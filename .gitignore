@@ -10,10 +10,13 @@
 # SSIS deployment-wizard output report (timestamped per run, not source)
 deploysummary_*.xml
 
-# Claude Code local session state -- accumulates machine-specific paths and
-# references to ephemeral per-session temp/scratchpad directories, not
-# meant to be shared as project config.
-.claude/
+# Claude Code local session/permission state -- accumulates machine-specific
+# paths and references to ephemeral per-session temp/scratchpad directories,
+# not meant to be shared as project config. Narrowed (not a blanket .claude/
+# exclude) so that .claude/skills/ -- deliberate, shareable project context
+# meant to persist across sessions -- still gets tracked.
+.claude/settings.json
+.claude/settings.local.json
 
 # OS cruft
 Thumbs.db
