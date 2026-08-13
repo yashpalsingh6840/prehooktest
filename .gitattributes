@@ -1,0 +1,12 @@
+# SSIS package/project XML and the extractor's golden JSON fixtures are compared and hashed
+# byte-for-byte (PackageSpec.Sha256/FileSizeBytes, and StableJsonWriter's deliberately LF-only
+# output -- see Tools/SsisExtractor/src/Ssis.Extract.Model/Serialization/StableJsonWriter.cs).
+# Git's line-ending normalization on checkout (core.autocrlf=true on this machine) silently
+# rewrites bytes for any file it treats as text, which corrupts both: a fresh clone's .dtsx
+# gets a different size/hash than what was committed, and the LF-only golden files come back
+# as CRLF, failing GoldenFileTests for no code reason. Force these untouched, in both
+# directions, regardless of platform/autocrlf setting.
+*.dtsx -text
+*.dtproj -text
+Project.params -text
+Tools/SsisExtractor/tests/Ssis.Extract.Tests/Golden/*.json -text
