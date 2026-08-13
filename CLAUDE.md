@@ -37,7 +37,15 @@ Ways to execute with parameter overrides:
   to an Environment, executed server-side (see "SSISDB catalog" below)
 
 The first two are in-process wrappers around the same `Scripts/PkgRun.cs`
-logic; the third runs inside SQL Server and is independent of them.
+logic; the third runs inside SQL Server and is independent of them. Both
+default to running **both** packages in one invocation. `LoadEmployees`
+needs a SQL-auth password that is never persisted to the `.ispac` (see
+"Sensitive credential" below), so it fails locally unless supplied
+explicitly via `--set CM.CM_TargetDb.Password=<password>` — see "Running
+LoadEmployees locally" further down for the override syntax and two traps
+hit getting it working end to end. Without that override, pass `--package
+LoadReferenceData.dtsx` to skip `LoadEmployees` entirely rather than see it
+fail.
 
 ## This machine's environment (facts, not guesses — re-verify if stale)
 
@@ -105,18 +113,114 @@ dotnet build Scripts\SsisRunner\SsisRunner.csproj -c Release
 .\Scripts\SsisRunner\bin\Release\net8.0\SsisRunner.exe --manifest Scripts\SsisRunner\manifests\nightly.json --wait
 .\Scripts\SsisRunner\bin\Release\net8.0\SsisRunner.exe --status <RunId>
 
-# run with Project.params defaults
+# run both packages (the default, as of 2026-08-13 rework) with Project.params defaults
 .\Scripts\Run-Package.ps1
 .\Scripts\PkgRun.Console\bin\Release\PkgRun.Console.exe
 
-# run with overrides
-.\Scripts\Run-Package.ps1 -Override @('SourceFolder=...', 'SourceFileName=...', 'TargetConnectionString=...')
-.\Scripts\PkgRun.Console\bin\Release\PkgRun.Console.exe --set "SourceFolder=..." --set "TargetConnectionString=..."
+# run just one
+.\Scripts\Run-Package.ps1 -PackageName LoadReferenceData.dtsx
+.\Scripts\PkgRun.Console\bin\Release\PkgRun.Console.exe --package LoadReferenceData.dtsx
+
+# run with overrides (applied across every package in the batch; matched
+# against package scope first, then project scope -- see PkgRun.cs)
+.\Scripts\Run-Package.ps1 -Override @('TargetConnectionString=...')
+.\Scripts\PkgRun.Console\bin\Release\PkgRun.Console.exe --set "TargetConnectionString=..."
+
+# run LoadEmployees locally too -- needs its connection-manager password
+# supplied explicitly, every run (see "Running LoadEmployees locally" below)
+.\Scripts\PkgRun.Console\bin\Release\PkgRun.Console.exe --set "CM.CM_TargetDb.Password=<the real ssis_loader password>"
 ```
 
 The two script entry points execute in-process via `Project.OpenProject()` +
-`Package.Execute()`. They remain the simplest way to do a quick local run.
-Raw local `dtexec` is still broken (COM) — don't suggest it.
+`Package.Execute()` and remain the simplest way to do a quick local run.
+**Since the 2026-08-13 logging rework, both default to running BOTH
+packages** in one invocation (`LoadEmployees.dtsx` then
+`LoadReferenceData.dtsx`), each in its own try/catch so one failing to
+launch doesn't stop the other — mirrors `ctl.usp_DispatchRunItems`'s
+per-item isolation. **Without an override, `LoadEmployees` still fails
+here, by design** — it needs `ssis_loader`'s password, which is a
+write-only connection-manager property never persisted to the `.ispac`
+(see trap 13), so there is no default to silently fall back on. The
+failure (*"Login failed for user 'ssis_loader'"*) is the credential
+protection working as intended, not a bug. See the next section for how to
+supply the password explicitly and actually run it locally when you have
+it. Overriding `TargetConnectionString` no longer affects `LoadEmployees`
+either, for the same reason its connection manager stopped reading that
+parameter. Raw local `dtexec` is still broken (COM) — don't suggest it.
+
+### Running `LoadEmployees` locally (added 2026-08-13, same day as the credential switch)
+
+`PkgRun.cs`'s override syntax has a second form:
+`CM.<ConnectionManagerName>.<PropertyName>=Value` (same `CM.*` naming
+SSISDB itself uses for its auto-split connection-manager parameters — see
+"Sensitive credential"). It routes to
+`pkg.Connections[name].Properties[property].SetValue(cm, value)` instead of
+a project/package parameter, which is the same object-model call CLAUDE.md
+already documented SSISDB's execution engine makes internally before
+`AcquireConnection`. This makes `--set
+CM.CM_TargetDb.Password=<real password>` work for a local run — verified
+end to end 2026-08-13: `LoadEmployees` loaded 12 rows locally with no
+SSISDB involved. Nothing about SSISDB's protection changed: no password is
+stored by this file, a run without the override still fails exactly as
+documented, and the value is masked (`***`) in console output regardless of
+source. Values are still `${var}` free text on the command line/PowerShell
+history, same caveat as any CLI secret — fine for this throwaway local PoC,
+not a pattern to carry into anything real.
+
+**Two traps hit getting a real end-to-end run working, neither about the
+override mechanism itself (which worked correctly on the first try) —
+both about drift in supporting state that had nothing to do with today's
+code change:**
+- **The login was locked out**, not just failing on a wrong password.
+  `CHECK_POLICY=ON` (set in `Sql/04_CreateLoaderCredential.sql`) enforces
+  Windows-style lockout after repeated bad attempts — every earlier local
+  `LoadEmployees` run before this session's fix authenticated with an
+  *empty* password (write-only property, never persisted), which was
+  apparently enough failed attempts to lock the account. Symptom:
+  `Login failed for user 'ssis_loader'` even with the objectively-correct
+  password from the SQL script. Diagnose with
+  `LOGINPROPERTY('ssis_loader','IsLocked')`; fix with
+  `ALTER LOGIN ssis_loader WITH PASSWORD = N'<pwd>' UNLOCK;` — the same
+  password, not a new one.
+- **`Sql/01_CreateTarget.sql` does `DROP TABLE IF EXISTS dbo.Employee`
+  before recreating it**, and `GRANT` is scoped to the specific object, so
+  any re-run of that script silently wipes `ssis_loader`'s `SELECT`/
+  `INSERT`/`ALTER` grants — the new table is a different securable even
+  though it has the same name. Symptom (only after fixing the lockout
+  above): login succeeds, then *"The SELECT permission was denied on the
+  object 'Employee'"*, same wording as trap 13's original discovery of this
+  requirement. Fix: re-run `Sql\04_CreateLoaderCredential.sql` (its GRANTs
+  are idempotent) any time `01_CreateTarget.sql` has been re-run since.
+
+**Logging (added 2026-08-13):** every run now wires up 3 of the 4 SSIS
+logging channels (see `Scripts/PkgRun.cs` header for the full breakdown of
+all four and why the 4th — custom `IDTSLogging` — is deliberately not
+wired here). Console output comes from an `IDTSEvents` sink
+(`CaptureEvents`); each package additionally gets a native text-file log
+provider cascaded to every container (`LoggingOptions` do **not** inherit
+from parent to child — confirmed empirically, must walk `IDTSSequence.
+Executables` recursively), written to
+`SSIS/bin/Development/logs/<PackageName>.log`. That file is the only
+channel carrying pipeline-level events (`OnPipelineRowsSent`, `Diagnostic`)
+— i.e. real per-component row counts, not just task pass/fail.
+
+Two traps hit wiring this up, both invisible until actually executed
+(compiled clean, failed at runtime):
+- **The log-provider ProgID suffix is version-specific and undocumented in
+  most blog posts/older docs**: this SSIS version (17.0) needs
+  `DTS.LogProviderTextFile.9`, not the `.3`/`.4` seen elsewhere. Get ground
+  truth from `Application.LogProviderInfos` (enumerate `.CreationName`)
+  rather than guessing — same "ask the runtime, don't guess the XML/API"
+  lesson as trap 12.
+- **`LogProvider.ConfigString` is the NAME of a connection manager, not a
+  raw file path.** Passing a path directly fails with *"The connection
+  '\<path\>' is not found"* — and that failure itself counts toward the
+  package's `MaximumErrorCount`, which silently flipped an otherwise-
+  successful `LoadReferenceData` run (8+10 rows genuinely loaded) to
+  `Failure`. Reproduced and confirmed before fixing: create a `FILE`
+  connection manager (`pkg.Connections.Add("FILE")`), set its
+  `ConnectionString` to the actual path, and point `ConfigString` at that
+  connection manager's `Name` instead.
 
 **Tool-choice note:** capturing `devenv.com` output through the Bash tool
 here has repeatedly returned an empty file even on success (exit 0); the
@@ -229,6 +333,151 @@ For a one-run-only override use `catalog.set_execution_parameter_value`
 with `@object_type=20` between `create_execution` and `start_execution`.
 To add a `Prod` environment, re-run `Sql/02_SetupCatalogEnvironment.sql`'s
 steps with a different `@environment_name` and pass that `reference_id`.
+
+## Sensitive credential (built 2026-08-13 — working)
+
+Every other connection in this PoC uses Integrated Security, which has no
+password to protect — that's *why* `TargetConnectionString` can never be
+sensitive (trap 13) and why `AuditToken`, the one sensitive value that
+existed before this, demonstrates encryption/masking with no live consumer.
+`LoadEmployees`' `CM_TargetDb` connection manager was switched to SQL Server
+Authentication specifically to give the catalog's sensitive-value machinery
+something real to protect end to end. `LoadReferenceData` is untouched —
+this is a one-package demonstration, not a project-wide credential rework.
+
+| Thing | Value |
+|---|---|
+| SQL login | `ssis_loader` (`Sql/04_CreateLoaderCredential.sql`) — `SELECT, INSERT, ALTER` on `dbo.Employee` only |
+| Connection manager | `LoadEmployees.dtsx` → `CM_TargetDb`, package-scoped, `OLEDB`, static `ConnectionString` with `User ID=ssis_loader;Password=;` (no expression) |
+| Auto-split parameter | `CM.CM_TargetDb.Password` — `object_type=30`, `sensitive=1`, `design_default_value` NULL |
+| Environment variable | `TargetDbPassword` in the `Dev` environment, `@sensitive=1`, value must match the login's real password — rotate both together |
+| Binding | `catalog.set_object_parameter_value @object_type=30, @object_name='LoadEmployees.dtsx', @parameter_name='CM.CM_TargetDb.Password', @parameter_value='TargetDbPassword', @value_type='R'` |
+
+Verified 2026-08-13: `LoadEmployees` ran successfully through `ctl.usp_StartPackage`
+authenticating as `ssis_loader` with the password pulled from the encrypted
+environment variable; 12 rows loaded; the real password string does not
+appear anywhere in `catalog.operation_messages` for that execution.
+
+**How this actually works, since it contradicted an earlier assumption in
+this file** — no project-level connection manager or package restructuring
+was needed. Every OLEDB connection manager exposes a distinct, write-only
+`Password` property in the object model (separate from `ConnectionString`,
+confirmed by enumerating `cm.Properties`) — setting it, or simply having a
+literal `Password=` in a *static* `ConnectionString` (i.e. not overridden by
+a whole-string property expression), makes SSIS persist a
+`<DTS:Password Sensitive="1">` node in the `.dtsx` and makes the project
+deployment step auto-split it into its own `CM.<name>.Password` parameter at
+whatever scope the connection manager lives at — package-scoped worked
+exactly the same as project-scoped would have. A connection manager driven
+entirely by a whole-string `PropertyExpression` (as `CM_TargetDb` was
+before, and as `LoadReferenceData`'s still is) never gets this treatment,
+because the expression already owns `ConnectionString` outright — this is
+*why* switching required removing the expression, not adding to it.
+
+**The full value-flow, end to end — four stages, only one of which is ours.**
+Traced and confirmed empirically 2026-08-13 by querying
+`catalog.execution_parameter_values`/`internal.execution_parameter_values`
+for the actual successful run; don't re-derive this from scratch next time:
+
+1. **Deploy-time split — Microsoft's code, not ours.** `catalog.deploy_project`
+   (the stock proc we call with raw `.ispac` bytes) inspects every OLEDB/
+   ADO.NET connection manager in the project and unconditionally creates a
+   decomposed parameter set for it: `CM.<name>.ConnectionString` (rewritten
+   with any `Password=` stripped out), `.ServerName`, `.InitialCatalog`,
+   `.UserName`, `.Password` (`sensitive=1`), etc. — at whatever `object_type`
+   the connection manager lives at (30 for package-scoped, as here). This
+   happens for *every* OLEDB connection manager, used or not — confirmed:
+   `LoadReferenceData`'s `CM_TargetDb` got the same `CM.CM_TargetDb.Password`
+   parameter despite never touching it, sitting inert at `value_type='V'`,
+   default NULL.
+2. **Binding a value — ours, one-time, at setup.** The single
+   `catalog.set_object_parameter_value @value_type='R'` call in
+   `Sql/02_SetupCatalogEnvironment.sql` (see table above). This is the *only*
+   step that requires project-specific code, and it's a design-time binding,
+   not a per-run action.
+3. **Per-execution resolution — SSISDB's code, not ours.** `ctl.usp_DispatchRunItems`
+   (`Sql/03_CreateControlFramework.sql`) calls `catalog.create_execution` with
+   `@reference_id` set to the package's environment reference — that's it, no
+   `CM.*` awareness anywhere in our T-SQL. `create_execution` itself, given
+   that reference, resolves the current value of *every* `value_type='R'`
+   parameter bound to that project/package for that environment (`SourceFolder`,
+   `TargetConnectionString` on `LoadReferenceData`, `CM.CM_TargetDb.Password`
+   on `LoadEmployees` — all three, uniformly) and stages them for the
+   execution. Proven directly: RunId 21's manifest only ever named
+   `SourceFileName`; `CM.CM_TargetDb.Password` still resolved correctly
+   because it rode in via `@reference_id`, never via our parameter loop.
+4. **Runtime application — the SSIS execution engine, not ours.** When the
+   package actually runs, the engine recognizes the `CM.<ConnectionManagerName>.
+   <PropertyName>` name pattern specifically and sets that resolved value onto
+   `Connections[<name>].Properties[<property>]` on the live connection manager
+   object before `AcquireConnection` — for *any* of the five auto-split
+   properties, not just `Password`. The OLE DB provider then builds the actual
+   login request from whatever combination of properties the connection
+   manager was left with. `ConnectionString` and `Password` are applied as
+   independent properties and never merged back into one visible string —
+   confirmed by reading back `catalog.execution_parameter_values` for the
+   successful run: `ConnectionString` still shows the literal password-free
+   design value, while `Password` carried its own separate 116-byte
+   ciphertext in `internal.execution_parameter_values`, matching
+   `TargetDbPassword`'s own ciphertext size exactly.
+
+**Recipe for protecting another credential later — don't reinvent this:**
+1. Give the target connection manager a **static** `ConnectionString` (no
+   whole-string `PropertyExpression` — that's what suppresses the auto-split,
+   per the paragraph above) containing `User ID=...;Password=;` for SQL auth
+   (or just leave `Password` set via the object model for other auth shapes).
+2. Rebuild (`devenv /Build`) and redeploy (`catalog.deploy_project`) — confirm
+   `CM.<name>.Password` now exists in `catalog.object_parameters`,
+   `sensitive=1`, before doing anything else.
+3. `catalog.create_environment_variable @sensitive=1` for the real secret.
+4. `catalog.set_object_parameter_value @parameter_name='CM.<name>.Password',
+   @parameter_value='<env var name>', @value_type='R'` — `@object_type=20`
+   with `@object_name` omitted for a project-scoped CM, `@object_type=30`
+   with `@object_name='<Package>.dtsx'` for package-scoped (either works
+   identically, see above).
+5. Nothing else changes. `ctl`/`SsisRunner` need no new code — they already
+   resolve every parameter generically by name via `catalog.object_parameters`
+   and never special-case `CM.*`; the environment reference already in play
+   for that package/environment pulls the new binding in automatically via
+   stage 3 above.
+6. Remember the one-way trip: once bound, the value cannot be read back by
+   us or by package logic (trap 13) — only applied by the runtime. Verify by
+   checking ciphertext length in `internal.environment_variables`/
+   `internal.execution_parameter_values`, not by trying to print it anywhere.
+
+**Traps hit getting here, beyond what's in the numbered list below:**
+- `TRUNCATE TABLE` needs `ALTER` on the table, not just `SELECT`/`INSERT` —
+  the package's `SQL_TruncateTarget` task failed with a misleading "Cannot
+  find the object 'Employee'" (SQL Server's deliberately vague permission-
+  denied phrasing) until `ALTER` was granted.
+- Opening the OLE DB Destination's fast-load rowset resolves column metadata
+  up front, which needs `SELECT` even though the task only ever inserts —
+  `INSERT`-only failed validation with *"The SELECT permission was denied on
+  the object 'Employee'"*.
+- Editing the connection manager was done via the SSIS object model (per
+  trap 12's ethos), not hand-edited XML: `Application.LoadPackage`, clear
+  the expression via `cm.Properties["ConnectionString"].SetExpression(cm,
+  $null)`, set `cm.ConnectionString`, `Application.SaveToXml`. Reflection
+  loaded from the GAC as usual (trap 7).
+- The machine's SQL Server instance was already in mixed-mode authentication
+  (`SERVERPROPERTY('IsIntegratedSecurityOnly') = 0`) — no auth-mode change
+  or service restart was needed, which would otherwise have been the
+  riskiest part of this change.
+- **This broke local (non-catalog) execution of `LoadEmployees`** —
+  `Run-Package.ps1` / `PkgRun.Console.exe` both run it as part of their
+  default (both-packages) run and fail with *"Login failed for user
+  'ssis_loader'"* unless the caller supplies the password (empty password:
+  `Password` is write-only and SSIS never persists it in the `.ispac`).
+  Verified, not theoretical. This is inherent, not a bug: those entry
+  points run in-process via `Project.OpenProject()`, entirely outside
+  SSISDB, and by design there is no default value to fall back on — a
+  local run only succeeds if the real password is supplied explicitly
+  every time via `--set CM.CM_TargetDb.Password=<password>` (added
+  2026-08-13, see "Running LoadEmployees locally"), which sets the
+  connection manager's property directly rather than reading anything back
+  out of SSISDB. Without that override, pass `--package
+  LoadReferenceData.dtsx` to skip it, or drive `LoadEmployees` through
+  `ctl.usp_StartPackage`/`SsisRunner` instead.
 
 ## The `ctl` control framework (built 2026-08-12, reworked 2026-08-13 — working)
 
@@ -351,6 +600,175 @@ all-succeeded (or merely started, without `--wait`), 1 some-failed, 2 runner
 error, 3 still-running (`--status` without `--wait` only). In `SSIS.sln`
 mapped to `Release|Any CPU` (trap 6 — any real platform label makes devenv
 silently skip it); `dotnet build` on the csproj alone works too.
+
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`)
+
+A separate tool (`ssisx`), planned in `Phase0-Extractor-Plan.md` (also see
+`Migration-Validation-Plan.md` and `PoC-Architecture-Overview.md` for the
+surrounding phases). Turns a folder of `.dtsx`/`.dtproj` files into
+deterministic, redacted, lossless spec JSON by parsing the raw XML directly
+— deliberately **not** the SSIS object model (plan §2.1: version tolerance,
+no GAC/Windows dependency, works on packages built by any SSIS version).
+Session-agreed decisions (plan §11, all defaults accepted): lives inside
+this repo at `Tools/SsisExtractor/` rather than a separate repo; build
+straight through slices 1–4 then stop and reassess with real client
+packages before slices 5–6; `pull`/`enrich` (catalog-backed, slice 6)
+treated as unavailable/low-priority for now — no client SSISDB access.
+
+**Full detail (build/run/test commands, JSON contract, gotchas already hit)
+is in `Tools/SsisExtractor/README.md` and `Tools/SsisExtractor/docs/spec-schema.md`
+— this section is only the pointer + the one fact worth surfacing here.**
+
+Own solution (`SsisExtractor.slnx` — this SDK's `dotnet new sln` emits the
+newer XML `.slnx` format, not `.sln`; `dotnet build`/`dotnet test` work on
+either), zero coupling to `SSIS.sln`/this PoC's own build. Verified
+end-to-end 2026-08-13: `ssisx extract --input SSIS --out <dir>` against
+both this PoC's packages produces byte-identical output across repeated
+runs (aside from `_meta.json`'s timestamp), and golden-file tests
+(`tests/Ssis.Extract.Tests/`) pass against the PoC's actual `.dtsx` files,
+referenced by relative path rather than copied — so those tests double as
+an unplanned drift check on this PoC's own packages, a useful side effect
+worth knowing about before wondering why an extractor test broke.
+
+**Slice 2 (same day):** recursive control-flow tree, `Microsoft.ExecuteSQLTask`
+payloads (SQL text, connection resolved by name from the task's DTSID
+reference against the package's own connection managers), a derived DAG per
+container (topological order + a longest-path "parallel level" grouping —
+sound but deliberately incomplete, documented in `ControlFlowDagSpec`'s doc
+comment), and the coverage-percentage metric (plan §7.2) wired for real,
+including a working `--fail-under` that exits 3. Both PoC packages currently
+score **~19–20% coverage** — expected, not a regression: each package's Data
+Flow Task pipeline internals (components/columns/expressions) are still the
+dominant share of the file by element count, and that's slice 3, not yet
+done. **Neither PoC package's control flow branches** (both are straight
+`A → B` or `A → B → C` chains — no parallel paths to demonstrate), so the
+DAG algorithm itself is proven by a synthetic unit test
+(`tests/Ssis.Extract.Tests/DagAlgorithmTests.cs`, reaches
+`DtsxPackageReader.BuildDag` via `InternalsVisibleTo`), not the golden files.
+Event handlers are wired generically (same recursive shape as the control-
+flow tree) but are **unverified** — neither PoC package has one.
+
+**Slice 3 (same day):** the full Data Flow Task pipeline model
+(`PipelineReader.cs`) — every component parsed generically (properties,
+connections resolved to CM names, inputs/outputs/columns, paths) regardless
+of `componentClassID`, plus bespoke semantic payloads
+(`FlatFileSourcePayload`/`OleDbDestinationPayload`, with a derived
+column↔external-column mapping) for the two component types this PoC
+actually has — confirmed by grepping every `componentClassID` in both
+`.dtsx` files rather than guessing from the plan's table. On top of that,
+`Ssis.Extract.Dtsx.LineageBuilder` derives column-level lineage (plan §5.1)
+purely from the typed pipeline model, no XML involved. **Key discovery,
+evidenced from `LoadEmployees`'s own pipeline, not assumed:** a `<path>`
+element is a physical buffer connection, not what determines column
+lineage — a synchronous transform's untouched passthrough columns (e.g.
+Derived Column's own `EmployeeID`/`Department` inputs, never re-emitted as
+its own output columns) are consumed downstream by matching `lineageId`
+directly against the column's true original producer, skipping the
+transform's output entirely; there is no `<path>` straight from the flat
+file source to the OLE DB destination for those two columns, yet that is
+exactly where their value comes from. So lineage edges are built by
+matching `lineageId` globally, never by walking `<paths>` — which turns out
+to reproduce the plan's own §5.1 example diagram exactly (direct arrows
+bypassing the transform's subgraph for passthrough columns), a validation
+that happened after the fact, not a design borrowed from the plan's prose.
+**Net effect on the coverage metric:** both PoC packages jumped from
+~19–20% (slice 2, pipeline internals still raw XML) to **100%** (slice 3) —
+predicted in the slice 2 note above, now confirmed, not a fluke: every
+distinct element name found under `<pipeline>` in both packages was
+enumerated and checked against what `PipelineReader` actually reads before
+trusting the number. `ssisx graph --input <path> --out <dir>` renders the
+lineage as Mermaid/DOT, one file pair per Data Flow Task, using the same
+"only produced columns + sink-component terminal columns get nodes" rule
+the plan's own diagram uses (a plain passthrough input on a non-sink
+transform gets no separate node). `LineageBuilder` is proven against
+synthetic pipelines (`tests/Ssis.Extract.Tests/LineageBuilderTests.cs`,
+public type, no `InternalsVisibleTo` needed) the same way `BuildDag` is,
+since neither PoC package's lineage produces an unused column or a
+multi-reference expression to exercise those paths for real.
+
+**Slice 4 (2026-08-13, per plan §8 the actual phase-0 deliverable):**
+`ssisx report` — complexity scoring (`ComplexityScorer.cs`, weighted counts
+→ Simple/SqlHeavy/Procedural/HighRisk, weights in
+`config/complexity-weights.json` not code, per plan §5.6), a 23-rule
+findings engine (`RulesEngine.cs`, covering plan §5.7's four categories —
+answerable entirely from the slice 1–3 model, no ScriptDom/expression
+tokenizer needed yet), and the non-determinism manifest (`NonDeterminism-
+Analyzer.cs`, plan §5.8). Writes `inventory.csv/.md`, `findings.csv/.md`,
+`nondeterministic.json`, `unmapped.md`, `portfolio.md`. Full rule catalog
+and scoring detail in `Tools/SsisExtractor/docs/report-schema.md` — this
+note is only the one fact worth surfacing here.
+
+**That one fact:** the non-determinism manifest was cross-checked against
+this very file, not just synthetic tests — `ssisx report` against both PoC
+packages finds *exactly* the three columns the "Sensitive credential"
+section above's sibling note (plan §5.8's worked example) already names:
+`dbo.Employee.LoadedAtUtc`, `dbo.Department.LoadedAtUtc`,
+`dbo.Designation.LoadedAtUtc`, all `GETUTCDATE()`, all correctly traced
+through the Derived Column that produces them to the OLE DB Destination
+that lands them. That's an independent confirmation the lineage-tracing
+logic (slice 3) and the manifest logic built on top of it (slice 4) are
+actually right, not just that the tool runs without crashing. Also
+confirmed real on this PoC (not just synthetic): the `hardcoded-connection-
+string` finding fires on exactly `LoadEmployees`' `CM_TargetDb` — the one
+connection manager in the whole PoC deliberately switched to a static
+`ConnectionString` for the sensitive-credential demo (see that section
+above) — and nowhere else, matching what CLAUDE.md already documents about
+which connection managers are expression-driven vs literal.
+
+**Slice 5 (2026-08-13, everything except `pull`/`enrich`):** SQL harvest +
+ScriptDom parsing (new `Ssis.Extract.Sql` project — the only one with a
+third-party parser dependency, kept out of the core readers deliberately),
+expression harvest + tokenization, `.ispac` input, cross-package dependency
+graph, data-touch inventory, and `ssisx diff`. **`pull`/`enrich` are now
+formally out of scope, not pending** — both need SSISDB catalog access this
+engagement doesn't have (plan §11 decision 4), and `ssisx diff` against a
+deployed `.ispac` covers the source-vs-deployed drift case `pull` existed
+for, entirely offline. They exit 2 with a message saying exactly that.
+Detail in `Tools/SsisExtractor/docs/report-schema.md`.
+
+**Facts worth surfacing here, each verified rather than assumed:**
+- **ScriptDom's API was probed before use**, not guessed (same discipline as
+  trap 12): `TSql170Parser`, `Parse(TextReader, out IList<ParseError>)`,
+  visitor overloads confirmed from the package's own XML docs, then the
+  analyzer was run against 10 real SQL shapes before being wired in.
+  Package: `Microsoft.SqlServer.TransactSql.ScriptDom` 180.78.1, net8.0.
+- **The read/write trap:** ScriptDom models an `INSERT INTO x` target as a
+  `NamedTableReference` exactly like a `FROM` source, so "every table
+  reference is a read" reports every written table as also read. Each
+  mutating statement type is visited explicitly to capture its own target,
+  and writes are subtracted from reads.
+- **`ssisx diff` exits 1 on SEMANTIC differences only, never on bytes.**
+  Proven necessary on this very PoC: its repo `.dtsx` and the `.ispac` built
+  from it differ byte-for-byte with **zero** semantic differences (a build
+  rewrites version stamps and designer layout). Gating CI on bytes would
+  fire on every build and train everyone to ignore it.
+- **All three of this PoC's CSV connection managers are expression-driven** —
+  `LoadReferenceData`'s two carry no static `ConnectionString` attribute at
+  all. So the data-touch inventory reports the *expression*
+  (`CM_DepartmentCsv = @[User::DepartmentFilePath]`) in its own
+  `FilePathsFromExpression` list rather than a design-time default the
+  runtime replaces. Resolving those for real needs environment parameter
+  values — i.e. exactly what the unavailable `enrich` would have provided.
+- **Measured expression-language surface for this PoC:** `GETUTCDATE` (3),
+  `UPPER` (3), `SUBSTRING` (1), plus the `DT_WSTR` cast (5). Casts are
+  counted separately from functions on purpose — `(DT_WSTR,50)` looks like a
+  function call to a naive scan, and conflating them inflates the "what must
+  a replacement engine support" number this output exists to answer.
+- **Zero cross-package dependency edges**, correctly: the two packages write
+  disjoint tables and neither calls the other. Table names are
+  bracket-normalized first (`[dbo].[Employee]` from a destination vs
+  `dbo.Employee` from SQL text) or that comparison would silently miss.
+
+**Where this leaves the extractor:** slices 1–5 done, 54 tests green, both
+PoC packages at 100% extraction coverage. That number says the model handles
+*these two packages*, **not** that it handles an unseen portfolio — plan §8's
+own risk note is that component/task-type coverage on real client packages,
+not code volume, is what actually tests this. Getting 3–5 representative real
+client packages (plan §11 decision 2) remains the single biggest accuracy
+lever and is the natural next step ahead of any further building. Still
+genuinely unbuilt: Script Task source extraction, type/length-narrowing
+detection, and the plan §7.3 object-model oracle — see the extractor's own
+README "Out of scope / not implemented" section.
 
 ## Traps already hit once — don't re-derive these
 
@@ -477,9 +895,15 @@ silently skip it); `dotnet build` on the csproj alone works too.
     So any parameter consumed via an expression — which is how a connection
     manager normally gets a parameterised connection string — **can never be
     sensitive**. The only consumer SSIS allows is the runtime applying a
-    project connection manager's `CM.<name>.Password`, which never passes
-    through package code. Marking `Sensitive=1` also makes the build strip
-    the value from the `.ispac` entirely (`design_default_value` = NULL).
+    connection manager's `CM.<name>.Password`, which never passes through
+    package code. Marking `Sensitive=1` also makes the build strip the value
+    from the `.ispac` entirely (`design_default_value` = NULL). **The
+    connection manager does NOT need to be project-scoped for this** — a
+    package-scoped OLEDB connection manager auto-splits a literal `Password=`
+    in its `ConnectionString` into a package-level (`object_type = 30`)
+    `CM.<name>.Password` parameter just the same; verified empirically 2026-
+    08-13 (see "Sensitive credential" below) after this note originally
+    assumed otherwise.
 14. **SSISDB's collation is `Latin1_General_BIN2`**, so every *column-to-column*
     comparison between SSISDB and a normal database fails with *"Cannot
     resolve the collation conflict"*. Add `COLLATE DATABASE_DEFAULT` to the
@@ -527,14 +951,10 @@ silently skip it); `dotnet build` on the csproj alone works too.
   a second start of one already-`Running` PackageKey — was added in the
   2026-08-13 rework; that is a correctness check, not the missing
   cross-package throughput limiter described here.)
-- **A genuinely protected credential is not demonstrated.** Encryption at
-  rest and masking are proven (`AuditToken`: ciphertext in
-  `internal.environment_variables.sensitive_value`, NULL in the public view),
-  but trap 13 means nothing in these packages can legally consume it. Doing
-  it properly needs a project-level connection manager on SQL authentication
-  with `CM.<name>.Password` bound to a sensitive variable — which needs a SQL
-  login and both packages restructured onto a shared project connection
-  manager.
+- A genuinely protected credential (not just encryption-at-rest with no
+  consumer) is now demonstrated for `LoadEmployees` only — see "Sensitive
+  credential" below. `LoadReferenceData` still uses Integrated Security
+  throughout and was deliberately left untouched.
 - SSISDB retention is still at the 365-day default and the
   `SSIS Server Maintenance Job` has not been checked. A verbose retry
   generated **769 messages vs 34** for one small package, so this matters

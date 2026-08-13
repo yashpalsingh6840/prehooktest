@@ -1,0 +1,144 @@
+{
+  "BuildConfigurations": [
+    {
+      "Name": "Development",
+      "OutputPath": "bin",
+      "TargetServerVersion": "SQLServer2025"
+    }
+  ],
+  "ConnectionManagers": [],
+  "CreationDate": "2026-08-07T17:03:01.4047283\u002B05:30",
+  "CreatorComputerName": "IRIS-CSG-7247",
+  "CreatorName": "IRISSOFTWARE\\yashpal.singh01",
+  "DeploymentModel": "Project",
+  "Description": null,
+  "FormatVersion": "1",
+  "Id": "{31851c18-953d-4726-9e65-31ea6f564d74}",
+  "Name": "SSIS",
+  "Packages": [
+    {
+      "Description": "Reads an employee CSV, merges columns with a Derived Column transform, and loads dbo.Employee.",
+      "EntryPoint": true,
+      "Name": "LoadEmployees.dtsx",
+      "PackageFormatVersion": 8,
+      "Parameters": [],
+      "ProtectionLevelName": "DontSaveSensitive",
+      "ProtectionLevelRaw": 0,
+      "VersionGuid": "{BFB496A7-0501-4554-A7B8-9FA2F6AE1124}"
+    },
+    {
+      "Description": "Loads dbo.Department and dbo.Designation from two CSVs in two different folders.",
+      "EntryPoint": true,
+      "Name": "LoadReferenceData.dtsx",
+      "PackageFormatVersion": 8,
+      "Parameters": [
+        {
+          "CreationName": null,
+          "DataTypeName": "String",
+          "DataTypeRaw": 18,
+          "Description": "Folder that holds the inbound department CSV file.",
+          "Id": "{8576F622-BEA6-47C4-93F2-E4AF570AA6FD}",
+          "IncludeInDebugDump": 0,
+          "Name": "DepartmentFolder",
+          "Required": false,
+          "Scope": "Package",
+          "Sensitive": false,
+          "Value": "D:\\PoC\\SSIS\\Data\\Input\\Department"
+        },
+        {
+          "CreationName": null,
+          "DataTypeName": "String",
+          "DataTypeRaw": 18,
+          "Description": "File name of the inbound department CSV file.",
+          "Id": "{9F556CF8-833E-4B0A-9171-1EABA231F16D}",
+          "IncludeInDebugDump": 0,
+          "Name": "DepartmentFileName",
+          "Required": false,
+          "Scope": "Package",
+          "Sensitive": false,
+          "Value": "Departments.csv"
+        },
+        {
+          "CreationName": null,
+          "DataTypeName": "String",
+          "DataTypeRaw": 18,
+          "Description": "Folder that holds the inbound designation CSV file.",
+          "Id": "{A0A74AA8-E0F9-4DA9-A370-A944F6D68456}",
+          "IncludeInDebugDump": 0,
+          "Name": "DesignationFolder",
+          "Required": false,
+          "Scope": "Package",
+          "Sensitive": false,
+          "Value": "D:\\PoC\\SSIS\\Data\\Input\\Designation"
+        },
+        {
+          "CreationName": null,
+          "DataTypeName": "String",
+          "DataTypeRaw": 18,
+          "Description": "File name of the inbound designation CSV file.",
+          "Id": "{F9B00A8B-E0FA-454B-84DE-A721FEFF5111}",
+          "IncludeInDebugDump": 0,
+          "Name": "DesignationFileName",
+          "Required": false,
+          "Scope": "Package",
+          "Sensitive": false,
+          "Value": "Designations.csv"
+        }
+      ],
+      "ProtectionLevelName": "DontSaveSensitive",
+      "ProtectionLevelRaw": 0,
+      "VersionGuid": "{F50D0299-AB89-4645-82E1-B072A3514738}"
+    }
+  ],
+  "Parameters": [
+    {
+      "CreationName": null,
+      "DataTypeName": "String",
+      "DataTypeRaw": 18,
+      "Description": "Folder that holds the inbound employee CSV file.",
+      "Id": "{cbb972ef-374a-461c-b90f-13d0f6d5af89}",
+      "IncludeInDebugDump": 0,
+      "Name": "SourceFolder",
+      "Required": false,
+      "Scope": "Project",
+      "Sensitive": false,
+      "Value": "D:\\PoC\\SSIS\\Data\\Input"
+    },
+    {
+      "CreationName": null,
+      "DataTypeName": "String",
+      "DataTypeRaw": 18,
+      "Description": "File name of the inbound employee CSV file.",
+      "Id": "{64ff6e54-3360-404d-b9b0-ea912b121c62}",
+      "IncludeInDebugDump": 0,
+      "Name": "SourceFileName",
+      "Required": false,
+      "Scope": "Project",
+      "Sensitive": false,
+      "Value": "Employees.csv"
+    },
+    {
+      "CreationName": null,
+      "DataTypeName": "String",
+      "DataTypeRaw": 18,
+      "Description": "OLE DB connection string for the destination SQL Server database.",
+      "Id": "{0b7d2683-3fba-42e8-8cc9-5f29f842169a}",
+      "IncludeInDebugDump": 0,
+      "Name": "TargetConnectionString",
+      "Required": false,
+      "Scope": "Project",
+      "Sensitive": false,
+      "Value": "Data Source=.\\SQLFORPOC;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;"
+    }
+  ],
+  "ProductVersion": "17.0.1016.0",
+  "ProtectionLevelName": "DontSaveSensitive",
+  "ProtectionLevelRaw": null,
+  "SchemaVersion": "9.0.1.0",
+  "SourceDtprojPath": "<normalized>",
+  "SourceProjectParamsPath": "<normalized>",
+  "VersionBuild": "0",
+  "VersionComments": null,
+  "VersionMajor": "1",
+  "VersionMinor": "0"
+}

@@ -1,0 +1,14 @@
+{
+  "Task": 1,
+  "Container": 3,
+  "DataFlowTask": 2,
+  "PipelineComponent": 1,
+  "Expression": 1,
+  "SqlStatement": 2,
+  "ScriptTask": 15,
+  "Loop": 5,
+  "EventHandler": 4,
+  "UnmappedNode": 10,
+  "SimpleThreshold": 15,
+  "HighRiskThreshold": 60
+}
