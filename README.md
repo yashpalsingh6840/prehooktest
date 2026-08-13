@@ -7,7 +7,10 @@ capabilities asked for:
    project parameters (not hardcoded).
 2. **Transform** the data with a Derived Column transform that merges columns.
 3. **Load** the result into a SQL Server table via an OLE DB destination,
-   whose connection string also comes from a project parameter.
+   whose connection is fully externalized — a project parameter for
+   `LoadReferenceData`, and SQL Server Authentication with a genuinely
+   protected password for `LoadEmployees` (see "A genuinely protected
+   credential" below).
 
 ## Layout
 
@@ -20,6 +23,7 @@ Sql/
   01_CreateTarget.sql           SsisPoC DB + Employee / Department / Designation tables
   02_SetupCatalogEnvironment.sql SSISDB "Dev" environment + parameter bindings
   03_CreateControlFramework.sql  the ctl schema: registry, run tables, 4 procedures
+  04_CreateLoaderCredential.sql  ssis_loader SQL login for LoadEmployees' SQL auth
 SSIS/
   SSIS.dtproj                   project file (targets SQL Server 2025 deployment format)
   Project.params                three project parameters (see below)
@@ -37,16 +41,35 @@ project parameters; `LoadReferenceData` uses package parameters as well. The
 control framework resolves which is which from catalog metadata, so callers
 pass a flat name/value bag and never need to know the difference.
 
+## Packages at a glance
+
+| | `LoadEmployees.dtsx` | `LoadReferenceData.dtsx` |
+|---|---|---|
+| Loads | `dbo.Employee` | `dbo.Department`, `dbo.Designation` |
+| Control flow tasks | 1 Execute SQL Task, 1 Data Flow Task | 1 Execute SQL Task, 2 Data Flow Tasks (sequential) |
+| Data flows | 1 (source → derived column → destination) | 2, same shape each, one per table |
+| Connection managers | `CM_EmployeesCsv` (Flat File), `CM_TargetDb` (OLE DB, SQL auth) | `CM_DepartmentCsv`, `CM_DesignationCsv` (Flat File), `CM_TargetDb` (OLE DB, Windows auth) |
+| Parameters | 3 project parameters (shares 2 with the other package) | 4 package parameters + 1 shared project parameter |
+| Destination auth | SQL Server Authentication, password protected via SSISDB (§ "A genuinely protected credential") | Windows Integrated Security throughout |
+
+Both packages share the same three building blocks per source file — **Flat
+File Source → Derived Column → OLE DB Destination** — and both truncate
+their target table(s) before loading, via an Execute SQL Task, so either
+package can be re-run without duplicate-key errors. The difference is
+`LoadReferenceData` repeats that shape twice (once per CSV) inside one
+package, sequentially, sharing one destination connection manager.
+
 ## Package: `LoadEmployees.dtsx`
 
 **Control flow**
 
 ```
 SQL_TruncateTarget  --success-->  DFT_LoadEmployees
+     (Execute SQL Task)              (Data Flow Task)
 ```
 
-`SQL_TruncateTarget` empties `dbo.Employee` first so the package can be
-re-run without duplicate-key errors.
+`SQL_TruncateTarget` runs `TRUNCATE TABLE dbo.Employee` first so the package
+can be re-run without duplicate-key errors.
 
 **Data flow** (`DFT_LoadEmployees`)
 
@@ -55,14 +78,165 @@ FF_SRC_Employees --> DER_MergeColumns --> OLEDST_Employee
 (Flat File Source)   (Derived Column)     (OLE DB Destination)
 ```
 
-`DER_MergeColumns` adds four computed columns:
+- **`FF_SRC_Employees`** (Flat File Source) reads `CM_EmployeesCsv` — columns
+  `EmployeeID, FirstName, LastName, Department, HireDate, Salary, City,
+  State`.
+- **`DER_MergeColumns`** (Derived Column) adds four computed columns:
 
-| New column    | Expression                                              |
-|---------------|----------------------------------------------------------|
-| `FullName`    | `FirstName + " " + LastName`                              |
-| `Location`    | `City + ", " + State`                                     |
-| `EmployeeKey` | `UPPER(SUBSTRING(Department,1,3)) + "-" + EmployeeID`      |
-| `LoadedAtUtc` | `GETUTCDATE()` (audit timestamp)                           |
+  | New column    | Expression                                              |
+  |---------------|----------------------------------------------------------|
+  | `FullName`    | `FirstName + " " + LastName`                              |
+  | `Location`    | `City + ", " + State`                                     |
+  | `EmployeeKey` | `UPPER(SUBSTRING(Department,1,3)) + "-" + EmployeeID`      |
+  | `LoadedAtUtc` | `GETUTCDATE()` (audit timestamp)                           |
+
+- **`OLEDST_Employee`** (OLE DB Destination, fast load) writes all eight
+  source columns plus the four derived ones into `dbo.Employee` (see
+  `Sql/01_CreateTarget.sql` for the table shape — every derived-string
+  column is `NVARCHAR`, per the Unicode/non-Unicode trap noted there).
+
+**End-to-end: file on disk → SQL Server table**
+
+Solid arrows are the data flow (rows actually moving); dotted arrows are
+control-flow precedence (a task that only *starts* once the previous one
+succeeds, same distinction the SSIS designer itself draws between a
+precedence constraint and a data flow path).
+
+```mermaid
+flowchart LR
+    CSV(["Employees.csv<br/>on disk at SourceFolder + SourceFileName"])
+    TRUNC[["SQL_TruncateTarget<br/>TRUNCATE dbo.Employee"]]
+    SRC["FF_SRC_Employees<br/>Flat File Source"]
+    DER["DER_MergeColumns<br/>Derived Column<br/>+FullName +Location +EmployeeKey +LoadedAtUtc"]
+    DST["OLEDST_Employee<br/>OLE DB Destination"]
+    DB[("SQL Server<br/>dbo.Employee")]
+
+    TRUNC -. success .-> SRC
+    CSV --> SRC --> DER --> DST --> DB
+```
+
+**Connection managers**
+
+| Name | Type | Purpose | Wiring |
+|---|---|---|---|
+| `CM_EmployeesCsv` | Flat File | source CSV | `ConnectionString` expression → `User::SourceFilePath` (built from `$Project::SourceFolder` + `$Project::SourceFileName`) |
+| `CM_TargetDb` | OLE DB | destination | static `ConnectionString` with SQL Server Authentication (`User ID=ssis_loader;Password=;`) — **not** expression-driven, deliberately, see "A genuinely protected credential" below |
+
+**Parameters this package consumes**
+
+| Parameter | Scope | Role |
+|---|---|---|
+| `$Project::SourceFolder` | project | folder containing the source CSV |
+| `$Project::SourceFileName` | project | source CSV file name |
+| `CM.CM_TargetDb.Password` | package (auto-split, sensitive) | `ssis_loader`'s password — bound to environment variable `TargetDbPassword`, see below |
+| `CM.CM_TargetDb.ServerName` / `.InitialCatalog` | package (auto-split) | destination server/database — left at design defaults (`.\SQLFORPOC` / `SsisPoC`) unless overridden |
+
+`$Project::TargetConnectionString` exists in the project but this package
+does **not** read it — see "A genuinely protected credential" for why.
+
+## Package: `LoadReferenceData.dtsx`
+
+**Control flow** — three tasks, strictly sequential (each gated on the
+previous one's success):
+
+```
+SQL_TruncateTargets --success--> DFT_LoadDepartment --success--> DFT_LoadDesignation
+   (Execute SQL Task)               (Data Flow Task)                (Data Flow Task)
+```
+
+`SQL_TruncateTargets` is a single Execute SQL Task running both truncates
+against `CM_TargetDb`: `TRUNCATE TABLE dbo.Department; TRUNCATE TABLE
+dbo.Designation;` — one task for both tables, unlike `LoadEmployees`' one
+task per (single) table.
+
+**Data flow 1** (`DFT_LoadDepartment`)
+
+```
+FF_SRC_Department --> DER_DepartmentKey --> OLEDST_Department
+(Flat File Source)    (Derived Column)      (OLE DB Destination)
+```
+
+- **`FF_SRC_Department`** reads `CM_DepartmentCsv` — columns `DepartmentID,
+  DepartmentCode, DepartmentName, CostCenter, HeadCount`.
+- **`DER_DepartmentKey`** adds:
+
+  | New column | Expression | Friendly form |
+  |---|---|---|
+  | `DepartmentKey` | `(DT_WSTR,25)([UPPER](DepartmentCode) + "-" + (DT_WSTR,10)DepartmentID)` | `UPPER(DepartmentCode) + "-" + DepartmentID` |
+  | `LoadedAtUtc` | `GETUTCDATE()` | audit timestamp |
+
+- **`OLEDST_Department`** (fast load) writes into `dbo.Department`.
+
+**Data flow 2** (`DFT_LoadDesignation`) — identical shape, different table:
+
+```
+FF_SRC_Designation --> DER_DesignationKey --> OLEDST_Designation
+(Flat File Source)     (Derived Column)       (OLE DB Destination)
+```
+
+- **`FF_SRC_Designation`** reads `CM_DesignationCsv` — columns
+  `DesignationID, DesignationCode, Title, JobLevel, Band`.
+- **`DER_DesignationKey`** adds:
+
+  | New column | Expression | Friendly form |
+  |---|---|---|
+  | `DesignationKey` | `(DT_WSTR,25)([UPPER](DesignationCode) + "-" + (DT_WSTR,10)JobLevel)` | `UPPER(DesignationCode) + "-" + JobLevel` |
+  | `LoadedAtUtc` | `GETUTCDATE()` | audit timestamp |
+
+- **`OLEDST_Designation`** (fast load) writes into `dbo.Designation`.
+
+**End-to-end: both files on disk → SQL Server** (same solid/dotted
+convention as `LoadEmployees` above — solid follows the rows, dotted is
+control-flow precedence)
+
+```mermaid
+flowchart LR
+    CSV1(["Departments.csv<br/>on disk at DepartmentFolder + DepartmentFileName"])
+    CSV2(["Designations.csv<br/>on disk at DesignationFolder + DesignationFileName"])
+    TRUNC[["SQL_TruncateTargets<br/>TRUNCATE dbo.Department;<br/>TRUNCATE dbo.Designation;"]]
+
+    SRC1["FF_SRC_Department<br/>Flat File Source"]
+    DER1["DER_DepartmentKey<br/>Derived Column<br/>+DepartmentKey +LoadedAtUtc"]
+    DST1["OLEDST_Department<br/>OLE DB Destination"]
+    DB1[("dbo.Department")]
+
+    SRC2["FF_SRC_Designation<br/>Flat File Source"]
+    DER2["DER_DesignationKey<br/>Derived Column<br/>+DesignationKey +LoadedAtUtc"]
+    DST2["OLEDST_Designation<br/>OLE DB Destination"]
+    DB2[("dbo.Designation")]
+
+    TRUNC -. success .-> SRC1
+    CSV1 --> SRC1 --> DER1 --> DST1 --> DB1
+    DST1 -. "DFT_LoadDepartment succeeds" .-> SRC2
+    CSV2 --> SRC2 --> DER2 --> DST2 --> DB2
+```
+
+Both data flows share the one `CM_TargetDb` connection manager (and thus
+one open connection to the destination) — they just run one after the
+other rather than concurrently, per the control-flow precedence shown.
+
+**Connection managers**
+
+| Name | Type | Purpose | Wiring |
+|---|---|---|---|
+| `CM_DepartmentCsv` | Flat File | Department source CSV | `ConnectionString` expression → `User::DepartmentFilePath` (`$DepartmentFolder` + `\` + `$DepartmentFileName`) |
+| `CM_DesignationCsv` | Flat File | Designation source CSV | `ConnectionString` expression → `User::DesignationFilePath` (`$DesignationFolder` + `\` + `$DesignationFileName`) |
+| `CM_TargetDb` | OLE DB | destination (both tables + the truncate task) | `ConnectionString` expression → `$Project::TargetConnectionString`; Windows Integrated Security, untouched by the credential work below |
+
+**Parameters this package consumes**
+
+| Parameter | Scope | Default | Role |
+|---|---|---|---|
+| `DepartmentFolder` | package | `D:\PoC\SSIS\Data\Input\Department` | folder for the Department CSV |
+| `DepartmentFileName` | package | `Departments.csv` | Department CSV file name |
+| `DesignationFolder` | package | `D:\PoC\SSIS\Data\Input\Designation` | folder for the Designation CSV |
+| `DesignationFileName` | package | `Designations.csv` | Designation CSV file name |
+| `$Project::TargetConnectionString` | project (shared) | see Configuration below | destination connection for `CM_TargetDb` |
+
+This is the package that exercises the **package-parameter** half of the
+`ctl` framework's "resolve scope from catalog metadata" design (§ "Running
+many packages from an application") — its four file-path parameters are
+package-scoped, unlike anything `LoadEmployees` has.
 
 ## Configuration — everything is a parameter, nothing is hardcoded
 
@@ -73,7 +247,7 @@ All three externally-variable settings are **project parameters**
 |----------------------------|---------------------------------------------------------------------------------------------------|---------|
 | `$Project::SourceFolder`         | `D:\PoC\SSIS\Data\Input`                                                                    | builds the CSV path |
 | `$Project::SourceFileName`       | `Employees.csv`                                                                              | builds the CSV path |
-| `$Project::TargetConnectionString` | `Data Source=.\SQLFORPOC;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;` | OLE DB destination |
+| `$Project::TargetConnectionString` | `Data Source=.\SQLFORPOC;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;` | `LoadReferenceData`'s OLE DB destinations only, as of 2026-08-13 — see below |
 
 **⚠️ Important:** `dtexec`'s local `/Project` execution mode (running a
 `.ispac` directly, no catalog) does **not** support overriding `$Project::`
@@ -89,8 +263,12 @@ Wiring, so you can see how the indirection works:
   `@[$Project::SourceFolder] + "\\" + @[$Project::SourceFileName]`
 - Connection manager **`CM_EmployeesCsv`** (Flat File) has a
   `ConnectionString` property **expression**: `@[User::SourceFilePath]`
-- Connection manager **`CM_TargetDb`** (OLE DB) has a `ConnectionString`
-  property **expression**: `@[$Project::TargetConnectionString]`
+- `LoadReferenceData`'s own **`CM_TargetDb`** (OLE DB) has a
+  `ConnectionString` property **expression**: `@[$Project::TargetConnectionString]`
+
+`LoadEmployees`' **`CM_TargetDb`** is wired differently, and deliberately
+not through `$Project::TargetConnectionString` — see "A genuinely protected
+credential" further down for why and how.
 
 Because these are project parameters (not just package variables), they can
 be overridden without opening the package:
@@ -102,12 +280,11 @@ be overridden without opening the package:
 
 Example of a full override, once deployed to SSISDB (note the semicolon
 delimiter, not `=`, and the extra quote-wrapping needed on any value that
-itself contains `;`, like a connection string):
+itself contains `;`, like a connection string). Shown against
+`LoadReferenceData`, the package that still reads `TargetConnectionString`:
 
 ```powershell
-dtexec /ISServer "\SSISDB\MyFolder\SSIS\LoadEmployees.dtsx" `
-  /Par "$Project::SourceFolder(String)";"C:\Drop\NewHires" `
-  /Par "$Project::SourceFileName(String)";"NewHires.csv" `
+dtexec /ISServer "\SSISDB\MyFolder\SSIS\LoadReferenceData.dtsx" `
   /Par "$Project::TargetConnectionString(String)";"""Data Source=PRODSQL;Initial Catalog=HR;Integrated Security=SSPI;Provider=MSOLEDBSQL.1;"""
 ```
 
@@ -117,6 +294,52 @@ untested here, because local `dtexec.exe` is independently broken (COM
 registration — see CLAUDE.md) and because `catalog.start_execution` is the
 better path anyway. **See "Running many packages from an application" below
 for the supported route, or the section after it for catalog-free local runs.**
+
+## A genuinely protected credential
+
+Every connection elsewhere in this PoC uses Integrated Security, which has
+no password to protect. `LoadEmployees`' `CM_TargetDb` connection manager
+uses **SQL Server Authentication** instead, specifically to demonstrate a
+credential that SSISDB actually protects end to end — not just encrypts at
+rest with nothing consuming it.
+
+| Piece | What it is |
+|---|---|
+| SQL login | `ssis_loader` (`Sql/04_CreateLoaderCredential.sql`) — `SELECT, INSERT, ALTER` on `dbo.Employee`, nothing else |
+| Environment variable | `TargetDbPassword` in the `Dev` environment (`Sql/02_SetupCatalogEnvironment.sql`), `sensitive = 1` |
+| Binding | Bound to the auto-generated `CM.CM_TargetDb.Password` catalog parameter — SSIS splits any connection manager's literal `Password=` out of its `ConnectionString` into its own sensitive parameter at deploy time |
+
+**The value is never readable once set** — not by you, not by package
+logic. SSIS only ever *applies* it, inside the OLE DB provider's own login
+handshake:
+
+```sql
+-- public view: NULL for a sensitive variable
+SELECT name, sensitive, value FROM SSISDB.catalog.environment_variables
+WHERE name = 'TargetDbPassword';
+
+-- internal table: ciphertext, not plaintext
+SELECT name, sensitive, sensitive_value FROM SSISDB.internal.environment_variables
+WHERE name = 'TargetDbPassword';
+```
+
+**Consequence:** because the password now lives solely inside SSISDB, only
+execution paths that actually reach SSISDB can supply it. That's
+`ctl.usp_StartPackage` / `SsisRunner`, or `catalog.start_execution`
+directly — not the local, catalog-free entry points below, which run
+in-process and never touch SSISDB. See the warning under "Running and
+overriding parameters without a catalog".
+
+```powershell
+.\Scripts\SsisRunner\bin\Release\net8.0\SsisRunner.exe --package LOAD_EMPLOYEES --set SourceFileName=Employees.csv --wait
+```
+
+`LoadReferenceData` is untouched — still Integrated Security throughout —
+so this is a one-package demonstration, not a project-wide credential
+rework. See CLAUDE.md's "Sensitive credential" section for the full
+mechanics (how the auto-split works, the permission traps hit setting up
+`ssis_loader`, and why a project-level connection manager turned out not to
+be required).
 
 ## Running many packages from an application — the `ctl` framework
 
@@ -289,18 +512,32 @@ ManagedDTS`) that `devenv`/`dtexec` themselves sit on top of — functionally
 equivalent to a `dtexec` run, but with working parameter overrides and no
 catalog required. Pick whichever fits how you want to invoke it.
 
+> **This path no longer works for `LoadEmployees`** (both entry points'
+> default package), as of the SQL-authenticated `CM_TargetDb` change
+> described under "A genuinely protected credential" below: its password
+> lives solely inside SSISDB's encrypted environment variable, unreachable
+> by an in-process run that never touches SSISDB. It fails fast with
+> *"Login failed for user 'ssis_loader'"* rather than silently using no
+> credential. Pass `--package LoadReferenceData.dtsx` /
+> `-PackageName LoadReferenceData.dtsx` to use this path — that package is
+> still Integrated Security throughout — or run `LoadEmployees` through the
+> `ctl` framework below, which does reach the catalog.
+
 ### PowerShell — `Scripts/Run-Package.ps1`
 
 Compiles `PkgRun.cs` on the fly via `Add-Type`, no build step needed.
 
 ```powershell
-# run with the defaults baked into SSIS/Project.params
-.\Scripts\Run-Package.ps1
-
-# override one or more parameters for this run only
+# LoadEmployees (the default package) -- source-side parameters still work
+# locally; the run still fails at the destination per the box above, since
+# ssis_loader's password only exists inside SSISDB.
 .\Scripts\Run-Package.ps1 -Override @(
     'SourceFolder=C:\Drop\NewHires',
-    'SourceFileName=NewHires.csv',
+    'SourceFileName=NewHires.csv'
+)
+
+# LoadReferenceData -- still Integrated Security, runs end to end locally
+.\Scripts\Run-Package.ps1 -PackageName LoadReferenceData.dtsx -Override @(
     'TargetConnectionString=Data Source=.\SQLFORPOC;Initial Catalog=SsisPoC;Integrated Security=SSPI;Provider=MSOLEDBSQL.1;'
 )
 ```
@@ -327,13 +564,14 @@ SDK, without Visual Studio:
 # or: build just this project
 dotnet build Scripts\PkgRun.Console\PkgRun.Console.csproj -c Release
 
-# run with the defaults baked into SSIS/Project.params
-.\Scripts\PkgRun.Console\bin\Release\PkgRun.Console.exe
-
-# override one or more parameters for this run only
+# LoadEmployees (the default package) -- source-side parameters still work
+# locally; the run still fails at the destination per the box above.
 .\Scripts\PkgRun.Console\bin\Release\PkgRun.Console.exe `
   --set "SourceFolder=C:\Drop\NewHires" `
-  --set "SourceFileName=NewHires.csv" `
+  --set "SourceFileName=NewHires.csv"
+
+# LoadReferenceData -- still Integrated Security, runs end to end locally
+.\Scripts\PkgRun.Console\bin\Release\PkgRun.Console.exe --package LoadReferenceData.dtsx `
   --set "TargetConnectionString=Data Source=.\SQLFORPOC;Initial Catalog=SsisPoC;Integrated Security=SSPI;Provider=MSOLEDBSQL.1;"
 ```
 
@@ -352,14 +590,19 @@ the real `.\SQLFORPOC` SQL Server 2025 instance.
 ## Target: SQL Server 2025 (`.\SQLFORPOC`)
 
 This machine has a local **SQL Server 2025 Developer Edition** named
-instance, `SQLFORPOC`, so `TargetConnectionString` defaults to
-`Data Source=.\SQLFORPOC;...` — a real SQL Server, not LocalDB, and it
-matches this project's `TargetServerVersion` (`SQLServer2025`) exactly.
+instance, `SQLFORPOC`, so both packages point at it by default — a real SQL
+Server, not LocalDB, and it matches this project's `TargetServerVersion`
+(`SQLServer2025`) exactly. `LoadReferenceData` gets there via
+`TargetConnectionString` (`Data Source=.\SQLFORPOC;...`); `LoadEmployees`
+gets there via `CM_TargetDb`'s own `ServerName`/`InitialCatalog` properties
+plus SQL authentication (see "A genuinely protected credential" below).
 
-**To point at a different SQL Server instead**, change one value — either
-edit `$Project::TargetConnectionString` in `SSIS/Project.params` before
-building, or override it at run/deploy time as shown above. No package
-edits needed.
+**To point `LoadReferenceData` at a different SQL Server**, change one
+value — either edit `$Project::TargetConnectionString` in
+`SSIS/Project.params` before building, or override it at run/deploy time as
+shown above. No package edits needed. **To point `LoadEmployees` at a
+different server**, override `CM.CM_TargetDb.ServerName`/`InitialCatalog`
+at the catalog level the same way `CM.CM_TargetDb.Password` is bound below.
 
 ## How it was verified (on this machine)
 

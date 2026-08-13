@@ -77,23 +77,31 @@
 
     That is deliberate: the value must never surface anywhere it could be
     logged. The only consumer SSIS permits is the runtime itself applying a
-    CONNECTION MANAGER property -- the CM.<name>.Password parameter that a
-    project-level connection manager exposes, which never passes through
-    package code.
+    CONNECTION MANAGER property -- a CM.<name>.Password parameter, which
+    never passes through package code.
 
     Consequence for this PoC: TargetConnectionString CANNOT be sensitive,
     because both packages receive it through a property expression on their
     connection manager. It is therefore created non-sensitive below.
 
     AuditToken is created sensitive purely to demonstrate the encryption and
-    masking, and is deliberately left unbound -- there is nothing in these
-    packages that SSIS would let consume it.
+    masking, and is deliberately left unbound -- neither package has ever
+    consumed it; nothing in package logic is allowed to.
 
-    To protect a real credential you need the production shape: a project
-    connection manager using SQL authentication, with CM.<name>.Password
-    bound to a sensitive variable. That needs a SQL login and a restructuring
-    of both packages onto a shared project connection manager, which is
-    tracked as follow-up work rather than done here.
+    TargetDbPassword IS bound, to a real consumer: LoadEmployees' CM_TargetDb
+    connection manager was switched from Integrated Security to SQL Server
+    Authentication (login "ssis_loader", created by
+    Sql\04_CreateLoaderCredential.sql) specifically so a CM.<name>.Password
+    parameter would exist to bind this to. Contrary to what an earlier
+    version of this comment assumed, the connection manager does NOT need to
+    be project-level for the auto-split to happen -- CM_TargetDb is (and
+    stays) package-scoped, and deploying still produced a package-level
+    (object_type = 30) "CM.CM_TargetDb.Password" parameter, sensitive = 1,
+    the moment the connection manager's ConnectionString held a literal
+    Password= keyword instead of an expression. Verified empirically by
+    inspecting catalog.object_parameters after redeploying, not assumed.
+    LoadReferenceData is untouched; this is a one-package demonstration, not
+    a project-wide credential rework.
 */
 
 USE SSISDB;
@@ -156,11 +164,9 @@ EXEC catalog.create_environment_variable
      @value            = N'Data Source=.\SQLFORPOC;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;',
      @description      = N'OLE DB connection string for the destination SQL Server database.';
 
-/* The sensitive one. AuditToken is consumed by an Execute SQL Task PARAMETER
-   MAPPING inside LoadReferenceData, not by a property expression, so it is
-   allowed to be sensitive -- and the matching package parameter is declared
-   Sensitive="1", which SSISDB requires before it will map a sensitive
-   variable to it. */
+/* Sensitive, deliberately unbound. Nothing in either package's logic is
+   allowed to read a sensitive parameter (see the header) -- this variable
+   exists purely to prove encryption-at-rest and masking, with no consumer. */
 EXEC catalog.create_environment_variable
      @folder_name      = @folder,
      @environment_name = @environment,
@@ -168,7 +174,19 @@ EXEC catalog.create_environment_variable
      @data_type        = N'String',
      @sensitive        = 1,   -- encrypted at rest; masked in catalog views
      @value            = N'S3cr3t-Token-9f2a4c',
-     @description      = N'Secret token recorded against each reference-data load.';
+     @description      = N'Secret token; demonstrates encryption/masking only, deliberately unbound.';
+
+/* Sensitive AND bound -- the real consumer. Must match the password set for
+   the ssis_loader SQL login by Sql\04_CreateLoaderCredential.sql; rotate
+   both together. Bound below to LoadEmployees' CM.CM_TargetDb.Password. */
+EXEC catalog.create_environment_variable
+     @folder_name      = @folder,
+     @environment_name = @environment,
+     @variable_name    = N'TargetDbPassword',
+     @data_type        = N'String',
+     @sensitive        = 1,   -- encrypted at rest; masked in catalog views
+     @value            = N'ZMNRgL4kUp5iyHi+*wjhuMRer-6*',
+     @description      = N'Password for the ssis_loader SQL login used by LoadEmployees'' CM_TargetDb.';
 
 /* ---------------------------------------------------------------
    4. Reference the environment from the project.
@@ -227,6 +245,20 @@ EXEC catalog.set_object_parameter_value
 /* AuditToken is deliberately NOT bound to any parameter -- see the header.
    It exists to demonstrate encryption at rest; SSIS will not let a sensitive
    value be consumed by package logic, only by a connection-manager property. */
+
+/* TargetDbPassword IS bound -- to a connection-manager property, which is
+   the one thing SSIS does let a sensitive value reach. @object_type = 30
+   (package-level) and @object_name identify CM_TargetDb's auto-split
+   Password parameter inside LoadEmployees.dtsx specifically; this parameter
+   does not exist at the project level. */
+EXEC catalog.set_object_parameter_value
+     @object_type     = 30,
+     @folder_name     = @folder,
+     @project_name    = @project,
+     @object_name     = N'LoadEmployees.dtsx',
+     @parameter_name  = N'CM.CM_TargetDb.Password',
+     @parameter_value = N'TargetDbPassword',
+     @value_type      = 'R';
 
 /* ---------------------------------------------------------------
    5b. Explicitly UNBIND what this script deliberately does not bind.
@@ -301,4 +333,21 @@ JOIN catalog.folders  f ON f.folder_id  = p.folder_id
 WHERE f.name = N'SSIS PoC' AND p.name = N'SSIS'
   AND op.parameter_name NOT LIKE 'CM.%'
 ORDER BY op.object_type, op.object_name, op.parameter_name;
+
+/* The one CM.* parameter that matters: proof the connection-manager Password
+   is bound to the sensitive variable, and that its design default was
+   stripped from the deployed project (NULL) because it is sensitive. */
+SELECT
+    op.object_type,
+    op.object_name,
+    op.parameter_name,
+    op.value_type,
+    op.referenced_variable_name,
+    op.sensitive,
+    op.design_default_value
+FROM catalog.object_parameters op
+JOIN catalog.projects p ON p.project_id = op.project_id
+JOIN catalog.folders  f ON f.folder_id  = p.folder_id
+WHERE f.name = N'SSIS PoC' AND p.name = N'SSIS'
+  AND op.parameter_name = N'CM.CM_TargetDb.Password';
 GO

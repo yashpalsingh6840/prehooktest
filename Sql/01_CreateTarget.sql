@@ -61,10 +61,14 @@ GO
 DROP TABLE IF EXISTS dbo.LoadAudit;
 GO
 
-/* Written by LoadReferenceData's SQL_Audit task. The token it records comes
-   from a SENSITIVE package parameter, supplied by an encrypted SSISDB
-   environment variable and passed via an Execute SQL Task parameter mapping.
-   Nothing outside SQL Server ever sees the value. */
+/* Not currently written by anything -- kept for a load path that was never
+   built. SSIS will not let a sensitive parameter's value reach an Execute
+   SQL Task parameter mapping (see trap 13 in CLAUDE.md), so AuditToken
+   (the sensitive value this table was meant to receive) stays deliberately
+   unbound and unconsumed; see Sql\02_SetupCatalogEnvironment.sql. The one
+   genuinely protected credential in this PoC is TargetDbPassword, consumed
+   by a connection manager instead -- see CLAUDE.md's "Sensitive credential"
+   section. */
 CREATE TABLE dbo.LoadAudit
 (
     AuditId     INT           NOT NULL IDENTITY(1,1) CONSTRAINT PK_LoadAudit PRIMARY KEY,
