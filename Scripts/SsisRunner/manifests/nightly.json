@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "packageKey": "LOAD_EMPLOYEES",
+      "parameters": {
+        "SourceFileName": "Employees.csv"
+      }
+    },
+    {
+      "packageKey": "LOAD_REFERENCE_DATA",
+      "parameters": {
+        "DepartmentFolder": "D:\\PoC\\SSIS\\Data\\Input\\Department",
+        "DepartmentFileName": "Departments.csv",
+        "DesignationFolder": "D:\\PoC\\SSIS\\Data\\Input\\Designation",
+        "DesignationFileName": "Designations.csv"
+      }
+    }
+  ]
+}

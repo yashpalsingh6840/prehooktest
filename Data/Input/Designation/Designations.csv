@@ -1,0 +1,11 @@
+DesignationID,DesignationCode,Title,JobLevel,Band
+101,ASSOC,Associate Engineer,1,B1
+102,SENG,Software Engineer,2,B2
+103,SRENG,Senior Software Engineer,3,B3
+104,LEAD,Technical Lead,4,B4
+105,ARCH,Solution Architect,5,B5
+106,MGR,Engineering Manager,5,B5
+107,DIR,Director,6,B6
+108,ANLST,Business Analyst,2,B2
+109,QAENG,Quality Engineer,2,B2
+110,VP,Vice President,7,B7

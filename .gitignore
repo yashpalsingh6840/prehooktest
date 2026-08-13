@@ -1,0 +1,20 @@
+# Build outputs (SSIS project + every .NET project under Scripts/)
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio / SSDT local state and per-user project options
+.vs/
+*.user
+*.suo
+
+# SSIS deployment-wizard output report (timestamped per run, not source)
+deploysummary_*.xml
+
+# Claude Code local session state -- accumulates machine-specific paths and
+# references to ephemeral per-session temp/scratchpad directories, not
+# meant to be shared as project config.
+.claude/
+
+# OS cruft
+Thumbs.db
+.DS_Store

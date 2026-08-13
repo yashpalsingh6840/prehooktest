@@ -1,0 +1,30 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.37516.0 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{C9674DCB-5085-4A16-B785-4C70DD1589BD}") = "SSIS", "SSIS\SSIS.dtproj", "{6BBBE90E-3010-7FE3-85CA-D32B890EAAE2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PkgRun.Console", "Scripts\PkgRun.Console\PkgRun.Console.csproj", "{71B36FB2-820A-4353-9DFA-6F05913D9C75}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SsisRunner", "Scripts\SsisRunner\SsisRunner.csproj", "{E587A84A-9763-493A-A65B-A010B99260E2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Development|Default = Development|Default
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6BBBE90E-3010-7FE3-85CA-D32B890EAAE2}.Development|Default.ActiveCfg = Development
+		{6BBBE90E-3010-7FE3-85CA-D32B890EAAE2}.Development|Default.Build.0 = Development
+		{71B36FB2-820A-4353-9DFA-6F05913D9C75}.Development|Default.ActiveCfg = Release|Any CPU
+		{71B36FB2-820A-4353-9DFA-6F05913D9C75}.Development|Default.Build.0 = Release|Any CPU
+		{E587A84A-9763-493A-A65B-A010B99260E2}.Development|Default.ActiveCfg = Release|Any CPU
+		{E587A84A-9763-493A-A65B-A010B99260E2}.Development|Default.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {AD440A8C-A116-462C-AF35-99383B2280B3}
+	EndGlobalSection
+EndGlobal
