@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <!-- Microsoft.SqlServer.DTSRuntimeWrap is GAC_64 only (CLAUDE.md environment note),
+         so anything referencing it must build/run as x64, not AnyCPU/x86. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>Ssis.Extract.ObjectModel</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    Windows-only, optional (plan §7.3): loads a package via the real SSIS object model as a
+    test oracle, deliberately kept out of the main extraction path (Ssis.Extract.Dtsx parses
+    raw XML instead, per plan §2.1: no GAC/Windows dependency on the main path). GAC paths
+    below are this machine's (SSIS 17.0.0.0, PublicKeyToken 89845dcd8080cc91); resolve fresh
+    on another machine via:
+      [System.Reflection.Assembly]::LoadWithPartialName('Microsoft.SqlServer.ManagedDTS').Location
+  -->
+  <ItemGroup>
+    <Reference Include="Microsoft.SqlServer.ManagedDTS">
+      <HintPath>C:\WINDOWS\Microsoft.Net\assembly\GAC_MSIL\Microsoft.SqlServer.ManagedDTS\v4.0_17.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.ManagedDTS.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.SqlServer.DTSPipelineWrap">
+      <HintPath>C:\WINDOWS\Microsoft.Net\assembly\GAC_MSIL\Microsoft.SqlServer.DTSPipelineWrap\v4.0_17.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSPipelineWrap.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.SqlServer.DTSRuntimeWrap">
+      <HintPath>C:\WINDOWS\Microsoft.Net\assembly\GAC_64\Microsoft.SqlServer.DTSRuntimeWrap\v4.0_17.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSRuntimeWrap.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

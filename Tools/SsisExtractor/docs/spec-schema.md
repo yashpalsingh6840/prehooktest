@@ -224,9 +224,12 @@ its mapping:
 
 If a client package surfaces a code not in one of these tables, it renders as
 `Unknown(n)`/`DT_UNKNOWN(n)` rather than a fabricated label -- extend the table only after
-confirming the value against the runtime (the object-model oracle planned for slice 6 is
-the intended way to do that, same "ask the runtime, don't guess" approach CLAUDE.md trap
-12 itself used to resolve this originally).
+confirming the value against the runtime, the same "ask the runtime, don't guess" approach
+CLAUDE.md trap 12 itself used to resolve this originally. `Ssis.Extract.ObjectModel` (plan
+§7.3, built post-slice-5 -- see report-schema.md/README.md) is exactly this kind of
+runtime-truth tool, though its current scope is structural counts, not type-code decoding;
+extending it to print a live `Variable`/`Parameter`/pipeline column's actual `DataType`
+value for an unknown code would be a natural, small addition when one is next hit.
 
 ## Known naming trap already hit once here
 

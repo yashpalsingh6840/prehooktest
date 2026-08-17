@@ -1,11 +1,13 @@
 # ssisx -- SSIS package extractor (phase 0)
 
-Status: **slice 5 of 6 complete, minus `pull`** (build plan: `../../Phase0-Extractor-Plan.md`
-§8). Slice 6 and slice 5's `pull`/`enrich` both need SSISDB catalog access this engagement
-does not have (that plan's §11 decision 4), so they are **out of scope rather than pending** --
-`ssisx diff` against a deployed `.ispac` covers the drift-detection use case `pull` existed
-to serve, offline. Zero coupling to the PoC's own `SSIS.sln`/build (plan §2.2) -- this is its
-own solution, built with plain `dotnet build`, and never referenced by anything under
+Status: **slice 5 of 6 complete, minus `pull`; slice 6's object-model oracle also done**
+(build plan: `../../Phase0-Extractor-Plan.md` §8). Slice 6 bundles two things: `enrich`
+(needs SSISDB catalog access this engagement does not have, plan §11 decision 4 -- **out
+of scope rather than pending**, same as slice 5's `pull`; `ssisx diff` against a deployed
+`.ispac` covers the drift-detection use case `pull` existed to serve, offline) and the
+object-model oracle (plan §7.3, needs only local SSIS/GAC, not catalog access -- built,
+see below). Zero coupling to the PoC's own `SSIS.sln`/build (plan §2.2) -- the main tool is
+its own solution, built with plain `dotnet build`, and never referenced by anything under
 `../../Scripts` or `../../SSIS`.
 
 ## What's done (slices 1-5)
@@ -82,6 +84,48 @@ bugs (a ForEach Loop's enumerator config and a pipeline component's output-level
 `<properties>` were both silently invisible before) and one `RulesEngine` false positive
 (`unused-variable` wrongly flagging a ForEach Loop's own iteration variable). Full detail,
 including what's object-model-verified versus best-effort, in `docs/report-schema.md`.
+
+### Object-model oracle (plan §7.3, built post-slice-5)
+
+A second, independent way to gain confidence without client packages: `Ssis.Extract.ObjectModel`
+(`net48`, Windows-only, `src/Ssis.Extract.ObjectModel/`) loads a package via
+`Application.LoadPackage` -- the real SSIS object model, never this tool's own production
+path -- and derives the same structural facts plan §7.3 names (executable count/names,
+connection manager count/types, variable count, parameter count/types, pipeline
+component/path counts, precedence constraint count). `Ssis.Extract.ObjectModel.Tests`
+cross-checks those against the already-golden-tested XML-derived `spec.json` for both real
+PoC packages, plus two hand-verified checks against the synthetic fixtures above (proving
+the oracle's own recursive container-walk and multi-component-pipeline counting, neither
+exercised by the two straight-line PoC packages).
+
+Deliberately **not** part of `SsisExtractor.slnx` or referenced by anything under `src/` --
+a separate `SsisExtractor.ObjectModel.slnx`, so the main tool's "works on any OS, no GAC"
+promise (plan §2.1) stays true. Build/run explicitly:
+
+```powershell
+dotnet build Tools/SsisExtractor/SsisExtractor.ObjectModel.slnx
+dotnet test  Tools/SsisExtractor/SsisExtractor.ObjectModel.slnx
+```
+
+Needs the SSIS 17 GAC assemblies (this machine's paths are hardcoded as `HintPath`s in the
+`.csproj` -- resolve fresh elsewhere via
+`[System.Reflection.Assembly]::LoadWithPartialName('Microsoft.SqlServer.ManagedDTS').Location`).
+Getting this working surfaced three real object-model quirks along the way, each worth
+knowing before extending it further (full detail + fix in `PackageOracle.cs`'s own comments):
+- `DtsContainer.Variables` returns every variable *visible* at that scope -- every
+  `System::` variable at every level, plus every ancestor's own declared variables
+  inherited into view -- not "declared directly here". Comparing `Variable.Parent.ID`
+  against the container's own `.ID` is what actually answers that; `ReferenceEquals` does
+  not, because COM interop hands back a fresh RCW on each property access.
+- Project/package **parameters** are exposed as synthetic variables too, namespaced
+  `$Package::`/`$Project::` -- excluded from the variable count (they're a different XML
+  element entirely, covered by the parameter count instead); only `Namespace == "User"` is
+  a real declared variable.
+
+Because the two runtimes (net8.0 main extractor, net48 oracle) can't share a process, the
+comparison is file-based: the oracle test reads the *committed* golden `spec.json` directly
+via `JObject` (not deserialized into `PackageSpec`, which lives in a net8.0-only project a
+.NET Framework runtime cannot load), rather than shelling out to `dotnet run -- extract`.
 
 See `docs/spec-schema.md` for the `extract`/`graph` JSON contract, and
 `docs/report-schema.md` for `report` + `diff` output (rule catalog, scoring, SQL/expression
@@ -208,9 +252,6 @@ Still genuinely not built:
   the `script-task-present` finding fires, but the source itself isn't extracted.
 - **Type/length-narrowing detection** along a lineage chain (plan §5.1) -- a truncation risk
   the package tolerates today; the core edge/constant/unused lineage analysis is done.
-- **The object-model oracle** (plan §7.3) -- a `net48`, Windows-only test project asserting
-  the XML-derived model agrees with `Application.LoadPackage`. Worth having before trusting
-  this on a client portfolio.
 - **`--password`** on `extract` is accepted but a no-op (the encrypted-package object-model
   fallback, plan §2.1) so the command line won't change shape when it lands.
 - **Bespoke component semantics** now also exist for OLE DB Source, Lookup, and Conditional

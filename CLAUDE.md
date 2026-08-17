@@ -601,7 +601,7 @@ error, 3 still-running (`--status` without `--wait` only). In `SSIS.sln`
 mapped to `Release|Any CPU` (trap 6 — any real platform label makes devenv
 silently skip it); `dotnet build` on the csproj alone works too.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass added 2026-08-14)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle both added 2026-08-14)
 
 A separate tool (`ssisx`), planned in `Phase0-Extractor-Plan.md` (also see
 `Migration-Validation-Plan.md` and `PoC-Architecture-Overview.md` for the
@@ -806,9 +806,46 @@ packages still at genuine 100%, both synthetic fixtures too. Still
 genuinely unbuilt, unchanged by this pass: Script Task *source* extraction
 (the declared surface — language, read/write variables — is now captured;
 the actual script lives inside the embedded VSTA project binary, still
-unread), type/length-narrowing detection, and the plan §7.3 object-model
-oracle — see the extractor's own README "Out of scope / not implemented"
-section.
+unread) and type/length-narrowing detection — see the extractor's own
+README "Out of scope / not implemented" section.
+
+**2026-08-14 (same day) — the plan §7.3 object-model oracle, built.**
+`Ssis.Extract.ObjectModel` (`net48`, Windows-only, its own
+`SsisExtractor.ObjectModel.slnx` — deliberately not part of the main
+`SsisExtractor.slnx`, keeping the main tool's no-GAC promise true) loads a
+package via `Application.LoadPackage` and independently derives the
+counts plan §7.3 names, cross-checked against the already-golden-tested
+XML-derived `spec.json` for both real PoC packages (read generically via
+`JObject`, since a net48 test project cannot reference the net8.0 model
+project at all — the two runtimes never share a process; the comparison is
+file-based on purpose). All green, plus two hand-verified checks against
+the synthetic fixtures above (the oracle's own recursive-container-walk
+and multi-component-pipeline counting, neither exercised by either
+straight-line PoC package).
+
+Getting the *counts* to actually agree took three real, evidenced fixes to
+`PackageOracle.cs` — the object model has sharp edges here worth knowing
+before extending this further, not obvious from the docs:
+1. `DtsContainer.Variables` returns every variable *visible* at that scope
+   (every `System::` variable at every container level, plus every
+   ancestor's own declared variables inherited into view), not "declared
+   directly here." An unfiltered count came back 100+ against a package
+   declaring exactly one.
+2. Filtering `System::` still 3x-overcounted a single real variable, because
+   it's inherited into every child container's own enumeration too.
+   `ReferenceEquals(v.Parent, container)` was tried next and *undercounted
+   to zero* — COM interop hands back a fresh RCW on each `.Parent` access,
+   so it's never the same .NET reference even for the same underlying
+   object. Comparing `.ID` (a stable GUID string) is what actually works.
+3. Project/package parameters are *also* exposed as synthetic variables,
+   namespaced `$Package::`/`$Project::` — a different XML element entirely
+   (`<DTS:PackageParameters>`, already counted separately); only
+   `Namespace == "User"` is a real declared variable.
+
+None of these three were guessed — each was root-caused by dumping the
+live object model's actual variable list (namespace, `SystemVariable`
+flag, `Parent.Name`/`.ID`) for a real PoC package and reading what came
+back, the same evidence-first discipline as everywhere else in this file.
 
 **Unrelated, found while running this pass's tests, not caused by it:** as
 of 2026-08-17 this repo's working tree has independent, uncommitted changes
