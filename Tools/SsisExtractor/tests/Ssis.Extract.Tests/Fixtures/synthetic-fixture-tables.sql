@@ -70,3 +70,15 @@ CREATE TABLE dbo.SyntheticNoMatch
     Amount     DECIMAL(18, 2) NOT NULL
 );
 GO
+
+-- Script Component fixture (Fixtures/SyntheticScriptComponent.dtsx): a synchronous
+-- transform's passthrough output, same shape as its own source so the mapping is trivial.
+DROP TABLE IF EXISTS dbo.SyntheticScriptOutput;
+GO
+CREATE TABLE dbo.SyntheticScriptOutput
+(
+    OrderID    INT            NOT NULL,
+    CustomerID INT            NOT NULL,
+    Amount     DECIMAL(18, 2) NOT NULL
+);
+GO

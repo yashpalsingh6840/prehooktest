@@ -116,23 +116,42 @@ Split puts a whole case's `Expression`/`FriendlyExpression`/`EvaluationOrder` at
 level, not on a column; before that field existed an output-level `<properties>` block was
 invisible to the generic model entirely (see report-schema.md).
 
+`PipelinePropertySpec.IsArray`/`.ArrayElements` cover a real, previously-lossy gap in that
+same generic layer: an `isArray="true"` property (`<arrayElements><arrayElement>text
+</arrayElement>...</arrayElements>`) used to collapse through `.Value` into one run-on
+string with every element boundary silently lost -- found building Script Component
+support (report-schema.md). `.Value` is `null` for an array property; read
+`.ArrayElements` instead.
+
 On top of the generic layer, `PipelineComponentSpec.FlatFileSource`/`.OleDbDestination`/
-`.OleDbSource`/`.Lookup`/`.ConditionalSplit` add component-specific extraction (plan §4.7's
-per-component table) for the five types this project has real evidence for -- two from the
-PoC's own packages, three from synthetic object-model-built fixtures (report-schema.md;
-`Lookup`/`ConditionalSplit` still have no client-package evidence). `FlatFileSource`/
-`OleDbDestination`/`OleDbSource` share the same shape: `ConnectionName`, the source/target
-table or `SqlCommand`, and a derived `ColumnMappings` list (component column ↔ external
-file/table column, built from `externalMetadataColumnId` cross-references, not a separate
-section in the source XML). `Lookup` adds `MatchOutputName`/`NoMatchOutputName` (SSIS's own
-fixed names for this component, not user-renamed) and a best-effort `ReferenceColumns` list
-parsed out of the component's own `ReferenceMetadataXml` custom property -- an internal,
-undocumented format, not the standard `externalMetadataColumns` mechanism the other three
-use (confirmed empty on this fixture even with a join key set). `ConditionalSplit` promotes
-each non-default/non-error output's own properties into a `Cases` list, ordered by
+`.OleDbSource`/`.Lookup`/`.ConditionalSplit`/`.ScriptComponent` add component-specific
+extraction (plan §4.7's per-component table) for the six types this project has real
+evidence for -- two from the PoC's own packages, four from synthetic object-model-built
+fixtures (report-schema.md; `Lookup`/`ConditionalSplit`/`ScriptComponent` still have no
+client-package evidence). `FlatFileSource`/`OleDbDestination`/`OleDbSource` share the same
+shape: `ConnectionName`, the source/target table or `SqlCommand`, and a derived
+`ColumnMappings` list (component column ↔ external file/table column, built from
+`externalMetadataColumnId` cross-references, not a separate section in the source XML).
+`Lookup` adds `MatchOutputName`/`NoMatchOutputName` (SSIS's own fixed names for this
+component, not user-renamed) and a best-effort `ReferenceColumns` list parsed out of the
+component's own `ReferenceMetadataXml` custom property -- an internal, undocumented
+format, not the standard `externalMetadataColumns` mechanism the other three use (confirmed
+empty on this fixture even with a join key set). `ConditionalSplit` promotes each
+non-default/non-error output's own properties into a `Cases` list, ordered by
 `EvaluationOrder`. Derived Column needed no dedicated payload type: every output column
 already carries promoted `Expression`/`FriendlyExpression` fields (pulled from its own
 `Properties`) regardless of component type.
+
+`ScriptComponent` is the pipeline-transform sibling of `ExecutableSpec.ScriptTask`, and the
+one bespoke payload here NOT discriminated by `ComponentClassId` -- a Script Component's own
+class ID is the generic `"Microsoft.ManagedComponentHost"` (confirmed real, not a guess: any
+managed pipeline component could in principle use that same host); `PipelineReader` checks
+the component's own `UserComponentTypeName` custom property (`"Microsoft.ScriptComponentHost"`)
+instead. See docs/report-schema.md's "Script Component source extraction" section for the
+full evidence, including the genuinely different comma-vs-semicolon `ReadOnlyVariables`/
+`ReadWriteVariables` delimiter convention from `ScriptTaskPayload`'s, and what's confirmed
+about `SourceCodeItems`' structure versus what isn't (no per-element file identity, unlike
+Script Task's named `ProjectItems`).
 
 `ExecutableSpec.DataFlowTask.Lineage` (`LineageSpec`, plan §5.1) is *derived*, not parsed --
 built by `Ssis.Extract.Dtsx.LineageBuilder` from the `PipelineSpec` above, offline from any

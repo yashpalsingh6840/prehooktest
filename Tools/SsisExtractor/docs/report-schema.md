@@ -75,7 +75,8 @@ message, not silently treated as authoritative.
 | RuleId | Category | Severity | Evidence used |
 |---|---|---|---|
 | `script-task-present` | RewriteEffort | Error | `ExecutableType` |
-| `script-source-stripped` | RewriteEffort | Error | `ScriptTaskPayload.SourceStripped` -- `<ScriptProject>` has a `<BinaryItem>` but no `<ProjectItem>` at all |
+| `script-component-present` | RewriteEffort | Error | `PipelineComponentSpec.ScriptComponent` is not null (pipeline transform sibling of Script Task) |
+| `script-source-stripped` | RewriteEffort | Error | `ScriptTaskPayload.SourceStripped` / `ScriptComponentPayload.SourceStripped` -- source array/element(s) empty but a compiled binary cache is present |
 | `execute-process-task-present` | RewriteEffort | Error | `ExecutableType` |
 | `loop-present` | RewriteEffort | Warning | `ExecutableType` |
 | `third-party-component` | RewriteEffort | Error | `ComponentClassId` not `Microsoft.*` |
@@ -262,6 +263,7 @@ fixed output name named in the model below was confirmed this way, not guessed:
 |---|---|---|
 | `SyntheticForEachScript.dtsx` | ForEach File Enumerator (`STOCK:FOREACHLOOP` / `Microsoft.ForEachFileEnumerator`) wrapping a Script Task (`Microsoft.ScriptTask`) | `ForEachLoopPayload`, `ScriptTaskPayload` |
 | `SyntheticLookupSplit.dtsx` | OLE DB Source → Lookup → Conditional Split → 3 OLE DB Destinations (match/no-match/business-rule branches -- the Lookup+Conditional Split combination that underlies most hand-rolled SCD Type-1 upserts, not the deprecated SCD wizard component itself) | `OleDbSourcePayload`, `LookupPayload`, `ConditionalSplitPayload` |
+| `SyntheticScriptComponent.dtsx` (added later, alongside Script Component source extraction below) | OLE DB Source → Script Component (passthrough transform, `Microsoft.ManagedComponentHost`/`UserComponentTypeName=Microsoft.ScriptComponentHost`) → OLE DB Destination | `ScriptComponentPayload`, `PipelinePropertySpec.IsArray`/`.ArrayElements` |
 
 **A real, pre-existing coverage-accuracy bug was found and fixed along the way, not just
 new payload types added.** Two elements were silently invisible to *both* the model and
@@ -376,3 +378,83 @@ finding fires only in that case, not for an ordinary Script Task with intact sou
 no detection of what APIs it calls (`Dts.Variables`, ADO.NET, file I/O, ...) beyond the
 already-existing `ReadOnlyVariables`/`ReadWriteVariables` declared surface. Plan's own
 words apply as-is: "Script Tasks are extracted, not understood."
+
+## Script Component source extraction (plan §4.5's other half, built same day)
+
+Script Component -- the Data Flow pipeline-transform sibling of Script Task -- needed its
+own investigation rather than assuming it shares Script Task's exact shape, and turned out
+to differ in three real, evidenced ways:
+
+1. **Different discriminator.** Every other bespoke payload in this model is keyed off
+   `PipelineComponentSpec.ComponentClassId` (`"Microsoft.Lookup"`, `"Microsoft.OLEDBSource"`,
+   ...). A Script Component's own `ComponentClassId` is the generic
+   `"Microsoft.ManagedComponentHost"` -- confirmed real via the object model, not a
+   version-specific quirk: `ProvideComponentProperties()` reports the in-memory
+   `ComponentClassID` as a completely different value (a GUID), and the *saved* XML's
+   `componentClassID` attribute is `"Microsoft.ManagedComponentHost"` either way. The actual
+   disambiguator is a custom property, `UserComponentTypeName`, whose value is
+   `"Microsoft.ScriptComponentHost"` -- `PipelineReader.ReadComponent` checks that property,
+   not `ComponentClassId`, before building `ScriptComponentPayload`.
+2. **Different source storage shape.** Script Task's source lives in dedicated
+   `<ProjectItem>`/`<BinaryItem>` sibling elements (see above). Script Component instead has
+   two ordinary custom properties, `SourceCode`/`BinaryCode`, both `isArray="true"` --
+   confirmed by dumping every custom property `ProvideComponentProperties()` declares, with
+   their own self-reported `Description` text ("Stores the source code of the component" /
+   "Stores the binary representation of the component"). This is what motivated
+   `PipelinePropertySpec.IsArray`/`.ArrayElements` (see spec-schema.md): before that fix, an
+   array property's multiple `<arrayElement>`s silently collapsed into one run-on string via
+   `.Value` -- a genuine, previously-unnoticed data-fidelity bug (not a coverage-percentage
+   bug like the Script Task/ForEachLoop ones -- `SourceCode`'s elements were still counted as
+   "covered" correctly, just mangled together when read). The exact persisted shape
+   (`<arrayElements arrayElementCount="N"><arrayElement dataType="...">CDATA</arrayElement>
+   ...</arrayElements>`) was confirmed by setting a real `string[]` through
+   `IDTSCustomProperty100.Value`'s own setter -- bypassing the VSTA editor entirely (which,
+   same as Script Task's synthetic fixture, never writes a real project when driven by bare
+   property calls) -- and reading back what the object model itself persisted, not guessed
+   from documentation or blog posts.
+3. **Different delimiter.** `ReadOnlyVariables`/`ReadWriteVariables` are **comma**-separated
+   here, not semicolon-separated like `ScriptTaskPayload`'s -- confirmed from this property's
+   own self-declared description ("Specifies a comma-separated list of read-only
+   variables."), read directly off the object model rather than assumed to match Script Task
+   just because the two features are conceptually the same. `PipelineReader.SplitCommaVariableList`
+   is a deliberately separate helper from `DtsxPackageReader.SplitVariableList`, not a shared
+   one with a parameter -- the two really are different conventions, not the same code with
+   different call sites.
+
+**What's confirmed versus not, for `ScriptComponentPayload.SourceCodeItems`:** the array
+*shape* is real, direct evidence (point 2 above). What is **not** confirmed is the real
+per-element *identity* a genuine SSDT-authored Script Component would produce -- unlike
+Script Task, no real SSDT-authored Script Component was available anywhere in this repo to
+read for ground truth (only a Script *Task* was, `SSIS/ScriptTest.dtsx`). So
+`SourceCodeItems` is kept as an ordered list of opaque text blobs, never assumed to be "one
+element = ScriptMain.cs" the way Script Task's named `ProjectItems` list is. `ssisx report`
+reflects this honestly: each element is written to `scripts/<Package>/<Task>/<Component>/
+source-<index>.cs|.vb|.txt` (extension from `ScriptLanguage`), not a real recovered file
+name. `BinaryCode`'s elements carry no name at all to even capture -- only
+`ScriptComponentPayload.HasBinaryCode`, a presence flag, same "name/presence only, never
+content" rule as `ScriptTaskPayload.BinaryItemNames` one level more conservative (there
+isn't even a name here).
+
+**Fixture:** `SyntheticScriptComponent.dtsx` (OLE DB Source → Script Component → OLE DB
+Destination, `SyntheticSourceOrder`/`SyntheticScriptOutput` staging tables, same
+`synthetic-fixture-tables.sql`), built the same "ask the runtime" way as the others. Its
+three input columns are marked passthrough (`UT_READONLY`) and never re-declared as new
+output columns, so the Script Component's own `Output 0` has zero output columns in the
+saved XML -- confirming, on a third component type, the same passthrough-lineage rule
+already documented for Derived Column (CLAUDE.md, `LineageBuilder`'s own doc comment): the
+OLE DB Destination downstream resolves `OrderID`/`CustomerID`/`Amount` by `lineageId`
+straight back to the OLE DB Source's own output columns, never through the Script
+Component's output at all.
+
+**What's built, matching Script Task's shape:** `ScriptComponentPayload` (model);
+`PipelineReader.ReadComponent`'s `UserComponentTypeName` branch (reader); a
+`script-component-present` (RewriteEffort/Error) finding, parallel to `script-task-present`
+but scoped to a pipeline component's own location (`<DataFlowTask RefId>/<Component Name>`);
+the same `script-source-stripped` finding, reused rather than duplicated, firing from either
+the executable-level Script Task branch or this component-level branch; `ssisx report`'s
+`scripts/` output (above); and a new `ComplexityStats.ScriptComponentCount`, weighted
+identically to `ScriptTaskCount` (`weights.ScriptTask`, no separate config key -- both
+represent the same "arbitrary code, no structural model" risk) and folded into the same
+unconditional `HighRisk` classification trigger.
+
+**Still genuinely unbuilt**, same as Script Task: understanding what the script does.

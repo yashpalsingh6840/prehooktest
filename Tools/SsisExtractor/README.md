@@ -1,7 +1,7 @@
 # ssisx -- SSIS package extractor (phase 0)
 
 Status: **slice 5 of 6 complete, minus `pull`; slice 6's object-model oracle also done;
-Script Task source extraction (plan §4.5) also done**
+Script Task AND Script Component source extraction (plan §4.5, both halves) also done**
 (build plan: `../../Phase0-Extractor-Plan.md` §8). Slice 6 bundles two things: `enrich`
 (needs SSISDB catalog access this engagement does not have, plan §11 decision 4 -- **out
 of scope rather than pending**, same as slice 5's `pull`; `ssisx diff` against a deployed
@@ -86,6 +86,9 @@ bugs (a ForEach Loop's enumerator config and a pipeline component's output-level
 (`unused-variable` wrongly flagging a ForEach Loop's own iteration variable). Full detail,
 including what's object-model-verified versus best-effort, in `docs/report-schema.md`.
 
+A third fixture, `SyntheticScriptComponent.dtsx`, was added later alongside Script
+Component source extraction (below) -- same build discipline, same directory.
+
 ### Object-model oracle (plan §7.3, built post-slice-5)
 
 A second, independent way to gain confidence without client packages: `Ssis.Extract.ObjectModel`
@@ -151,6 +154,35 @@ a `<ScriptProject>` with a `<BinaryItem>` but no `<ProjectItem>` at all, i.e. th
 genuinely gone -- not yet observed on any real package, verified instead with a direct unit
 test constructing that XML shape by hand. Full detail in `docs/report-schema.md`'s own
 "Script Task source extraction" section.
+
+### Script Component source extraction (plan §4.5's other half, built same day)
+
+Script Component -- the Data Flow pipeline-transform sibling of Script Task -- turned out
+to differ from it in three real, evidenced ways, not just "same feature, different host":
+- Its own `ComponentClassId` is the generic `"Microsoft.ManagedComponentHost"`, never a
+  Script-Component-specific ID; the actual discriminator is a custom property,
+  `UserComponentTypeName` (`"Microsoft.ScriptComponentHost"`).
+- Its source lives in two ordinary `isArray="true"` custom properties (`SourceCode`/
+  `BinaryCode`), not dedicated `<ProjectItem>`/`<BinaryItem>` elements -- which exposed a
+  real, previously-unnoticed bug: `PipelinePropertySpec` had no way to represent an array
+  property's multiple `<arrayElement>`s, so they silently collapsed into one run-on string.
+  Fixed generically (`PipelinePropertySpec.IsArray`/`.ArrayElements`), not just for this one
+  component.
+- `ReadOnlyVariables`/`ReadWriteVariables` are **comma**-separated here, confirmed from the
+  property's own self-declared description -- genuinely different from `ScriptTaskPayload`'s
+  semicolon convention, not assumed to match just because the features are conceptually the
+  same.
+
+Unlike Script Task, no real SSDT-authored Script Component was available anywhere in this
+repo to read for ground truth, so `ScriptComponentPayload.SourceCodeItems` is kept as an
+ordered list of opaque text blobs -- the array *shape* is confirmed real (set through the
+object model's own property system and read back), but per-element file identity is not,
+so `ssisx report` writes `scripts/<Package>/<Task>/<Component>/source-<index>.cs|.vb|.txt`
+rather than a recovered real file name. Full evidence, the `SyntheticScriptComponent.dtsx`
+fixture (which also reconfirms Derived Column's passthrough-lineage rule on a third
+component type), and the new `script-component-present` finding + `ComplexityStats.
+ScriptComponentCount` are in `docs/report-schema.md`'s own "Script Component source
+extraction" section.
 
 See `docs/spec-schema.md` for the `extract`/`graph` JSON contract, and
 `docs/report-schema.md` for `report` + `diff` output (rule catalog, scoring, SQL/expression
@@ -270,25 +302,20 @@ catalog access ever appears, plan §5/§6 has both designs ready.
 
 Still genuinely not built:
 
-- **Script Component source extraction** (plan §4.5's other half) -- Script *Task* source
-  extraction is now built (see "Script Task source extraction" below); a Script
-  *Component* (a pipeline transform, not a control-flow task) would need the same
-  `ProjectItem`/`BinaryItem` treatment plus input/output column usage, but no PoC or
-  synthetic package uses one yet, so `PipelineComponentSpec` has no bespoke payload for it.
-- **Understanding what a Script Task's code does** -- no C#/VB parsing, no detection of
-  which APIs it calls beyond the already-captured `ReadOnlyVariables`/`ReadWriteVariables`
-  declared surface. The source is extracted verbatim, not analyzed; plan's own words:
-  "Script Tasks are extracted, not understood."
+- **Understanding what a Script Task's/Component's code does** -- no C#/VB parsing, no
+  detection of which APIs it calls beyond the already-captured `ReadOnlyVariables`/
+  `ReadWriteVariables` declared surface. The source is extracted verbatim, not analyzed;
+  plan's own words: "Script Tasks are extracted, not understood."
 - **Type/length-narrowing detection** along a lineage chain (plan §5.1) -- a truncation risk
   the package tolerates today; the core edge/constant/unused lineage analysis is done.
 - **`--password`** on `extract` is accepted but a no-op (the encrypted-package object-model
   fallback, plan §2.1) so the command line won't change shape when it lands.
-- **Bespoke component semantics** now also exist for OLE DB Source, Lookup, and Conditional
-  Split (synthetic fixtures, no client evidence yet -- see above), on top of the two types
-  this PoC's own packages use (Flat File Source, OLE DB Destination). Script Component,
-  async transforms (Sort/Aggregate/Union All), Fuzzy Lookup, and the rest are still
-  captured *fully* but generically, without a typed payload -- true of anything without a
-  real example behind it, per this project's own "read one first" rule.
+- **Bespoke component semantics** now also exist for OLE DB Source, Lookup, Conditional
+  Split, and Script Component (synthetic fixtures, no client evidence yet -- see above), on
+  top of the two types this PoC's own packages use (Flat File Source, OLE DB Destination).
+  Async transforms (Sort/Aggregate/Union All), Fuzzy Lookup, and the rest are still captured
+  *fully* but generically, without a typed payload -- true of anything without a real
+  example behind it, per this project's own "read one first" rule.
 - **`unused-variable`/`unused-connection-manager`** still use a best-effort text search rather
   than a real reference resolver; each such finding says so in its own message.
 

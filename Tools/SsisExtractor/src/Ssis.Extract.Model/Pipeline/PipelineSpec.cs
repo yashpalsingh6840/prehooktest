@@ -62,6 +62,9 @@ public sealed class PipelineComponentSpec
     public OleDbSourcePayload? OleDbSource { get; init; }
     public LookupPayload? Lookup { get; init; }
     public ConditionalSplitPayload? ConditionalSplit { get; init; }
+
+    /// <summary>Discriminated by the <c>UserComponentTypeName</c> custom property, not <see cref="ComponentClassId"/> -- see <see cref="Ssis.Extract.Model.Pipeline.ScriptComponentPayload"/>'s own doc comment for why.</summary>
+    public ScriptComponentPayload? ScriptComponent { get; init; }
 }
 
 /// <summary>A component's reference to a connection manager. <see cref="ConnectionManagerRefRaw"/> is the pipeline's own reference shape (a refId path, e.g. "Package.ConnectionManagers[CM_EmployeesCsv]") -- notably NOT the DTSID-GUID form Execute SQL Task uses (see <c>ExecuteSqlTaskPayload.ConnectionRefRaw</c>'s doc comment); resolved the same way, by matching against <c>ConnectionManagerSpec.RefId</c> this time instead of <c>DtsId</c>.</summary>
@@ -74,13 +77,30 @@ public sealed class PipelineComponentConnectionSpec
     public string? ConnectionManagerName { get; init; }
 }
 
-/// <summary>Generic name/value/dataType property, used identically for a component's own properties and every input/output column's properties (which is where expressions like Derived Column's live).</summary>
+/// <summary>
+/// Generic name/value/dataType property, used identically for a component's own properties
+/// and every input/output column's properties (which is where expressions like Derived
+/// Column's live). <see cref="IsArray"/> covers a real, previously-lossy gap: an
+/// <c>isArray="true"</c> property (confirmed real via Script Component's <c>SourceCode</c>/
+/// <c>BinaryCode</c>/<c>BreakpointCollection</c> custom properties, verified end-to-end
+/// through the object model's own property-array serialization, not guessed) persists as
+/// <c>&lt;arrayElements arrayElementCount="N"&gt;&lt;arrayElement&gt;text&lt;/arrayElement&gt;...</c>,
+/// which <see cref="Value"/> alone (backed by <c>XElement.Value</c>) would silently
+/// concatenate into one run-on string with every element boundary lost. When
+/// <see cref="IsArray"/> is true, read <see cref="ArrayElements"/> instead -- <see cref="Value"/>
+/// is not populated for an array property.
+/// </summary>
 public sealed class PipelinePropertySpec
 {
     public required string Name { get; init; }
     public string? DataType { get; init; }
     public string? Description { get; init; }
     public string? Value { get; init; }
+
+    public bool IsArray { get; init; }
+
+    /// <summary>One entry per &lt;arrayElement&gt;, in document order, only populated when <see cref="IsArray"/> is true.</summary>
+    public List<string> ArrayElements { get; init; } = [];
 }
 
 /// <summary>One &lt;path&gt; -- a physical buffer connection between one component's output and another's input. Note this does NOT fully determine column-level lineage by itself: a synchronous transform's passthrough columns (same buffer, no new output column emitted) are consumed directly by name/lineageId at a downstream component without an intervening path -- see <c>LineageSpec</c>'s doc comment, discovered empirically from this PoC's own <c>LoadEmployees</c> pipeline.</summary>

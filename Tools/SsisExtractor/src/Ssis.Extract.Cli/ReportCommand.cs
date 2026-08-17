@@ -104,7 +104,7 @@ internal static class ReportCommand
 
         var sqlDir = Path.Combine(outDir, "sql");
         var scriptFilesWritten = 0;
-        var scriptTasksStripped = 0;
+        var scriptItemsStripped = 0;
 
         foreach (var pkg in packages)
         {
@@ -142,7 +142,7 @@ internal static class ReportCommand
             foreach (var ex in allExecutables)
             {
                 if (ex.ScriptTask is null) continue;
-                if (ex.ScriptTask.SourceStripped) { scriptTasksStripped++; continue; }
+                if (ex.ScriptTask.SourceStripped) { scriptItemsStripped++; continue; }
 
                 var taskDir = Path.Combine(outDir, "scripts", pkg.ObjectName, SanitizeFileName(ex.RefId));
                 foreach (var item in ex.ScriptTask.ProjectItems)
@@ -152,6 +152,34 @@ internal static class ReportCommand
                     Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
                     File.WriteAllText(fullPath, item.Content, EncodingFor(item.Encoding));
                     scriptFilesWritten++;
+                }
+            }
+
+            // Script Component source extraction -- same idea, different shape: SourceCode's
+            // array elements carry no per-element file name (see ScriptComponentPayload's own
+            // doc comment), so each is written as an index-numbered file rather than by its
+            // real project file name, which this property doesn't preserve.
+            foreach (var ex in allExecutables)
+            {
+                if (ex.DataFlowTask is null) continue;
+                foreach (var comp in ex.DataFlowTask.Pipeline.Components)
+                {
+                    if (comp.ScriptComponent is null) continue;
+                    if (comp.ScriptComponent.SourceStripped) { scriptItemsStripped++; continue; }
+
+                    var componentDir = Path.Combine(outDir, "scripts", pkg.ObjectName, SanitizeFileName(ex.RefId), SanitizeFileName(comp.Name));
+                    var extension = comp.ScriptComponent.Language switch
+                    {
+                        "CSharp" => ".cs",
+                        "VisualBasic" => ".vb",
+                        _ => ".txt",
+                    };
+                    for (var i = 0; i < comp.ScriptComponent.SourceCodeItems.Count; i++)
+                    {
+                        Directory.CreateDirectory(componentDir);
+                        File.WriteAllText(Path.Combine(componentDir, $"source-{i}{extension}"), comp.ScriptComponent.SourceCodeItems[i], EncodingFor(null));
+                        scriptFilesWritten++;
+                    }
                 }
             }
         }
@@ -202,7 +230,7 @@ internal static class ReportCommand
         Console.WriteLine($"wrote report for {packages.Count} package(s) -> {outDir}");
         Console.WriteLine($"  {allFindings.Count} finding(s), {allNonDeterministic.Count} non-deterministic column(s)");
         Console.WriteLine($"  {sqlFileCount} SQL statement(s) harvested ({parseFailures} failed to parse), {allExpressions.Count} expression(s), {dependencyEdges.Count} cross-package dependency edge(s)");
-        Console.WriteLine($"  {scriptFilesWritten} Script Task source file(s) harvested to `scripts/`{(scriptTasksStripped > 0 ? $", {scriptTasksStripped} Script Task(s) had NO source (binary only -- see findings)" : "")}");
+        Console.WriteLine($"  {scriptFilesWritten} Script Task/Component source file(s) harvested to `scripts/`{(scriptItemsStripped > 0 ? $", {scriptItemsStripped} script(s) had NO source (binary only -- see findings)" : "")}");
         foreach (var row in inventory)
         {
             Console.WriteLine($"  {row.PackageName}: {row.Complexity.Classification} (score {row.Complexity.Score:0.##}), {row.FindingsCount} finding(s)");
@@ -255,14 +283,14 @@ internal static class ReportCommand
     private static void WriteInventoryCsv(List<PortfolioInventoryRow> rows, string path)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Package,Classification,Score,Tasks,Containers,DataFlows,Components,Expressions,SqlStatements,ScriptTasks,Loops,EventHandlers,UnmappedNodes,CoveragePercent,Findings,HighestSeverity");
+        sb.AppendLine("Package,Classification,Score,Tasks,Containers,DataFlows,Components,Expressions,SqlStatements,ScriptTasks,ScriptComponents,Loops,EventHandlers,UnmappedNodes,CoveragePercent,Findings,HighestSeverity");
         foreach (var r in rows)
         {
             var c = r.Complexity;
             sb.AppendLine(string.Join(",",
                 Csv(r.PackageName), Csv(c.Classification), c.Score.ToString(CultureInfo.InvariantCulture),
                 c.TaskCount, c.ContainerCount, c.DataFlowTaskCount, c.PipelineComponentCount, c.ExpressionCount,
-                c.SqlStatementCount, c.ScriptTaskCount, c.LoopCount, c.EventHandlerCount, c.UnmappedNodeCount,
+                c.SqlStatementCount, c.ScriptTaskCount, c.ScriptComponentCount, c.LoopCount, c.EventHandlerCount, c.UnmappedNodeCount,
                 r.CoveragePercent.ToString(CultureInfo.InvariantCulture), r.FindingsCount, Csv(r.HighestSeverity ?? "")));
         }
         File.WriteAllText(path, sb.ToString());

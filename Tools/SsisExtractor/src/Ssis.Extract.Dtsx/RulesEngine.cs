@@ -103,6 +103,17 @@ public static class RulesEngine
                     Add(findings, "oledb-command-present", "RewriteEffort", "Warning", package.ObjectName, location,
                         "OLE DB Command -- executes one SQL statement per row (RBAR). Always a performance finding, and the per-row parameter binding needs care in a rewrite.");
                 }
+                if (comp.ScriptComponent is not null)
+                {
+                    Add(findings, "script-component-present", "RewriteEffort", "Error", package.ObjectName, location,
+                        "Script Component -- arbitrary .NET/VBA code with no structural model here (beyond the generic input/output columns already captured); must be read and manually ported, not mechanically translated.");
+
+                    if (comp.ScriptComponent.SourceStripped)
+                    {
+                        Add(findings, "script-source-stripped", "RewriteEffort", "Error", package.ObjectName, location,
+                            "Script Component's source was stripped from this package -- only the precompiled binary cache remains. There is no source to read or port; recovering intent requires decompiling the binary or finding the original project elsewhere.");
+                    }
+                }
 
                 var isSource = comp.Inputs.Count == 0;
                 if (!isSource && comp.Outputs.Any(o => o.IsErrorOut != true && o.SynchronousInputId is null))
@@ -307,6 +318,11 @@ public static class RulesEngine
                     foreach (var output in comp.Outputs)
                     {
                         texts.AddRange(output.Columns.Where(c => c.Expression is not null).Select(c => c.Expression!));
+                    }
+                    if (comp.ScriptComponent is not null)
+                    {
+                        texts.AddRange(comp.ScriptComponent.ReadOnlyVariables);
+                        texts.AddRange(comp.ScriptComponent.ReadWriteVariables);
                     }
                 }
             }

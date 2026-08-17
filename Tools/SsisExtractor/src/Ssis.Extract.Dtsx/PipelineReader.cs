@@ -71,8 +71,30 @@ internal static class PipelineReader
         OleDbSourcePayload? oleDbSource = null;
         LookupPayload? lookup = null;
         ConditionalSplitPayload? conditionalSplit = null;
+        ScriptComponentPayload? scriptComponent = null;
 
-        if (componentClassId == "Microsoft.FlatFileSource")
+        // Script Component's own componentClassID is the generic "Microsoft.ManagedComponentHost"
+        // -- not a Script-Component-specific ID the way every other bespoke type here is --
+        // confirmed real via the object model (ComponentPayloads.cs's own doc comment).
+        // UserComponentTypeName is what actually disambiguates it.
+        if (GetProperty(properties, "UserComponentTypeName") == "Microsoft.ScriptComponentHost")
+        {
+            var sourceCodeProp = properties.FirstOrDefault(p => p.Name == "SourceCode");
+            var binaryCodeProp = properties.FirstOrDefault(p => p.Name == "BinaryCode");
+            var sourceCodeItems = sourceCodeProp?.ArrayElements ?? [];
+            var hasBinaryCode = binaryCodeProp?.ArrayElements.Count > 0;
+            scriptComponent = new ScriptComponentPayload
+            {
+                Language = GetProperty(properties, "ScriptLanguage"),
+                ProjectName = GetProperty(properties, "VSTAProjectName"),
+                ReadOnlyVariables = SplitCommaVariableList(GetProperty(properties, "ReadOnlyVariables")),
+                ReadWriteVariables = SplitCommaVariableList(GetProperty(properties, "ReadWriteVariables")),
+                SourceCodeItems = sourceCodeItems,
+                HasBinaryCode = hasBinaryCode,
+                SourceStripped = sourceCodeItems.Count == 0 && hasBinaryCode,
+            };
+        }
+        else if (componentClassId == "Microsoft.FlatFileSource")
         {
             var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
             flatFileSource = new FlatFileSourcePayload
@@ -180,6 +202,7 @@ internal static class PipelineReader
             OleDbSource = oleDbSource,
             Lookup = lookup,
             ConditionalSplit = conditionalSplit,
+            ScriptComponent = scriptComponent,
         };
     }
 
@@ -295,12 +318,20 @@ internal static class PipelineReader
 
     private static List<PipelinePropertySpec> ReadProperties(XElement? container) =>
         (container?.Elements("property") ?? [])
-            .Select(p => new PipelinePropertySpec
+            .Select(p =>
             {
-                Name = p.Attr("name") ?? "",
-                DataType = p.Attr("dataType"),
-                Description = p.Attr("description"),
-                Value = p.Value,
+                var isArray = p.Attr("isArray") == "true";
+                return new PipelinePropertySpec
+                {
+                    Name = p.Attr("name") ?? "",
+                    DataType = p.Attr("dataType"),
+                    Description = p.Attr("description"),
+                    Value = isArray ? null : p.Value,
+                    IsArray = isArray,
+                    ArrayElements = isArray
+                        ? (p.Element("arrayElements")?.Elements("arrayElement") ?? []).Select(e => e.Value).ToList()
+                        : [],
+                };
             })
             .ToList();
 
@@ -333,4 +364,8 @@ internal static class PipelineReader
         int.TryParse(raw, out var v) ? v : null;
 
     private static string? NullIfEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;
+
+    /// <summary>Comma-delimited, unlike <c>DtsxPackageReader.SplitVariableList</c>'s semicolon split for Script Task's own ReadOnlyVariables/ReadWriteVariables -- confirmed a genuinely different, real convention by reading Script Component's own property description text from the object model ("Specifies a comma-separated list of read-only variables."), not assumed to match Script Task.</summary>
+    private static List<string> SplitCommaVariableList(string? raw) =>
+        string.IsNullOrEmpty(raw) ? [] : raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 }

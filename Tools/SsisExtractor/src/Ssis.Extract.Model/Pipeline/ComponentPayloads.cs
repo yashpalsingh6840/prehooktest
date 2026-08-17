@@ -144,3 +144,52 @@ public sealed class ConditionalSplitCaseSpec
     public string? FriendlyExpression { get; init; }
     public int? EvaluationOrder { get; init; }
 }
+
+/// <summary>
+/// A Script Component -- the Data Flow pipeline transform sibling of Script Task, plan
+/// §4.5's "same source extraction as Script Task, plus input/output column usage" (the
+/// latter is already covered generically: <see cref="PipelineComponentSpec.Inputs"/>/
+/// <see cref="PipelineComponentSpec.Outputs"/> and their columns are read the same way for
+/// every component). Confirmed real via the object model, not the same discriminator as
+/// every other bespoke payload in this file: the component's own <c>ComponentClassId</c>
+/// is the generic <c>"Microsoft.ManagedComponentHost"</c> (the same host class any managed
+/// pipeline component could in principle use), never a Script-Component-specific ID --
+/// <see cref="PipelineComponentSpec"/>'s <c>UserComponentTypeName</c> custom property
+/// (value <c>"Microsoft.ScriptComponentHost"</c>) is what actually disambiguates it, so
+/// <c>PipelineReader.ReadComponent</c> checks that property's value, not
+/// <c>ComponentClassId</c>, before building this payload.
+///
+/// <see cref="ReadOnlyVariables"/>/<see cref="ReadWriteVariables"/> are comma-split, NOT
+/// semicolon-split like <c>ScriptTaskPayload</c>'s -- confirmed genuinely different by
+/// reading the property's own self-declared description text from the object model
+/// ("Specifies a comma-separated list of read-only variables."), not assumed to match
+/// Script Task just because the two features are conceptually similar.
+///
+/// <see cref="SourceCodeItems"/> is confirmed real evidence of structure, not content: the
+/// <c>SourceCode</c> custom property is <c>isArray="true"</c>, and setting an array value
+/// through the object model's own property system (bypassing the VSTA editor entirely,
+/// which -- same as Script Task's synthetic fixture -- never writes a real project when
+/// driven by bare property calls) proved the exact persisted shape is
+/// <c>&lt;arrayElements&gt;&lt;arrayElement&gt;text&lt;/arrayElement&gt;...&lt;/arrayElements&gt;</c>,
+/// each element carrying no name/index attribute of its own. What is NOT confirmed: the
+/// real per-element file identity a genuine SSDT-authored Script Component would produce
+/// (unlike Script Task, no real SSDT-authored Script Component was available to read for
+/// ground truth here) -- so elements are kept in document order only, never assumed to be
+/// "one element = ScriptMain.cs" the way Script Task's named <c>ProjectItem</c> list is.
+/// <see cref="HasBinaryCode"/> mirrors <c>ScriptTaskPayload.BinaryItemNames</c>'s
+/// "name only, never content" rule, except <c>BinaryCode</c>'s array elements carry no
+/// name at all to even capture -- just a presence flag.
+/// </summary>
+public sealed class ScriptComponentPayload
+{
+    public string? Language { get; init; }
+    public string? ProjectName { get; init; }
+    public List<string> ReadOnlyVariables { get; init; } = [];
+    public List<string> ReadWriteVariables { get; init; } = [];
+
+    public List<string> SourceCodeItems { get; init; } = [];
+    public bool HasBinaryCode { get; init; }
+
+    /// <summary>True when <c>BinaryCode</c> is non-empty but <see cref="SourceCodeItems"/> is empty -- same "source genuinely gone" signal as <c>ScriptTaskPayload.SourceStripped</c>, not yet observed on any real package.</summary>
+    public bool SourceStripped { get; init; }
+}

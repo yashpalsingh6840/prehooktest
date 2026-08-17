@@ -53,6 +53,9 @@ public sealed class ComplexityStats
     public required int SqlStatementCount { get; init; }
     public required int ScriptTaskCount { get; init; }
 
+    /// <summary>Script Component pipeline transforms, counted separately from <see cref="ScriptTaskCount"/> since they're control-flow vs. data-flow, but weighted identically (both are "arbitrary code, no structural model") and both drive <c>HighRisk</c> classification unconditionally -- see <c>ComplexityScorer.Classify</c>.</summary>
+    public required int ScriptComponentCount { get; init; }
+
     /// <summary>ForEach/For Loop containers specifically (a subset of <see cref="ContainerCount"/>) -- called out separately per plan §5.6 since loops are a specific rewrite-effort signal, not just "any container."</summary>
     public required int LoopCount { get; init; }
 

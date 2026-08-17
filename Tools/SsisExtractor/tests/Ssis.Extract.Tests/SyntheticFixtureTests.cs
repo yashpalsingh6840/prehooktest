@@ -20,6 +20,7 @@ public class SyntheticFixtureTests
 
     private static string ForEachScriptPath => Path.Combine(FixturesDir, "SyntheticForEachScript.dtsx");
     private static string LookupSplitPath => Path.Combine(FixturesDir, "SyntheticLookupSplit.dtsx");
+    private static string ScriptComponentPath => Path.Combine(FixturesDir, "SyntheticScriptComponent.dtsx");
 
     [Fact]
     public void ForEachScript_ExtractsAt100PercentCoverage()
@@ -217,5 +218,88 @@ public class SyntheticFixtureTests
         var findings = RulesEngine.Evaluate(package).Select(f => f.RuleId).ToList();
 
         Assert.DoesNotContain("async-transform-present", findings);
+    }
+
+    [Fact]
+    public void ScriptComponent_ExtractsAt100PercentCoverage()
+    {
+        var package = DtsxPackageReader.Read(ScriptComponentPath, noRedact: false);
+        Assert.Equal(100.0, package.Coverage.CoveragePercent);
+    }
+
+    [Fact]
+    public void ScriptComponent_DiscriminatedByUserComponentTypeName_NotComponentClassId()
+    {
+        // Ground truth this fixture exists to prove: a Script Component's own
+        // ComponentClassId is the generic "Microsoft.ManagedComponentHost", never a
+        // Script-Component-specific ID -- confirmed against this fixture's own saved XML.
+        var package = DtsxPackageReader.Read(ScriptComponentPath, noRedact: false);
+        var dataFlow = Assert.Single(package.Executables).DataFlowTask!;
+        var comp = dataFlow.Pipeline.Components.Single(c => c.Name == "Script Component");
+
+        Assert.Equal("Microsoft.ManagedComponentHost", comp.ComponentClassId);
+        Assert.NotNull(comp.ScriptComponent);
+    }
+
+    [Fact]
+    public void ScriptComponent_LanguageVariablesAndSource_ParseCorrectly()
+    {
+        var package = DtsxPackageReader.Read(ScriptComponentPath, noRedact: false);
+        var dataFlow = Assert.Single(package.Executables).DataFlowTask!;
+        var scriptComponent = dataFlow.Pipeline.Components.Single(c => c.Name == "Script Component").ScriptComponent!;
+
+        Assert.Equal("CSharp", scriptComponent.Language);
+        Assert.Equal("SC_synthetic_passthrough_demo", scriptComponent.ProjectName);
+        Assert.Empty(scriptComponent.ReadOnlyVariables);
+        Assert.Equal(["User::ProcessedRowCount"], scriptComponent.ReadWriteVariables);
+
+        Assert.False(scriptComponent.SourceStripped);
+        Assert.False(scriptComponent.HasBinaryCode); // never compiled -- only ProvideComponentProperties/ReinitializeMetaData were called, same as the Script Task fixture never getting a real BinaryItem
+        var sourceItem = Assert.Single(scriptComponent.SourceCodeItems);
+        Assert.Contains("Variables.ProcessedRowCount++", sourceItem);
+    }
+
+    [Fact]
+    public void ScriptComponent_TriggersRewriteEffortRule_NotSourceStrippedRule()
+    {
+        var package = DtsxPackageReader.Read(ScriptComponentPath, noRedact: false);
+        var findings = RulesEngine.Evaluate(package).Select(f => f.RuleId).ToList();
+
+        Assert.Contains("script-component-present", findings);
+        Assert.DoesNotContain("script-source-stripped", findings);
+    }
+
+    [Fact]
+    public void ScriptComponent_ReadWriteVariable_IsNotFlaggedUnused()
+    {
+        // Regression guard mirroring UnusedVariableRule_DoesNotFlagAForEachLoopsOwnIterationVariable:
+        // ProcessedRowCount is only ever "used" via ScriptComponentPayload.ReadWriteVariables,
+        // never inside an expression/SQL statement this rule's text collector already knew about.
+        var package = DtsxPackageReader.Read(ScriptComponentPath, noRedact: false);
+        var unusedVariableMessages = RulesEngine.Evaluate(package)
+            .Where(f => f.RuleId == "unused-variable")
+            .Select(f => f.Message)
+            .ToList();
+
+        Assert.DoesNotContain(unusedVariableMessages, m => m.Contains("User::ProcessedRowCount"));
+    }
+
+    [Fact]
+    public void ScriptComponent_PassthroughOutput_HasNoOutputColumnsOfItsOwn()
+    {
+        // Confirms the same passthrough-lineage behavior CLAUDE.md already documents for
+        // Derived Column (LineageBuilder's own doc comment): a synchronous transform's
+        // untouched passthrough columns are never re-emitted as the transform's own output
+        // columns. Here the Script Component's three input columns were marked
+        // UT_READONLY (passthrough) and never assigned as new output columns, so its own
+        // Output 0 has zero declared columns -- the OLE DB Destination downstream resolves
+        // OrderID/CustomerID/Amount by lineageId straight back to the OLE DB Source's output,
+        // skipping the Script Component's output entirely, same as the plan's own diagram.
+        var package = DtsxPackageReader.Read(ScriptComponentPath, noRedact: false);
+        var dataFlow = Assert.Single(package.Executables).DataFlowTask!;
+        var scriptComp = dataFlow.Pipeline.Components.Single(c => c.Name == "Script Component");
+
+        var output = Assert.Single(scriptComp.Outputs);
+        Assert.Empty(output.Columns);
     }
 }

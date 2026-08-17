@@ -601,7 +601,7 @@ error, 3 still-running (`--status` without `--wait` only). In `SSIS.sln`
 mapped to `Release|Any CPU` (trap 6 — any real platform label makes devenv
 silently skip it); `dotnet build` on the csproj alone works too.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task source extraction added 2026-08-17)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — added 2026-08-17)
 
 A separate tool (`ssisx`), planned in `Phase0-Extractor-Plan.md` (also see
 `Migration-Validation-Plan.md` and `PoC-Architecture-Overview.md` for the
@@ -905,6 +905,59 @@ the XML shape by hand, not a real fixture. Full detail (including the
 with a small `ProjectItem`/`BinaryItem` pair to cover the source-present
 path) in `Tools/SsisExtractor/docs/report-schema.md`'s own "Script Task
 source extraction" section.
+
+**2026-08-17 (same day) — Script Component source extraction, plan §4.5's
+other half, built.** Investigated rather than assumed to share Script
+Task's shape, and found three real differences, each confirmed via the
+object model, not guessed from how Script Task works:
+- **Different discriminator.** A Script Component's own `componentClassID`
+  in the saved XML is the generic `Microsoft.ManagedComponentHost` — not a
+  Script-Component-specific ID the way every other bespoke pipeline
+  payload in this extractor is keyed. The real disambiguator is a custom
+  property, `UserComponentTypeName`, value `Microsoft.ScriptComponentHost`.
+- **Different source storage.** No `<ProjectItem>`/`<BinaryItem>` here —
+  instead two ordinary custom properties, `SourceCode`/`BinaryCode`, both
+  `isArray="true"`. This exposed a real, previously-unnoticed bug one
+  level below Script Component itself: the extractor's generic pipeline
+  property reader had no representation for an array-valued property at
+  all, so an `isArray` property's multiple `<arrayElement>`s were silently
+  collapsed into one run-on string through `XElement.Value`. Fixed
+  generically (`PipelinePropertySpec.IsArray`/`.ArrayElements`), confirmed
+  correct by setting a real `string[]` through
+  `IDTSCustomProperty100.Value`'s own setter (bypassing the VSTA editor
+  entirely, same limitation as Script Task's synthetic fixture never
+  getting a real project) and reading back exactly what the object model
+  persisted: `<arrayElements arrayElementCount="N"><arrayElement
+  dataType="...">CDATA</arrayElement>...</arrayElements>`.
+- **Different delimiter.** `ReadOnlyVariables`/`ReadWriteVariables` are
+  **comma**-separated for Script Component (confirmed from the property's
+  own self-declared description text), not semicolon-separated like
+  Script Task's — a genuinely different convention between two features
+  that look identical from the SSIS UI.
+
+**What's NOT confirmed, stated as such rather than guessed:** the real
+per-element file identity inside `SourceCode`'s array. No real
+SSDT-authored Script Component was available anywhere on this machine to
+read for ground truth (only a Script *Task* was — `SSIS/ScriptTest.dtsx`,
+per the note above). So `ScriptComponentPayload.SourceCodeItems` stays an
+ordered list of opaque text blobs, and `ssisx report` writes them as
+`scripts/<Package>/<Task>/<Component>/source-<index>.cs|.vb|.txt` — an
+index, not a recovered file name.
+
+Also built: a `script-component-present` (RewriteEffort/Error) finding
+paired with the same `script-source-stripped` finding Script Task uses
+(reused, not duplicated); `ComplexityStats.ScriptComponentCount`, weighted
+identically to `ScriptTaskCount` and folded into the same unconditional
+`HighRisk` trigger; and a third synthetic fixture,
+`SyntheticScriptComponent.dtsx` (OLE DB Source → Script Component → OLE DB
+Destination), which incidentally reconfirmed Derived Column's own
+passthrough-lineage rule (CLAUDE.md's `LineageBuilder` note above) on a
+third component type — its three passthrough input columns were never
+re-declared as output columns, so the downstream OLE DB Destination
+resolves them by `lineageId` straight back to the OLE DB Source, skipping
+the Script Component's own output entirely, same as documented. Full
+detail in `Tools/SsisExtractor/docs/report-schema.md`'s own "Script
+Component source extraction" section.
 
 ## Traps already hit once — don't re-derive these
 
