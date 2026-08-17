@@ -224,9 +224,15 @@ public static partial class DtsxPackageReader
             else if (executableType == "Microsoft.ScriptTask")
             {
                 scriptTaskPayload = ReadScriptTask(objectData);
-                // Not counted as unmapped: the ObjectData here is fully modeled (see
-                // ScriptTaskPayload's own doc comment for what's genuinely absent from this
-                // shape, as opposed to what we chose not to read).
+                // Not counted as unmapped: every child of <ScriptProject> is now read --
+                // <ProjectItem>/<BinaryItem> included. Worth recording that this was NOT
+                // always true: before ReadScriptTask read those two element types, they were
+                // still silently swept into "covered" by this very comment (coverage.Unmapped
+                // was never incremented for them either), the same silent-overstatement shape
+                // as the pre-fix ForEachLoop/pipeline-output-property gaps documented
+                // elsewhere in this file and in CLAUDE.md's synthetic-coverage-pass note --
+                // just never caught until a real SSDT-authored Script Task (source text, not
+                // just declared surface) was actually examined.
             }
             else
             {
@@ -273,10 +279,23 @@ public static partial class DtsxPackageReader
         };
     }
 
-    private static ScriptTaskPayload ReadScriptTask(XElement objectData)
+    internal static ScriptTaskPayload ReadScriptTask(XElement objectData)
     {
         var el = objectData.Element("ScriptProject");
         if (el is null) return new ScriptTaskPayload();
+
+        var projectItems = el.Elements("ProjectItem")
+            .Select(pi => new ScriptProjectItemSpec
+            {
+                Name = pi.Attr("Name") ?? "",
+                Encoding = pi.Attr("Encoding"),
+                Content = pi.Value,
+            })
+            .ToList();
+
+        var binaryItemNames = el.Elements("BinaryItem")
+            .Select(bi => bi.Attr("Name") ?? "")
+            .ToList();
 
         return new ScriptTaskPayload
         {
@@ -286,6 +305,9 @@ public static partial class DtsxPackageReader
             VstaMinorVersion = el.Attr("VSTAMinorVersion"),
             ReadOnlyVariables = SplitVariableList(el.Attr("ReadOnlyVariables")),
             ReadWriteVariables = SplitVariableList(el.Attr("ReadWriteVariables")),
+            ProjectItems = projectItems,
+            BinaryItemNames = binaryItemNames,
+            SourceStripped = projectItems.Count == 0 && binaryItemNames.Count > 0,
         };
     }
 

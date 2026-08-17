@@ -66,6 +66,12 @@ public static class RulesEngine
             {
                 Add(findings, "script-task-present", "RewriteEffort", "Error", package.ObjectName, ex.RefId,
                     "Script Task -- arbitrary .NET/VBA code with no structural model here; must be read and manually ported, not mechanically translated.");
+
+                if (ex.ScriptTask?.SourceStripped == true)
+                {
+                    Add(findings, "script-source-stripped", "RewriteEffort", "Error", package.ObjectName, ex.RefId,
+                        "Script Task's source was stripped from this package -- only the precompiled binary cache remains ([" + string.Join(", ", ex.ScriptTask.BinaryItemNames) + "]). There is no source to read or port; recovering intent requires decompiling the binary or finding the original project elsewhere.");
+                }
             }
             if (ex.ExecutableType == "Microsoft.ExecuteProcess")
             {

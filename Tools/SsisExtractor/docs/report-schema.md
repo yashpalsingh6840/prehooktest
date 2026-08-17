@@ -75,6 +75,7 @@ message, not silently treated as authoritative.
 | RuleId | Category | Severity | Evidence used |
 |---|---|---|---|
 | `script-task-present` | RewriteEffort | Error | `ExecutableType` |
+| `script-source-stripped` | RewriteEffort | Error | `ScriptTaskPayload.SourceStripped` -- `<ScriptProject>` has a `<BinaryItem>` but no `<ProjectItem>` at all |
 | `execute-process-task-present` | RewriteEffort | Error | `ExecutableType` |
 | `loop-present` | RewriteEffort | Warning | `ExecutableType` |
 | `third-party-component` | RewriteEffort | Error | `ComponentClassId` not `Microsoft.*` |
@@ -301,9 +302,10 @@ test guarding it (`UnusedVariableRule_DoesNotFlagAForEachLoopsOwnIterationVariab
 - `ScriptTaskPayload` deliberately has no `EntryPoint` field even though the object
   model's own `TaskHost.Properties["EntryPoint"]` defaults to `"Main"` at design time --
   confirmed that value is not persisted to the saved `.dtsx` for a VSTA-hosted Script Task
-  (the only kind SSIS 17 creates). The real entry point lives inside the embedded VSTA
-  project binary, which this reader does not unpack (plan's own "Script Task source
-  extraction" remains unbuilt, tracked separately in the README).
+  (the only kind SSIS 17 creates). By VSTA convention the entry point is always
+  `ScriptMain` inside a project item named `ScriptMain.cs`/`ScriptMain.vb` -- see "Script
+  Task source extraction" below for where that source actually lives (corrects an earlier,
+  wrong assumption in this same file that it was locked inside the compiled binary).
 - The Lookup fixture's join key (`CustomerID`) is genuinely marked as a used input column
   in the live pipeline object (confirmed via `SetUsageType` + a second `ReinitializeMetaData`
   round-trip, without which the reference query's own columns never resolve), but that
@@ -318,3 +320,59 @@ Lookup/Conditional Split XML, which the fixture as built already demonstrates). 
 client package with this exact pattern would still parse correctly today: the generic
 model captures whatever output columns and mappings exist regardless of how they got
 there, same as every other component.
+
+## Script Task source extraction (plan §4.5/§6.1, built post-slice-6)
+
+**Corrects a real, wrong assumption this doc used to make.** The synthetic-fixture pass
+above built `SyntheticForEachScript.dtsx`'s Script Task via bare object-model property
+sets (`Language`, `ReadOnlyVariables`, ...), never through SSDT's actual Script Task
+editor -- so it never got a VSTA project written into it, and the doc note at the time
+guessed the missing piece ("the actual script source lives inside the embedded VSTA
+project binary") without ever looking inside a real one. That guess was wrong, discovered
+by reading (read-only, never edited or committed by this tool) a genuine SSDT-authored
+Script Task the repo happened to have on disk at the time
+(`SSIS/ScriptTest.dtsx` -- the user's own separate in-progress work, unrelated to this
+extractor):
+
+- The real source **is plain text**: one `<ProjectItem Name="..." Encoding="...">CDATA
+  text</ProjectItem>` sibling per VSTA project file -- `ScriptMain.cs`/`.vb` (the actual
+  entry point), the `.csproj`/`.vbproj`, `AssemblyInfo.*`, `Resources`/`Settings` designer
+  files, and one internal MSBuild-ish "Project" descriptor. `Encoding` is the *original
+  on-disk file's* encoding (`UTF8` on every item observed except that internal "Project"
+  descriptor, which is `UTF16LE`) -- not this XML's own encoding.
+- `<BinaryItem Name="....dll">base64</BinaryItem>` is a **precompiled cache of the same
+  code**, not the only copy of it and not where source "really" lives. It carries no
+  independent information for a migration audience, so its content is deliberately not
+  captured -- only its file name (`ScriptTaskPayload.BinaryItemNames`), enough to prove a
+  cache existed without bloating `spec.json` with base64 machine code.
+- Both element types were, before this fix, real pre-existing coverage-accuracy bugs of
+  exactly the same shape as the two the synthetic-fixture pass found: `ReadScriptTask`
+  never looked at either child, and `DtsxPackageReader.ReadExecutable`'s own comment
+  claimed the Script Task `ObjectData` was "fully modeled" and therefore not counted as
+  unmapped -- so a real Script Task's actual source text was silently absent from both the
+  model *and* the coverage percentage's accounting of what's handled, on every package
+  with one, the whole time slices 4-6 were being built and verified only against the two
+  PoC packages (neither of which has a Script Task).
+
+**What's built:** `ScriptTaskPayload.ProjectItems`/`BinaryItemNames`/`SourceStripped`
+(model), `DtsxPackageReader.ReadScriptTask` reading both element types (reader), a new
+`script-source-stripped` (RewriteEffort/Error) finding for the case plan §4.5 calls out --
+a `<ScriptProject>` with a `<BinaryItem>` but no `<ProjectItem>` at all, i.e. source
+genuinely gone -- and `ssisx report`'s `scripts/<Package>/<Task>/<relative path>` output
+tree (plan §6.1), one file per `ProjectItem`, written with its own declared `Encoding`
+rather than always defaulting to UTF-8, so the one `UTF16LE` item round-trips as the
+correct bytes rather than being silently re-encoded.
+
+**Not observed for real anywhere yet:** `SourceStripped` -- SSDT's default behavior keeps
+source alongside the compiled cache; neither the PoC's own packages nor the one real
+SSDT-authored Script Task read for ground truth here has it stripped. Verified instead via
+a direct unit test constructing that XML shape by hand
+(`ScriptTask_ReadScriptTask_DetectsSourceStrippedFromObjectDataDirectly`, reaching
+`DtsxPackageReader.ReadScriptTask` via `InternalsVisibleTo`, the same pattern
+`DagAlgorithmTests` uses for `BuildDag`) plus a `RulesEngineTests` pair proving the new
+finding fires only in that case, not for an ordinary Script Task with intact source.
+
+**Still genuinely unbuilt:** understanding what the script *does* -- no C#/VB parsing,
+no detection of what APIs it calls (`Dts.Variables`, ADO.NET, file I/O, ...) beyond the
+already-existing `ReadOnlyVariables`/`ReadWriteVariables` declared surface. Plan's own
+words apply as-is: "Script Tasks are extracted, not understood."

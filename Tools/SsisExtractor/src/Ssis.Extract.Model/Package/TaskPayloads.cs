@@ -77,11 +77,22 @@ public sealed class UnmappedTaskPayload
 /// absent: this component's saved &lt;ObjectData&gt; carries no per-task entry-point name
 /// (no <c>EntryPoint</c>/<c>EntryPointSymbol</c> attribute) -- confirmed empirically, not an
 /// oversight here. The object model's own <c>TaskHost.Properties["EntryPoint"]</c> defaults
-/// to <c>"Main"</c> at design time but that value is not persisted to the .dtsx; the actual
-/// script source (and therefore its real entry point) lives inside the embedded VSTA project
-/// binary this reader does not unpack (plan's own "Script Task source extraction" is listed
-/// as still unbuilt) -- this payload only ever describes the task's declared surface
-/// (language, which variables it reads/writes), never its behavior.
+/// to <c>"Main"</c> at design time but that value is not persisted to the .dtsx; by VSTA
+/// convention the entry point is always <c>ScriptMain</c> in a <see cref="ProjectItems"/>
+/// entry named "ScriptMain.cs"/"ScriptMain.vb".
+///
+/// Earlier assumption here was wrong and has been corrected with real evidence (a genuine
+/// .dtsx built by SSDT's own Script Task editor, not guessed): the actual script source is
+/// NOT inside an opaque compiled binary. It is plain text, verbatim, in one
+/// <c>&lt;ProjectItem Name="..." Encoding="..."&gt;CDATA&lt;/ProjectItem&gt;</c> sibling per
+/// VSTA project file (ScriptMain.cs/.vb, the .csproj/.vbproj, AssemblyInfo, Resources.resx,
+/// Settings.settings, and an internal MSBuild-ish "Project" descriptor) -- see
+/// <see cref="ProjectItems"/>. The one thing genuinely opaque is <c>&lt;BinaryItem
+/// Name="....dll"&gt;</c>: a base64-encoded precompiled cache of the same source, never the
+/// only copy of it -- see <see cref="BinaryItemNames"/>/<see cref="SourceStripped"/>. This
+/// payload still only describes the task's declared surface (language, which variables it
+/// reads/writes) plus the extracted source text; it never executes or semantically
+/// understands the script (plan's own "Script Tasks are extracted, not understood").
 /// </summary>
 public sealed class ScriptTaskPayload
 {
@@ -97,6 +108,41 @@ public sealed class ScriptTaskPayload
 
     /// <summary>Split from the semicolon-delimited <c>ReadWriteVariables</c> attribute.</summary>
     public List<string> ReadWriteVariables { get; init; } = [];
+
+    /// <summary>
+    /// Every &lt;ProjectItem&gt; under &lt;ScriptProject&gt;, verbatim -- the VSTA mini-project's
+    /// own source and support files (ScriptMain.cs/.vb, the .csproj/.vbproj, AssemblyInfo.*,
+    /// Resources/Settings designer files, and an internal "Project" MSBuild-ish descriptor).
+    /// Empty when the task was saved with source stripped -- see <see cref="SourceStripped"/>.
+    /// </summary>
+    public List<ScriptProjectItemSpec> ProjectItems { get; init; } = [];
+
+    /// <summary>
+    /// Names only (e.g. "ST_xxx.dll") of every &lt;BinaryItem&gt; under &lt;ScriptProject&gt; --
+    /// a precompiled cache of the same code in <see cref="ProjectItems"/>, deliberately not
+    /// captured as content: it is base64 machine code with no independent information value
+    /// for a migration/rewrite audience, and would bloat spec.json for no benefit.
+    /// </summary>
+    public List<string> BinaryItemNames { get; init; } = [];
+
+    /// <summary>
+    /// True when this task's &lt;ScriptProject&gt; has a &lt;BinaryItem&gt; (compiled cache) but
+    /// no &lt;ProjectItem&gt; at all -- i.e. the source was stripped and only the opaque
+    /// compiled binary remains, the one case plan §4.5 calls out to flag loudly rather than
+    /// silently extract nothing. Not yet observed on any package this tool has actually read;
+    /// SSDT's default behavior keeps source alongside the binary cache.
+    /// </summary>
+    public bool SourceStripped { get; init; }
+}
+
+/// <summary>One &lt;ProjectItem&gt; -- a single VSTA project source/support file, saved verbatim as CDATA text. <see cref="Encoding"/> (e.g. "UTF8", "UTF16LE") describes the *original on-disk file's* encoding, not this XML's -- honor it when writing <see cref="Content"/> back out to a file, or a UTF16LE item (observed on the internal "Project" descriptor) round-trips as the wrong bytes.</summary>
+public sealed class ScriptProjectItemSpec
+{
+    /// <summary>e.g. "ScriptMain.cs" or "Properties\Resources.resx" -- a backslash-separated relative path, not just a bare file name.</summary>
+    public required string Name { get; init; }
+
+    public string? Encoding { get; init; }
+    public required string Content { get; init; }
 }
 
 /// <summary>

@@ -137,6 +137,44 @@ public class RulesEngineTests
     }
 
     [Fact]
+    public void ScriptTaskWithSourceStripped_IsFlaggedSeparatelyFromScriptTaskPresent()
+    {
+        var task = new ExecutableSpec
+        {
+            RefId = "T1",
+            ExecutableType = "Microsoft.ScriptTask",
+            ScriptTask = new ScriptTaskPayload { BinaryItemNames = ["ST_x.dll"], SourceStripped = true },
+        };
+        var package = WithExecutables(TestFixtures.MinimalPackage("P"), [task]);
+
+        var findings = RulesEngine.Evaluate(package);
+
+        Assert.Contains(findings, f => f.RuleId == "script-task-present" && f.Location == "T1");
+        Assert.Contains(findings, f => f.RuleId == "script-source-stripped" && f.Location == "T1" && f.Message.Contains("ST_x.dll"));
+    }
+
+    [Fact]
+    public void ScriptTaskWithSourceIntact_IsNotFlaggedAsStripped()
+    {
+        var task = new ExecutableSpec
+        {
+            RefId = "T1",
+            ExecutableType = "Microsoft.ScriptTask",
+            ScriptTask = new ScriptTaskPayload
+            {
+                ProjectItems = [new ScriptProjectItemSpec { Name = "ScriptMain.cs", Content = "class ScriptMain {}" }],
+                BinaryItemNames = ["ST_x.dll"],
+                SourceStripped = false,
+            },
+        };
+        var package = WithExecutables(TestFixtures.MinimalPackage("P"), [task]);
+
+        var findings = RulesEngine.Evaluate(package);
+
+        Assert.DoesNotContain(findings, f => f.RuleId == "script-source-stripped");
+    }
+
+    [Fact]
     public void DuplicatePackages_AreFlaggedByPortfolioRule_ButNotBySinglePackageEvaluate()
     {
         var a = TestFixtures.MinimalPackage("A", sha256: "same");

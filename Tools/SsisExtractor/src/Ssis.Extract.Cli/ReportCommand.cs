@@ -103,6 +103,8 @@ internal static class ReportCommand
         var allExpressions = new List<HarvestedExpressionSpec>();
 
         var sqlDir = Path.Combine(outDir, "sql");
+        var scriptFilesWritten = 0;
+        var scriptTasksStripped = 0;
 
         foreach (var pkg in packages)
         {
@@ -129,6 +131,29 @@ internal static class ReportCommand
 
             perPackageDataTouch[pkg.ObjectName] = DataTouchBuilder.Build(pkg, sqlAnalyses);
             allExpressions.AddRange(ExpressionHarvester.Harvest(pkg));
+
+            // Script Task source extraction (plan §6.1's scripts/<Package>/<Task>/*): every
+            // <ProjectItem> is the VSTA project's own plain-text source/support file, written
+            // out verbatim under a folder per task -- see ScriptTaskPayload's doc comment for
+            // why this is safe (source is plain CDATA text, never inside the opaque compiled
+            // <BinaryItem>). A task with SourceStripped=true writes nothing here; RulesEngine's
+            // "script-source-stripped" finding is what surfaces that loudly instead of a silent
+            // empty folder.
+            foreach (var ex in allExecutables)
+            {
+                if (ex.ScriptTask is null) continue;
+                if (ex.ScriptTask.SourceStripped) { scriptTasksStripped++; continue; }
+
+                var taskDir = Path.Combine(outDir, "scripts", pkg.ObjectName, SanitizeFileName(ex.RefId));
+                foreach (var item in ex.ScriptTask.ProjectItems)
+                {
+                    var relativePath = SanitizeRelativePath(item.Name);
+                    var fullPath = Path.Combine(taskDir, relativePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+                    File.WriteAllText(fullPath, item.Content, EncodingFor(item.Encoding));
+                    scriptFilesWritten++;
+                }
+            }
         }
 
         var dependencyEdges = DependencyGraphBuilder.Build(packages, perPackageDataTouch);
@@ -177,6 +202,7 @@ internal static class ReportCommand
         Console.WriteLine($"wrote report for {packages.Count} package(s) -> {outDir}");
         Console.WriteLine($"  {allFindings.Count} finding(s), {allNonDeterministic.Count} non-deterministic column(s)");
         Console.WriteLine($"  {sqlFileCount} SQL statement(s) harvested ({parseFailures} failed to parse), {allExpressions.Count} expression(s), {dependencyEdges.Count} cross-package dependency edge(s)");
+        Console.WriteLine($"  {scriptFilesWritten} Script Task source file(s) harvested to `scripts/`{(scriptTasksStripped > 0 ? $", {scriptTasksStripped} Script Task(s) had NO source (binary only -- see findings)" : "")}");
         foreach (var row in inventory)
         {
             Console.WriteLine($"  {row.PackageName}: {row.Complexity.Classification} (score {row.Complexity.Score:0.##}), {row.FindingsCount} finding(s)");
@@ -203,6 +229,20 @@ internal static class ReportCommand
         var invalid = Path.GetInvalidFileNameChars();
         return new string(s.Select(c => invalid.Contains(c) ? '_' : c).ToArray());
     }
+
+    /// <summary>Unlike <see cref="SanitizeFileName"/> (used for the SQL harvest, where the whole location string collapses to one flat file name), a ScriptProjectItemSpec.Name like "Properties\Resources.resx" must keep its directory structure -- so each backslash/forward-slash-delimited segment is sanitized individually, not the whole string, and rejoined with the current OS's own separator.</summary>
+    private static string SanitizeRelativePath(string name)
+    {
+        var segments = name.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).Select(SanitizeFileName);
+        return Path.Combine(segments.ToArray());
+    }
+
+    /// <summary>Maps a ScriptProjectItemSpec.Encoding attribute (the *original on-disk file's* encoding, e.g. "UTF8"/"UTF16LE" -- observed values only) to the .NET Encoding to write the extracted file back out with, so it round-trips as the same bytes rather than always defaulting to UTF-8.</summary>
+    private static System.Text.Encoding EncodingFor(string? encodingName) => encodingName switch
+    {
+        "UTF16LE" => System.Text.Encoding.Unicode,
+        _ => new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+    };
 
     private static string? HighestSeverity(List<FindingSpec> findings)
     {

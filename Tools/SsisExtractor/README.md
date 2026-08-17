@@ -1,6 +1,7 @@
 # ssisx -- SSIS package extractor (phase 0)
 
-Status: **slice 5 of 6 complete, minus `pull`; slice 6's object-model oracle also done**
+Status: **slice 5 of 6 complete, minus `pull`; slice 6's object-model oracle also done;
+Script Task source extraction (plan §4.5) also done**
 (build plan: `../../Phase0-Extractor-Plan.md` §8). Slice 6 bundles two things: `enrich`
 (needs SSISDB catalog access this engagement does not have, plan §11 decision 4 -- **out
 of scope rather than pending**, same as slice 5's `pull`; `ssisx diff` against a deployed
@@ -127,6 +128,30 @@ comparison is file-based: the oracle test reads the *committed* golden `spec.jso
 via `JObject` (not deserialized into `PackageSpec`, which lives in a net8.0-only project a
 .NET Framework runtime cannot load), rather than shelling out to `dotnet run -- extract`.
 
+### Script Task source extraction (plan §4.5, built post-slice-6)
+
+`ScriptTaskPayload` now captures the real script source, not just the task's declared
+surface. **Corrects a wrong assumption made when the synthetic-fixture pass above was
+built:** that pass constructed its Script Task via bare object-model property sets, which
+never writes a VSTA project into the saved XML at all, so this doc guessed the source must
+be "inside the embedded VSTA project binary" -- a guess never checked against a real one.
+Reading (read-only -- never edited, never committed by this tool) a genuine SSDT-authored
+Script Task that happened to be on disk showed the opposite: the source is plain text, one
+`<ProjectItem Name="..." Encoding="...">CDATA</ProjectItem>` sibling per VSTA project file
+(`ScriptMain.cs`/`.vb` -- the real entry point by VSTA convention -- plus the
+`.csproj`/`.vbproj`, `AssemblyInfo.*`, designer files). `<BinaryItem>` is a precompiled
+cache of that same code, not the only copy -- captured by name only
+(`ScriptTaskPayload.BinaryItemNames`), never by content.
+
+`ssisx report` now writes every `ProjectItem` to `scripts/<Package>/<Task>/<relative path>`
+(plan §6.1), honoring each item's own declared `Encoding` rather than always defaulting to
+UTF-8 (one internal item observed is `UTF16LE`). A new `script-source-stripped`
+(RewriteEffort/Error) finding fires for the one case plan §4.5 asks to be flagged loudly --
+a `<ScriptProject>` with a `<BinaryItem>` but no `<ProjectItem>` at all, i.e. the source is
+genuinely gone -- not yet observed on any real package, verified instead with a direct unit
+test constructing that XML shape by hand. Full detail in `docs/report-schema.md`'s own
+"Script Task source extraction" section.
+
 See `docs/spec-schema.md` for the `extract`/`graph` JSON contract, and
 `docs/report-schema.md` for `report` + `diff` output (rule catalog, scoring, SQL/expression
 analysis, manifest format).
@@ -245,11 +270,15 @@ catalog access ever appears, plan §5/§6 has both designs ready.
 
 Still genuinely not built:
 
-- **Script Task/Component source extraction** (plan §4.5) -- writing out each `ProjectItem`'s
-  `.cs`/`.vb`. `ScriptTaskPayload` now captures the task's declared surface (language,
-  read-only/read-write variables -- see the synthetic fixture above), but the actual script
-  source lives inside the embedded VSTA project binary, which this reader does not unpack;
-  the `script-task-present` finding fires, but the source itself isn't extracted.
+- **Script Component source extraction** (plan §4.5's other half) -- Script *Task* source
+  extraction is now built (see "Script Task source extraction" below); a Script
+  *Component* (a pipeline transform, not a control-flow task) would need the same
+  `ProjectItem`/`BinaryItem` treatment plus input/output column usage, but no PoC or
+  synthetic package uses one yet, so `PipelineComponentSpec` has no bespoke payload for it.
+- **Understanding what a Script Task's code does** -- no C#/VB parsing, no detection of
+  which APIs it calls beyond the already-captured `ReadOnlyVariables`/`ReadWriteVariables`
+  declared surface. The source is extracted verbatim, not analyzed; plan's own words:
+  "Script Tasks are extracted, not understood."
 - **Type/length-narrowing detection** along a lineage chain (plan §5.1) -- a truncation risk
   the package tolerates today; the core edge/constant/unused lineage analysis is done.
 - **`--password`** on `extract` is accepted but a no-op (the encrypted-package object-model

@@ -601,7 +601,7 @@ error, 3 still-running (`--status` without `--wait` only). In `SSIS.sln`
 mapped to `Release|Any CPU` (trap 6 — any real platform label makes devenv
 silently skip it); `dotnet build` on the csproj alone works too.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle both added 2026-08-14)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task source extraction added 2026-08-17)
 
 A separate tool (`ssisx`), planned in `Phase0-Extractor-Plan.md` (also see
 `Migration-Validation-Plan.md` and `PoC-Architecture-Overview.md` for the
@@ -860,6 +860,51 @@ extractor's own code by stashing just those two files and re-running (62/62
 of the extractor's *own* changes pass clean against the last-committed PoC
 state). Not touched, not fixed — this is someone else's in-progress edit to
 resolve, not an extractor bug.
+
+**2026-08-17 — Script Task source extraction (plan §4.5), built; corrects a
+wrong guess from the 2026-08-14 note above.** That note assumed the real
+script source "lives inside the embedded VSTA project binary" — a guess,
+never checked against a real SSDT-authored Script Task, because the
+synthetic fixture built that same day only ever set object-model
+properties directly and never went through SSDT's own Script Task editor,
+so it never got a real VSTA project written into it at all. Reading (read-
+only — never edited, never committed by this tool) the in-progress
+`SSIS/ScriptTest.dtsx` mentioned in the note right above this one — a real
+SSDT-authored Script Task that happened to already be on disk — showed the
+opposite is true: the actual source is plain text, one `<ProjectItem
+Name="..." Encoding="...">CDATA</ProjectItem>` sibling per VSTA project
+file (`ScriptMain.cs`/`.vb` — the real entry point by VSTA convention —
+plus the `.csproj`/`.vbproj`, `AssemblyInfo.*`, and designer files).
+`<BinaryItem Name="....dll">base64</BinaryItem>` is a precompiled *cache*
+of that same code, not the only copy of it.
+
+Before this fix, both element types were silently invisible to the reader
+**and** to the coverage percentage, the exact same shape as the
+ForEachLoop/pipeline-output-property bugs the 2026-08-14 synthetic pass
+found — `DtsxPackageReader.ReadExecutable`'s own comment claimed a Script
+Task's `ObjectData` was "fully modeled" and so never counted anything
+under it as unmapped, which was only true of the four attributes on
+`<ScriptProject>` itself, never of its `<ProjectItem>`/`<BinaryItem>`
+children. Neither PoC package has a Script Task, so this was invisible to
+every golden-file test run against them the whole time slices 4-6 were
+being built and verified.
+
+**What's built:** `ScriptTaskPayload.ProjectItems`/`BinaryItemNames`/
+`SourceStripped`; `DtsxPackageReader.ReadScriptTask` now reads both element
+types; a new `script-source-stripped` (RewriteEffort/Error) finding for
+the case plan §4.5 calls out to flag loudly — a `<ScriptProject>` with a
+`<BinaryItem>` but no `<ProjectItem>` at all; and `ssisx report`'s
+`scripts/<Package>/<Task>/<relative path>` output (plan §6.1), writing
+each `ProjectItem` back out with its own declared `Encoding` (`UTF8` on
+every item observed except one internal `UTF16LE` descriptor) rather than
+always defaulting to UTF-8. `SourceStripped` has not been observed on any
+real package yet — SSDT's default behavior keeps source alongside the
+binary cache — so that path is verified by a direct unit test constructing
+the XML shape by hand, not a real fixture. Full detail (including the
+`SyntheticForEachScript.dtsx` fixture's `ScriptProject` element, extended
+with a small `ProjectItem`/`BinaryItem` pair to cover the source-present
+path) in `Tools/SsisExtractor/docs/report-schema.md`'s own "Script Task
+source extraction" section.
 
 ## Traps already hit once — don't re-derive these
 

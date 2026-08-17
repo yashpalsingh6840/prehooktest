@@ -70,6 +70,52 @@ public class SyntheticFixtureTests
     }
 
     [Fact]
+    public void ScriptTask_SourceExtractedFromProjectItem_NotFromCompiledBinary()
+    {
+        // Ground truth this fixture's <ScriptProject> was extended with (see the .dtsx
+        // itself): a real SSDT-authored Script Task stores its actual source as plain CDATA
+        // text in <ProjectItem>, and only a precompiled cache in <BinaryItem> -- confirmed
+        // against a real .dtsx built by SSDT's own Script Task editor, not guessed.
+        var package = DtsxPackageReader.Read(ForEachScriptPath, noRedact: false);
+        var loop = Assert.Single(package.Executables);
+        var scriptTask = Assert.Single(loop.Children);
+
+        Assert.False(scriptTask.ScriptTask!.SourceStripped);
+        var item = Assert.Single(scriptTask.ScriptTask.ProjectItems);
+        Assert.Equal("ScriptMain.vb", item.Name);
+        Assert.Equal("UTF8", item.Encoding);
+        Assert.Contains("Public Class ScriptMain", item.Content);
+
+        var binaryName = Assert.Single(scriptTask.ScriptTask.BinaryItemNames);
+        Assert.Equal("ST_d94303efd87041348059ee651fec5022.dll", binaryName);
+    }
+
+    [Fact]
+    public void ScriptTask_ReadScriptTask_DetectsSourceStrippedFromObjectDataDirectly()
+    {
+        // Direct unit test rather than a third .dtsx fixture: constructs the one XML shape
+        // plan §4.5 asks to be flagged loudly -- a <ScriptProject> whose source was stripped,
+        // leaving only the compiled <BinaryItem> cache -- and calls the reader directly via
+        // InternalsVisibleTo, the same pattern DagAlgorithmTests uses for BuildDag. Not
+        // observed on any real package yet (see ScriptTaskPayload.SourceStripped's own doc
+        // comment), so there is no real .dtsx evidence to build a full fixture from.
+        // RulesEngineTests covers the resulting "script-source-stripped" finding.
+        var objectData = System.Xml.Linq.XElement.Parse("""
+            <ObjectData>
+              <ScriptProject Name="ST_stripped" VSTAMajorVersion="17" VSTAMinorVersion="0" Language="CSharp">
+                <BinaryItem Name="ST_stripped.dll">AAAA</BinaryItem>
+              </ScriptProject>
+            </ObjectData>
+            """);
+
+        var payload = DtsxPackageReader.ReadScriptTask(objectData);
+
+        Assert.True(payload.SourceStripped);
+        Assert.Empty(payload.ProjectItems);
+        Assert.Equal(["ST_stripped.dll"], payload.BinaryItemNames);
+    }
+
+    [Fact]
     public void ScriptTask_And_ForEachLoop_TriggerTheirRewriteEffortRules()
     {
         var package = DtsxPackageReader.Read(ForEachScriptPath, noRedact: false);

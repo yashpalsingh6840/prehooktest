@@ -79,7 +79,18 @@
               VSTAMajorVersion="17"
               VSTAMinorVersion="0"
               Language="VisualBasic"
-              ReadOnlyVariables="User::CurrentFile" />
+              ReadOnlyVariables="User::CurrentFile">
+              <ProjectItem
+                Name="ScriptMain.vb"
+                Encoding="UTF8"><![CDATA[Public Class ScriptMain
+    Public Sub Main()
+        Dts.Events.FireInformation(0, "SCR_LogFile", "Current file: " & Dts.Variables("User::CurrentFile").Value.ToString(), "", 0, True)
+        Dts.TaskResult = ScriptResults.Success
+    End Sub
+End Class]]></ProjectItem>
+              <BinaryItem
+                Name="ST_d94303efd87041348059ee651fec5022.dll">TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</BinaryItem>
+            </ScriptProject>
           </DTS:ObjectData>
         </DTS:Executable>
       </DTS:Executables>
