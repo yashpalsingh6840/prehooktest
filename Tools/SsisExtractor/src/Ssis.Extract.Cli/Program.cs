@@ -18,6 +18,7 @@ internal static class Program
             "extract" => ExtractCommand.Run(rest),
             "graph" => GraphCommand.Run(rest),
             "report" => ReportCommand.Run(rest),
+            "conformance" => ConformanceCommand.Run(rest),
             "diff" => DiffCommand.Run(rest),
             "pull" or "enrich" =>
                 Fail($"'{command}' needs SSISDB catalog access, which this engagement does not have (Phase0-Extractor-Plan.md §11 decision 4) -- use 'ssisx diff' against a deployed .ispac instead for drift detection."),
@@ -74,6 +75,19 @@ internal static class Program
             graph/portfolio.mmd + dependencies.json, unmapped.md, and portfolio.md --
             the "here is what you own" report (plan §5.2-§5.8).
 
+              ssisx conformance --input <dir|file.dtsx|file.dtproj> --out <dir>
+                                 [--claims <dir>] [--recursive] [--check]
+
+            conformance options: gate 1 of Migration-Validation-Plan.md -- generates the
+            obligations a rewrite must satisfy (control flow, ordering, data flow, source
+            columns, target columns/schema, transformations, SQL, load semantics, script
+            code) and reports how many are accounted for. Writes conformance/<Package>.
+            rules.json, conformance-rules.csv, conformance-report.json/.md, plus an
+            all-Pending claims stub per package under --claims (default:
+            <out>/conformance/claims). Claim files are HAND-MAINTAINED and never
+            overwritten -- edit them as the rewrite progresses. --check exits 1 unless
+            every obligation is Implemented or explained-NotApplicable, for CI gating.
+
               ssisx diff --left <file.dtsx|file.ispac> --right <file.dtsx|file.ispac>
                           [--package <name>] [--out <report.md>]
 
@@ -83,8 +97,9 @@ internal static class Program
             the report goes to stdout. Exits 1 when any difference is found, so it works
             as a CI drift gate.
 
-            Exit codes: 0 success, 1 diff found (diff only), 2 usage/extraction error,
-            3 a package's coverage was below --fail-under (extract only).
+            Exit codes: 0 success, 1 diff found (diff) / gate 1 failed (conformance
+            --check), 2 usage/extraction error, 3 a package's coverage was below
+            --fail-under (extract only).
 
             Not implemented -- need SSISDB catalog access this engagement does not have
             (plan §11 decision 4); use 'diff' against a deployed .ispac instead:

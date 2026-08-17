@@ -601,7 +601,7 @@ error, 3 still-running (`--status` without `--wait` only). In `SSIS.sln`
 mapped to `Release|Any CPU` (trap 6 — any real platform label makes devenv
 silently skip it); `dotnet build` on the csproj alone works too.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — added 2026-08-17)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17)
 
 A separate tool (`ssisx`), planned in `Phase0-Extractor-Plan.md` (also see
 `Migration-Validation-Plan.md` and `PoC-Architecture-Overview.md` for the
@@ -958,6 +958,62 @@ resolves them by `lineageId` straight back to the OLE DB Source, skipping
 the Script Component's own output entirely, same as documented. Full
 detail in `Tools/SsisExtractor/docs/report-schema.md`'s own "Script
 Component source extraction" section.
+
+**2026-08-17 (same day) — `ssisx conformance`: migration-validation gate 1,
+and the first thing that CONSUMES the extractor's output rather than adding
+to it.** Up to this point every command described the old package; nothing
+turned that description into work the rewrite is measured against, which
+meant the whole "generate the gates instead of hand-writing 50 test suites"
+payoff in `Migration-Validation-Plan.md` was still theoretical. This closes
+that gap for gate 1 (§3 of that plan). Gates 2–5 remain unbuilt.
+
+Ten rule categories, one per bullet of that plan's §3 — `ControlFlow`,
+`Ordering`, `DataFlow`, `SourceColumn`, `TargetColumn`, `TargetSchema`,
+`Transformation`, `SqlStatement`, `LoadSemantics`, `ScriptCode` — each rule
+carrying both a `Requirement` (phrased as an obligation) and `Evidence` (the
+concrete fact: the declared column type, the fast-load commit size, the
+friendly expression text). Measured on this PoC: **31 obligations for
+`LoadEmployees`, 49 for `LoadReferenceData`**, both correctly 0% accounted
+for since no replacement exists. Full detail in
+`Tools/SsisExtractor/docs/conformance-schema.md`.
+
+**Three design points that are load-bearing — don't "simplify" these away:**
+- **Rules and claims are separate files with different lifecycles, and
+  `ssisx` NEVER overwrites a claim file.** Rules are regenerated from the
+  `.dtsx` every run and are disposable; claims are human work product
+  accumulated across a migration (which decisions were made and why). A stub
+  is written only when none exists. Losing that property would mean
+  regenerating rules after a package edit silently discards the audit trail
+  behind a go-live decision.
+- **Rule ids must stay stable, and that's correctness, not tidiness.** Claim
+  files are keyed by id, so an id that changed when someone nudged a package
+  in the designer would orphan every claim against it. Ids derive only from
+  meaning-bearing identifiers (refIds, object/column names) — never document
+  order, GUIDs, or counts — and are ordinal-sorted on emit;
+  `ConformanceTests.RuleIds_AreStableAcrossRepeatedBuilds` guards all three.
+- **An unexplained `NotApplicable` is rejected as invalid, not counted.**
+  Dropping an obligation is legitimate; dropping one with no written reason
+  is how a real requirement gets quietly deleted. Same reasoning rejects an
+  unrecognised status rather than charitably reading it as done, and reports
+  "no claim at all" separately from `Pending` (unclaimed usually means the
+  package changed and nobody re-reviewed — staler than known-outstanding
+  work).
+
+**Verified against a real package I didn't author**, not just the PoC's two:
+run against the in-progress `SSIS/ScriptTest.dtsx` (read-only, untouched) it
+correctly produced both Script Tasks' `ScriptCode` rules with real evidence
+(`language=CSharp; reads User::InputName; writes User::OutputMessage; 8
+source file(s) extracted`), the precedence constraint between them, and
+flagged both as `MachineVerifiable: false` — no tool can satisfy those, a
+human must read the source and port it (that plan's §13).
+
+**One reality-check worth recording**, since the first version of the test
+asserted otherwise from an assumption: `LoadReferenceData` truncates both
+its tables from a **single batched Execute SQL Task**
+(`TRUNCATE ...Department; TRUNCATE ...Designation;`), not two tasks. So it
+yields **one** `SqlStatement` rule whose evidence holds both statements —
+rules are per *task* (the addressable unit the SQL harvest already writes to
+`sql/`), not per statement.
 
 ## Traps already hit once — don't re-derive these
 

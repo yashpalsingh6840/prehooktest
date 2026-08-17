@@ -1,7 +1,8 @@
 # ssisx -- SSIS package extractor (phase 0)
 
 Status: **slice 5 of 6 complete, minus `pull`; slice 6's object-model oracle also done;
-Script Task AND Script Component source extraction (plan §4.5, both halves) also done**
+Script Task AND Script Component source extraction (plan §4.5, both halves) also done;
+`ssisx conformance` — gate 1 of the migration-validation plan — also done**
 (build plan: `../../Phase0-Extractor-Plan.md` §8). Slice 6 bundles two things: `enrich`
 (needs SSISDB catalog access this engagement does not have, plan §11 decision 4 -- **out
 of scope rather than pending**, same as slice 5's `pull`; `ssisx diff` against a deployed
@@ -155,6 +156,38 @@ genuinely gone -- not yet observed on any real package, verified instead with a 
 test constructing that XML shape by hand. Full detail in `docs/report-schema.md`'s own
 "Script Task source extraction" section.
 
+### Gate 1 — spec conformance (`ssisx conformance`)
+
+**The first output this tool produces that something else consumes rather than a human
+reads.** Everything above describes the old package; this turns the spec into the list of
+obligations a replacement must satisfy, and an exit code CI can gate on — gate 1 of
+`../../Migration-Validation-Plan.md` §3.
+
+```powershell
+ssisx conformance --input ..\..\SSIS --out out          # generate rules + claim stubs
+ssisx conformance --input ..\..\SSIS --out out --check   # exit 1 unless all accounted for
+```
+
+Ten rule categories (control flow, ordering, data flow, source/target columns, target
+schema, transformations, SQL, load semantics, script code), each carrying the concrete
+evidence behind it — the declared column type, the fast-load commit size, the friendly
+expression text — so the report is reviewable without opening the `.dtsx` beside it.
+Measured on this PoC: 31 obligations for `LoadEmployees`, 49 for `LoadReferenceData`.
+
+Two design points that are load-bearing rather than incidental:
+
+- **Claim files are hand-maintained and never overwritten.** Rules are regenerated from
+  the `.dtsx` every run and are disposable; the claims recorded against them are the
+  migration's audit trail. A stub is written only when none exists.
+- **Rule ids must stay stable**, because claim files are keyed by them — so ids derive only
+  from meaning-bearing identifiers (refIds, object/column names), never document order or
+  GUIDs, and a test guards it.
+
+Gate 1 proves nothing is *missing*; it does not prove anything is *correct* (that's gates
+2 and 4). `ScriptCode` rules are explicitly flagged as un-verifiable by any tool and
+reported separately, so a green percentage is never mistaken for a working rewrite. Full
+detail in `docs/conformance-schema.md`.
+
 ### Script Component source extraction (plan §4.5's other half, built same day)
 
 Script Component -- the Data Flow pipeline-transform sibling of Script Task -- turned out
@@ -184,9 +217,10 @@ component type), and the new `script-component-present` finding + `ComplexitySta
 ScriptComponentCount` are in `docs/report-schema.md`'s own "Script Component source
 extraction" section.
 
-See `docs/spec-schema.md` for the `extract`/`graph` JSON contract, and
+See `docs/spec-schema.md` for the `extract`/`graph` JSON contract,
 `docs/report-schema.md` for `report` + `diff` output (rule catalog, scoring, SQL/expression
-analysis, manifest format).
+analysis, manifest format), and `docs/conformance-schema.md` for `conformance` (rule
+categories, claim statuses, the rules/claims split).
 
 ## Build
 
@@ -216,6 +250,12 @@ not `.sln` -- same `dotnet build`/`dotnet test` commands work on either.)
 # inventory + findings + non-determinism manifest + SQL/expression harvest + dependency
 # graph + portfolio report -- also doesn't need a prior 'extract' run (docs/report-schema.md)
 .\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe report --input ..\..\SSIS --out out
+
+# gate 1: what the rewrite owes, + progress against hand-maintained claim files.
+# First run writes an all-Pending claims stub per package; later runs read it back.
+# --check exits 1 unless every obligation is accounted for (docs/conformance-schema.md)
+.\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe conformance --input ..\..\SSIS --out out
+.\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe conformance --input ..\..\SSIS --out out --check
 
 # an .ispac works as --input anywhere a .dtsx/.dtproj does (it's just a zip)
 .\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe extract --input ..\..\SSIS\bin\Development\SSIS.ispac --out out-deployed

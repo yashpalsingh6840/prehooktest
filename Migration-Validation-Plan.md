@@ -110,6 +110,12 @@ your evidence for the go-live decision.
 
 ## 3. Gate 1 — spec conformance (generated from the extractor)
 
+> **Built.** `ssisx conformance` implements this gate — it generates the obligations
+> below as `ConformanceRuleSpec` rules, joins them against hand-maintained claim files,
+> and exits non-zero under `--check` unless every obligation is accounted for. See
+> `Tools/SsisExtractor/docs/conformance-schema.md`. Measured on this PoC: 31 obligations
+> for `LoadEmployees`, 49 for `LoadReferenceData`. Gates 2–5 remain unbuilt.
+
 The extractor's `spec.json` is a machine-readable list of everything the old
 package does. Turn each into an assertion the new implementation must satisfy:
 
@@ -132,6 +138,21 @@ shows up three weeks into parallel run. Cheap to catch here.
 
 **Output:** a per-package conformance report — *N rules in spec, M implemented,
 K unaccounted for* — that is a genuine, defensible progress metric.
+
+**Two things the implementation added that this section didn't anticipate**, both
+learned from making the metric actually trustworthy:
+
+- **A `NotApplicable` claim requires a written reason, or it is rejected.** Dropping an
+  obligation is a legitimate decision, but an *unexplained* one is precisely how a real
+  requirement gets quietly deleted — and it would otherwise count toward the same
+  "accounted for" number as real work. Likewise an unrecognised status fails loudly
+  rather than being charitably read as done.
+- **"No claim at all" is counted separately from "Pending".** Both mean not-done, but
+  unclaimed usually means the rules were regenerated after someone edited the package
+  and nobody reviewed the new obligations — a staler and more dangerous state than work
+  that is known to be outstanding. Same reason orphaned claims (naming a rule that no
+  longer exists) are reported rather than dropped: the obligation may have moved, not
+  vanished.
 
 ---
 
