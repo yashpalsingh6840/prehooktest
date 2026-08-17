@@ -84,13 +84,17 @@ direct children) and a derived `Dag`:
   unit test (`tests/Ssis.Extract.Tests/DagAlgorithmTests.cs`), not a golden file.
 - `Dag.HasCycle` -- SSIS's designer won't author one, but a hand-edited file could; reported rather than looping forever.
 
-Exactly one of `ExecutableSpec.ExecuteSqlTask` / `.DataFlowTask` / `.UnmappedTask` is
-populated, by `ExecutableType`:
+At most one of `ExecutableSpec.ExecuteSqlTask` / `.DataFlowTask` / `.UnmappedTask` /
+`.ScriptTask` is populated, by `ExecutableType`. `.ForEachLoop` is the one exception that
+can be populated *alongside* a real container (`Children`/`PrecedenceConstraints`/`Dag`) --
+see its own row below for why:
 
 | ExecutableType | Payload | Notes |
 |---|---|---|
 | `Microsoft.ExecuteSQLTask` | `ExecuteSqlTask` | Full SQL text (`SqlStatementSource`), connection resolved by name via the task's DTSID reference against the package's own connection managers. `ParameterBindings`/`ResultBindings` are best-effort -- neither PoC package's task uses them. |
 | `Microsoft.Pipeline` | `DataFlowTask` | Full pipeline model (`Pipeline`) plus derived column lineage (`Lineage`) -- see the next section. |
+| `Microsoft.ScriptTask` | `ScriptTask` | Language, project name, VSTA version, `ReadOnlyVariables`/`ReadWriteVariables` -- confirmed via a synthetic object-model-built fixture (docs/report-schema.md), no client evidence yet. No entry-point field: confirmed the saved `.dtsx` carries none for a VSTA-hosted Script Task (the only kind SSIS 17 creates); the real script source/entry point lives inside the embedded VSTA project binary, unread by this tool. |
+| `STOCK:FOREACHLOOP` | `ForEachLoop` (in addition to being a real container) | Enumerator config + variable mappings -- these live in `<ForEachEnumerator>`/`<ForEachVariableMappings>`, siblings of `<Executables>`, not inside `<ObjectData>` (this executable type doesn't have one). Before this payload existed those two elements were invisible to both the model and the coverage percentage -- see report-schema.md for the fix. Bespoke parsing covers the File enumerator only; any other enumerator type gets `EnumeratorCreationName` plus a raw XML fallback, same honesty pattern as `UnmappedTask`. |
 | anything else | `UnmappedTask` | Plan's mandatory "anything else" row -- raw `DTS:ObjectData` XML, so an unanticipated task type on a client's 50 packages is loud, not silently skipped. |
 
 Event handlers (`EventHandlers` on the package and on any `ExecutableSpec`) are wired with
@@ -106,14 +110,29 @@ connection manager names), `Inputs`/`Outputs` and their columns (including each 
 own `Properties`), and `Paths`. This generic layer is populated identically for *any*
 `componentClassID`, recognized or not -- an unfamiliar/third-party component on a client
 package still gets its properties/columns captured completely, just without the bespoke
-semantic payload below. On top of it, `PipelineComponentSpec.FlatFileSource`/
-`.OleDbDestination` add component-specific extraction (plan §4.7's per-component table) for
-the two types this PoC has real evidence for -- `ConnectionName`, the target
-table/`SqlCommand`, fast-load options, and a derived `ColumnMappings` list (component
-column ↔ external file/table column, built from `externalMetadataColumnId` cross-
-references, not a separate section in the source XML). Derived Column needed no dedicated
-payload type: every output column already carries promoted `Expression`/`FriendlyExpression`
-fields (pulled from its own `Properties`) regardless of component type.
+semantic payload below. `PipelineInputSpec`/`PipelineOutputSpec` also carry their own
+`Properties` (distinct from any individual column's) -- added after discovering Conditional
+Split puts a whole case's `Expression`/`FriendlyExpression`/`EvaluationOrder` at the output
+level, not on a column; before that field existed an output-level `<properties>` block was
+invisible to the generic model entirely (see report-schema.md).
+
+On top of the generic layer, `PipelineComponentSpec.FlatFileSource`/`.OleDbDestination`/
+`.OleDbSource`/`.Lookup`/`.ConditionalSplit` add component-specific extraction (plan §4.7's
+per-component table) for the five types this project has real evidence for -- two from the
+PoC's own packages, three from synthetic object-model-built fixtures (report-schema.md;
+`Lookup`/`ConditionalSplit` still have no client-package evidence). `FlatFileSource`/
+`OleDbDestination`/`OleDbSource` share the same shape: `ConnectionName`, the source/target
+table or `SqlCommand`, and a derived `ColumnMappings` list (component column ↔ external
+file/table column, built from `externalMetadataColumnId` cross-references, not a separate
+section in the source XML). `Lookup` adds `MatchOutputName`/`NoMatchOutputName` (SSIS's own
+fixed names for this component, not user-renamed) and a best-effort `ReferenceColumns` list
+parsed out of the component's own `ReferenceMetadataXml` custom property -- an internal,
+undocumented format, not the standard `externalMetadataColumns` mechanism the other three
+use (confirmed empty on this fixture even with a join key set). `ConditionalSplit` promotes
+each non-default/non-error output's own properties into a `Cases` list, ordered by
+`EvaluationOrder`. Derived Column needed no dedicated payload type: every output column
+already carries promoted `Expression`/`FriendlyExpression` fields (pulled from its own
+`Properties`) regardless of component type.
 
 `ExecutableSpec.DataFlowTask.Lineage` (`LineageSpec`, plan §5.1) is *derived*, not parsed --
 built by `Ssis.Extract.Dtsx.LineageBuilder` from the `PipelineSpec` above, offline from any

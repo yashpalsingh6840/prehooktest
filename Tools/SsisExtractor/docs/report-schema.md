@@ -235,3 +235,86 @@ populated `UnmappedTask` (an unrecognized `ExecutableType`, not caught by `Unmap
 that field is package-level free text, not walked recursively). As of slice 3, both PoC
 packages are at 100% coverage, so `LoadReferenceData`'s section reads "Nothing unmapped."
 and `LoadEmployees`' only entry is the permanently-excluded `Package/DesignTimeProperties`.
+
+## Synthetic component-coverage fixtures (added post-slice-5, no client packages yet)
+
+Plan §8's own risk note: "the estimate's real risk is component coverage, not code
+volume" -- both PoC packages only ever exercise four component/task types (Flat File
+Source, Derived Column, OLE DB Destination, Execute SQL). With no client packages
+available yet (plan §11 decision 2, still unresolved), two small synthetic `.dtsx` files
+were built to attack that risk directly, covering the specific gap components plan §8
+calls out: Lookup, Conditional Split, a ForEach Loop Container, and a Script Task. They
+live at `tests/Ssis.Extract.Tests/Fixtures/` (not under the PoC's own `SSIS/` folder --
+they aren't part of the PoC's deliverable), with a `synthetic-fixture-tables.sql` script
+to (re)create the two tiny staging tables `SyntheticLookupSplit.dtsx` reads/writes on
+`.\SQLFORPOC`.
+
+**Built via the real SSIS 17 object model, not hand-written XML** -- CLAUDE.md trap 12's
+"ask the runtime, don't guess the XML/API" discipline, extended from single-property
+probing to whole-package construction: `Application`/`Package`/`MainPipe`/
+`IDTSDesigntimeComponent100` calls (same GAC assemblies this PoC already uses for local
+execution), `SaveToXML`, then the *saved XML itself* read back as ground truth rather than
+assumed from memory or documentation. Every componentClassID, custom property name, and
+fixed output name named in the model below was confirmed this way, not guessed:
+
+| Fixture | Contents | What it's real evidence for |
+|---|---|---|
+| `SyntheticForEachScript.dtsx` | ForEach File Enumerator (`STOCK:FOREACHLOOP` / `Microsoft.ForEachFileEnumerator`) wrapping a Script Task (`Microsoft.ScriptTask`) | `ForEachLoopPayload`, `ScriptTaskPayload` |
+| `SyntheticLookupSplit.dtsx` | OLE DB Source → Lookup → Conditional Split → 3 OLE DB Destinations (match/no-match/business-rule branches -- the Lookup+Conditional Split combination that underlies most hand-rolled SCD Type-1 upserts, not the deprecated SCD wizard component itself) | `OleDbSourcePayload`, `LookupPayload`, `ConditionalSplitPayload` |
+
+**A real, pre-existing coverage-accuracy bug was found and fixed along the way, not just
+new payload types added.** Two elements were silently invisible to *both* the model and
+the coverage percentage before this pass:
+- A ForEach Loop's `<ForEachEnumerator>`/`<ForEachVariableMappings>` -- these are sibling
+  elements next to `<Executables>`, not inside `<ObjectData>` the way every task's payload
+  is, so `DtsxPackageReader.ReadExecutable`'s `ObjectData`-gated branch never even looked
+  at them. Neither counted as unmapped nor modeled -- a silent overstatement of coverage
+  for any package containing this extremely common container.
+- A pipeline component's output-level `<properties>` -- Conditional Split puts its whole
+  case expression (`Expression`/`FriendlyExpression`/`EvaluationOrder`, plus
+  `IsDefaultOut` on the default case) at the *output* level, not on an output column the
+  way Derived Column does. `PipelineOutputSpec`/`PipelineInputSpec` had no `Properties`
+  field at all before this pass, and `DtsxPackageReader`'s "everything under `<pipeline>`
+  is modeled generically, don't count it as unmapped" assumption meant this was invisible
+  rather than flagged.
+
+Both fixtures now extract at genuinely-earned 100% coverage (verified, not assumed --
+`SyntheticFixtureTests.cs`), and a third bug was caught the same way: `RulesEngine`'s
+`unused-variable` rule wrongly flagged the ForEach Loop's own iteration variable
+(`User::CurrentFile`) as unused, because its text-collection pass didn't know
+`ForEachLoopPayload.VariableMappings` or `ScriptTaskPayload.ReadOnlyVariables`/
+`ReadWriteVariables` count as real usage -- fixed in the same pass, with a regression
+test guarding it (`UnusedVariableRule_DoesNotFlagAForEachLoopsOwnIterationVariable`).
+
+**What's evidenced versus best-effort, so the next reader doesn't have to re-derive it:**
+- `LookupPayload.MatchOutputName`/`NoMatchOutputName` are SSIS's own fixed names for this
+  component ("Lookup Match Output"/"Lookup No Match Output") -- confirmed from the
+  fixture's saved XML, and (unlike a Conditional Split case) not something a package
+  author typically renames.
+- `LookupPayload.ReferenceColumns` is a best-effort parse of the component's own
+  `ReferenceMetadataXml` custom property -- confirmed real and populated once a join key
+  is set, but it's an internal, undocumented nested-XML-in-a-string format, **not** the
+  standard `externalMetadataColumns` mechanism OLE DB Source/Destination use (that
+  collection stayed empty on this fixture even after the join key was set and the
+  component fully reinitialized -- checked directly, not assumed). Parsed defensively; a
+  future SSIS version changing this internal shape degrades to an empty list, not a crash.
+- `ScriptTaskPayload` deliberately has no `EntryPoint` field even though the object
+  model's own `TaskHost.Properties["EntryPoint"]` defaults to `"Main"` at design time --
+  confirmed that value is not persisted to the saved `.dtsx` for a VSTA-hosted Script Task
+  (the only kind SSIS 17 creates). The real entry point lives inside the embedded VSTA
+  project binary, which this reader does not unpack (plan's own "Script Task source
+  extraction" remains unbuilt, tracked separately in the README).
+- The Lookup fixture's join key (`CustomerID`) is genuinely marked as a used input column
+  in the live pipeline object (confirmed via `SetUsageType` + a second `ReinitializeMetaData`
+  round-trip, without which the reference query's own columns never resolve), but that
+  marking does **not** appear as an `<inputColumns>` entry in the saved XML -- a real,
+  checked object-model quirk of this component, not a gap in the reader.
+
+**Still not attempted:** wiring a Lookup's match output to add an actual new column from
+the reference table (e.g. `CustomerName`) end-to-end -- the modern hash-match Lookup's
+mechanism for this isn't exposed via a documented public API, and reverse-engineering it
+was judged not worth the time against the actual goal (proving the *reader* handles real
+Lookup/Conditional Split XML, which the fixture as built already demonstrates). A real
+client package with this exact pattern would still parse correctly today: the generic
+model captures whatever output columns and mappings exist regardless of how they got
+there, same as every other component.

@@ -304,6 +304,21 @@ public static class RulesEngine
                     }
                 }
             }
+
+            // A ForEach Loop's own variable mapping and a Script Task's declared
+            // ReadOnlyVariables/ReadWriteVariables are both real usages of a variable even
+            // though neither is an "expression" in the plan §5.5 sense -- added after the
+            // synthetic ForEach+Script fixture (docs/report-schema.md) surfaced this rule
+            // wrongly flagging the loop's own iteration variable as unused.
+            if (ex.ForEachLoop is not null)
+            {
+                texts.AddRange(ex.ForEachLoop.VariableMappings.Select(m => m.VariableName));
+            }
+            if (ex.ScriptTask is not null)
+            {
+                texts.AddRange(ex.ScriptTask.ReadOnlyVariables);
+                texts.AddRange(ex.ScriptTask.ReadWriteVariables);
+            }
         }
 
         return texts;

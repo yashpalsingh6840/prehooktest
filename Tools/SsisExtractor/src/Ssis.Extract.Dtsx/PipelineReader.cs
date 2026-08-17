@@ -68,6 +68,9 @@ internal static class PipelineReader
 
         FlatFileSourcePayload? flatFileSource = null;
         OleDbDestinationPayload? oleDbDestination = null;
+        OleDbSourcePayload? oleDbSource = null;
+        LookupPayload? lookup = null;
+        ConditionalSplitPayload? conditionalSplit = null;
 
         if (componentClassId == "Microsoft.FlatFileSource")
         {
@@ -101,6 +104,61 @@ internal static class PipelineReader
                     mainInput.ExternalMetadataColumns),
             };
         }
+        else if (componentClassId == "Microsoft.OLEDBSource")
+        {
+            var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            oleDbSource = new OleDbSourcePayload
+            {
+                ConnectionName = connectionName,
+                OpenRowset = NullIfEmpty(GetProperty(properties, "OpenRowset")),
+                SqlCommand = NullIfEmpty(GetProperty(properties, "SqlCommand")),
+                AccessMode = ParseInt(GetProperty(properties, "AccessMode")),
+                CommandTimeout = ParseInt(GetProperty(properties, "CommandTimeout")),
+                ColumnMappings = mainOutput is null ? [] : BuildColumnMappings(
+                    mainOutput.Columns.Select(c => (c.Name, c.ExternalMetadataColumnId)),
+                    mainOutput.ExternalMetadataColumns),
+            };
+        }
+        else if (componentClassId == "Microsoft.Lookup")
+        {
+            // SSIS's own fixed names for this component's two non-error outputs -- confirmed
+            // against the synthetic fixture's own saved XML, not user-renamed the way a
+            // Conditional Split case is (see ConditionalSplitPayload's doc comment for the
+            // contrast).
+            var matchOutput = outputs.FirstOrDefault(o => o.Name == "Lookup Match Output");
+            var noMatchOutput = outputs.FirstOrDefault(o => o.Name == "Lookup No Match Output");
+            lookup = new LookupPayload
+            {
+                ConnectionName = connectionName,
+                SqlCommand = NullIfEmpty(GetProperty(properties, "SqlCommand")),
+                NoMatchBehaviorRaw = ParseInt(GetProperty(properties, "NoMatchBehavior")),
+                CacheTypeRaw = ParseInt(GetProperty(properties, "CacheType")),
+                MatchOutputName = matchOutput?.Name,
+                NoMatchOutputName = noMatchOutput?.Name,
+                ReferenceColumns = ParseLookupReferenceColumns(GetProperty(properties, "ReferenceMetadataXml")),
+            };
+        }
+        else if (componentClassId == "Microsoft.ConditionalSplit")
+        {
+            var defaultOutput = outputs.FirstOrDefault(o =>
+                o.IsErrorOut != true && ParseBool(GetProperty(o.Properties, "IsDefaultOut")) == true);
+            var cases = outputs
+                .Where(o => o.IsErrorOut != true && o != defaultOutput)
+                .Select(o => new ConditionalSplitCaseSpec
+                {
+                    OutputName = o.Name,
+                    Expression = GetProperty(o.Properties, "Expression"),
+                    FriendlyExpression = GetProperty(o.Properties, "FriendlyExpression"),
+                    EvaluationOrder = ParseInt(GetProperty(o.Properties, "EvaluationOrder")),
+                })
+                .OrderBy(c => c.EvaluationOrder ?? int.MaxValue)
+                .ToList();
+            conditionalSplit = new ConditionalSplitPayload
+            {
+                DefaultOutputName = defaultOutput?.Name,
+                Cases = cases,
+            };
+        }
 
         return new PipelineComponentSpec
         {
@@ -119,7 +177,41 @@ internal static class PipelineReader
             Outputs = outputs,
             FlatFileSource = flatFileSource,
             OleDbDestination = oleDbDestination,
+            OleDbSource = oleDbSource,
+            Lookup = lookup,
+            ConditionalSplit = conditionalSplit,
         };
+    }
+
+    /// <summary>
+    /// Best-effort parse of a Lookup's <c>ReferenceMetadataXml</c> custom property -- an
+    /// internal, undocumented nested-XML-in-a-string format (see <see cref="LookupPayload"/>'s
+    /// doc comment). Returns an empty list on anything that doesn't parse as XML or doesn't
+    /// have the expected shape, rather than throwing -- this is exactly the kind of internal
+    /// format CLAUDE.md trap 12 warns isn't safe to assume stable across SSIS versions.
+    /// </summary>
+    private static List<LookupReferenceColumnSpec> ParseLookupReferenceColumns(string? referenceMetadataXml)
+    {
+        if (string.IsNullOrWhiteSpace(referenceMetadataXml)) return [];
+        try
+        {
+            var doc = XDocument.Parse(referenceMetadataXml);
+            return doc.Descendants("referenceColumn")
+                .Select(c => new LookupReferenceColumnSpec
+                {
+                    Name = c.Attr("name") ?? "",
+                    DataType = c.Attr("dataType"),
+                    Length = c.AttrInt("length"),
+                    Precision = c.AttrInt("precision"),
+                    Scale = c.AttrInt("scale"),
+                })
+                .Where(c => c.Name.Length > 0)
+                .ToList();
+        }
+        catch (System.Xml.XmlException)
+        {
+            return [];
+        }
     }
 
     private static PipelineInputSpec ReadInput(XElement inputEl) => new()
@@ -146,6 +238,7 @@ internal static class PipelineReader
             })
             .ToList(),
         ExternalMetadataColumns = ReadExternalMetadataColumns(inputEl.Element("externalMetadataColumns")),
+        Properties = ReadProperties(inputEl.Element("properties")),
     };
 
     private static PipelineOutputSpec ReadOutput(XElement outputEl) => new()
@@ -183,6 +276,7 @@ internal static class PipelineReader
             })
             .ToList(),
         ExternalMetadataColumns = ReadExternalMetadataColumns(outputEl.Element("externalMetadataColumns")),
+        Properties = ReadProperties(outputEl.Element("properties")),
     };
 
     private static List<PipelineExternalMetadataColumnSpec> ReadExternalMetadataColumns(XElement? container) =>

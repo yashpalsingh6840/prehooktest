@@ -564,6 +564,7 @@
           "Components": [
             {
               "ComponentClassId": "Microsoft.DerivedColumn",
+              "ConditionalSplit": null,
               "Connections": [],
               "ContactInfo": "Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0",
               "Description": "Creates new column values by applying expressions to transformation input columns. Create new columns or overwrite existing ones. For example, concatenate the values from the \u0027first name\u0027 and \u0027last name\u0027 column to make a \u0027full name\u0027 column.",
@@ -649,13 +650,16 @@
                   "ExternalMetadataColumns": [],
                   "HasSideEffects": null,
                   "Name": "Derived Column Input",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input]",
                   "TruncationRowDisposition": null
                 }
               ],
               "LocaleId": null,
+              "Lookup": null,
               "Name": "DER_MergeColumns",
               "OleDbDestination": null,
+              "OleDbSource": null,
               "Outputs": [
                 {
                   "Columns": [
@@ -790,6 +794,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": null,
                   "Name": "Derived Column Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Outputs[Derived Column Output]",
                   "SynchronousInputId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input]"
                 },
@@ -838,6 +843,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": true,
                   "Name": "Derived Column Error Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Outputs[Derived Column Error Output]",
                   "SynchronousInputId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input]"
                 }
@@ -850,6 +856,7 @@
             },
             {
               "ComponentClassId": "Microsoft.FlatFileSource",
+              "ConditionalSplit": null,
               "Connections": [
                 {
                   "ConnectionManagerName": "CM_EmployeesCsv",
@@ -910,8 +917,10 @@
               },
               "Inputs": [],
               "LocaleId": "1033",
+              "Lookup": null,
               "Name": "FF_SRC_Employees",
               "OleDbDestination": null,
+              "OleDbSource": null,
               "Outputs": [
                 {
                   "Columns": [
@@ -1243,6 +1252,7 @@
                   ],
                   "IsErrorOut": null,
                   "Name": "Flat File Source Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output]",
                   "SynchronousInputId": null
                 },
@@ -1309,6 +1319,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": true,
                   "Name": "Flat File Source Error Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Error Output]",
                   "SynchronousInputId": null
                 }
@@ -1334,6 +1345,7 @@
             },
             {
               "ComponentClassId": "Microsoft.OLEDBDestination",
+              "ConditionalSplit": null,
               "Connections": [
                 {
                   "ConnectionManagerName": "CM_TargetDb",
@@ -1524,11 +1536,13 @@
                   ],
                   "HasSideEffects": true,
                   "Name": "OLE DB Destination Input",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input]",
                   "TruncationRowDisposition": null
                 }
               ],
               "LocaleId": null,
+              "Lookup": null,
               "Name": "OLEDST_Employee",
               "OleDbDestination": {
                 "AccessMode": 3,
@@ -1583,6 +1597,7 @@
                 "OpenRowset": "[dbo].[Employee]",
                 "SqlCommand": null
               },
+              "OleDbSource": null,
               "Outputs": [
                 {
                   "Columns": [
@@ -1629,6 +1644,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": true,
                   "Name": "OLE DB Destination Error Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Outputs[OLE DB Destination Error Output]",
                   "SynchronousInputId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input]"
                 }
@@ -1733,6 +1749,7 @@
       "ExecuteSqlTask": null,
       "FailPackageOnFailure": null,
       "FailParentOnFailure": null,
+      "ForEachLoop": null,
       "ForcedExecutionValue": null,
       "IsolationLevel": null,
       "MaximumErrorCount": null,
@@ -1740,6 +1757,7 @@
       "PrecedenceConstraints": [],
       "PropertyExpressions": [],
       "RefId": "Package\\DFT_LoadEmployees",
+      "ScriptTask": null,
       "ThreadHint": null,
       "TransactionOption": null,
       "UnmappedTask": null,
@@ -1774,6 +1792,7 @@
       },
       "FailPackageOnFailure": null,
       "FailParentOnFailure": null,
+      "ForEachLoop": null,
       "ForcedExecutionValue": null,
       "IsolationLevel": null,
       "MaximumErrorCount": null,
@@ -1781,6 +1800,7 @@
       "PrecedenceConstraints": [],
       "PropertyExpressions": [],
       "RefId": "Package\\SQL_TruncateTarget",
+      "ScriptTask": null,
       "ThreadHint": "0",
       "TransactionOption": null,
       "UnmappedTask": null,

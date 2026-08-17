@@ -56,6 +56,12 @@ public sealed class PipelineComponentSpec
     // for the type-code tables) -- do not extrapolate from documentation alone.
     public FlatFileSourcePayload? FlatFileSource { get; init; }
     public OleDbDestinationPayload? OleDbDestination { get; init; }
+
+    // Added during the synthetic component-coverage pass (docs/report-schema.md) once real
+    // evidence existed for these three types too -- same "read a real example first" rule.
+    public OleDbSourcePayload? OleDbSource { get; init; }
+    public LookupPayload? Lookup { get; init; }
+    public ConditionalSplitPayload? ConditionalSplit { get; init; }
 }
 
 /// <summary>A component's reference to a connection manager. <see cref="ConnectionManagerRefRaw"/> is the pipeline's own reference shape (a refId path, e.g. "Package.ConnectionManagers[CM_EmployeesCsv]") -- notably NOT the DTSID-GUID form Execute SQL Task uses (see <c>ExecuteSqlTaskPayload.ConnectionRefRaw</c>'s doc comment); resolved the same way, by matching against <c>ConnectionManagerSpec.RefId</c> this time instead of <c>DtsId</c>.</summary>

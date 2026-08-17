@@ -199,6 +199,7 @@ public static partial class DtsxPackageReader
         ExecuteSqlTaskPayload? sqlPayload = null;
         DataFlowTaskPayload? dataFlowPayload = null;
         UnmappedTaskPayload? unmappedPayload = null;
+        ScriptTaskPayload? scriptTaskPayload = null;
 
         var objectData = exEl.Element(Dts + "ObjectData");
         if (objectData is not null)
@@ -220,12 +221,27 @@ public static partial class DtsxPackageReader
                 // doc comment). Confirmed by enumerating every distinct element name under
                 // <pipeline> in both PoC packages against what PipelineReader actually reads.
             }
+            else if (executableType == "Microsoft.ScriptTask")
+            {
+                scriptTaskPayload = ReadScriptTask(objectData);
+                // Not counted as unmapped: the ObjectData here is fully modeled (see
+                // ScriptTaskPayload's own doc comment for what's genuinely absent from this
+                // shape, as opposed to what we chose not to read).
+            }
             else
             {
                 coverage.Unmapped += objectData.DescendantsAndSelf().Count();
                 unmappedPayload = new UnmappedTaskPayload { RawObjectDataXml = objectData.ToString(SaveOptions.DisableFormatting) };
             }
         }
+
+        // A ForEach Loop's enumerator config and variable mappings live in two sibling
+        // elements alongside <Executables>, not inside <ObjectData> (it doesn't have one) --
+        // see ForEachLoopPayload's own comment for why this was invisible to both the model
+        // AND the coverage accounting before this branch existed.
+        var forEachLoopPayload = executableType == "STOCK:FOREACHLOOP"
+            ? ReadForEachLoop(exEl, coverage)
+            : null;
 
         return new ExecutableSpec
         {
@@ -252,6 +268,74 @@ public static partial class DtsxPackageReader
             ExecuteSqlTask = sqlPayload,
             DataFlowTask = dataFlowPayload,
             UnmappedTask = unmappedPayload,
+            ScriptTask = scriptTaskPayload,
+            ForEachLoop = forEachLoopPayload,
+        };
+    }
+
+    private static ScriptTaskPayload ReadScriptTask(XElement objectData)
+    {
+        var el = objectData.Element("ScriptProject");
+        if (el is null) return new ScriptTaskPayload();
+
+        return new ScriptTaskPayload
+        {
+            Language = el.Attr("Language"),
+            ProjectName = el.Attr("Name"),
+            VstaMajorVersion = el.Attr("VSTAMajorVersion"),
+            VstaMinorVersion = el.Attr("VSTAMinorVersion"),
+            ReadOnlyVariables = SplitVariableList(el.Attr("ReadOnlyVariables")),
+            ReadWriteVariables = SplitVariableList(el.Attr("ReadWriteVariables")),
+        };
+    }
+
+    private static List<string> SplitVariableList(string? raw) =>
+        string.IsNullOrEmpty(raw) ? [] : raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    private static ForEachLoopPayload ReadForEachLoop(XElement exEl, CoverageAccumulator coverage)
+    {
+        var enumeratorEl = exEl.Element(Dts + "ForEachEnumerator");
+        var enumeratorCreationName = enumeratorEl?.Attr(Dts + "CreationName");
+        var enumeratorObjectData = enumeratorEl?.Element(Dts + "ObjectData");
+
+        ForEachFileEnumeratorSpec? fileEnumerator = null;
+        string? rawEnumeratorObjectDataXml = null;
+
+        if (enumeratorCreationName == "Microsoft.ForEachFileEnumerator")
+        {
+            var props = enumeratorObjectData?.Element("ForEachFileEnumeratorProperties");
+            string? Fefe(string name) => props?.Elements("FEFEProperty").FirstOrDefault(p => p.Attribute(name) is not null)?.Attr(name);
+            fileEnumerator = new ForEachFileEnumeratorSpec
+            {
+                Folder = Fefe("Folder"),
+                FileSpec = Fefe("FileSpec"),
+                FileNameRetrievalTypeRaw = int.TryParse(Fefe("FileNameRetrievalType"), out var frt) ? frt : null,
+                Recurse = Fefe("Recurse") switch { "1" => true, "0" => false, _ => null },
+            };
+        }
+        else if (enumeratorObjectData is not null)
+        {
+            // Not modeled -- an enumerator type this build slice has no real evidence for
+            // (Database/Item/Event/ADO/etc.). Captured verbatim, same honesty pattern as
+            // UnmappedTaskPayload, and counted as unmapped since it genuinely isn't.
+            coverage.Unmapped += enumeratorObjectData.DescendantsAndSelf().Count();
+            rawEnumeratorObjectDataXml = enumeratorObjectData.ToString(SaveOptions.DisableFormatting);
+        }
+
+        var variableMappings = (exEl.Element(Dts + "ForEachVariableMappings")?.Elements(Dts + "ForEachVariableMapping") ?? [])
+            .Select(m => new ForEachVariableMappingSpec
+            {
+                VariableName = m.Attr(Dts + "VariableName") ?? "",
+                ValueIndex = m.AttrInt(Dts + "ValueIndex"),
+            })
+            .ToList();
+
+        return new ForEachLoopPayload
+        {
+            EnumeratorCreationName = enumeratorCreationName,
+            FileEnumerator = fileEnumerator,
+            RawEnumeratorObjectDataXml = rawEnumeratorObjectDataXml,
+            VariableMappings = variableMappings,
         };
     }
 

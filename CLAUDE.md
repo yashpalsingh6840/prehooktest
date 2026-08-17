@@ -601,7 +601,7 @@ error, 3 still-running (`--status` without `--wait` only). In `SSIS.sln`
 mapped to `Release|Any CPU` (trap 6 — any real platform label makes devenv
 silently skip it); `dotnet build` on the csproj alone works too.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass added 2026-08-14)
 
 A separate tool (`ssisx`), planned in `Phase0-Extractor-Plan.md` (also see
 `Migration-Validation-Plan.md` and `PoC-Architecture-Overview.md` for the
@@ -759,16 +759,70 @@ Detail in `Tools/SsisExtractor/docs/report-schema.md`.
   bracket-normalized first (`[dbo].[Employee]` from a destination vs
   `dbo.Employee` from SQL text) or that comparison would silently miss.
 
-**Where this leaves the extractor:** slices 1–5 done, 54 tests green, both
-PoC packages at 100% extraction coverage. That number says the model handles
+**Where slice 5 left the extractor:** slices 1–5 done, 54 tests green, both
+PoC packages at 100% extraction coverage. That number said the model handles
 *these two packages*, **not** that it handles an unseen portfolio — plan §8's
 own risk note is that component/task-type coverage on real client packages,
 not code volume, is what actually tests this. Getting 3–5 representative real
-client packages (plan §11 decision 2) remains the single biggest accuracy
-lever and is the natural next step ahead of any further building. Still
-genuinely unbuilt: Script Task source extraction, type/length-narrowing
-detection, and the plan §7.3 object-model oracle — see the extractor's own
-README "Out of scope / not implemented" section.
+client packages (plan §11 decision 2) is still the single biggest accuracy
+lever and hasn't happened yet.
+
+**2026-08-14 — synthetic component-coverage pass, no client packages yet.**
+With decision 2 still unresolved, attacked plan §8's stated risk directly
+instead of waiting: built two small `.dtsx` fixtures via the real SSIS 17
+object model (same "ask the runtime, don't guess" discipline as trap 12,
+extended from single-property probing to whole-package construction —
+`Application`/`Package`/`MainPipe`/`IDTSDesigntimeComponent100` calls,
+`SaveToXML`, then the saved XML read back as ground truth) covering exactly
+the gap components plan §8 names: a ForEach Loop Container + Script Task
+(`SyntheticForEachScript.dtsx`), and an OLE DB Source → Lookup → Conditional
+Split → 3 OLE DB Destinations flow (`SyntheticLookupSplit.dtsx`, the
+Lookup+Conditional Split combination that underlies a hand-rolled SCD
+Type-1 upsert, not the deprecated SCD wizard component). Both fixtures now
+extract at 100% coverage; full detail (exact componentClassIDs/property
+names confirmed, what's object-model-verified vs. best-effort) is in
+`Tools/SsisExtractor/docs/report-schema.md`'s own "Synthetic
+component-coverage fixtures" section, not repeated here.
+
+**This pass earned its keep beyond just adding types — it found and fixed
+two real, pre-existing coverage-accuracy bugs and one rules false positive,
+none visible with only two straight-line PoC packages to test against:**
+- A ForEach Loop's `<ForEachEnumerator>`/`<ForEachVariableMappings>` are
+  siblings of `<Executables>`, not inside `<ObjectData>` — invisible to
+  both the model and the coverage percentage before this pass (never
+  counted unmapped, never modeled — a silent overstatement for any package
+  with this extremely common container).
+- A pipeline component's *output-level* `<properties>` (distinct from an
+  output column's own) had no field to land in at all — Conditional Split's
+  whole case expression lives there, not on a column the way Derived
+  Column's does. Same silent-overstatement shape as above.
+- `RulesEngine`'s `unused-variable` rule wrongly flagged a ForEach Loop's
+  own iteration variable as unused, because its best-effort text-collection
+  pass didn't know a `ForEachVariableMapping`/a Script Task's
+  `ReadOnlyVariables` count as real usage. Fixed with a regression test.
+
+Now 65 tests total (62 green as of this note — see below), both PoC
+packages still at genuine 100%, both synthetic fixtures too. Still
+genuinely unbuilt, unchanged by this pass: Script Task *source* extraction
+(the declared surface — language, read/write variables — is now captured;
+the actual script lives inside the embedded VSTA project binary, still
+unread), type/length-narrowing detection, and the plan §7.3 object-model
+oracle — see the extractor's own README "Out of scope / not implemented"
+section.
+
+**Unrelated, found while running this pass's tests, not caused by it:** as
+of 2026-08-17 this repo's working tree has independent, uncommitted changes
+to `SSIS/LoadReferenceData.dtsx` and `SSIS/SSIS.dtproj` (plus new untracked
+`SSIS/ScriptTest.dtsx` and `SSIS_V1.zip`) — looks like an in-progress SSDT
+session adding a Script Task package to the actual PoC project. Three of
+the extractor's 65 tests fail against that in-progress state (a golden-file
+mismatch on `LoadReferenceData`'s now-cached CSV connection-string values,
+`ProjectSpec`'s own golden file, and `IspacReaderTests` expecting 2 packages
+in the built `.ispac` where there are now 3) — confirmed unrelated to the
+extractor's own code by stashing just those two files and re-running (62/62
+of the extractor's *own* changes pass clean against the last-committed PoC
+state). Not touched, not fixed — this is someone else's in-progress edit to
+resolve, not an extractor bug.
 
 ## Traps already hit once — don't re-derive these
 

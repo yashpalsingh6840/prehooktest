@@ -316,6 +316,7 @@
       },
       "FailPackageOnFailure": null,
       "FailParentOnFailure": null,
+      "ForEachLoop": null,
       "ForcedExecutionValue": null,
       "IsolationLevel": null,
       "MaximumErrorCount": null,
@@ -323,6 +324,7 @@
       "PrecedenceConstraints": [],
       "PropertyExpressions": [],
       "RefId": "Package\\SQL_TruncateTargets",
+      "ScriptTask": null,
       "ThreadHint": "0",
       "TransactionOption": null,
       "UnmappedTask": null,
@@ -555,6 +557,7 @@
           "Components": [
             {
               "ComponentClassId": "Microsoft.FlatFileSource",
+              "ConditionalSplit": null,
               "Connections": [
                 {
                   "ConnectionManagerName": "CM_DepartmentCsv",
@@ -600,8 +603,10 @@
               },
               "Inputs": [],
               "LocaleId": "1033",
+              "Lookup": null,
               "Name": "FF_SRC_Department",
               "OleDbDestination": null,
+              "OleDbSource": null,
               "Outputs": [
                 {
                   "Columns": [
@@ -813,6 +818,7 @@
                   ],
                   "IsErrorOut": null,
                   "Name": "Flat File Source Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output]",
                   "SynchronousInputId": null
                 },
@@ -879,6 +885,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": true,
                   "Name": "Flat File Source Error Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output]",
                   "SynchronousInputId": null
                 }
@@ -904,6 +911,7 @@
             },
             {
               "ComponentClassId": "Microsoft.DerivedColumn",
+              "ConditionalSplit": null,
               "Connections": [],
               "ContactInfo": "Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0",
               "Description": "Creates new column values by applying expressions to transformation input columns.",
@@ -941,13 +949,16 @@
                   "ExternalMetadataColumns": [],
                   "HasSideEffects": null,
                   "Name": "Derived Column Input",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Inputs[Derived Column Input]",
                   "TruncationRowDisposition": null
                 }
               ],
               "LocaleId": null,
+              "Lookup": null,
               "Name": "DER_DepartmentKey",
               "OleDbDestination": null,
+              "OleDbSource": null,
               "Outputs": [
                 {
                   "Columns": [
@@ -1020,6 +1031,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": null,
                   "Name": "Derived Column Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output]",
                   "SynchronousInputId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Inputs[Derived Column Input]"
                 },
@@ -1068,6 +1080,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": true,
                   "Name": "Derived Column Error Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Error Output]",
                   "SynchronousInputId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Inputs[Derived Column Input]"
                 }
@@ -1080,6 +1093,7 @@
             },
             {
               "ComponentClassId": "Microsoft.OLEDBDestination",
+              "ConditionalSplit": null,
               "Connections": [
                 {
                   "ConnectionManagerName": "CM_TargetDb",
@@ -1249,11 +1263,13 @@
                   ],
                   "HasSideEffects": true,
                   "Name": "OLE DB Destination Input",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input]",
                   "TruncationRowDisposition": null
                 }
               ],
               "LocaleId": null,
+              "Lookup": null,
               "Name": "OLEDST_Department",
               "OleDbDestination": {
                 "AccessMode": 3,
@@ -1303,6 +1319,7 @@
                 "OpenRowset": "[dbo].[Department]",
                 "SqlCommand": null
               },
+              "OleDbSource": null,
               "Outputs": [
                 {
                   "Columns": [
@@ -1349,6 +1366,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": true,
                   "Name": "OLE DB Destination Error Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Outputs[OLE DB Destination Error Output]",
                   "SynchronousInputId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input]"
                 }
@@ -1453,6 +1471,7 @@
       "ExecuteSqlTask": null,
       "FailPackageOnFailure": null,
       "FailParentOnFailure": null,
+      "ForEachLoop": null,
       "ForcedExecutionValue": null,
       "IsolationLevel": null,
       "MaximumErrorCount": null,
@@ -1460,6 +1479,7 @@
       "PrecedenceConstraints": [],
       "PropertyExpressions": [],
       "RefId": "Package\\DFT_LoadDepartment",
+      "ScriptTask": null,
       "ThreadHint": null,
       "TransactionOption": null,
       "UnmappedTask": null,
@@ -1692,6 +1712,7 @@
           "Components": [
             {
               "ComponentClassId": "Microsoft.FlatFileSource",
+              "ConditionalSplit": null,
               "Connections": [
                 {
                   "ConnectionManagerName": "CM_DesignationCsv",
@@ -1737,8 +1758,10 @@
               },
               "Inputs": [],
               "LocaleId": "1033",
+              "Lookup": null,
               "Name": "FF_SRC_Designation",
               "OleDbDestination": null,
+              "OleDbSource": null,
               "Outputs": [
                 {
                   "Columns": [
@@ -1950,6 +1973,7 @@
                   ],
                   "IsErrorOut": null,
                   "Name": "Flat File Source Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output]",
                   "SynchronousInputId": null
                 },
@@ -2016,6 +2040,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": true,
                   "Name": "Flat File Source Error Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output]",
                   "SynchronousInputId": null
                 }
@@ -2041,6 +2066,7 @@
             },
             {
               "ComponentClassId": "Microsoft.DerivedColumn",
+              "ConditionalSplit": null,
               "Connections": [],
               "ContactInfo": "Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0",
               "Description": "Creates new column values by applying expressions to transformation input columns.",
@@ -2078,13 +2104,16 @@
                   "ExternalMetadataColumns": [],
                   "HasSideEffects": null,
                   "Name": "Derived Column Input",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Inputs[Derived Column Input]",
                   "TruncationRowDisposition": null
                 }
               ],
               "LocaleId": null,
+              "Lookup": null,
               "Name": "DER_DesignationKey",
               "OleDbDestination": null,
+              "OleDbSource": null,
               "Outputs": [
                 {
                   "Columns": [
@@ -2157,6 +2186,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": null,
                   "Name": "Derived Column Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output]",
                   "SynchronousInputId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Inputs[Derived Column Input]"
                 },
@@ -2205,6 +2235,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": true,
                   "Name": "Derived Column Error Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Error Output]",
                   "SynchronousInputId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Inputs[Derived Column Input]"
                 }
@@ -2217,6 +2248,7 @@
             },
             {
               "ComponentClassId": "Microsoft.OLEDBDestination",
+              "ConditionalSplit": null,
               "Connections": [
                 {
                   "ConnectionManagerName": "CM_TargetDb",
@@ -2386,11 +2418,13 @@
                   ],
                   "HasSideEffects": true,
                   "Name": "OLE DB Destination Input",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input]",
                   "TruncationRowDisposition": null
                 }
               ],
               "LocaleId": null,
+              "Lookup": null,
               "Name": "OLEDST_Designation",
               "OleDbDestination": {
                 "AccessMode": 3,
@@ -2440,6 +2474,7 @@
                 "OpenRowset": "[dbo].[Designation]",
                 "SqlCommand": null
               },
+              "OleDbSource": null,
               "Outputs": [
                 {
                   "Columns": [
@@ -2486,6 +2521,7 @@
                   "ExternalMetadataColumns": [],
                   "IsErrorOut": true,
                   "Name": "OLE DB Destination Error Output",
+                  "Properties": [],
                   "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Outputs[OLE DB Destination Error Output]",
                   "SynchronousInputId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input]"
                 }
@@ -2590,6 +2626,7 @@
       "ExecuteSqlTask": null,
       "FailPackageOnFailure": null,
       "FailParentOnFailure": null,
+      "ForEachLoop": null,
       "ForcedExecutionValue": null,
       "IsolationLevel": null,
       "MaximumErrorCount": null,
@@ -2597,6 +2634,7 @@
       "PrecedenceConstraints": [],
       "PropertyExpressions": [],
       "RefId": "Package\\DFT_LoadDesignation",
+      "ScriptTask": null,
       "ThreadHint": null,
       "TransactionOption": null,
       "UnmappedTask": null,

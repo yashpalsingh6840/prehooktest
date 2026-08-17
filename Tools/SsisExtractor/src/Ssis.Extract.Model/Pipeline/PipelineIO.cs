@@ -11,6 +11,9 @@ public sealed class PipelineInputSpec
     public bool? HasSideEffects { get; init; }
     public List<PipelineInputColumnSpec> Columns { get; init; } = [];
     public List<PipelineExternalMetadataColumnSpec> ExternalMetadataColumns { get; init; } = [];
+
+    /// <summary>Every &lt;property&gt; directly under this input's own &lt;properties&gt; (distinct from any individual input column's own properties). Added alongside <see cref="PipelineOutputSpec.Properties"/> -- see that field's doc comment for why this closes a real coverage gap rather than being speculative.</summary>
+    public List<PipelinePropertySpec> Properties { get; init; } = [];
 }
 
 /// <summary>One &lt;inputColumn&gt;. <see cref="LineageId"/> is the consuming end of the wire identifier -- it names which upstream output column's value this is, and is the join key <c>LineageBuilder</c> uses to resolve the producer (plan §5.1), independent of whether a &lt;path&gt; directly connects the two components (see <see cref="PipelinePathSpec"/>'s doc comment).</summary>
@@ -28,7 +31,7 @@ public sealed class PipelineInputColumnSpec
     public List<PipelinePropertySpec> Properties { get; init; } = [];
 }
 
-/// <summary>One &lt;output&gt;. <see cref="SynchronousInputId"/> present means this output shares its buffer with that input (a synchronous transform, e.g. Derived Column) -- absent means asynchronous (a blocking/semi-blocking memory consumer, a performance-relevant fact per plan §4.7). Neither of this PoC's components is asynchronous (Sort/Aggregate/Union All etc. are all "(nP)" in the plan), so this field is evidenced as "always present here" but the null case is real schema, not a guess.</summary>
+/// <summary>One &lt;output&gt;. <see cref="SynchronousInputId"/> present means this output shares its buffer with that input (a synchronous transform, e.g. Derived Column) -- absent means asynchronous (a blocking/semi-blocking memory consumer, a performance-relevant fact per plan §4.7). Neither of this PoC's slice-3 components was asynchronous (Sort/Aggregate/Union All etc. are all "(nP)" in the plan), so this field was evidenced as "always present here" but the null case was always real schema, not a guess -- and the synthetic Lookup/Conditional Split fixtures (component-coverage pass, see docs/report-schema.md) confirm both stay synchronous too.</summary>
 public sealed class PipelineOutputSpec
 {
     public required string RefId { get; init; }
@@ -40,6 +43,25 @@ public sealed class PipelineOutputSpec
     public bool? DeleteOutputOnPathDetached { get; init; }
     public List<PipelineOutputColumnSpec> Columns { get; init; } = [];
     public List<PipelineExternalMetadataColumnSpec> ExternalMetadataColumns { get; init; } = [];
+
+    /// <summary>
+    /// Every &lt;property&gt; directly under this output's own &lt;properties&gt; -- distinct
+    /// from any individual output column's own properties (<see cref="PipelineOutputColumnSpec.Properties"/>).
+    /// Added during the synthetic component-coverage pass after discovering Conditional Split
+    /// puts its case's whole boolean expression (<c>Expression</c>/<c>FriendlyExpression</c>/
+    /// <c>EvaluationOrder</c>, plus <c>IsDefaultOut</c> on the default case) at THIS level, not
+    /// on a column -- unlike Derived Column, where the same two property names live per output
+    /// COLUMN. Before this field existed, an output-level &lt;properties&gt; block was silently
+    /// invisible to the generic model, which matters because DtsxPackageReader.ReadExecutable
+    /// deliberately never adds anything under a Data Flow Task's own &lt;pipeline&gt; to
+    /// coverage.Unmapped -- the whole subtree is assumed 100% covered on the premise that
+    /// PipelineReader structurally models every element generically (see that method's own
+    /// comment). Output-level &lt;properties&gt; was a real, silent exception to that premise:
+    /// a genuine coverage-percentage overstatement for any package with a Conditional Split
+    /// (or any other component using this shape), not just a missing convenience field.
+    /// See <see cref="ConditionalSplitPayload"/> for where these are promoted into cases.
+    /// </summary>
+    public List<PipelinePropertySpec> Properties { get; init; } = [];
 }
 
 /// <summary>

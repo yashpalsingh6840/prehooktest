@@ -55,10 +55,16 @@ public sealed class ExecutableSpec
 
     public List<EventHandlerSpec> EventHandlers { get; init; } = [];
 
-    // Exactly one of the three payload fields below is non-null, chosen by ExecutableType
-    // -- see docs/spec-schema.md for the discriminator table. None are set for a pure
-    // container (Sequence/ForEach/For Loop) with no DTS:ObjectData of its own.
+    // At most one of the payload fields below is non-null, chosen by ExecutableType -- see
+    // docs/spec-schema.md for the discriminator table. A plain container (e.g. Sequence, not
+    // evidenced in this PoC) with no DTS:ObjectData of its own and no bespoke sibling element
+    // gets none of them; a ForEach Loop is the one exception that's still a real container
+    // (Children/PrecedenceConstraints/Dag populated) while ALSO carrying a payload, since its
+    // enumerator config lives in sibling elements alongside <Executables>, not inside
+    // <ObjectData> the way every task's payload does -- see ForEachLoopPayload's own comment.
     public ExecuteSqlTaskPayload? ExecuteSqlTask { get; init; }
     public DataFlowTaskPayload? DataFlowTask { get; init; }
     public UnmappedTaskPayload? UnmappedTask { get; init; }
+    public ScriptTaskPayload? ScriptTask { get; init; }
+    public ForEachLoopPayload? ForEachLoop { get; init; }
 }

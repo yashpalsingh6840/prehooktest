@@ -23,11 +23,14 @@ path -- plan §2.1) and writes deterministic, redacted, lossless JSON:
   precedence constraints, a derived DAG per container (topological order + parallel-level
   grouping), and event handlers (wired generically, unverified -- neither PoC package has one).
 - **Data Flow / pipeline model (slice 3, plan §4.7):** every `Microsoft.Pipeline` task is now
-  fully parsed -- components, properties, connections, inputs/outputs and their columns,
-  paths -- generically, for any component type, plus bespoke semantic extraction
-  (`FlatFileSource`/`OleDbDestination` payloads with resolved column mappings) for the two
-  component types this PoC has real evidence for. Derived Column's `Expression`/
-  `FriendlyExpression` are promoted onto every output column generically.
+  fully parsed -- components, properties (including output-level `<properties>`, e.g. a
+  Conditional Split case's whole expression), connections, inputs/outputs and their
+  columns, paths -- generically, for any component type, plus bespoke semantic extraction
+  for five component types: `FlatFileSource`/`OleDbDestination` (this PoC's own two
+  packages), and `OleDbSource`/`Lookup`/`ConditionalSplit` (synthetic object-model-built
+  fixtures, no client evidence yet -- see "Synthetic component-coverage fixtures" below).
+  Derived Column's `Expression`/`FriendlyExpression` are promoted onto every output column
+  generically.
 - **Column-level lineage (slice 3, plan §5.1):** derived from the pipeline model by
   `Ssis.Extract.Dtsx.LineageBuilder` -- source-to-target edges (including expression-derived
   hops), constant columns (no upstream source, e.g. `GETUTCDATE()`), and unused columns
@@ -62,6 +65,23 @@ path -- plan §2.1) and writes deterministic, redacted, lossless JSON:
 - **`ssisx diff` (slice 5, plan §6.2):** semantic (not textual) diff between two versions of a
   package -- typically repo source vs a deployed `.ispac`, answering "which packages can I not
   trust the source of". Exits 1 on *semantic* drift only, so it survives as a CI gate.
+
+### Synthetic component-coverage fixtures (post-slice-5)
+
+Plan §8's own risk note is that component coverage, not code volume, is what actually
+tests this tool -- and both PoC packages only exercise four component/task types. With no
+client packages available yet (plan §11 decision 2, still unresolved), two small `.dtsx`
+fixtures were built via the real SSIS 17 object model (not hand-written XML -- same
+"ask the runtime" discipline as everywhere else in this project) to cover the specific gap
+components plan §8 names: a ForEach Loop Container + Script Task
+(`SyntheticForEachScript.dtsx`), and an OLE DB Source → Lookup → Conditional Split → 3 OLE
+DB Destinations flow (`SyntheticLookupSplit.dtsx`). Both live under
+`tests/Ssis.Extract.Tests/Fixtures/` and extract at genuinely-earned 100% coverage
+(`SyntheticFixtureTests.cs`). This pass also caught and fixed two real coverage-accuracy
+bugs (a ForEach Loop's enumerator config and a pipeline component's output-level
+`<properties>` were both silently invisible before) and one `RulesEngine` false positive
+(`unused-variable` wrongly flagging a ForEach Loop's own iteration variable). Full detail,
+including what's object-model-verified versus best-effort, in `docs/report-schema.md`.
 
 See `docs/spec-schema.md` for the `extract`/`graph` JSON contract, and
 `docs/report-schema.md` for `report` + `diff` output (rule catalog, scoring, SQL/expression
@@ -134,8 +154,14 @@ of them present in either PoC package.
 `ComplexityScorerTests.cs`/`RulesEngineTests.cs`/`NonDeterminismAnalyzerTests.cs` cover the
 slice 4 derived-analysis layer the same way: neither PoC package has a script task, a
 disabled task, an unused variable, a duplicate sibling, or a `NEWID()`/system-variable
-non-determinism source, so those branches are proven synthetically too. The parts that
-*are* exercised by the real packages (Simple/Procedural classification, the
+non-determinism source, so those branches are proven synthetically (via
+`TestFixtures.MinimalPackage`) too. `SyntheticFixtureTests.cs` layers a second, more
+realistic check on top for `script-task-present`/`loop-present`: run against a *real*
+object-model-built fixture rather than a hand-built `PackageSpec`, which is what caught the
+`unused-variable` false positive on a ForEach Loop's own iteration variable -- a bug the
+synthetic-`PackageSpec` tests couldn't have found, since they never modeled
+`ForEachLoopPayload.VariableMappings` in the first place. The parts that *are* exercised by
+the real PoC packages (Simple/Procedural classification, the
 `error-output-unrouted`/`hardcoded-connection-string` findings, the `GETUTCDATE()` manifest
 rows) are checked by actually running `ssisx report` against the PoC and reading its
 output, not (yet) a golden-file test the way `extract`'s spec.json is -- worth adding if
@@ -176,8 +202,10 @@ catalog access ever appears, plan §5/§6 has both designs ready.
 Still genuinely not built:
 
 - **Script Task/Component source extraction** (plan §4.5) -- writing out each `ProjectItem`'s
-  `.cs`/`.vb`. Neither PoC package has a script task, so there is no real example to model
-  against; the `script-task-present` finding fires, but the source isn't extracted.
+  `.cs`/`.vb`. `ScriptTaskPayload` now captures the task's declared surface (language,
+  read-only/read-write variables -- see the synthetic fixture above), but the actual script
+  source lives inside the embedded VSTA project binary, which this reader does not unpack;
+  the `script-task-present` finding fires, but the source itself isn't extracted.
 - **Type/length-narrowing detection** along a lineage chain (plan §5.1) -- a truncation risk
   the package tolerates today; the core edge/constant/unused lineage analysis is done.
 - **The object-model oracle** (plan §7.3) -- a `net48`, Windows-only test project asserting
@@ -185,9 +213,12 @@ Still genuinely not built:
   this on a client portfolio.
 - **`--password`** on `extract` is accepted but a no-op (the encrypted-package object-model
   fallback, plan §2.1) so the command line won't change shape when it lands.
-- **Bespoke component semantics** exist only for the types this PoC uses (Flat File Source,
-  Derived Column, OLE DB Destination). Lookup, Conditional Split, Script Component, async
-  transforms and so on are captured *fully* but generically, without a typed payload.
+- **Bespoke component semantics** now also exist for OLE DB Source, Lookup, and Conditional
+  Split (synthetic fixtures, no client evidence yet -- see above), on top of the two types
+  this PoC's own packages use (Flat File Source, OLE DB Destination). Script Component,
+  async transforms (Sort/Aggregate/Union All), Fuzzy Lookup, and the rest are still
+  captured *fully* but generically, without a typed payload -- true of anything without a
+  real example behind it, per this project's own "read one first" rule.
 - **`unused-variable`/`unused-connection-manager`** still use a best-effort text search rather
   than a real reference resolver; each such finding says so in its own message.
 
