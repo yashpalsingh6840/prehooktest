@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="Ssis.Validate.Harness/Ssis.Validate.Harness.csproj" />
+  </Folder>
+  <Folder Name="/selftest/">
+    <Project Path="selftest/Ssis.Validate.SelfTestJob/Ssis.Validate.SelfTestJob.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Ssis.Validate.Harness.Tests/Ssis.Validate.Harness.Tests.csproj" />
+  </Folder>
+</Solution>

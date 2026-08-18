@@ -601,6 +601,72 @@ error, 3 still-running (`--status` without `--wait` only). In `SSIS.sln`
 mapped to `Release|Any CPU` (trap 6 — any real platform label makes devenv
 silently skip it); `dotnet build` on the csproj alone works too.
 
+## Gate 3 prep (`Tools/Validation/`, added 2026-08-18 — golden corpus + comparison harness, built before a C# rewrite exists)
+
+A separate tool from the extractor, `ssis-validate` (`Tools/Validation/Ssis.Validate.Harness/`),
+built ahead of need: `Migration-Validation-Plan.md` §5 (gate 3, golden-dataset integration
+test) needs a captured golden corpus and a comparison harness, neither of which depend on a
+rewrite existing yet. Building both now means gate 3 is "point the harness at the new job"
+the moment a C# job does exist, not new engineering at that point.
+
+**The user's own framing, stated explicitly and worth repeating here:** all 50 packages are
+migrating to C# jobs, so anything referencing SSISDB/`catalog.*` needs to be considered with
+that end state in mind — SSISDB won't exist once a package is retired. This is already how
+the tool is split:
+
+- **`CorpusCapture`** — Windows-only, drives `SsisRunner.exe` against this box's live SSISDB.
+  Reads the *old* system exactly once per corpus entry, before it goes away. Retires with the
+  SSIS packages.
+- **`GateRunner`** — zero SSISDB/catalog dependency, ever. Talks only to whatever SQL Server
+  connection string and job command it's given. This is gate 3 itself, and it doesn't change
+  when the SSIS packages disappear.
+
+**Real corpus captured from real runs** (not fabricated): `LoadEmployees` RunId 26 (0→12 rows
+in `dbo.Employee`), `LoadReferenceData` RunId 25 (0→8 `dbo.Department`, 0→10 `dbo.Designation`).
+**One real finding along the way:** `catalog.execution_data_statistics` only gets populated at
+a verbose enough `LOGGING_LEVEL` — the `ctl` framework's own default (1) writes nothing there;
+level 3 does. Confirmed empirically (first capture attempt: empty `StageRowCounts`; re-run at
+level 3: populated) rather than assumed from the LOGGING_LEVEL docs. It also logs one row per
+BUFFER FLUSH, not one per component pair — `LoadEmployees`'s capture shows two rows per
+component pair (a `0`-row end-of-data marker, then the real count).
+
+**No rewrite exists to validate gate 3 against**, so a tiny stand-in job
+(`Tools/Validation/selftest/Ssis.Validate.SelfTestJob/`, explicitly NOT a rewrite of
+anything) proves the harness's own comparison logic instead — `--mode pass` loads the
+corpus's golden output verbatim (harness should report PASS), `--mode fail` deliberately
+corrupts one value (harness should report FAIL, naming exactly what differs). Verified against
+**a real, freshly-created `mcr.microsoft.com/mssql/server:2022-latest` Linux container** (via
+the new `docker-compose.yml`) — not just this box's local `.\SQLFORPOC` — for both packages:
+`LoadReferenceData` PASS, `LoadReferenceData` FAIL (correct row/column named), `LoadEmployees`
+PASS, container torn down afterward.
+
+**A real gap in the first self-test round was caught and closed**, the same discipline as
+everywhere else in this file: the `--mode pass` run copies the corpus's own captured values
+verbatim, so an excluded (non-deterministic) column like `LoadedAtUtc` is identical between
+expected and actual *by construction* — that run never actually exercised the EXCLUSION path,
+only "everything matches." Closed with a focused unit suite
+(`tests/Ssis.Validate.Harness.Tests/SnapshotDifferTests.cs`, no database needed) asserting the
+differ still passes when an excluded column genuinely differs, and fails when the same
+scenario's column is NOT excluded — so the exclusion test actually proves the exclusion.
+
+**A real environment bug was caught wiring up the container, not shipped:** on a brand-new
+container the target database doesn't exist yet, so a connection string that already names
+it as the initial catalog fails to open at all, before the schema script's own
+`CREATE DATABASE`/`USE` batches run. Fixed by having `GateRunner` connect at the server level
+(`master`) for the schema-restore step specifically.
+
+Config format is JSON, not the YAML the plan's prose illustrates — this repo has no YAML
+dependency anywhere, and JSON already matches every other generated artifact
+(`spec.json`, conformance rules, the non-determinism manifest itself). A deliberate,
+documented deviation, not a different design. `ExcludedColumns` is generated automatically
+from `ssisx report`'s `nondeterministic.json`; `KeyColumn` is deliberately left for a human to
+fill in (the extractor doesn't detect primary keys from a `.dtsx` yet) — both PoC configs have
+already been filled in by hand and committed.
+
+Full account, every command, and the honest-limits list (per-stage row counts captured but
+not yet asserted against; `KeyColumn` hand-filled; only two corpus entries exist) in
+`Tools/Validation/docs/gate3-harness.md` and `Tools/Validation/README.md`.
+
 ## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18)
 
 A separate tool (`ssisx`), planned in `Phase0-Extractor-Plan.md` (also see

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>selftest-job</AssemblyName>
+    <RootNamespace>Ssis.Validate.SelfTestJob</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    NOT a rewrite of any SSIS package, since there isn't one yet. This is a stand-in "job
+    under test" that exists only to prove Ssis.Validate.Harness's own comparison logic
+    actually works, the same way the extractor's synthetic fixtures prove an algorithm before
+    a real package can exercise it. Mode "pass" loads the corpus's own golden "after"
+    snapshot verbatim (the harness should report PASS); mode "fail" deliberately corrupts one
+    value first (the harness should report FAIL, naming exactly what differs). See
+    Tools/Validation/docs/gate3-harness.md.
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Ssis.Validate.Harness\Ssis.Validate.Harness.csproj" />
+  </ItemGroup>
+
+</Project>

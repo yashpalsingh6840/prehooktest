@@ -1,0 +1,104 @@
+{
+  "Table": "dbo.Designation",
+  "Columns": [
+    "DesignationID",
+    "DesignationKey",
+    "DesignationCode",
+    "Title",
+    "JobLevel",
+    "Band",
+    "LoadedAtUtc"
+  ],
+  "Rows": [
+    [
+      101,
+      "ASSOC-1",
+      "ASSOC",
+      "Associate Engineer",
+      1,
+      "B1",
+      "2026-08-18T06:26:59.1810000"
+    ],
+    [
+      102,
+      "SENG-2",
+      "SENG",
+      "Software Engineer",
+      2,
+      "B2",
+      "2026-08-18T06:26:59.1810000"
+    ],
+    [
+      103,
+      "SRENG-3",
+      "SRENG",
+      "Senior Software Engineer",
+      3,
+      "B3",
+      "2026-08-18T06:26:59.1810000"
+    ],
+    [
+      104,
+      "LEAD-4",
+      "LEAD",
+      "Technical Lead",
+      4,
+      "B4",
+      "2026-08-18T06:26:59.1810000"
+    ],
+    [
+      105,
+      "ARCH-5",
+      "ARCH",
+      "Solution Architect",
+      5,
+      "B5",
+      "2026-08-18T06:26:59.1810000"
+    ],
+    [
+      106,
+      "MGR-5",
+      "MGR",
+      "Engineering Manager",
+      5,
+      "B5",
+      "2026-08-18T06:26:59.1810000"
+    ],
+    [
+      107,
+      "DIR-6",
+      "DIR",
+      "Director",
+      6,
+      "B6",
+      "2026-08-18T06:26:59.1810000"
+    ],
+    [
+      108,
+      "ANLST-2",
+      "ANLST",
+      "Business Analyst",
+      2,
+      "B2",
+      "2026-08-18T06:26:59.1810000"
+    ],
+    [
+      109,
+      "QAENG-2",
+      "QAENG",
+      "Quality Engineer",
+      2,
+      "B2",
+      "2026-08-18T06:26:59.1810000"
+    ],
+    [
+      110,
+      "VP-7",
+      "VP",
+      "Vice President",
+      7,
+      "B7",
+      "2026-08-18T06:26:59.1810000"
+    ]
+  ]
+}

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ssis-validate</AssemblyName>
+    <RootNamespace>Ssis.Validate.Harness</RootNamespace>
+    <!-- Must run inside the gate-3 container (Linux, no SSIS, no Windows, plan §5) as well
+         as on this dev box, so InvariantGlobalization stays off (CLAUDE.md trap 17: it
+         breaks Microsoft.Data.SqlClient at startup) and nothing here references the GAC. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.1" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,13 @@
+{
+  "Table": "dbo.Designation",
+  "Columns": [
+    "DesignationID",
+    "DesignationKey",
+    "DesignationCode",
+    "Title",
+    "JobLevel",
+    "Band",
+    "LoadedAtUtc"
+  ],
+  "Rows": []
+}

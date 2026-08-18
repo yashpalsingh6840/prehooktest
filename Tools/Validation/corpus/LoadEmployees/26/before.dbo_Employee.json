@@ -1,0 +1,14 @@
+{
+  "Table": "dbo.Employee",
+  "Columns": [
+    "EmployeeID",
+    "EmployeeKey",
+    "FullName",
+    "Department",
+    "HireDate",
+    "Salary",
+    "Location",
+    "LoadedAtUtc"
+  ],
+  "Rows": []
+}

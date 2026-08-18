@@ -1,0 +1,6 @@
+# bin/ and obj/ are already covered by the repo root .gitignore.
+
+# Per-run gate-3 reports: regenerable output, not source (same treatment as
+# Tools/SsisExtractor's own out/). corpus/ and configs/ ARE committed -- they're the golden
+# dataset and its hand-reviewed config, the actual artifacts this tool exists to produce.
+reports/

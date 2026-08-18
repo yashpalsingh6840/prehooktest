@@ -1,0 +1,86 @@
+{
+  "Table": "dbo.Department",
+  "Columns": [
+    "DepartmentID",
+    "DepartmentKey",
+    "DepartmentCode",
+    "DepartmentName",
+    "CostCenter",
+    "HeadCount",
+    "LoadedAtUtc"
+  ],
+  "Rows": [
+    [
+      1,
+      "ENG-1",
+      "ENG",
+      "Engineering",
+      "CC-1000",
+      120,
+      "2026-08-18T06:26:58.4620000"
+    ],
+    [
+      2,
+      "FIN-2",
+      "FIN",
+      "Finance",
+      "CC-2000",
+      25,
+      "2026-08-18T06:26:58.4620000"
+    ],
+    [
+      3,
+      "HR-3",
+      "HR",
+      "Human Resources",
+      "CC-3000",
+      14,
+      "2026-08-18T06:26:58.4620000"
+    ],
+    [
+      4,
+      "MKT-4",
+      "MKT",
+      "Marketing",
+      "CC-4000",
+      32,
+      "2026-08-18T06:26:58.4620000"
+    ],
+    [
+      5,
+      "OPS-5",
+      "OPS",
+      "Operations",
+      "CC-5000",
+      58,
+      "2026-08-18T06:26:58.4620000"
+    ],
+    [
+      6,
+      "LEG-6",
+      "LEG",
+      "Legal",
+      "CC-6000",
+      9,
+      "2026-08-18T06:26:58.4620000"
+    ],
+    [
+      7,
+      "SUP-7",
+      "SUP",
+      "Customer Support",
+      "CC-7000",
+      44,
+      "2026-08-18T06:26:58.4620000"
+    ],
+    [
+      8,
+      "RND-8",
+      "RND",
+      "Research and Development",
+      "CC-8000",
+      27,
+      "2026-08-18T06:26:58.4620000"
+    ]
+  ]
+}

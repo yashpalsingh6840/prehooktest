@@ -220,6 +220,20 @@ and tested once, rather than reinvented per package.
 
 ## 5. Gate 3 — golden-dataset integration test in CI
 
+> **Prep work done, gate itself not yet fully exercised.** `Ssis.Validate.Harness`
+> (`Tools/Validation/`) implements steps 1-3 and 5 below against a real, containerized SQL
+> Server on Linux — schema restore, before-snapshot seeding, golden-input staging, and
+> after-snapshot diffing excluding the non-determinism manifest's columns — and a real golden
+> corpus has been captured from both of this PoC's actual packages (`LoadEmployees` RunId 26,
+> `LoadReferenceData` RunId 25). Step 6 (per-stage row counts) is captured into the corpus but
+> not yet asserted against, since no rewrite exists yet to define a comparable "stage" in C#.
+> **There is no C# rewrite to point step 4 at yet**, so the harness itself is verified with a
+> stand-in self-test job instead (`Tools/Validation/selftest/`, explicitly not a rewrite) —
+> proven to both PASS on a correct result and FAIL (naming the exact row/column) on a
+> deliberately wrong one, against a real freshly-created Linux container. See
+> `Tools/Validation/docs/gate3-harness.md`. The moment a rewrite exists, running gate 3 for
+> real is pointing `--job` at it — a config change, not new engineering.
+
 The whole package, end to end, deterministic, in a container, on every commit.
 
 ```

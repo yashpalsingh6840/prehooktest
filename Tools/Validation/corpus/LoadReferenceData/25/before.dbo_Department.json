@@ -1,0 +1,13 @@
+{
+  "Table": "dbo.Department",
+  "Columns": [
+    "DepartmentID",
+    "DepartmentKey",
+    "DepartmentCode",
+    "DepartmentName",
+    "CostCenter",
+    "HeadCount",
+    "LoadedAtUtc"
+  ],
+  "Rows": []
+}

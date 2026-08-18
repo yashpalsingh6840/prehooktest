@@ -1,0 +1,19 @@
+
+services:
+  # The gate-3 target: SQL Server on Linux, not the dev box's Windows-only ".\SQLFORPOC"/
+  # SSISDB. Proves the comparison side of gate 3 genuinely has no Windows/SSIS dependency
+  # (Migration-Validation-Plan.md §5's own requirement) rather than assuming it because the
+  # C# code happens to be portable.
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Gate3-SelfTest-2026!"
+      MSSQL_PID: Developer
+    ports:
+      - "14330:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

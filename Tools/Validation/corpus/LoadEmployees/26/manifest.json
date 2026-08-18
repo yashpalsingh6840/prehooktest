@@ -1,0 +1,36 @@
+{
+  "PackageName": "LoadEmployees",
+  "RunId": 26,
+  "ExecutionId": 45,
+  "CapturedAtUtc": "2026-08-18T06:27:17.7305555Z",
+  "Parameters": {},
+  "InputFiles": [
+    "Employees.csv"
+  ],
+  "StageRowCounts": [
+    {
+      "TaskName": "DFT_LoadEmployees",
+      "SourceComponentName": "FF_SRC_Employees",
+      "DestinationComponentName": "DER_MergeColumns",
+      "RowsSent": 0
+    },
+    {
+      "TaskName": "DFT_LoadEmployees",
+      "SourceComponentName": "DER_MergeColumns",
+      "DestinationComponentName": "OLEDST_Employee",
+      "RowsSent": 0
+    },
+    {
+      "TaskName": "DFT_LoadEmployees",
+      "SourceComponentName": "FF_SRC_Employees",
+      "DestinationComponentName": "DER_MergeColumns",
+      "RowsSent": 12
+    },
+    {
+      "TaskName": "DFT_LoadEmployees",
+      "SourceComponentName": "DER_MergeColumns",
+      "DestinationComponentName": "OLEDST_Employee",
+      "RowsSent": 12
+    }
+  ]
+}

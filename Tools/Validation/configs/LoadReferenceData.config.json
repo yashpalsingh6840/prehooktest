@@ -1,0 +1,20 @@
+{
+  "PackageName": "LoadReferenceData",
+  "SchemaScript": "../../../Sql/01_CreateTarget.sql",
+  "TargetTables": [
+    {
+      "Table": "dbo.Department",
+      "KeyColumn": "DepartmentID",
+      "ExcludedColumns": [
+        "LoadedAtUtc"
+      ]
+    },
+    {
+      "Table": "dbo.Designation",
+      "KeyColumn": "DesignationID",
+      "ExcludedColumns": [
+        "LoadedAtUtc"
+      ]
+    }
+  ]
+}

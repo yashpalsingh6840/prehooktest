@@ -1,0 +1,61 @@
+{
+  "PackageName": "LoadReferenceData",
+  "RunId": 25,
+  "ExecutionId": 44,
+  "CapturedAtUtc": "2026-08-18T06:27:01.2309539Z",
+  "Parameters": {},
+  "InputFiles": [
+    "Departments.csv",
+    "Designations.csv"
+  ],
+  "StageRowCounts": [
+    {
+      "TaskName": "DFT_LoadDepartment",
+      "SourceComponentName": "FF_SRC_Department",
+      "DestinationComponentName": "DER_DepartmentKey",
+      "RowsSent": 8
+    },
+    {
+      "TaskName": "DFT_LoadDepartment",
+      "SourceComponentName": "DER_DepartmentKey",
+      "DestinationComponentName": "OLEDST_Department",
+      "RowsSent": 8
+    },
+    {
+      "TaskName": "DFT_LoadDepartment",
+      "SourceComponentName": "FF_SRC_Department",
+      "DestinationComponentName": "DER_DepartmentKey",
+      "RowsSent": 0
+    },
+    {
+      "TaskName": "DFT_LoadDepartment",
+      "SourceComponentName": "DER_DepartmentKey",
+      "DestinationComponentName": "OLEDST_Department",
+      "RowsSent": 0
+    },
+    {
+      "TaskName": "DFT_LoadDesignation",
+      "SourceComponentName": "FF_SRC_Designation",
+      "DestinationComponentName": "DER_DesignationKey",
+      "RowsSent": 10
+    },
+    {
+      "TaskName": "DFT_LoadDesignation",
+      "SourceComponentName": "DER_DesignationKey",
+      "DestinationComponentName": "OLEDST_Designation",
+      "RowsSent": 10
+    },
+    {
+      "TaskName": "DFT_LoadDesignation",
+      "SourceComponentName": "FF_SRC_Designation",
+      "DestinationComponentName": "DER_DesignationKey",
+      "RowsSent": 0
+    },
+    {
+      "TaskName": "DFT_LoadDesignation",
+      "SourceComponentName": "DER_DesignationKey",
+      "DestinationComponentName": "OLEDST_Designation",
+      "RowsSent": 0
+    }
+  ]
+}
