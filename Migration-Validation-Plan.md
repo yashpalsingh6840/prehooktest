@@ -114,7 +114,8 @@ your evidence for the go-live decision.
 > below as `ConformanceRuleSpec` rules, joins them against hand-maintained claim files,
 > and exits non-zero under `--check` unless every obligation is accounted for. See
 > `Tools/SsisExtractor/docs/conformance-schema.md`. Measured on this PoC: 31 obligations
-> for `LoadEmployees`, 49 for `LoadReferenceData`. Gates 2–5 remain unbuilt.
+> for `LoadEmployees`, 49 for `LoadReferenceData`. Gate 2 is now also built (see below);
+> gates 3–5 remain unbuilt.
 
 The extractor's `spec.json` is a machine-readable list of everything the old
 package does. Turn each into an assertion the new implementation must satisfy:
@@ -158,6 +159,15 @@ learned from making the metric actually trustworthy:
 
 ## 4. Gate 2 — expression unit tests (generated)
 
+> **Built.** Two pieces: `Ssis.Runtime.Expressions` (a portable, net8.0, no-GAC SSIS
+> expression-language parser + evaluator, verified against a 136-row corpus captured by
+> actually running the real SSIS 17 evaluator) and `ssisx testgen`, which generates an xUnit
+> test file per package from every Derived Column expression, with boundary cases computed by
+> evaluating the expression through the library **at generation time** rather than
+> hand-authored. See `Tools/SsisExtractor/docs/gate2-schema.md`. Measured on this PoC: 5
+> expressions covered, 3 correctly skipped (non-deterministic `GETUTCDATE()` columns), 30
+> generated tests verified to compile and pass. Gates 3–5 remain unbuilt.
+
 The extractor's expression harvest (§5.5) gives every transformation rule
 verbatim. Each becomes a table-driven test case.
 
@@ -190,6 +200,21 @@ SSIS functions the portfolio uses and which have no clean .NET equivalent
 (`TOKEN`, `REPLACENULL`, `(DT_STR,n,codepage)` casts, `NULL(DT_WSTR,n)`).
 Those become a small shared expression-compatibility library, written once
 and tested once, rather than reinvented per package.
+
+**Two things the implementation added that this section didn't anticipate:**
+
+- **The library's own correctness had to be established before it could generate
+  anything trustworthy.** This section describes generating tests *from* the spec, but
+  says nothing about validating the expression semantics the tests would assert against
+  — that gap would have meant every generated test silently encoded whatever the library
+  assumed, not what SSIS actually does. Closed by building a ground-truth oracle
+  (`Ssis.Expression.Oracle`, evaluates expressions with the real SSIS 17 evaluator) and
+  making the library's own test suite a `[Theory]` over that captured corpus, so the
+  library's spec is measured behaviour, not documentation.
+- **"No implicit type coercion" turned out to be the one rule everything else follows
+  from**, not just one item in a list of divergences. `1 + "a"`, `"1" + 1`, and
+  `LEN(123)` are all measured errors — SSIS never silently converts between string and
+  numeric types the way most languages (including a naive C# rewrite) do by default.
 
 ---
 

@@ -601,7 +601,7 @@ error, 3 still-running (`--status` without `--wait` only). In `SSIS.sln`
 mapped to `Release|Any CPU` (trap 6 — any real platform label makes devenv
 silently skip it); `dotnet build` on the csproj alone works too.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18)
 
 A separate tool (`ssisx`), planned in `Phase0-Extractor-Plan.md` (also see
 `Migration-Validation-Plan.md` and `PoC-Architecture-Overview.md` for the
@@ -1014,6 +1014,86 @@ its tables from a **single batched Execute SQL Task**
 yields **one** `SqlStatement` rule whose evidence holds both statements —
 rules are per *task* (the addressable unit the SQL harvest already writes to
 `sql/`), not per statement.
+
+**2026-08-18 — `Ssis.Runtime.Expressions` + `ssisx testgen`: migration-validation
+gate 2, built.** Gate 1 proves nothing is missing; gate 2 (plan §4) starts
+proving things are *correct* — the first extractor output that runs
+generated assertions against real SSIS *behaviour*, not just its structure.
+Two pieces: a portable (no GAC, net8.0) SSIS expression-language parser +
+evaluator (`Tools/SsisExtractor/src/Ssis.Runtime.Expressions/`), and
+`ssisx testgen`, which generates an xUnit test file per package from every
+Derived Column expression, with boundary cases computed by evaluating the
+expression through the library **at generation time** rather than
+hand-authored.
+
+**Ground truth came from the real SSIS 17 evaluator, same discipline as
+trap 12** — extended from probing single object-model properties to probing
+expression *behaviour*. A new Windows-only project,
+`Tools/SsisExtractor/src/Ssis.Expression.Oracle/` (lives in
+`SsisExtractor.ObjectModel.slnx` alongside the plan §7.3 oracle, same GAC
+dependency), evaluates a fixed 136-expression corpus via a package
+`Variable` with `EvaluateAsExpression=true` (reading `.Value` triggers real
+evaluation) and writes the result to
+`tests/Ssis.Runtime.Expressions.Tests/Fixtures/ssis-expression-oracle.tsv`.
+`OracleCorpusTests.MatchesOracle` is a `[Theory]` over every row — the
+corpus **is** the library's spec, not a hand-written assertion list.
+
+**A real measurement bug was caught building the oracle, not shipped.** An
+early version reused one `Package` and one variable name across all ~130
+evaluations in a single process and produced an internally *contradictory*
+reading: both `"a" < "A"` and `"A" < "a"` came back `True` in the same run,
+which cannot both be correct under any consistent ordering. Root-caused by
+re-running the pair in total isolation (fresh `Application`+`Package`+
+uniquely-named variable each) and getting one consistent answer both
+times — confirming the shared state leaked stale evaluator results across
+iterations, not a real SSIS behaviour. Fixed by giving every evaluation in
+the corpus its own `Application`/`Package`/variable name, nothing shared.
+The corrected, isolated corpus is what's checked in.
+
+**The measured semantics diverge from a naive C# rewrite in specific,
+now-documented ways** (full catalog in
+`Tools/SsisExtractor/docs/gate2-schema.md`) — the master rule almost
+everything else follows from is **SSIS never implicitly coerces between
+types** (`1 + "a"`, `"1" + 1`, `LEN(123)` are all measured errors, not
+auto-converted):
+- NULL propagates through string concat and comparisons as **three-valued
+  logic** (SQL-style) — `NULL(DT_I4) == 1` is NULL, not `False`; `&&`/`||`
+  follow Kleene logic (`FALSE && NULL` → `False`, `TRUE || NULL` → `True`,
+  `TRUE && NULL` → NULL).
+- String `==`/`!=` are **ordinal** (case-sensitive); `<`/`>`/`<=`/`>=` are
+  **culture-aware** (lowercase sorts before its own uppercase) — verified to
+  match .NET 8's `CultureInfo.InvariantCulture` comparer exactly, despite
+  running on a different globalization stack (ICU) than the SSIS process
+  (Windows NLS) that produced the corpus. Checked directly, not assumed.
+- `(DT_WSTR,n)`/`(DT_STR,n)` casts are a **hard error** on overflow, never
+  silent truncation.
+- `(DT_I4)` casts round **half-to-even** on a float input, and cast `TRUE`
+  to **-1** (the classic VB/COM Automation convention), not `1`.
+- `SUBSTRING` requires `start >= 1` (0 errors exactly like a negative
+  start — an assumption I got wrong on first pass, caught immediately by
+  the corpus-driven test suite, not hand-review); out-of-range clamps to
+  `""` instead. `TOKEN`/`TOKENCOUNT`'s delimiter argument is a **character
+  set** (`strtok`-style), not a substring, and an empty input string is
+  exactly one token (itself), not zero.
+
+**One deliberate, documented gap:** SSIS's `(DT_WSTR,n)` cast of a float
+produced by *arithmetic* (not a plain cast/literal) sometimes pads to a
+fixed decimal-place count that varies by expression shape (`5.0/2` →
+`"2.500000000000"`, 12 decimals) — looks like an internal "scale" tracked
+through the expression compiler, similar to `DT_NUMERIC`'s own
+precision/scale. Not reverse-engineered: no harvested expression in this
+PoC does float arithmetic before a string cast (the measured surface is
+string concat, `UPPER`, `SUBSTRING`, `GETUTCDATE`, `DT_WSTR` casts only).
+The two affected oracle rows are named explicitly in
+`OracleCorpusTests.KnownDivergences` rather than silently passed.
+
+**Measured on this PoC:** `ssisx testgen` against both packages produces
+**5 expressions covered, 3 skipped** — the three `LoadedAtUtc` columns'
+`GETUTCDATE()` calls, correctly excluded as non-deterministic (the same
+three columns the slice-4 non-determinism manifest already names). 30
+generated `[Fact]` methods, verified to actually **compile and pass**
+against a real xUnit project referencing the library — copied out and run
+end to end, not just eyeballed.
 
 ## Traps already hit once — don't re-derive these
 

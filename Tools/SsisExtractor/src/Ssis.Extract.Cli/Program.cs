@@ -19,6 +19,7 @@ internal static class Program
             "graph" => GraphCommand.Run(rest),
             "report" => ReportCommand.Run(rest),
             "conformance" => ConformanceCommand.Run(rest),
+            "testgen" => TestGenCommand.Run(rest),
             "diff" => DiffCommand.Run(rest),
             "pull" or "enrich" =>
                 Fail($"'{command}' needs SSISDB catalog access, which this engagement does not have (Phase0-Extractor-Plan.md §11 decision 4) -- use 'ssisx diff' against a deployed .ispac instead for drift detection."),
@@ -87,6 +88,17 @@ internal static class Program
             <out>/conformance/claims). Claim files are HAND-MAINTAINED and never
             overwritten -- edit them as the rewrite progresses. --check exits 1 unless
             every obligation is Implemented or explained-NotApplicable, for CI gating.
+
+              ssisx testgen --input <dir|file.dtsx|file.dtproj> --out <dir> [--recursive]
+
+            testgen options: gate 2 of Migration-Validation-Plan.md §4 -- generates an xUnit
+            test file per package (under <out>/testgen/) covering every Derived Column
+            expression, with generated boundary cases (over-length cast, NULL/empty operand,
+            a too-short SUBSTRING window, a case-folding probe) alongside the normal case.
+            Every expected value is computed by evaluating the expression through
+            Ssis.Runtime.Expressions (itself verified against the real SSIS evaluator) at
+            generation time, not hand-authored. Writes testgen-summary.md listing exactly
+            which expressions were covered and which were skipped, with a reason for each.
 
               ssisx diff --left <file.dtsx|file.ispac> --right <file.dtsx|file.ispac>
                           [--package <name>] [--out <report.md>]

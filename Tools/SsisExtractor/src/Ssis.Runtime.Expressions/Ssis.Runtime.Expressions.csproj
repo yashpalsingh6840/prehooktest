@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Ssis.Runtime.Expressions</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    Gate 2 (Migration-Validation-Plan.md §4): a small, portable (no GAC, no Windows
+    dependency, same "works anywhere" promise as the rest of this tool, plan §2.1) SSIS
+    expression-language parser + evaluator, covering exactly the functions/operators/casts
+    the extractor's ExpressionHarvester (plan §5.5) can surface plus everything the ground
+    truth oracle (src/Ssis.Expression.Oracle, Windows-only, separate slnx) actually measured
+    against the real SSIS 17 evaluator, not the full SSIS expression grammar guessed from
+    documentation. See docs/gate2-schema.md for the semantics catalog and every documented
+    divergence from a naive C# rewrite.
+  -->
+
+</Project>
