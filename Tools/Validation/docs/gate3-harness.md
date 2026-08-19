@@ -69,15 +69,21 @@ ssis-validate generate-config --package LoadReferenceData `
   --schema-script ..\..\Sql\01_CreateTarget.sql `
   --tables "dbo.Department,dbo.Designation" `
   --nondeterministic-json <ssisx report output>\nondeterministic.json `
+  --primary-keys-json <ssisx report output>\primary-keys.json `
   --out configs\LoadReferenceData.config.json
 ```
 
 `ExcludedColumns` is populated automatically from `ssisx report`'s non-determinism manifest —
-real, generated data, the same file gate 0/1 already produce. `KeyColumn` is deliberately left
-`null` by the generator: the extractor doesn't detect primary keys from a `.dtsx` today, so
-this is the one field a human fills in per plan §12's own framing ("reviewed by a human"). Both
-of this PoC's configs have been filled in by hand from the known target schema
-(`EmployeeID`/`DepartmentID`/`DesignationID`) and committed.
+real, generated data, the same file gate 0/1 already produce. **`KeyColumn` is now
+auto-filled too** (added 2026-08-19, `ssisx report`'s new `primary-keys.json` --
+`PrimaryKeyInference`'s naming-convention heuristic), but only when the extractor found
+exactly one confident candidate column — a composite key or "Unknown" confidence still leaves
+it `null` for a human, and even an auto-filled value is printed back with a reminder to
+confirm it (a `.dtsx` carries no real primary-key concept, so this is still a guess, not a
+fact). **Verified, not assumed:** regenerating both of this PoC's configs with
+`--primary-keys-json` produces byte-identical output to the configs a human had already
+hand-filled in an earlier session (`EmployeeID`/`DepartmentID`/`DesignationID`) — confirmed
+with a plain `diff`, zero differences.
 
 ## Self-test: proving the harness works before a rewrite exists to test
 
@@ -152,8 +158,12 @@ correctly against a brand-new, non-Windows, non-SSIS SQL Server, end to end.
   "stage" even means in C# (a method call? a batch insert?), so `GateRunner` doesn't try to
   compare against them yet. The data is there in the corpus manifest for whenever that
   convention exists.
-- **`KeyColumn` is hand-filled, not detected.** Same honest gap `ssisx conformance`'s
-  `TargetSchema` rules already have — primary-key detection from a `.dtsx` alone isn't built.
+- **`KeyColumn` auto-fill is a naming-convention heuristic, not a fact (closed 2026-08-19,
+  was previously hand-filled only).** `PrimaryKeyInference` (`Tools/SsisExtractor`) has no
+  live database to check against, so it can be wrong — a table whose real key doesn't follow
+  the `"<table>ID"`/`"ID"` convention gets `Confidence: "Unknown"` and still needs a human,
+  and even a confident guess should be spot-checked once, not assumed correct forever. Still
+  narrower than before: composite keys and low-confidence guesses are still left `null`.
 - **Row matching is by key, not by full-row identity.** A column not in the key and not
   excluded that legitimately has multiple valid representations (e.g. floating-point
   formatting) would show as a false mismatch. Not an issue for either of this PoC's packages

@@ -24,6 +24,9 @@ package model `extract`/`graph` use, but doesn't read `extract`'s own JSON outpu
   sql-analysis.json                 per-statement parse result: objects, statement types, flags
   graph/portfolio.mmd               cross-package dependency graph (plan §5.2)
   dependencies.json                 the same edges as data
+
+  # added 2026-08-19
+  primary-keys.json | primary-keys.md   best-effort PK candidates, per destination table
 ```
 
 CSV files are plain comma-separated with a header row, RFC4180-style quoting (a field is
@@ -127,6 +130,48 @@ it runs without crashing.
 a non-determinism source. Identity is a destination-table property, not anything present in
 a package's own XML, so it isn't (and can't be) detected here -- it needs the live database
 schema, a later-slice concern (plan §5.3/§6's `enrich`).
+
+## Primary-key candidates (added 2026-08-19)
+
+`primary-keys.json`/`.md` -- a best-effort `PrimaryKeyCandidateSpec` per OLE DB Destination,
+built by `Ssis.Extract.Dtsx.PrimaryKeyInference`. Closes a gap named in
+`Tools/Validation/docs/gate3-harness.md`: gate 3's per-table `KeyColumn` used to be entirely
+hand-filled because nothing detected it.
+
+**Why this can only ever be a heuristic:** confirmed by reading this PoC's own real
+`<externalMetadataColumn>` elements, a `.dtsx` carries `dataType`/`length`/`precision`/
+`scale`/`codePage` for a destination column and *nothing about keys, nullability, or
+identity* -- SSIS simply doesn't persist that at design time. Without a live database
+connection (an `enrich`/`pull` concern, plan §11 decision 4, deliberately out of scope), the
+only signals available are:
+
+1. A destination input column whose name matches `"<last segment of the target table>ID"`
+   (e.g. `[dbo].[Employee]` → `EmployeeID`), or the fallback `"ID"`.
+2. It must be an integer pipeline type (`i1`/`i2`/`i4`/`i8` -- the literal short codes this
+   PoC's own `.dtsx` files use, e.g. `dataType="i4"` on `EmployeeID`; a different type space
+   than `SsisTypeCodeMaps`' other two tables, see that file's own doc comment).
+3. It must NOT be a computed value -- traced via the same lineageId join `LineageBuilder`
+   uses, so a derived business key (this PoC's own `EmployeeKey`/`DepartmentKey`/
+   `DesignationKey`, each a string concatenation) is never mistaken for the real key.
+
+**Verified against live ground truth, not just plausible-looking:** all three real PoC
+candidates (`Employee.EmployeeID`, `Department.DepartmentID`, `Designation.DesignationID`)
+were cross-checked against `.\SQLFORPOC`'s actual `PRIMARY KEY` constraints via
+`sys.indexes`/`sys.index_columns` -- exact matches, all three. Feeding the same output into
+`Tools/Validation`'s `ConfigGenerator` (via `--primary-keys-json`) reproduces byte-identical
+`KeyColumn` values to the ones a human had already hand-filled in an earlier session.
+
+**A real bug was caught wiring this into `ssisx conformance`'s `TargetSchema` evidence, not
+shipped:** the synthetic Lookup/Conditional Split fixture has three OLE DB Destinations all
+left at SSIS's default component name ("OLE DB Destination") -- joining candidates back to
+their destination by `(DataFlowTaskPath, Name)` collided and crashed with a duplicate-key
+exception. Fixed by joining on the destination's own `RefId` instead (always unique), the
+same identity every rule ID in this tool already relies on elsewhere. Pinned by
+`PrimaryKeyInferenceTests.SyntheticLookupSplit_HandlesThreeDestinationsSharingTheSameDefaultName`.
+
+**Also folded into `ssisx conformance`'s `TargetSchema` rule evidence** (not a separate rule
+category) -- a candidate PK appears right next to the column contract a reviewer is already
+reading, rather than requiring a cross-reference into a second file.
 
 ## SQL harvest and analysis (plan §5.4)
 

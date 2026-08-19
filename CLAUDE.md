@@ -659,15 +659,55 @@ Config format is JSON, not the YAML the plan's prose illustrates — this repo h
 dependency anywhere, and JSON already matches every other generated artifact
 (`spec.json`, conformance rules, the non-determinism manifest itself). A deliberate,
 documented deviation, not a different design. `ExcludedColumns` is generated automatically
-from `ssisx report`'s `nondeterministic.json`; `KeyColumn` is deliberately left for a human to
-fill in (the extractor doesn't detect primary keys from a `.dtsx` yet) — both PoC configs have
-already been filled in by hand and committed.
+from `ssisx report`'s `nondeterministic.json`; `KeyColumn` was originally left for a human to
+fill in every time — **closed 2026-08-19 by primary-key detection in the extractor**, see the
+Phase 0 extractor section below. Both PoC configs, hand-filled in an earlier session, were
+independently reproduced byte-for-byte by regenerating with `--primary-keys-json` — the new
+heuristic agrees with the human review exactly, on this PoC.
 
 Full account, every command, and the honest-limits list (per-stage row counts captured but
-not yet asserted against; `KeyColumn` hand-filled; only two corpus entries exist) in
+not yet asserted against; `KeyColumn` auto-fill is a heuristic, not a fact, and a composite/
+low-confidence candidate still needs a human; only two corpus entries exist) in
 `Tools/Validation/docs/gate3-harness.md` and `Tools/Validation/README.md`.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19)
+
+**2026-08-19 — primary-key candidate detection, closing a gate-3 gap.** `ssisx report` now
+writes `primary-keys.json`/`.md` (`Ssis.Extract.Dtsx.PrimaryKeyInference`), a best-effort
+guess per OLE DB Destination, and folds the same candidate into `ssisx conformance`'s
+`TargetSchema` rule evidence. Built because it directly closes a named gap in
+`Tools/Validation/docs/gate3-harness.md` ("`KeyColumn` is hand-filled, not detected"), not
+speculatively.
+
+**Confirmed, before writing a line of code, that a `.dtsx` genuinely carries no primary-key
+concept anywhere** — read this PoC's own real `<externalMetadataColumn>` elements directly
+(`SSIS/LoadEmployees.dtsx`) and found only `dataType`/`length`/`precision`/`scale`/
+`codePage`, nothing about keys/nullability/identity. So the only signals available without a
+live database (an `enrich`/`pull` concern, deliberately out of scope, plan §11 decision 4)
+are a naming convention (`"<table>ID"`, fallback `"ID"`) plus two guards: the column must be
+an integer pipeline type, and it must NOT be a computed value — traced via the same lineageId
+join `LineageBuilder` already uses, specifically so a derived business key (`EmployeeKey`,
+`DepartmentKey`, `DesignationKey` — each a string concatenation) is never mistaken for the
+real one. Every candidate carries its `Confidence` and is reported even when it's
+`"Unknown"` (no match), so a human knows to fill it in rather than assuming it was
+overlooked.
+
+**Verified against live ground truth, not just plausible-looking:** all three real PoC
+candidates were cross-checked against `.\SQLFORPOC`'s actual `PRIMARY KEY` constraints via
+`sys.indexes`/`sys.index_columns` — `Employee.EmployeeID`, `Department.DepartmentID`,
+`Designation.DesignationID`, exact matches, all three. Feeding the output into
+`Tools/Validation`'s `ConfigGenerator` (new `--primary-keys-json` flag) reproduced the two PoC
+configs' `KeyColumn` values byte-for-byte against what a human had already hand-filled in an
+earlier session — confirmed with a plain `diff`, zero differences.
+
+**A real bug was caught before it shipped, not after:** the synthetic Lookup/Conditional
+Split fixture has three OLE DB Destinations all left at SSIS's default component name ("OLE
+DB Destination") — never renamed, matching the plan's own worked example. Joining a
+destination's inferred candidate back to it by `(DataFlowTaskPath, Name)` collided across
+those three and crashed `ssisx conformance` with a duplicate-dictionary-key exception,
+caught immediately by the existing `ConformanceTests` suite (not a test written for this
+feature). Fixed by joining on the destination's own `RefId` instead — always unique, the same
+identity every rule ID in this tool already relies on. Now pinned by its own regression test.
 
 A separate tool (`ssisx`), planned in `Phase0-Extractor-Plan.md` (also see
 `Migration-Validation-Plan.md` and `PoC-Architecture-Overview.md` for the

@@ -40,17 +40,20 @@ dotnet test  Tools\Validation\SsisValidation.slnx
 ## Generate a package config
 
 ```powershell
-ssisx report --input ..\SSIS --out out   # produces nondeterministic.json (Tools/SsisExtractor)
+ssisx report --input ..\SSIS --out out   # produces nondeterministic.json + primary-keys.json
 
 .\Ssis.Validate.Harness\bin\Debug\net8.0\ssis-validate.exe generate-config `
   --package LoadReferenceData --schema-script ..\..\Sql\01_CreateTarget.sql `
   --tables "dbo.Department,dbo.Designation" `
   --nondeterministic-json ..\SsisExtractor\out\nondeterministic.json `
+  --primary-keys-json ..\SsisExtractor\out\primary-keys.json `
   --out configs\LoadReferenceData.config.json
 ```
 
-Fill in `KeyColumn` by hand afterward -- the generator deliberately leaves it `null` (plan
-§12: "reviewed by a human"). `ExcludedColumns` is real generated data; don't hand-edit it.
+`KeyColumn` is auto-filled when the extractor found exactly one confident candidate (a
+naming-convention guess -- confirm it once, don't assume it forever); a composite or
+low-confidence candidate still leaves it `null` for a human (plan §12: "reviewed by a
+human"). `ExcludedColumns` is real generated data either way; don't hand-edit it.
 
 ## Capture a corpus entry (one-time, per package, against the live SSIS system)
 
@@ -91,6 +94,7 @@ end to end (PASS and FAIL, both against a real containerized run) in
 
 See [`docs/gate3-harness.md`](docs/gate3-harness.md)'s own section: per-stage row-count
 assertion is captured but not yet compared against (no rewrite exists to define a comparable
-shape); `KeyColumn` is hand-filled, not detected; row matching is by key, not full-row
+shape); `KeyColumn` auto-fill is a naming-convention heuristic (confirm it, don't assume it);
+row matching is by key, not full-row
 identity; only two corpus entries exist (one run each) -- this is the mechanism, not the
 10-30-day golden corpus plan §2 actually calls for.

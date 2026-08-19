@@ -184,6 +184,13 @@ public static class ConformanceRulesBuilder
     /// </summary>
     private static void TargetRules(PackageSpec package, List<ExecutableSpec> allExecutables, List<ConformanceRuleSpec> rules)
     {
+        // Best-effort only (see PrimaryKeyCandidateSpec's own doc comment for why a .dtsx
+        // can never carry an authoritative answer) -- folded into TargetSchema's evidence so
+        // a reviewer sees the row-matching candidate right next to the column contract,
+        // rather than needing to cross-reference primary-keys.json separately.
+        var primaryKeyCandidates = PrimaryKeyInference.Infer(package, allExecutables)
+            .ToDictionary(c => c.DestinationComponentRefId);
+
         foreach (var ex in allExecutables.Where(e => e.DataFlowTask is not null))
         {
             foreach (var comp in ex.DataFlowTask!.Pipeline.Components.Where(c => c.OleDbDestination is not null))
@@ -210,6 +217,10 @@ public static class ConformanceRulesBuilder
                     var contract = string.Join(", ", mainInput.ExternalMetadataColumns
                         .Select(c => $"{c.Name} {DescribeType(c.DataType, c.Length, c.Precision, c.Scale)}"));
 
+                    var pkNote = primaryKeyCandidates.TryGetValue(comp.RefId, out var pk) && pk.Confidence != "Unknown"
+                        ? $"; candidate primary key (best-effort, confirm before relying on it): {string.Join(", ", pk.Columns)}"
+                        : "";
+
                     rules.Add(new ConformanceRuleSpec
                     {
                         RuleId = $"TARGET-SCHEMA:{target}",
@@ -220,7 +231,7 @@ public static class ConformanceRulesBuilder
                         // Design-time contract, not live DDL -- the plan pairs this with a
                         // check against the real database, which needs a connection this
                         // offline tool deliberately doesn't take.
-                        Evidence = $"design-time external metadata: {contract}",
+                        Evidence = $"design-time external metadata: {contract}{pkNote}",
                     });
                 }
 

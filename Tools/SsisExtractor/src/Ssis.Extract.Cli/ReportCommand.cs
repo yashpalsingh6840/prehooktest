@@ -101,6 +101,7 @@ internal static class ReportCommand
         var perPackageDataTouch = new Dictionary<string, DataTouchSpec>();
         var allSqlAnalyses = new List<SqlAnalysisSpec>();
         var allExpressions = new List<HarvestedExpressionSpec>();
+        var allPrimaryKeyCandidates = new List<PrimaryKeyCandidateSpec>();
 
         var sqlDir = Path.Combine(outDir, "sql");
         var scriptFilesWritten = 0;
@@ -112,6 +113,7 @@ internal static class ReportCommand
             perPackageComplexity[pkg.ObjectName] = ComplexityScorer.Score(pkg, weights);
             perPackageFindings[pkg.ObjectName] = RulesEngine.Evaluate(pkg);
             perPackageNonDeterministic[pkg.ObjectName] = NonDeterminismAnalyzer.Analyze(pkg, allExecutables);
+            allPrimaryKeyCandidates.AddRange(PrimaryKeyInference.Infer(pkg, allExecutables));
 
             // SQL harvest (plan §5.4): write each statement to its own addressable .sql
             // file, then parse it. The file is written before the parse so a statement that
@@ -209,6 +211,9 @@ internal static class ReportCommand
         WriteFindingsCsv(allFindings, Path.Combine(outDir, "findings.csv"));
         WriteFindingsMd(allFindings, Path.Combine(outDir, "findings.md"));
         StableJsonWriter.WriteToFile(allNonDeterministic.OrderBy(n => n.PackageName, StringComparer.Ordinal).ToList(), Path.Combine(outDir, "nondeterministic.json"));
+        StableJsonWriter.WriteToFile(
+            allPrimaryKeyCandidates.OrderBy(p => p.PackageName, StringComparer.Ordinal).ThenBy(p => p.DataFlowTaskPath, StringComparer.Ordinal).ToList(),
+            Path.Combine(outDir, "primary-keys.json"));
         WriteUnmappedMd(packages, Path.Combine(outDir, "unmapped.md"));
 
         // Slice 5 outputs (plan §5.2-§5.5)
@@ -217,6 +222,7 @@ internal static class ReportCommand
         StableJsonWriter.WriteToFile(allSqlAnalyses, Path.Combine(outDir, "sql-analysis.json"));
         StableJsonWriter.WriteToFile(perPackageDataTouch.Values.OrderBy(d => d.PackageName, StringComparer.Ordinal).ToList(), Path.Combine(outDir, "datatouch.json"));
         WriteDataTouchMd(perPackageDataTouch, Path.Combine(outDir, "datatouch.md"));
+        WritePrimaryKeysMd(allPrimaryKeyCandidates, Path.Combine(outDir, "primary-keys.md"));
         var graphDir = Path.Combine(outDir, "graph");
         Directory.CreateDirectory(graphDir);
         File.WriteAllText(Path.Combine(graphDir, "portfolio.mmd"), DependencyGraphBuilder.ToMermaid(packages, dependencyEdges));
@@ -477,6 +483,27 @@ internal static class ReportCommand
             AppendList(sb, "Files (path computed at run time)", dt.FilePathsFromExpression);
             AppendList(sb, "Servers", dt.Servers);
             sb.AppendLine();
+        }
+        File.WriteAllText(path, sb.ToString());
+    }
+
+    private static void WritePrimaryKeysMd(List<PrimaryKeyCandidateSpec> candidates, string path)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# Primary-key candidates (best-effort, needs human confirmation)");
+        sb.AppendLine();
+        sb.AppendLine("A `.dtsx` file carries no primary-key concept anywhere -- confirmed by reading this ");
+        sb.AppendLine("PoC's own `<externalMetadataColumn>` elements, which carry only dataType/length/");
+        sb.AppendLine("precision/scale/codePage, nothing about keys. Every row below is a naming-convention ");
+        sb.AppendLine("guess (`\"<table>ID\"` or a fallback `\"ID\"`, integer-typed, not a computed value), ");
+        sb.AppendLine("not a fact -- confirm each one before relying on it (e.g. filling in gate 3's `KeyColumn`).");
+        sb.AppendLine();
+        sb.AppendLine("| Package | Data Flow Task | Destination | Target table | Candidate | Confidence | Reason |");
+        sb.AppendLine("|---|---|---|---|---|---|---|");
+        foreach (var c in candidates.OrderBy(c => c.PackageName, StringComparer.Ordinal).ThenBy(c => c.DataFlowTaskPath, StringComparer.Ordinal))
+        {
+            var columns = c.Columns.Count > 0 ? string.Join(", ", c.Columns) : "(none)";
+            sb.AppendLine($"| {MdEscape(c.PackageName)} | {MdEscape(c.DataFlowTaskPath)} | {MdEscape(c.DestinationComponentName)} | {MdEscape(c.TargetTable ?? "(unknown)")} | {MdEscape(columns)} | {c.Confidence} | {MdEscape(c.Reason)} |");
         }
         File.WriteAllText(path, sb.ToString());
     }

@@ -72,9 +72,11 @@ internal static class Program
             --weights to override the complexity-scoring weights (config/complexity-
             weights.json has the defaults -- plan §5.6). Writes inventory.csv/.md,
             findings.csv/.md, nondeterministic.json (plan §5.8), datatouch.md/.json,
-            expressions.csv, expression-functions.md, sql/ + sql-analysis.json,
-            graph/portfolio.mmd + dependencies.json, unmapped.md, and portfolio.md --
-            the "here is what you own" report (plan §5.2-§5.8).
+            primary-keys.json/.md (best-effort naming-convention PK guesses, needs human
+            confirmation -- a .dtsx carries no real PK concept), expressions.csv,
+            expression-functions.md, sql/ + sql-analysis.json, graph/portfolio.mmd +
+            dependencies.json, unmapped.md, and portfolio.md -- the "here is what you own"
+            report (plan §5.2-§5.8).
 
               ssisx conformance --input <dir|file.dtsx|file.dtproj> --out <dir>
                                  [--claims <dir>] [--recursive] [--check]

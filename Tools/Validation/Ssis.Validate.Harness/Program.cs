@@ -36,11 +36,15 @@ internal static class Program
         var schemaScript = Require(opts, "schema-script");
         var tables = Require(opts, "tables").Split(',').Select(t => t.Trim()).ToList();
         var nonDetPath = Require(opts, "nondeterministic-json");
+        var primaryKeysPath = opts.TryGetValue("primary-keys-json", out var pkp) ? pkp : null;
         var outPath = Require(opts, "out");
 
-        var config = ConfigGenerator.Generate(packageName, schemaScript, tables, nonDetPath);
+        var config = ConfigGenerator.Generate(packageName, schemaScript, tables, nonDetPath, primaryKeysPath);
         ConfigGenerator.WriteToFile(config, outPath);
-        Console.WriteLine($"wrote {outPath}. KeyColumn is null for every table -- fill it in by hand before running gate 3 (plan §12: generated configs are reviewed by a human).");
+        var unfilled = config.TargetTables.Where(t => t.KeyColumn is null).Select(t => t.Table).ToList();
+        Console.WriteLine(unfilled.Count > 0
+            ? $"wrote {outPath}. KeyColumn still needs a human fill-in for: {string.Join(", ", unfilled)} (plan §12: generated configs are reviewed by a human)."
+            : $"wrote {outPath}. Every KeyColumn was auto-filled from primary-keys.json -- still confirm each one before trusting it (see the per-table messages above).");
         return 0;
     }
 
@@ -140,10 +144,15 @@ internal static class Program
             ssis-validate -- gate 3 harness (Migration-Validation-Plan.md §5)
 
             generate-config --package <name> --schema-script <path> --tables <t1,t2,...>
-                             --nondeterministic-json <path> --out <config.json>
+                             --nondeterministic-json <path> [--primary-keys-json <path>]
+                             --out <config.json>
               Generates a starter config from `ssisx report`'s non-determinism manifest.
-              ExcludedColumns is real generated data; KeyColumn is left null for a human to
-              fill in before the config is usable by 'run'.
+              ExcludedColumns is real generated data. KeyColumn is auto-filled from
+              --primary-keys-json (ssisx report's own best-effort naming-convention guess)
+              when exactly one confident candidate column exists; still confirm it before
+              trusting it -- a .dtsx carries no real primary-key concept, see
+              PrimaryKeyCandidateSpec's doc comment. Left null (for a human to fill in) when
+              --primary-keys-json is omitted or has no confident candidate for that table.
 
             capture-corpus --package-key <ctl key> --package-name <name>
                             --runner-exe <path to SsisRunner.exe>
