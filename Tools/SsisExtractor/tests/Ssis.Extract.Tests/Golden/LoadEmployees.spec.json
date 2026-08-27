@@ -563,6 +563,8 @@
         "Pipeline": {
           "Components": [
             {
+              "AdoNetDestination": null,
+              "AdoNetSource": null,
               "ComponentClassId": "Microsoft.DerivedColumn",
               "ConditionalSplit": null,
               "Connections": [],
@@ -872,6 +874,8 @@
               "Version": null
             },
             {
+              "AdoNetDestination": null,
+              "AdoNetSource": null,
               "ComponentClassId": "Microsoft.FlatFileSource",
               "ConditionalSplit": null,
               "Connections": [
@@ -1398,6 +1402,8 @@
               "Version": "1"
             },
             {
+              "AdoNetDestination": null,
+              "AdoNetSource": null,
               "ComponentClassId": "Microsoft.OLEDBDestination",
               "ConditionalSplit": null,
               "Connections": [

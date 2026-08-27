@@ -72,6 +72,8 @@ internal static class PipelineReader
         LookupPayload? lookup = null;
         ConditionalSplitPayload? conditionalSplit = null;
         ScriptComponentPayload? scriptComponent = null;
+        AdoNetDestinationPayload? adoNetDestination = null;
+        AdoNetSourcePayload? adoNetSource = null;
 
         // Script Component's own componentClassID is the generic "Microsoft.ManagedComponentHost"
         // -- not a Script-Component-specific ID the way every other bespoke type here is --
@@ -92,6 +94,41 @@ internal static class PipelineReader
                 SourceCodeItems = sourceCodeItems,
                 HasBinaryCode = hasBinaryCode,
                 SourceStripped = sourceCodeItems.Count == 0 && hasBinaryCode,
+            };
+        }
+        // ADO NET Destination/Source share Script Component's own discrimination shape --
+        // componentClassID is the generic "Microsoft.ManagedComponentHost", UserComponentTypeName
+        // is what actually says which one -- confirmed real via RBC_Demo_ETL's own
+        // Package_Exports.dtsx (ADO_DST_ExportLog / ADO_SRC_Customers), not guessed from either
+        // name's surface similarity to the OLE DB pair.
+        else if (GetProperty(properties, "UserComponentTypeName") == "Microsoft.ADONETDestination")
+        {
+            var mainInput = inputs.FirstOrDefault();
+            adoNetDestination = new AdoNetDestinationPayload
+            {
+                ConnectionName = connectionName,
+                TableOrViewName = NullIfEmpty(GetProperty(properties, "TableOrViewName")),
+                BatchSize = ParseInt(GetProperty(properties, "BatchSize")),
+                CommandTimeout = ParseInt(GetProperty(properties, "CommandTimeout")),
+                UseBulkInsertWhenPossible = ParseBool(GetProperty(properties, "UseBulkInsertWhenPossible")),
+                ColumnMappings = mainInput is null ? [] : BuildColumnMappings(
+                    mainInput.Columns.Select(c => (c.CachedName, c.ExternalMetadataColumnId)),
+                    mainInput.ExternalMetadataColumns),
+            };
+        }
+        else if (GetProperty(properties, "UserComponentTypeName") == "Microsoft.DataReaderSourceAdapter")
+        {
+            var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            adoNetSource = new AdoNetSourcePayload
+            {
+                ConnectionName = connectionName,
+                TableOrViewName = NullIfEmpty(GetProperty(properties, "TableOrViewName")),
+                SqlCommand = NullIfEmpty(GetProperty(properties, "SqlCommand")),
+                AccessMode = ParseInt(GetProperty(properties, "AccessMode")),
+                CommandTimeout = ParseInt(GetProperty(properties, "CommandTimeout")),
+                ColumnMappings = mainOutput is null ? [] : BuildColumnMappings(
+                    mainOutput.Columns.Select(c => (c.Name, c.ExternalMetadataColumnId)),
+                    mainOutput.ExternalMetadataColumns),
             };
         }
         else if (componentClassId == "Microsoft.FlatFileSource")
@@ -203,6 +240,8 @@ internal static class PipelineReader
             Lookup = lookup,
             ConditionalSplit = conditionalSplit,
             ScriptComponent = scriptComponent,
+            AdoNetDestination = adoNetDestination,
+            AdoNetSource = adoNetSource,
         };
     }
 

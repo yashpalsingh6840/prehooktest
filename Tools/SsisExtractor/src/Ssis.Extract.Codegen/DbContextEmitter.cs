@@ -76,10 +76,10 @@ public static class DbContextEmitter
 
     private static List<string>? EmitOneTable(TableSpec table, List<GenerationGap> gaps)
     {
-        var openRowset = table.DestinationComponent.OleDbDestination?.OpenRowset;
+        var openRowset = DestinationInfo.TableName(table.DestinationComponent);
         if (string.IsNullOrEmpty(openRowset))
         {
-            gaps.Add(new GenerationGap(table.EntityName, "destination has no OpenRowset -- SQL-command destinations are not supported yet"));
+            gaps.Add(new GenerationGap(table.EntityName, "destination has no OpenRowset/TableOrViewName -- SQL-command destinations are not supported yet"));
             return null;
         }
 

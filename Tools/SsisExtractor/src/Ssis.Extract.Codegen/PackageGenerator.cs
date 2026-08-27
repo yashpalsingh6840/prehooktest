@@ -91,8 +91,7 @@ public static class PackageGenerator
             // AccessMode itself is never decoded, this is the minimal check that decision
             // settled on). Anything else needs row-by-row insert generation this tool doesn't
             // have yet.
-            if (flow.DestinationComponent.OleDbDestination?.FastLoadMaxInsertCommitSize is null
-                && flow.DestinationComponent.OleDbDestination?.FastLoadOptions is null)
+            if (!DestinationInfo.IsFastLoadConfigured(flow.DestinationComponent))
             {
                 gaps.Add(new GenerationGap(flow.TaskName, $"destination '{flow.DestinationComponent.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
                 continue;
@@ -215,7 +214,7 @@ public static class PackageGenerator
     /// Split's per-branch destinations can reuse it too.</summary>
     private static string? TryResolveEntityName(string taskName, PipelineComponentSpec destinationComponent, List<GenerationGap> gaps)
     {
-        var openRowset = destinationComponent.OleDbDestination?.OpenRowset;
+        var openRowset = DestinationInfo.TableName(destinationComponent);
         if (string.IsNullOrEmpty(openRowset))
         {
             gaps.Add(new GenerationGap(taskName, "destination has no OpenRowset -- cannot derive an entity name for a SQL-command destination"));
@@ -280,7 +279,7 @@ public static class PackageGenerator
             return (rowTypeName, sqlSource);
         }
 
-        gaps.Add(new GenerationGap(flow.TaskName, "no Flat File Source or OLE DB Source (with a resolvable connection manager) found -- only [Flat File Source|OLE DB Source] -> [Derived Column] -> OLE DB Destination is supported yet"));
+        gaps.Add(new GenerationGap(flow.TaskName, "no Flat File Source, OLE DB Source, or ADO NET Source (with a resolvable connection manager) found -- only [Flat File Source|OLE DB Source|ADO NET Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination] is supported yet"));
         return null;
     }
 
@@ -343,8 +342,7 @@ public static class PackageGenerator
         var entityNames = new List<string>();
         foreach (var branch in split.Branches)
         {
-            if (branch.Destination.OleDbDestination?.FastLoadMaxInsertCommitSize is null
-                && branch.Destination.OleDbDestination?.FastLoadOptions is null)
+            if (!DestinationInfo.IsFastLoadConfigured(branch.Destination))
             {
                 gaps.Add(new GenerationGap(flow.TaskName, $"Conditional Split branch '{branch.OutputName}': destination '{branch.Destination.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
                 return null;
@@ -423,61 +421,94 @@ public static class PackageGenerator
         return new ProgramConditionalSplitStep(flow.TaskName, programSource, rowTypeName, routerClassName, branches);
     }
 
-    /// <summary>Resolves an OLE DB Source into a SqlFlowSource, building the actual SELECT
-    /// text per AccessMode: 0 (OpenRowset) builds <c>SELECT [Ext] AS [Comp], ... FROM
-    /// {OpenRowset}</c> from ColumnMappings, guaranteeing every column resolves later by the
-    /// pipeline's own buffer column name; 2 (SqlCommand) emits the author's own SQL verbatim
-    /// (this tool never rewrites recorded SQL text) plus a non-fatal gap stating the
-    /// assumption that the result set's own column names/aliases already match the buffer's
-    /// column names -- a fact this tool cannot verify from the spec alone. Any other
-    /// AccessMode, or a source whose connection manager can't be resolved or targets a
-    /// different server/database than the flow's own destination (a second source connection
-    /// is not supported yet), is a fatal gap for this flow -- returns null, with the reason
-    /// already added to <paramref name="gaps"/>.</summary>
+    /// <summary>Resolves an OLE DB or ADO NET Source into a SqlFlowSource -- dispatches to
+    /// <see cref="BuildOleDbFlowSource"/> or <see cref="BuildAdoNetFlowSource"/> after the one
+    /// check both share: a resolvable connection manager targeting the same server/database as
+    /// the flow's own destination (a second source connection is not supported yet).</summary>
     private static SqlFlowSource? BuildSqlFlowSource(
-        PackageSpec package, string taskName, PipelineComponentSpec oleDbSource,
+        PackageSpec package, string taskName, PipelineComponentSpec source,
         PipelineComponentSpec destinationComponent, List<GenerationGap> gaps)
     {
-        var payload = oleDbSource.OleDbSource;
-        if (payload?.ConnectionName is not { } cmName || FindConnectionManager(package, cmName) is not { } sourceCm
+        var sourceCmName = SourceInfo.ConnectionName(source);
+        if (sourceCmName is not { } cmName || FindConnectionManager(package, cmName) is not { } sourceCm
             || sourceCm.Parsed is not { } sourceParsed)
         {
-            gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{oleDbSource.Name}' has no resolvable connection manager"));
+            gaps.Add(new GenerationGap(taskName, $"Source '{source.Name}' has no resolvable connection manager"));
             return null;
         }
 
-        var destCmName = destinationComponent.OleDbDestination?.ConnectionName;
+        var destCmName = DestinationInfo.ConnectionName(destinationComponent);
         var destParsed = destCmName is not null ? FindConnectionManager(package, destCmName)?.Parsed : null;
         if (destParsed is null || sourceParsed.Server != destParsed.Server || sourceParsed.Database != destParsed.Database)
         {
-            gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{oleDbSource.Name}' targets a different server/database than this flow's own destination -- a separate source connection is not supported yet"));
+            gaps.Add(new GenerationGap(taskName, $"Source '{source.Name}' targets a different server/database than this flow's own destination -- a separate source connection is not supported yet"));
             return null;
         }
 
+        return source.OleDbSource is { } oleDbPayload
+            ? BuildOleDbFlowSource(taskName, source.Name, oleDbPayload, gaps)
+            : BuildAdoNetFlowSource(taskName, source.Name, source.AdoNetSource!, gaps);
+    }
+
+    /// <summary>Builds the actual SELECT text per AccessMode: 0 (OpenRowset) builds
+    /// <c>SELECT [Ext] AS [Comp], ... FROM {OpenRowset}</c> from ColumnMappings, guaranteeing
+    /// every column resolves later by the pipeline's own buffer column name; 2 (SqlCommand)
+    /// emits the author's own SQL verbatim (this tool never rewrites recorded SQL text) plus a
+    /// non-fatal gap stating the assumption that the result set's own column names/aliases
+    /// already match the buffer's column names -- a fact this tool cannot verify from the spec
+    /// alone. Any other AccessMode is a fatal gap.</summary>
+    private static SqlFlowSource? BuildOleDbFlowSource(string taskName, string sourceName, OleDbSourcePayload payload, List<GenerationGap> gaps)
+    {
         switch (payload.AccessMode)
         {
             case 0:
                 if (string.IsNullOrEmpty(payload.OpenRowset) || payload.ColumnMappings.Count == 0)
                 {
-                    gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{oleDbSource.Name}' has AccessMode=0 (OpenRowset) but no OpenRowset/ColumnMappings to build a SELECT from"));
+                    gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{sourceName}' has AccessMode=0 (OpenRowset) but no OpenRowset/ColumnMappings to build a SELECT from"));
                     return null;
                 }
                 var columns = string.Join(", ", payload.ColumnMappings.Select(m => $"[{m.ExternalColumnName}] AS [{m.ComponentColumnName}]"));
-                return new SqlFlowSource(oleDbSource.Name, $"SELECT {columns} FROM {payload.OpenRowset}");
+                return new SqlFlowSource(sourceName, $"SELECT {columns} FROM {payload.OpenRowset}");
 
             case 2:
                 if (string.IsNullOrEmpty(payload.SqlCommand))
                 {
-                    gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{oleDbSource.Name}' has AccessMode=2 (SQL command) but no SqlCommand text"));
+                    gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{sourceName}' has AccessMode=2 (SQL command) but no SqlCommand text"));
                     return null;
                 }
-                gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{oleDbSource.Name}' uses a SqlCommand -- generated code assumes each result-set column is named/aliased exactly like the pipeline's own buffer column name; verify before running. This tool never rewrites the author's own SQL.", IsBlocking: false));
-                return new SqlFlowSource(oleDbSource.Name, payload.SqlCommand);
+                gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{sourceName}' uses a SqlCommand -- generated code assumes each result-set column is named/aliased exactly like the pipeline's own buffer column name; verify before running. This tool never rewrites the author's own SQL.", IsBlocking: false));
+                return new SqlFlowSource(sourceName, payload.SqlCommand);
 
             default:
-                gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{oleDbSource.Name}' has AccessMode={(payload.AccessMode?.ToString() ?? "null")} -- only OpenRowset (0) and SQL command (2) are supported yet"));
+                gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{sourceName}' has AccessMode={(payload.AccessMode?.ToString() ?? "null")} -- only OpenRowset (0) and SQL command (2) are supported yet"));
                 return null;
         }
+    }
+
+    /// <summary>ADO NET Source's own AccessMode enum is not reverse-engineered (see
+    /// AdoNetSourcePayload's own doc comment for why) -- branches on which of
+    /// <see cref="AdoNetSourcePayload.SqlCommand"/>/<see cref="AdoNetSourcePayload.TableOrViewName"/>
+    /// is actually populated instead, sidestepping the need to know the enum's real mapping.
+    /// Same SqlCommand-verbatim/non-fatal-gap and OpenRowset-column-list shapes as
+    /// <see cref="BuildOleDbFlowSource"/>, just sourced from the ADO NET payload's own field
+    /// names/quoting.</summary>
+    private static SqlFlowSource? BuildAdoNetFlowSource(string taskName, string sourceName, AdoNetSourcePayload payload, List<GenerationGap> gaps)
+    {
+        if (!string.IsNullOrEmpty(payload.SqlCommand))
+        {
+            gaps.Add(new GenerationGap(taskName, $"ADO NET Source '{sourceName}' uses a SqlCommand -- generated code assumes each result-set column is named/aliased exactly like the pipeline's own buffer column name; verify before running. This tool never rewrites the author's own SQL.", IsBlocking: false));
+            return new SqlFlowSource(sourceName, payload.SqlCommand);
+        }
+
+        var tableName = AdoNetSupport.NormalizeTableName(payload.TableOrViewName);
+        if (!string.IsNullOrEmpty(tableName) && payload.ColumnMappings.Count > 0)
+        {
+            var columns = string.Join(", ", payload.ColumnMappings.Select(m => $"[{m.ExternalColumnName}] AS [{m.ComponentColumnName}]"));
+            return new SqlFlowSource(sourceName, $"SELECT {columns} FROM {tableName}");
+        }
+
+        gaps.Add(new GenerationGap(taskName, $"ADO NET Source '{sourceName}' has neither a SqlCommand nor a TableOrViewName/ColumnMappings to build a SELECT from"));
+        return null;
     }
 
     /// <summary>Design-time default file path, split into folder + file name for
@@ -507,7 +538,7 @@ public static class PackageGenerator
     /// up separately.</summary>
     private static (string AuthMode, string? UserId, string? Server, string? Database)? ResolveDatabaseAuth(PackageSpec package, PipelineComponentSpec destinationComponent)
     {
-        var cmName = destinationComponent.OleDbDestination?.ConnectionName;
+        var cmName = DestinationInfo.ConnectionName(destinationComponent);
         if (cmName is null || FindConnectionManager(package, cmName) is not { } cm || cm.Parsed is not { } parsed) return null;
 
         return parsed.AuthMode == "SqlLogin"

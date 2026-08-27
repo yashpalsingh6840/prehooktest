@@ -28,6 +28,62 @@ public sealed class FlatFileSourcePayload
 }
 
 /// <summary>
+/// <c>Microsoft.ADONETDestination</c>. Unlike <see cref="OleDbDestinationPayload"/>, this
+/// component's own <c>componentClassID</c> is the generic <c>Microsoft.ManagedComponentHost</c>
+/// -- <c>UserComponentTypeName</c> is what actually disambiguates it, the same discrimination
+/// <see cref="ScriptComponentPayload"/>'s own doc comment already documents for Script
+/// Component. Confirmed real via RBC_Demo_ETL's own Package_Exports.dtsx (ADO_DST_ExportLog),
+/// discovered testing this tool against a real third-party portfolio (SSIS_From_Sandeep,
+/// 2026-08-27). <see cref="TableOrViewName"/> is double-quoted (<c>"dbo"."Table"</c>), NOT
+/// bracketed like <see cref="OleDbDestinationPayload.OpenRowset"/> (<c>[dbo].[Table]</c>) --
+/// a genuinely different quoting convention between the two UI components, not a typo.
+/// </summary>
+public sealed class AdoNetDestinationPayload
+{
+    public string? ConnectionName { get; init; }
+
+    /// <summary>The target table/view, double-quoted, e.g. <c>"dbo"."CustomerExportLog"</c>.</summary>
+    public string? TableOrViewName { get; init; }
+
+    public int? BatchSize { get; init; }
+    public int? CommandTimeout { get; init; }
+
+    /// <summary>SSIS's own "use SqlBulkCopy when the provider supports it" toggle -- observed
+    /// true on the one real evidenced instance, which is why this tool treats an ADO NET
+    /// Destination with this set as fast-load-configured, the same gate an OLE DB Destination's
+    /// FastLoadMaxInsertCommitSize/FastLoadOptions already are.</summary>
+    public bool? UseBulkInsertWhenPossible { get; init; }
+
+    public List<PipelineColumnMappingSpec> ColumnMappings { get; init; } = [];
+}
+
+/// <summary>
+/// <c>Microsoft.DataReaderSourceAdapter</c> (the ADO NET Source's own UserComponentTypeName --
+/// confirmed real, NOT "Microsoft.ADONETSource" as the destination's naming might suggest).
+/// Same discrimination shape as <see cref="AdoNetDestinationPayload"/>. <see cref="AccessMode"/>
+/// is kept raw, same "don't hand-guess an enum" rule as <see cref="OleDbSourcePayload.AccessMode"/>
+/// -- and deliberately UNUSED by this tool's own codegen, since the one real evidenced instance
+/// (AccessMode=1) doesn't obviously match either of OLE DB Source's own evidenced values (0/2);
+/// codegen instead branches on which of <see cref="SqlCommand"/>/<see cref="TableOrViewName"/>
+/// is actually populated, sidestepping the need to know this enum's real mapping at all.
+/// </summary>
+public sealed class AdoNetSourcePayload
+{
+    public string? ConnectionName { get; init; }
+
+    /// <summary>The source table/view, double-quoted -- same convention as
+    /// <see cref="AdoNetDestinationPayload.TableOrViewName"/>. Empty on the one real evidenced
+    /// instance (which uses <see cref="SqlCommand"/> instead).</summary>
+    public string? TableOrViewName { get; init; }
+
+    public string? SqlCommand { get; init; }
+    public int? AccessMode { get; init; }
+    public int? CommandTimeout { get; init; }
+
+    public List<PipelineColumnMappingSpec> ColumnMappings { get; init; } = [];
+}
+
+/// <summary>
 /// <c>Microsoft.OLEDBDestination</c> (plan §4.7 table). <see cref="AccessMode"/> is kept as
 /// the raw integer only -- the XML tags it <c>typeConverter="AccessMode"</c> but doesn't
 /// spell out the enum's text values in this file, and CLAUDE.md trap 12's lesson is to not

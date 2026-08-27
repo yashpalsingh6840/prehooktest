@@ -803,7 +803,7 @@ A second, unrelated real bug (`GateRunner` not setting the job process's working
 which silently broke the job's own `appsettings.json` lookup and surfaced as an
 unrelated-looking Windows-auth failure) was also caught and fixed the same session.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved)
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -1916,6 +1916,84 @@ first-ever commit (`d8f6231`), bundling the full skeleton (Etl.Core, LoadEmploye
 LoadReferenceData, all tests) together with the File System Task additions -- there was no
 prior baseline to separate them from. Checked for secrets first (none; `ssis_loader`'s password
 lives in .NET User Secrets, never in the committed `appsettings.json` files).
+
+### ADO NET Source/Destination (2026-08-27)
+
+The fourth gap closed testing `ssisx` against `SSIS_From_Sandeep`: `Package_Exports.dtsx`'s
+`DFT_AdoNetRoundTrip` (`ADO_SRC_Customers` → `ADO_DST_ExportLog`) had no bespoke extraction
+payload -- structurally covered generically (100% coverage even before this round, same as
+every gap this session started from), but codegen had no idea either component was a SQL
+source/destination at all. Unlike File System Task, this one needed **no new Etl.Core
+abstraction** -- an ADO NET Source/Destination is, underneath, still a SQL Server read/write,
+so the existing `SqlRowSource<T>`/`SqlBulkSink<T>` machinery already covers it once the
+extraction/codegen layers recognize the component.
+
+**The real discrimination shape, confirmed from the real package's own XML, not guessed:**
+both components' own `componentClassID` is the generic `Microsoft.ManagedComponentHost` --
+same shape Script Component already uses (`ScriptComponentPayload`'s own doc comment) --
+disambiguated by a `UserComponentTypeName` custom property: `Microsoft.ADONETDestination` for
+the destination, and (genuinely surprising -- NOT the naming-symmetric `Microsoft.ADONETSource`
+a reader might guess) `Microsoft.DataReaderSourceAdapter` for the source. Property names differ
+from OLE DB's own: `TableOrViewName` instead of `OpenRowset`, and -- the one genuinely new
+quoting convention in this whole project -- **double-quoted** (`"dbo"."CustomerExportLog"`),
+not bracketed (`[dbo].[CustomerExportLog]`). The destination's own `UseBulkInsertWhenPossible`
+property (observed `true` on the real evidenced instance) plays the same "is this fast-load
+configured" role `FastLoadMaxInsertCommitSize`/`FastLoadOptions` do for OLE DB. The source's own
+`AccessMode` is deliberately left unresolved/unused by codegen: the one real evidenced value
+(`1`, with `SqlCommand` populated and `TableOrViewName` empty) doesn't obviously match either of
+OLE DB Source's own evidenced values (`0`/`2`), and guessing the enum mapping from one data
+point would violate this tool's own "don't hand-guess an enum, ask the runtime" rule (trap 12).
+Codegen branches on which of `SqlCommand`/`TableOrViewName` is actually populated instead,
+sidestepping the need to know the enum at all.
+
+**Model/reader (`AdoNetSourcePayload`/`AdoNetDestinationPayload` in `Ssis.Extract.Model`,
+wired in `PipelineReader.cs` alongside the existing `UserComponentTypeName ==
+"Microsoft.ScriptComponentHost"` branch) and codegen (new `AdoNetSupport.cs`:
+`DestinationInfo`/`SourceInfo`/`AdoNetSupport` normalize an OLE DB OR ADO NET
+destination/source's connection name, table name (bracket-normalized), and fast-load-configured
+flag into one shape) touch only ~10 call sites total across `PackagePlanner.cs`,
+`PackageGenerator.cs`, `DbContextEmitter.cs`, and `PrimaryKeyInference.cs`** -- confirmed by
+grepping every `.OleDbDestination`/`.OleDbSource` reference in `Ssis.Extract.Codegen` before
+touching anything, not assumed. `BuildSqlFlowSource` split into `BuildOleDbFlowSource` (the
+original AccessMode-number switch, unchanged) and `BuildAdoNetFlowSource` (the new field-
+presence branch), dispatched from one shared connection-manager-resolution preamble.
+`PrimaryKeyInference` (a separate, pre-existing `ssisx report` feature, not core to `generate`)
+was extended too, for completeness, since it was a 5-line addition once the same normalization
+existed.
+
+**Verified against the real motivating case, the same first check every gap this session used:**
+re-running `ssisx generate` against `SSIS_From_Sandeep`'s actual `Package_Exports.dtsx`:
+`DFT_AdoNetRoundTrip`'s own structural gap ("no OLE DB Destination found") is gone entirely,
+replaced by the SAME "no Derived Column found -- direct-copy pipeline" gate every OTHER
+unwired real-package flow already hits (a pre-existing, cross-cutting limitation, not specific
+to ADO NET) plus the expected non-fatal SqlCommand-column-naming advisory. The other two
+`Package_Exports.dtsx` flows (`DFT_ExportDelimited`/`DFT_ExportFixedWidth`, both writing to a
+Flat File Destination) remain unsupported -- a different, unrelated destination type, out of
+scope for this round.
+
+**Unlike every other gap closed this session, no dedicated fixture was built and actually run
+end to end** -- stated honestly rather than glossed over, since this is a genuinely lower-
+confidence verification tier than File System Task's or Conditional Split's. Constructing an
+ADO.NET connection manager through the real SSIS object model fails outright in this
+environment: `cm.AcquireConnection(null)` throws `Microsoft.SqlServer.Dts.Runtime.
+DtsCouldNotCreateManagedConnectionException: "Could not create a managed connection manager"`,
+reproduced identically across three independent variations -- `ADO.NET:System.Data.SqlClient.
+SqlConnection` (the real package's own provider) and `ADO.NET:Microsoft.Data.SqlClient.
+SqlConnection` (already working elsewhere on this machine per the SMO catalog-admin notes,
+pre-loaded from `...\SSIS\170\Extensions\SQLCommon\Microsoft.Data.SqlClient.dll` before
+retrying), and `Integrated Security=True` vs `=SSPI` -- with **zero further diagnostic detail**
+available via the .NET exception chain (`InnerException` is always null; the SSIS runtime
+swallows whatever the real root cause is). Left unresolved rather than papered over with an
+unverified guess, same discipline as the Union-All-remerge fixture's own unresolved quirk.
+Compensated for with direct unit tests against hand-constructed `PipelineComponentSpec` objects
+matching the REAL extracted evidence exactly (`AdoNetSupportTests.cs` -- table-name
+normalization, and `DestinationInfo`/`SourceInfo`'s OLE DB-vs-ADO-NET dispatch), plus the real-
+package structural verification above; what's NOT independently proven is that the generated
+`SqlRowSource<T>`/`SqlBulkSink<T>` wiring actually reads/writes correctly against a live ADO.NET
+connection at runtime, since no generated ADO NET flow has ever actually been run. A future
+session attempting this fixture again should treat the connection-manager-creation failure as
+the starting point, not re-derive it -- try capturing SSIS's own COM error stream/event
+listener rather than a bare try/catch, since the plain exception chain carries no detail at all.
 
 ## Traps already hit once — don't re-derive these
 

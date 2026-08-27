@@ -331,7 +331,10 @@ public static class PackagePlanner
     private static DataFlowPlan? PlanDataFlow(string taskName, PipelineSpec pipeline, List<GenerationGap> gaps)
     {
         var flatFileSource = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.FlatFileSource");
-        var oleDbSource = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.OLEDBSource");
+        // OLE DB Source or ADO NET Source (Microsoft.DataReaderSourceAdapter, discriminated by
+        // payload not ComponentClassId -- see AdoNetSourcePayload's own doc comment) -- either
+        // way, a SQL-based source BuildSqlFlowSource resolves generically from here.
+        var oleDbSource = pipeline.Components.FirstOrDefault(SourceInfo.IsSqlSource);
         var derivedColumn = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.DerivedColumn");
         var lookup = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.Lookup");
         var conditionalSplitComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.ConditionalSplit");
@@ -345,12 +348,13 @@ public static class PackagePlanner
 
         var destination = conditionalSplit is not null
             ? conditionalSplit.Branches[^1].Destination // the default branch, resolved last
-            : pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.OLEDBDestination");
+            : pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.OLEDBDestination")
+                ?? pipeline.Components.FirstOrDefault(c => c.AdoNetDestination is not null);
 
         if (destination is null)
         {
             gaps.Add(new GenerationGap(taskName,
-                "no OLE DB Destination found in this Data Flow Task -- only [Flat File Source|OLE DB Source] -> [Derived Column] -> OLE DB Destination is supported yet"));
+                "no OLE DB Destination or ADO NET Destination found in this Data Flow Task -- only [Flat File Source|OLE DB Source|ADO NET Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination] is supported yet"));
             return null;
         }
 
@@ -431,7 +435,7 @@ public static class PackagePlanner
                 return null;
             }
 
-            if (next.ComponentClassId == "Microsoft.OLEDBDestination")
+            if (next.ComponentClassId == "Microsoft.OLEDBDestination" || next.AdoNetDestination is not null)
                 return new ConditionalSplitBranchPlan(outputName, friendlyExpression, derivedColumns, next);
 
             if (next.ComponentClassId is "Microsoft.DerivedColumn" or "Microsoft.UnionAll")

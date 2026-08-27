@@ -38,10 +38,17 @@ public static class PrimaryKeyInference
 
         foreach (var ex in allExecutables.Where(e => e.DataFlowTask is not null))
         {
-            foreach (var comp in ex.DataFlowTask!.Pipeline.Components.Where(c => c.OleDbDestination is not null))
+            // ADO NET Destination (Microsoft.ADONETDestination, discriminated by payload not
+            // ComponentClassId -- see AdoNetDestinationPayload's own doc comment) included
+            // alongside OLE DB Destination, added 2026-08-27 testing this tool against a real
+            // third-party portfolio (SSIS_From_Sandeep). TableOrViewName is double-quoted
+            // ("dbo"."Table"), not bracketed like OpenRowset -- LastSegment below already
+            // trims on '.'/'[' /']', which happens not to need a '"' case: TrimEnd('"') isn't
+            // applied here, so an ADO NET target's LastSegment would keep a trailing quote --
+            // handled by normalizing to bracket form first via the same helper codegen uses.
+            foreach (var comp in ex.DataFlowTask!.Pipeline.Components.Where(c => c.OleDbDestination is not null || c.AdoNetDestination is not null))
             {
-                var dest = comp.OleDbDestination!;
-                var target = dest.OpenRowset;
+                var target = comp.OleDbDestination?.OpenRowset ?? NormalizeAdoNetTableName(comp.AdoNetDestination?.TableOrViewName);
                 var mainInput = comp.Inputs.FirstOrDefault();
                 if (mainInput is null) continue;
 
@@ -97,5 +104,24 @@ public static class PrimaryKeyInference
         var normalized = bracketedOrPlainTableName.Replace("[", "").Replace("]", "");
         var parts = normalized.Split('.');
         return parts[^1];
+    }
+
+    /// <summary>"dbo"."CustomerExportLog" -> "[dbo].[CustomerExportLog]" -- same normalization
+    /// Ssis.Extract.Codegen.AdoNetSupport.NormalizeTableName does, duplicated here rather than
+    /// shared since Ssis.Extract.Dtsx has no dependency on Ssis.Extract.Codegen (the direction
+    /// runs the other way) and this is an 8-line helper, not worth a new shared project just for
+    /// two call sites.</summary>
+    private static string? NormalizeAdoNetTableName(string? tableOrViewName)
+    {
+        if (string.IsNullOrEmpty(tableOrViewName)) return null;
+
+        var parts = tableOrViewName.Split("\".\"", StringSplitOptions.None);
+        if (parts.Length != 2) return null;
+
+        var schema = parts[0].TrimStart('"');
+        var table = parts[1].TrimEnd('"');
+        if (schema.Length == 0 || table.Length == 0) return null;
+
+        return $"[{schema}].[{table}]";
     }
 }

@@ -63,6 +63,13 @@ public sealed class PipelineComponentSpec
     public LookupPayload? Lookup { get; init; }
     public ConditionalSplitPayload? ConditionalSplit { get; init; }
 
+    /// <summary>Added 2026-08-27 testing this tool against a real third-party portfolio
+    /// (SSIS_From_Sandeep) -- same "read a real example first" rule, discriminated by
+    /// UserComponentTypeName, not ComponentClassId; see AdoNetDestinationPayload/
+    /// AdoNetSourcePayload's own doc comments for why.</summary>
+    public AdoNetDestinationPayload? AdoNetDestination { get; init; }
+    public AdoNetSourcePayload? AdoNetSource { get; init; }
+
     /// <summary>Discriminated by the <c>UserComponentTypeName</c> custom property, not <see cref="ComponentClassId"/> -- see <see cref="Ssis.Extract.Model.Pipeline.ScriptComponentPayload"/>'s own doc comment for why.</summary>
     public ScriptComponentPayload? ScriptComponent { get; init; }
 }
