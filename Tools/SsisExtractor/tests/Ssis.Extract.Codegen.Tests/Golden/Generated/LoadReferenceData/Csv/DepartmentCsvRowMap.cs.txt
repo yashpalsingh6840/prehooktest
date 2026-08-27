@@ -1,0 +1,15 @@
+using CsvHelper.Configuration;
+
+namespace LoadReferenceData.Csv;
+
+public sealed class DepartmentCsvRowMap : ClassMap<DepartmentCsvRow>
+{
+    public DepartmentCsvRowMap()
+    {
+        Map(m => m.DepartmentID).Name("DepartmentID");
+        Map(m => m.DepartmentCode).Name("DepartmentCode");
+        Map(m => m.DepartmentName).Name("DepartmentName");
+        Map(m => m.CostCenter).Name("CostCenter");
+        Map(m => m.HeadCount).Name("HeadCount");
+    }
+}

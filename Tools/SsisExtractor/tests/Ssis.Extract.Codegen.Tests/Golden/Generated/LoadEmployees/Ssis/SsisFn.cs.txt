@@ -1,0 +1,30 @@
+using System.Globalization;
+
+namespace LoadEmployees.Ssis;
+
+internal static class SsisFn
+{
+    /// <summary>UPPER() -- always invariant. A plain ToUpper() would map 'i' -> 'İ' under tr-TR.</summary>
+    public static string Upper(string value) => value.ToUpperInvariant();
+
+    /// <summary>
+    /// SUBSTRING(expression, start, length), 1-based like SSIS/T-SQL. start &lt; 1 is a hard
+    /// error in real SSIS, not a clamp to the start of the string. start beyond the end of
+    /// the string clamps to "" instead of erroring.
+    /// </summary>
+    public static string Substring(string value, int oneBasedStart, int length)
+    {
+        if (oneBasedStart < 1)
+            throw new ArgumentOutOfRangeException(nameof(oneBasedStart), oneBasedStart,
+                "SSIS SUBSTRING errors when start < 1; it does not clamp to the start of the string.");
+
+        if (length <= 0 || oneBasedStart > value.Length) return string.Empty;
+
+        var zeroBasedStart = oneBasedStart - 1;
+        var take = Math.Min(length, value.Length - zeroBasedStart);
+        return value.Substring(zeroBasedStart, take);
+    }
+
+    /// <summary>(DT_WSTR,n) cast of an integer -- invariant, no thousands separator.</summary>
+    public static string Str(int value) => value.ToString(CultureInfo.InvariantCulture);
+}

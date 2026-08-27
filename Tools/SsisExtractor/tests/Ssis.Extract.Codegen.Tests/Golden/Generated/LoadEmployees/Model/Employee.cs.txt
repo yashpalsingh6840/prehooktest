@@ -1,0 +1,20 @@
+namespace LoadEmployees.Model;
+
+public sealed class Employee
+{
+    public int EmployeeID { get; set; }
+
+    public string Department { get; set; } = "";
+
+    public DateOnly HireDate { get; set; }
+
+    public decimal Salary { get; set; }
+
+    public string FullName { get; set; } = "";
+
+    public string Location { get; set; } = "";
+
+    public string EmployeeKey { get; set; } = "";
+
+    public DateTime LoadedAtUtc { get; set; }
+}

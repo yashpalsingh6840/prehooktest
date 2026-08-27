@@ -1,0 +1,36 @@
+using Microsoft.EntityFrameworkCore;
+
+namespace LoadReferenceData.Model;
+
+public sealed class LoadReferenceDataDbContext(DbContextOptions<LoadReferenceDataDbContext> options) : DbContext(options)
+{
+    public DbSet<Department> Departments => Set<Department>();
+    public DbSet<Designation> Designations => Set<Designation>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Department>(entity =>
+        {
+            entity.ToTable("Department", "dbo");
+            entity.HasKey(e => e.DepartmentID);
+            entity.Property(e => e.DepartmentID).ValueGeneratedNever();
+            entity.Property(e => e.DepartmentCode).HasMaxLength(10);
+            entity.Property(e => e.DepartmentName).HasMaxLength(50);
+            entity.Property(e => e.CostCenter).HasMaxLength(20);
+            entity.Property(e => e.DepartmentKey).HasMaxLength(25);
+            entity.Property(e => e.LoadedAtUtc).HasColumnType("datetime2(3)");
+        });
+
+        modelBuilder.Entity<Designation>(entity =>
+        {
+            entity.ToTable("Designation", "dbo");
+            entity.HasKey(e => e.DesignationID);
+            entity.Property(e => e.DesignationID).ValueGeneratedNever();
+            entity.Property(e => e.DesignationCode).HasMaxLength(10);
+            entity.Property(e => e.Title).HasMaxLength(50);
+            entity.Property(e => e.Band).HasMaxLength(5);
+            entity.Property(e => e.DesignationKey).HasMaxLength(25);
+            entity.Property(e => e.LoadedAtUtc).HasColumnType("datetime2(3)");
+        });
+    }
+}

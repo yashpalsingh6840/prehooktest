@@ -161,6 +161,55 @@ were cross-checked against `.\SQLFORPOC`'s actual `PRIMARY KEY` constraints via
 `Tools/Validation`'s `ConfigGenerator` (via `--primary-keys-json`) reproduces byte-identical
 `KeyColumn` values to the ones a human had already hand-filled in an earlier session.
 
+## Observable effects (added 2026-08-20 -- closes a false-green risk in gate 3)
+
+`effects.json`/`effects.md` -- one `Ssis.Extract.Model.Analysis.ObservableEffectSpec` per
+real-world thing a package changes, built by `Ssis.Extract.Dtsx.ObservableEffectsBuilder`.
+Exists because `Tools/Validation`'s gate-3 harness only ever compared SQL table rows -- true
+for both of this PoC's packages, since both happen to end in a table, but not a general fact
+about SSIS packages. A package whose real output is a file drop, an email, or a queue message
+would have zero configured target tables, nothing to diff, and the harness would still print
+PASS. **A partial check that reports as a full pass is worse than no check, because it gets
+trusted** -- this file is what lets the harness refuse to make that mistake.
+
+**Four kinds, three of them derived from analysis that already existed** (`SqlTable`/`File`
+from `DataTouchBuilder`'s data-touch inventory, `StoredProcedure` from the SQL harvest) --
+**the fourth, `UncharacterizedTask`, is the load-bearing one.** Every executable in the
+package whose `ExecutableType` is not on a short allowlist of types already fully accounted
+for elsewhere (`Microsoft.Pipeline`, `Microsoft.ExecuteSQLTask`, and the stock containers --
+confirmed as `STOCK:SEQUENCE`/`STOCK:FOREACHLOOP`/`STOCK:FORLOOP` against real fixture XML,
+not guessed) becomes an explicit, unverifiable effect instead of silent nothing. **Deliberately
+an exclusion list of known-safe types, not an allow list of known-dangerous ones** -- so a
+future SSIS task type this tool has never seen (a Send Mail Task, an FTP Task, a Web Service
+Task) is unverifiable by default, not verifiable by default. A Script Component gets the same
+treatment even though it lives *inside* an otherwise-safe `Microsoft.Pipeline` -- its
+transform body can have any side effect a Script Task's can, and nothing here reads it either.
+
+Each effect carries a `Verifiability`: `Verifiable` (a gate-3 checker exists -- true for
+`SqlTable` today), `NeedsChecker` (a real, characterized effect with no checker built yet --
+`File`), or `NeedsHumanReview` (this tool cannot even establish what the effect is --
+`StoredProcedure`'s own writes, `UncharacterizedTask`).
+
+**Measured on this PoC:** `LoadEmployees` reports exactly one effect (`dbo.Employee`,
+`Verifiable`); `LoadReferenceData` reports exactly two (`dbo.Department`/`dbo.Designation`,
+both `Verifiable`) -- both packages are straight-line data flows with nothing this catch-all
+needs to flag, confirming it doesn't cry wolf on the ordinary case. Run against the user's own
+in-progress `SSIS/ScriptTest.dtsx` (read-only, untouched, per this repo's own discipline), it
+correctly reports both Script Tasks as `UncharacterizedTask`/`NeedsHumanReview` -- proving the
+catch-all actually fires on a package with a real unmodeled effect, not just that it stays
+quiet on packages without one. Pinned by `tests/Ssis.Extract.Tests/ObservableEffectsBuilderTests.cs`,
+including a Script-Component-specific fixture proving the "lives inside an allowlisted
+executable" case doesn't slip through.
+
+**`Tools/Validation`'s `ConfigGenerator`** (`--effects-json`) folds this into each package's
+`PackageConfig.DeclaredEffects` -- every effect NOT covered by `--tables`, including a
+`SqlTable` effect that *is* real but was left off `--tables` (the "wrote to a table nobody
+configured for comparison" gap, not just the non-table-effect case). `GateRunner.Run` then
+computes a three-way `Outcome` instead of a boolean: `Pass` only when every table matched
+*and* every declared effect is `Verifiable`; `Incomplete` when tables matched but a real
+effect has no checker (exit code 3, never collapsed into `Pass`); `Fail` otherwise. See
+`Tools/Validation/docs/gate3-harness.md`'s own section on this.
+
 **A real bug was caught wiring this into `ssisx conformance`'s `TargetSchema` evidence, not
 shipped:** the synthetic Lookup/Conditional Split fixture has three OLE DB Destinations all
 left at SSIS's default component name ("OLE DB Destination") -- joining candidates back to
@@ -501,5 +550,123 @@ the executable-level Script Task branch or this component-level branch; `ssisx r
 identically to `ScriptTaskCount` (`weights.ScriptTask`, no separate config key -- both
 represent the same "arbitrary code, no structural model" risk) and folded into the same
 unconditional `HighRisk` classification trigger.
+
+### Synthetic parallel-shapes fixture (added 2026-08-25, ahead of `ssisx generate`)
+
+Built to close a real risk in the generator plan (`Migration-Validation-Plan.md`/the
+generator's own scope table): every prior fixture -- both PoC packages and all three earlier
+synthetic ones -- is a straight-line chain, so `ControlFlowDagSpec.ParallelLevels` had never
+been exercised on a real multi-node level, and no fixture had an OLE DB Source -> Destination
+direct copy (no transform) or a Flat File Source's error output routed anywhere. A real
+client screenshot showed all three shapes in one package (four parallel Execute-SQL/Data-
+Flow/Execute-SQL chains; two independent OLE DB Source/Destination pairs sharing one Data
+Flow Task; a Flat File Source's error output feeding a Script Component). Building a
+sanitized structural equivalent -- generic table/column names, no client data -- was the
+fastest way to prove the extractor handles what a real portfolio will contain.
+
+**`SSIS/SyntheticParallelShapes.dtsx`**, three independent top-level branches with NO
+precedence constraints between them. Deliberately moved out of this project's own `Fixtures/`
+folder (where all three earlier synthetic fixtures live) into the PoC's own `SSIS/` folder,
+registered in `SSIS.dtproj` alongside `LoadEmployees.dtsx`/`LoadReferenceData.dtsx`, so it is
+visible in SSDT's Package Explorer / Solution Explorer the same way the real packages are.
+It is still not part of the PoC's own deliverable -- see CLAUDE.md's "unrelated in-progress
+files" note for the same distinction already drawn for `ScriptTest.dtsx`. Its CSV/SQL
+dependencies were deliberately NOT moved (see the two paragraphs below) and its own generator
+tool resolves them independently of wherever `.dtsx` output is written -- see
+`Ssis.Extract.FixtureBuilder.Program`'s own doc comment for why that had to change once the
+two directories diverged.
+
+| Branch | Shape | New evidence |
+|---|---|---|
+| 1 | Execute SQL (create-if-missing) -> Flat File Source -> OLE DB Destination -> Execute SQL (post-load update) | SQL sequenced AFTER a Data Flow Task, not just before -- the C# rewrite's `PackageRunner` only models pre-load SQL today; this is what makes that gap concrete rather than theoretical |
+| 2 | One Data Flow Task, two independent OLE DB Source -> Destination pairs, no transform | The direct-copy shape `Etl.Core` has no abstraction for |
+| 3 | Flat File Source's main output -> one destination; its ERROR output -> Script Component (real, minimal passthrough) -> a second destination | Error-row redirection, completely unmodeled before this fixture |
+
+Verified real, not assumed: extracting it produces `ParallelLevels[0]` with all three branch
+roots in one level (`SQL_CreateLoadATemp`, `DFT_DirectCopy`, `DFT_ErrorRouting`), then two
+singleton levels for branch 1's remaining chain -- exactly the "independent chains of
+different lengths" case `ParallelLevels`' own doc comment names as a documented limit, now
+backed by a real fixture instead of only prose. 100% coverage; `ssisx report`'s
+`ObservableEffectsBuilder` correctly reports the Script Component as `UncharacterizedTask`/
+`NeedsHumanReview` and all 5 destination tables as `Verifiable` `SqlTable` effects. Pinned by
+`tests/Ssis.Extract.Tests/SyntheticParallelShapesTests.cs` (8 tests).
+
+**Built via `src/Ssis.Extract.FixtureBuilder/`, a new checked-in console tool** -- unlike the
+first three synthetic fixtures, whose builders were never committed (confirmed by searching
+this repo's history for the file's own add-commit: only the `.dtsx` output survives, so none
+of those three can be regenerated or extended without re-deriving every object-model call
+from scratch). This one can be re-run: `ssis-fixture-builder.exe <output-path>`, against the
+backing tables in `tests/Ssis.Extract.Tests/Fixtures/synthetic-parallel-shapes-tables.sql`
+(run once against `.\SQLFORPOC_2022`/`SsisPoC`, same "safe to drop/recreate" contract as
+`synthetic-fixture-tables.sql`) and the two CSVs under
+`tests/Ssis.Extract.Tests/Fixtures/synthetic-parallel-shapes-csv/`. These stay put even
+though the built `.dtsx` now lives under `SSIS/` -- they are this tool's own test data, not
+part of the PoC's deliverable, and the flat-file connection managers point at them by
+absolute path regardless of where the `.dtsx` itself is saved.
+
+**Six real, evidenced gotchas hit building it, none guessable from documentation:**
+- **`ProvideComponentProperties()` resets a pipeline component's `Name` back to its class
+  default, discarding whatever was set beforehand.** Setting `.Name` before that call (the
+  order that reads naturally) is silently overwritten -- confirmed the hard way, not caught by
+  any of this repo's own tests: two OLE DB Destinations in `DFT_DirectCopy` both persisted
+  `name="OLE DB Destination"` (their auto-uniquified `refId`s differed, which is why extraction
+  and every test here looked completely clean), and SSDT's own "Add Existing Item" validation
+  rejected the package outright with *"The package contains two objects with the duplicate
+  name of 'OLE DB Destination' and 'OLE DB Destination'."* `ssisx` itself never noticed because
+  it keys everything by `refId`, never by `name` -- SSDT's stricter check is what caught it.
+  Fixed by moving every `.Name =` assignment to AFTER `ProvideComponentProperties()`, in
+  `AddOleDbComponent` and both inline Flat File Source / Script Component builders alike.
+- **A `FlatFileColumn`'s name has no property on its own COM interface.** Reflecting over
+  `IDTSConnectionManagerFlatFileColumn100` (static assembly metadata, and even a live
+  instance's runtime members) shows only `ColumnType`/`ColumnDelimiter`/`DataType`/
+  `MaximumWidth`/`DataPrecision`/`DataScale`/`TextQualified` -- genuinely no `Name`. Naming a
+  column requires casting the SAME object to `IDTSName100` and setting `.Name` there;
+  confirmed by loading `LoadReferenceData.dtsx`'s own real `CM_DepartmentCsv` and reading its
+  columns' names back exactly that way before trusting the construction path.
+- **A Script Component's script-specific custom properties (`SourceCode`/`BinaryCode`/
+  `ScriptLanguage`/...) only appear if `UserComponentTypeName` is seeded as a custom property
+  BEFORE `Instantiate()`/`ProvideComponentProperties()` runs, not after.** Setting it
+  afterward (the order that reads naturally from CLAUDE.md's existing Script Component notes,
+  which describe populating an ALREADY-a-script component's properties) leaves the component a
+  bare "Managed Component Wrapper" with none of those properties in its
+  `CustomPropertyCollection` at all -- confirmed by hitting exactly that failure first, then
+  finding the fix by seeding the property earlier and re-testing in isolation.
+- **A Flat File Source's error output has a FIXED three-column shape** --
+  `"Flat File Source Error Output Column"` (`DT_TEXT`), `ErrorCode`, `ErrorColumn` -- entirely
+  unrelated to the source's own column list. A first attempt sized the error-catch
+  destination table after the MAIN output's columns and failed to map; caught immediately by
+  the builder's own by-name mapping check (which refuses to guess a mapping), not discovered
+  later as a silent wrong-schema bug.
+
+- **A Script Component built by seeding properties directly (no VSTA editor round-trip) has
+  no cached `BinaryCode`, and SSDT's package validation demands one.** This surfaced only
+  after the fixture was moved into `SSIS/` and added to the real project via SSDT's own "Add
+  Existing Item" -- neither `ssisx` nor the extractor's own test suite ever opens a package in
+  a designer, so it was invisible until then. SSDT rejected the package with *"The binary code
+  for the script is not found. Please open the script in the designer... System.
+  ArgumentException: Requested value '// this package is structural evidence for the
+  extractor, not a runnable pipeline.' was not found."* -- the second half is
+  `LoadScriptFromComponent` trying to use the raw `SourceCode` comment text as a lookup key
+  once it can't find a real compiled binary. Fixed by setting `DTS:DelayValidation="True"` on
+  the containing Data Flow Task (`TaskHost.DelayValidation` in the object model), which defers
+  that task's validation to execution time -- which this fixture, documented from the start as
+  never compiled/executed, never reaches. Confirmed via the persisted XML
+  (`DTS:DelayValidation="True"` on `DFT_ErrorRouting`) and a clean re-run of the full test
+  suite (same 121/124, no new failures).
+
+- **A freshly constructed `Package`'s `ProtectionLevel` default does not match the project's,
+  and SSDT's solution-level build fails on the mismatch before any per-package validation
+  even runs.** Neither `ssisx` nor SSDT's per-package "Add Existing Item" check catches this
+  -- it only surfaced on `devenv /Build`/the equivalent Execute-triggered build, with *"Project
+  consistency check failed... SyntheticParallelShapes.dtsx has a different ProtectionLevel
+  than the project."* All three of the project's existing packages persist
+  `DTS:ProtectionLevel="0"` (`DontSaveSensitive`); the builder never set it explicitly, so the
+  object model's own default won. Fixed by setting
+  `pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive`
+  right after package construction (the type name needs full qualification --
+  `Microsoft.SqlServer.Dts.Runtime.Wrapper` declares a same-named enum the interop layer also
+  pulls in scope, an ambiguous-reference compile error, not a runtime one). Confirmed via a
+  clean `devenv /Build SSIS.sln` afterward: `3 succeeded, 0 failed`, `.ispac` rebuilt with all
+  four packages.
 
 **Still genuinely unbuilt**, same as Script Task: understanding what the script does.

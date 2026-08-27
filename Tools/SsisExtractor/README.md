@@ -318,6 +318,42 @@ not `.sln` -- same `dotnet build`/`dotnet test` commands work on either.)
 
 `out/` is gitignored (this project's own `.gitignore`) -- it's a run artifact, not source.
 
+## Portfolio survey (`scripts/`, added 2026-08-25) -- what ships to a client machine
+
+**The digest now answers the actual sizing question, not just complexity (added 2026-08-26):**
+alongside coverage/complexity/findings, `ssisx report` calls `ssisx generate`'s own planner
+per package (in-memory, no C# written to disk) and reports how many packages would generate
+with zero BLOCKING gaps -- see `generation-readiness.md`, the digest's "Generatable" line, and
+its "GENERATION GAP REASONS" section. A `{Package}.Notification` gap is never counted as
+blocking (every `.dtsx` gets one; no real package could ever avoid it, and it doesn't stop the
+generated project from compiling/running) -- see `PortfolioDigest.IsBlockingGap`'s own comment.
+
+`scripts/Run-Survey.ps1` (and `Run-Survey.bat`, a PowerShell-execution-policy-proof twin
+for locked-down machines) is the thing that actually leaves this repo: a wrapper that runs
+`ssisx report` + `ssisx conformance` over a client's own package folder and produces two
+tiers of output -- the full survey (SQL text, script source, table/server names; stays on
+their machine) and a counts-only digest (`portfolio-digest.md/json`, package names reduced
+to `PKG-nnn`) that's small enough and sanitized enough to actually send back.
+
+`ssisx.exe` itself is not checked in (`scripts/*` is gitignored except the `.ps1`/`.bat`
+wrappers -- see that file's own comment). Build it fresh before shipping:
+
+```powershell
+.\scripts\Publish-Survey.ps1
+```
+
+This must be a **self-contained, single-file** publish
+(`-p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+-p:EnableCompressionInSingleFile=true -p:DebugType=none`, all baked into the script) --
+plain `dotnet build`/`dotnet publish` without those flags produces either a exe that needs
+.NET installed on the target machine, or a correct-but-unwieldy ~210-file/~80 MB tree
+instead of one ~36 MB `ssisx.exe`. The target machine needs nothing installed at all: no
+.NET runtime, no Visual Studio, no SSIS, no SQL Server, no network -- confirmed by running
+the published exe completely standalone. Then zip the whole `scripts/` folder (just those
+4 files) and send that; a 30 MB zip is often too large for email as-is, so split it into
+parts with plain binary concatenation (`copy /b part1+part2+... out.zip` rejoins them --
+built into Windows, no extra software needed on the client end).
+
 ## Test
 
 ```powershell

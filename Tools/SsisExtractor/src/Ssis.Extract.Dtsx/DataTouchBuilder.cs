@@ -24,36 +24,19 @@ public static class DataTouchBuilder
             foreach (var p in sql.ExecutesProcedures) procs.Add(p);
         }
 
-        // Connection-manager name -> whether a source or destination component uses it. A
-        // FILE/FLATFILE connection manager's own definition says nothing about direction --
-        // only the component consuming it does (plan §5.3's read-vs-written split), so this
-        // is resolved from pipeline usage rather than guessed from the connection manager.
-        var readConnections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var writeConnections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
         foreach (var ex in PackageTree.AllExecutables(package))
         {
             if (ex.DataFlowTask is null) continue;
             foreach (var comp in ex.DataFlowTask.Pipeline.Components)
             {
-                // A component with no inputs is a source; one with no non-error outputs is a
-                // destination. Structural, so it works for component types this build slice
-                // has no bespoke payload for -- not a componentClassID name-matching guess.
-                var isSource = comp.Inputs.Count == 0;
-                var isDestination = comp.Outputs.Count(o => o.IsErrorOut != true) == 0;
-
                 if (comp.OleDbDestination?.OpenRowset is { } target && !string.IsNullOrWhiteSpace(target))
                 {
                     tablesWritten.Add(NormalizeTableName(target));
                 }
-
-                foreach (var conn in comp.Connections.Where(c => c.ConnectionManagerName is not null))
-                {
-                    if (isSource) readConnections.Add(conn.ConnectionManagerName!);
-                    else if (isDestination) writeConnections.Add(conn.ConnectionManagerName!);
-                }
             }
         }
+
+        var (readConnections, writeConnections) = ResolveConnectionDirections(package);
 
         var filePathsRead = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var filePathsWritten = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -103,6 +86,44 @@ public static class DataTouchBuilder
             FilePathsFromExpression = Sorted(filePathsFromExpression),
             Servers = Sorted(servers),
         };
+    }
+
+    /// <summary>
+    /// Connection-manager name -> whether a source or destination component uses it. A
+    /// FILE/FLATFILE connection manager's own definition says nothing about direction --
+    /// only the component consuming it does (plan §5.3's read-vs-written split), so this
+    /// is resolved from pipeline usage rather than guessed from the connection manager.
+    ///
+    /// <para>Public because <see cref="ObservableEffectsBuilder"/> needs the same answer for a
+    /// different question: a source CSV is an input and therefore not an effect, while a
+    /// destination file is. Sharing one implementation keeps the two from drifting into
+    /// disagreeing about which direction a connection manager points.</para>
+    /// </summary>
+    public static (HashSet<string> Read, HashSet<string> Write) ResolveConnectionDirections(PackageSpec package)
+    {
+        var readConnections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var writeConnections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var ex in PackageTree.AllExecutables(package))
+        {
+            if (ex.DataFlowTask is null) continue;
+            foreach (var comp in ex.DataFlowTask.Pipeline.Components)
+            {
+                // A component with no inputs is a source; one with no non-error outputs is a
+                // destination. Structural, so it works for component types this build slice
+                // has no bespoke payload for -- not a componentClassID name-matching guess.
+                var isSource = comp.Inputs.Count == 0;
+                var isDestination = comp.Outputs.Count(o => o.IsErrorOut != true) == 0;
+
+                foreach (var conn in comp.Connections.Where(c => c.ConnectionManagerName is not null))
+                {
+                    if (isSource) readConnections.Add(conn.ConnectionManagerName!);
+                    else if (isDestination) writeConnections.Add(conn.ConnectionManagerName!);
+                }
+            }
+        }
+
+        return (readConnections, writeConnections);
     }
 
     /// <summary>Strips SSIS/T-SQL bracket quoting so <c>[dbo].[Employee]</c> (how an OLE DB Destination writes its OpenRowset) and <c>dbo.Employee</c> (how SQL text usually writes it) become the same string -- without this, a package that truncates a table via SQL and writes it via a destination looks like it touches two different tables, and the §5.2 shared-table dependency edges silently miss.</summary>

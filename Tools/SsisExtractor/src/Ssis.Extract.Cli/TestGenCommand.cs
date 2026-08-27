@@ -163,7 +163,18 @@ internal static class TestGenCommand
         // col.DataType/col.Length) since the FriendlyExpression's own outer cast is exactly
         // what a human reads as "the contract" and is guaranteed to agree with what this
         // library will evaluate.
-        SsisExpression.Parse(expression); // throws early (skip+report) if this library can't parse it at all
+        try
+        {
+            SsisExpression.Parse(expression);
+        }
+        catch (SsisExpressionError ex)
+        {
+            // A parse failure must degrade this one column to a skip, never crash the whole
+            // command -- the same isolation PackageLoader already gives a bad package. Before
+            // this fix the call above was unguarded, so this was a latent bug: the trailing
+            // comment already claimed "throws early (skip+report)" but nothing caught it.
+            return new GenResult(null, 0, $"expression could not be parsed: {ex.Message}");
+        }
         var outerCast = TryGetOuterCast(expression);
 
         var cases = new List<TestCase>

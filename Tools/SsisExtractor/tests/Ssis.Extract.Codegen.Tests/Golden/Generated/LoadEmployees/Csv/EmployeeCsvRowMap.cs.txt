@@ -1,0 +1,18 @@
+using CsvHelper.Configuration;
+
+namespace LoadEmployees.Csv;
+
+public sealed class EmployeeCsvRowMap : ClassMap<EmployeeCsvRow>
+{
+    public EmployeeCsvRowMap()
+    {
+        Map(m => m.EmployeeID).Name("EmployeeID");
+        Map(m => m.FirstName).Name("FirstName");
+        Map(m => m.LastName).Name("LastName");
+        Map(m => m.Department).Name("Department");
+        Map(m => m.HireDate).Name("HireDate");
+        Map(m => m.Salary).Name("Salary");
+        Map(m => m.City).Name("City");
+        Map(m => m.State).Name("State");
+    }
+}

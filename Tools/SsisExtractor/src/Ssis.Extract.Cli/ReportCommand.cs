@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Ssis.Extract.Codegen;
 using Ssis.Extract.Dtsx;
 using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Package;
@@ -99,9 +100,11 @@ internal static class ReportCommand
         var perPackageComplexity = new Dictionary<string, ComplexityStats>();
         var perPackageNonDeterministic = new Dictionary<string, List<NonDeterministicColumnSpec>>();
         var perPackageDataTouch = new Dictionary<string, DataTouchSpec>();
+        var perPackageGenerationGaps = new Dictionary<string, List<GenerationGap>>();
         var allSqlAnalyses = new List<SqlAnalysisSpec>();
         var allExpressions = new List<HarvestedExpressionSpec>();
         var allPrimaryKeyCandidates = new List<PrimaryKeyCandidateSpec>();
+        var allObservableEffects = new List<ObservableEffectSpec>();
 
         var sqlDir = Path.Combine(outDir, "sql");
         var scriptFilesWritten = 0;
@@ -114,6 +117,12 @@ internal static class ReportCommand
             perPackageFindings[pkg.ObjectName] = RulesEngine.Evaluate(pkg);
             perPackageNonDeterministic[pkg.ObjectName] = NonDeterminismAnalyzer.Analyze(pkg, allExecutables);
             allPrimaryKeyCandidates.AddRange(PrimaryKeyInference.Infer(pkg, allExecutables));
+
+            // Pure, in-memory -- no files written here. This is what actually answers "how
+            // much of this portfolio can ssisx generate produce today", the sizing number
+            // CLAUDE.md names as still unknown; run `ssisx generate` itself for the real
+            // per-package C# output.
+            perPackageGenerationGaps[pkg.ObjectName] = PackageGenerator.Generate(pkg, namespacePrefix: null).Gaps;
 
             // SQL harvest (plan §5.4): write each statement to its own addressable .sql
             // file, then parse it. The file is written before the parse so a statement that
@@ -131,7 +140,9 @@ internal static class ReportCommand
             }
             allSqlAnalyses.AddRange(sqlAnalyses);
 
-            perPackageDataTouch[pkg.ObjectName] = DataTouchBuilder.Build(pkg, sqlAnalyses);
+            var dataTouch = DataTouchBuilder.Build(pkg, sqlAnalyses);
+            perPackageDataTouch[pkg.ObjectName] = dataTouch;
+            allObservableEffects.AddRange(ObservableEffectsBuilder.Build(pkg, dataTouch));
             allExpressions.AddRange(ExpressionHarvester.Harvest(pkg));
 
             // Script Task source extraction (plan §6.1's scripts/<Package>/<Task>/*): every
@@ -223,12 +234,17 @@ internal static class ReportCommand
         StableJsonWriter.WriteToFile(perPackageDataTouch.Values.OrderBy(d => d.PackageName, StringComparer.Ordinal).ToList(), Path.Combine(outDir, "datatouch.json"));
         WriteDataTouchMd(perPackageDataTouch, Path.Combine(outDir, "datatouch.md"));
         WritePrimaryKeysMd(allPrimaryKeyCandidates, Path.Combine(outDir, "primary-keys.md"));
+        WriteGenerationReadinessMd(perPackageGenerationGaps, Path.Combine(outDir, "generation-readiness.md"));
+        StableJsonWriter.WriteToFile(
+            allObservableEffects.OrderBy(e => e.PackageName, StringComparer.Ordinal).ThenBy(e => e.Kind, StringComparer.Ordinal).ThenBy(e => e.Target, StringComparer.Ordinal).ToList(),
+            Path.Combine(outDir, "effects.json"));
+        WriteEffectsMd(allObservableEffects, Path.Combine(outDir, "effects.md"));
         var graphDir = Path.Combine(outDir, "graph");
         Directory.CreateDirectory(graphDir);
         File.WriteAllText(Path.Combine(graphDir, "portfolio.mmd"), DependencyGraphBuilder.ToMermaid(packages, dependencyEdges));
         StableJsonWriter.WriteToFile(dependencyEdges, Path.Combine(outDir, "dependencies.json"));
 
-        WritePortfolioMd(inventory, allFindings, allNonDeterministic, allExpressions, allSqlAnalyses, dependencyEdges, Path.Combine(outDir, "portfolio.md"));
+        WritePortfolioMd(inventory, allFindings, allNonDeterministic, allExpressions, allSqlAnalyses, dependencyEdges, perPackageGenerationGaps, Path.Combine(outDir, "portfolio.md"));
 
         var sqlFileCount = allSqlAnalyses.Count(s => s.SqlFilePath is not null);
         var parseFailures = allSqlAnalyses.Count(s => !s.ParsedSuccessfully);
@@ -239,10 +255,57 @@ internal static class ReportCommand
         Console.WriteLine($"  {scriptFilesWritten} Script Task/Component source file(s) harvested to `scripts/`{(scriptItemsStripped > 0 ? $", {scriptItemsStripped} script(s) had NO source (binary only -- see findings)" : "")}");
         foreach (var row in inventory)
         {
-            Console.WriteLine($"  {row.PackageName}: {row.Complexity.Classification} (score {row.Complexity.Score:0.##}), {row.FindingsCount} finding(s)");
+            var gapCount = perPackageGenerationGaps.TryGetValue(row.PackageName, out var gaps) ? gaps.Count(PortfolioDigest.IsBlockingGap) : 0;
+            Console.WriteLine($"  {row.PackageName}: {row.Complexity.Classification} (score {row.Complexity.Score:0.##}), {row.FindingsCount} finding(s), {(gapCount == 0 ? "generatable (0 blocking gaps)" : $"{gapCount} blocking generation gap(s)")}");
+        }
+
+        // The digest is written LAST and printed to the console, because on a locked-down
+        // client site the console is frequently the only export channel that exists -- a
+        // screenshot or a phone photo of the terminal. See PortfolioDigest for why it is an
+        // allow-list of safe fields rather than a redaction of the fuller report.
+        var digest = PortfolioDigest.Build(packages, inventory, allFindings, allExpressions, allObservableEffects, allNonDeterministic, loaded.Failures.Count, perPackageGenerationGaps);
+        File.WriteAllText(Path.Combine(outDir, "portfolio-digest.md"), PortfolioDigest.ToMarkdown(digest));
+        StableJsonWriter.WriteToFile(digest, Path.Combine(outDir, "portfolio-digest.json"));
+        Console.WriteLine();
+        Console.WriteLine(PortfolioDigest.ToConsoleDigest(digest));
+
+        // Anything that could not be read is persisted next to the results, not just printed:
+        // a survey run on a machine we do not control is usually reduced to whatever ends up
+        // in the out directory, and "which packages are missing from this report, and why"
+        // is exactly the question that cannot be answered later from console scrollback.
+        WriteLoadFailuresMd(loaded.Failures, Path.Combine(outDir, "load-failures.md"));
+        if (loaded.Failures.Count > 0)
+        {
+            Console.Error.WriteLine($"warning: {loaded.Failures.Count} input(s) could not be read and are ABSENT from this report -- see load-failures.md");
+            return 2;
         }
 
         return 0;
+    }
+
+    /// <summary>Always written, including on a clean run, so its absence means the run died before finishing rather than "nothing failed".</summary>
+    private static void WriteLoadFailuresMd(List<PackageLoader.LoadFailure> failures, string path)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# Inputs that could not be read");
+        sb.AppendLine();
+        if (failures.Count == 0)
+        {
+            sb.AppendLine("None -- every .dtproj/.ispac/.dtsx found under `--input` was read successfully.");
+        }
+        else
+        {
+            sb.AppendLine($"{failures.Count} input(s) were skipped. They are **absent from every other file in this report**, so");
+            sb.AppendLine("treat the inventory as covering the packages listed there, not the whole folder.");
+            sb.AppendLine();
+            sb.AppendLine("| Kind | Path | Reason |");
+            sb.AppendLine("|---|---|---|");
+            foreach (var f in failures.OrderBy(f => f.Path, StringComparer.Ordinal))
+            {
+                sb.AppendLine($"| {f.Kind} | `{f.Path}` | {f.Reason.Replace("|", "\\|")} |");
+            }
+        }
+        File.WriteAllText(path, sb.ToString());
     }
 
     private static PackageLoader.LoadResult? LoadOrNull(string input, bool recursive)
@@ -508,6 +571,70 @@ internal static class ReportCommand
         File.WriteAllText(path, sb.ToString());
     }
 
+    /// <summary>
+    /// Whether `ssisx generate` would produce a fully-generated C# project for each package --
+    /// computed without writing any code to disk (that's `ssisx generate` itself); this is
+    /// the analysis-layer readout of the same gaps that command's own report would show.
+    /// </summary>
+    private static void WriteGenerationReadinessMd(Dictionary<string, List<GenerationGap>> perPackageGenerationGaps, string path)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# Generation readiness (`ssisx generate`)");
+        sb.AppendLine();
+        sb.AppendLine("Whether `ssisx generate` would produce a fully-generated C# project for each package below, with zero BLOCKING gaps. This is the migration-sizing question a complexity score alone cannot answer -- run `ssisx generate --input <dir> --out <dir>` for the real generated output.");
+        sb.AppendLine();
+        sb.AppendLine("A `{Package}.Notification` gap is listed per package below but never counted as blocking: `PackageGenerator` reports it unconditionally (a `.dtsx` has no notion of who to email on success/failure), the generated project still compiles and runs with empty recipient lists, and no real client package could ever satisfy it -- counting it would make \"0 gaps\" permanently unreachable. A SqlCommand-mode OLE DB Source's column-name-assumption gap is non-blocking for the same reason: the flow is fully generated, the gap is a \"verify before running\" note, not missing output.");
+        sb.AppendLine();
+        var readyCount = perPackageGenerationGaps.Count(kv => !kv.Value.Any(PortfolioDigest.IsBlockingGap));
+        sb.AppendLine($"**{readyCount} of {perPackageGenerationGaps.Count} package(s) are fully generatable today (0 blocking gaps).**");
+        sb.AppendLine();
+        foreach (var (packageName, gaps) in perPackageGenerationGaps.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            var blockingCount = gaps.Count(PortfolioDigest.IsBlockingGap);
+            sb.AppendLine($"## {packageName} -- {(blockingCount == 0 ? "fully generatable" : $"{blockingCount} blocking gap(s)")}");
+            sb.AppendLine();
+            if (gaps.Count == 0)
+            {
+                sb.AppendLine("No gaps.");
+            }
+            else
+            {
+                foreach (var g in gaps)
+                {
+                    var tag = PortfolioDigest.IsBlockingGap(g) ? "" : " _(non-blocking -- informational, see reason above)_";
+                    sb.AppendLine($"- **{MdEscape(g.Location)}** -- {MdEscape(g.Reason)}{tag}");
+                }
+            }
+            sb.AppendLine();
+        }
+        File.WriteAllText(path, sb.ToString());
+    }
+
+    private static void WriteEffectsMd(List<ObservableEffectSpec> effects, string path)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# Observable effects -- what a replacement must be checked against");
+        sb.AppendLine();
+        sb.AppendLine("Every table, file, and procedure this package changes -- plus, deliberately, every ");
+        sb.AppendLine("task type this extractor has no semantic model for, listed as `UncharacterizedTask` ");
+        sb.AppendLine("rather than silently omitted. This is the input to gate 3's own effect check: a ");
+        sb.AppendLine("package is fully verified only once every row below is `Verifiable`, never by the ");
+        sb.AppendLine("row count of one effect kind alone.");
+        sb.AppendLine();
+        var needsWork = effects.Count(e => e.Verifiability != "Verifiable");
+        sb.AppendLine(needsWork == 0
+            ? "**Every effect below has a gate-3 checker.**"
+            : $"**{needsWork} of {effects.Count} effect(s) have no gate-3 checker yet** -- see `Verifiability` per row.");
+        sb.AppendLine();
+        sb.AppendLine("| Package | Kind | Target | Origin | Verifiability | Note |");
+        sb.AppendLine("|---|---|---|---|---|---|");
+        foreach (var e in effects.OrderBy(e => e.PackageName, StringComparer.Ordinal).ThenBy(e => e.Kind, StringComparer.Ordinal).ThenBy(e => e.Target, StringComparer.Ordinal))
+        {
+            sb.AppendLine($"| {MdEscape(e.PackageName)} | {e.Kind} | {MdEscape(e.Target)} | {MdEscape(e.Origin)} | {e.Verifiability} | {MdEscape(e.Note)} |");
+        }
+        File.WriteAllText(path, sb.ToString());
+    }
+
     private static void AppendList(StringBuilder sb, string label, List<string> items)
     {
         if (items.Count == 0) return;
@@ -521,6 +648,7 @@ internal static class ReportCommand
         List<HarvestedExpressionSpec> expressions,
         List<SqlAnalysisSpec> sqlAnalyses,
         List<DependencyEdgeSpec> dependencyEdges,
+        Dictionary<string, List<GenerationGap>> perPackageGenerationGaps,
         string path)
     {
         var sb = new StringBuilder();
@@ -535,6 +663,21 @@ internal static class ReportCommand
         foreach (var g in byClass)
         {
             sb.AppendLine($"- **{g.Key}**: {g.Count()} -- {string.Join(", ", g.Select(r => r.PackageName).OrderBy(n => n, StringComparer.Ordinal))}");
+        }
+        sb.AppendLine();
+
+        var readyCount = perPackageGenerationGaps.Count(kv => !kv.Value.Any(PortfolioDigest.IsBlockingGap));
+        sb.AppendLine("## Generation readiness (`ssisx generate`)");
+        sb.AppendLine();
+        sb.AppendLine($"**{readyCount} of {perPackageGenerationGaps.Count} package(s) are fully generatable today (0 blocking gaps).** Full per-package gap detail in `generation-readiness.md`.");
+        sb.AppendLine();
+        var notReady = perPackageGenerationGaps
+            .Select(kv => (kv.Key, BlockingCount: kv.Value.Count(PortfolioDigest.IsBlockingGap)))
+            .Where(x => x.BlockingCount > 0)
+            .OrderBy(x => x.Key, StringComparer.Ordinal);
+        foreach (var (packageName, blockingCount) in notReady)
+        {
+            sb.AppendLine($"- **{packageName}**: {blockingCount} blocking gap(s)");
         }
         sb.AppendLine();
 
@@ -653,6 +796,7 @@ internal static class ReportCommand
         sb.AppendLine("- `graph/portfolio.mmd` / `dependencies.json` -- cross-package dependency graph");
         sb.AppendLine("- `nondeterministic.json` -- columns to exclude from parallel-run comparison");
         sb.AppendLine("- `unmapped.md` -- what this extraction did not model, per package");
+        sb.AppendLine("- `generation-readiness.md` -- whether `ssisx generate` would produce each package with zero gaps");
 
         File.WriteAllText(path, sb.ToString());
     }

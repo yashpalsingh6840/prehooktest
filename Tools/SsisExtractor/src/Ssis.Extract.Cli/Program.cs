@@ -21,6 +21,7 @@ internal static class Program
             "conformance" => ConformanceCommand.Run(rest),
             "testgen" => TestGenCommand.Run(rest),
             "diff" => DiffCommand.Run(rest),
+            "generate" => GenerateCommand.Run(rest),
             "pull" or "enrich" =>
                 Fail($"'{command}' needs SSISDB catalog access, which this engagement does not have (Phase0-Extractor-Plan.md §11 decision 4) -- use 'ssisx diff' against a deployed .ispac instead for drift detection."),
             _ => Fail($"unknown command '{command}'. Run 'ssisx --help'."),
@@ -45,8 +46,12 @@ internal static class Program
             extract options:
               --input <path>    A .dtproj (extracts the whole project + its packages), a
                                  single .dtsx, an .ispac (a deployed project -- it is just a
-                                 zip), or a directory containing .dtproj/.ispac files (add
-                                 --recursive to search subdirectories).
+                                 zip), or a directory holding any mix of those, INCLUDING
+                                 loose .dtsx files with no .dtproj beside them (add
+                                 --recursive to search subdirectories). A package that
+                                 cannot be read is skipped with a warning and listed in
+                                 load-failures.md -- one bad package never costs you the
+                                 rest of the folder.
               --out <dir>       Output directory. Writes project.spec.json,
                                  packages/<Package>.spec.json, and _meta.json.
               --no-redact       Do not strip Password=/Pwd= from connection strings.
@@ -73,10 +78,14 @@ internal static class Program
             weights.json has the defaults -- plan §5.6). Writes inventory.csv/.md,
             findings.csv/.md, nondeterministic.json (plan §5.8), datatouch.md/.json,
             primary-keys.json/.md (best-effort naming-convention PK guesses, needs human
-            confirmation -- a .dtsx carries no real PK concept), expressions.csv,
-            expression-functions.md, sql/ + sql-analysis.json, graph/portfolio.mmd +
-            dependencies.json, unmapped.md, and portfolio.md -- the "here is what you own"
-            report (plan §5.2-§5.8).
+            confirmation -- a .dtsx carries no real PK concept), effects.json/.md (every
+            table/file/procedure a package changes, PLUS every task type this tool has no
+            model for, as an explicit UncharacterizedTask -- the gate-3 harness must refuse
+            to report PASS while any effect here is unverified, so a package whose real
+            output is e.g. an email or an SFTP drop can never look fully checked just because
+            its table effects were), expressions.csv, expression-functions.md, sql/ +
+            sql-analysis.json, graph/portfolio.mmd + dependencies.json, unmapped.md, and
+            portfolio.md -- the "here is what you own" report (plan §5.2-§5.8).
 
               ssisx conformance --input <dir|file.dtsx|file.dtproj> --out <dir>
                                  [--claims <dir>] [--recursive] [--check]
@@ -111,9 +120,29 @@ internal static class Program
             the report goes to stdout. Exits 1 when any difference is found, so it works
             as a CI drift gate.
 
+              ssisx generate --input <dir|file.dtsx|file.dtproj|file.ispac> --out <dir>
+                              [--recursive] [--namespace-prefix <prefix>]
+
+            generate options: turns a package into a runnable C# ETL project -- entity,
+            DbContext, CSV row + ClassMap, Derived Column transform, the oracle-verified
+            SsisFn primitives it actually uses, Program.cs, and .csproj/appsettings.json --
+            under <out>/generate/<Package>/, calling Etl.Core for plumbing (SqlBulkCopy,
+            CSV reading, email notification) the same way the hand-written
+            D:\PoC\SSIS_Migration reference packages do. Covers exactly milestone 1's
+            scenario: Flat File Source -> [Derived Column] -> OLE DB Destination (fast
+            load), N flows per package, Execute SQL Task as pre-load. Anything else (a
+            non-fast-load destination, a flow with no Flat File Source, a SQL-command
+            destination, an untranslatable expression) degrades that one piece to a
+            GenerationGap rather than a guess -- every gap, with its reason, is listed in
+            generate-report.md alongside how many files each package produced.
+            --namespace-prefix roots every generated namespace under a prefix (e.g.
+            "Contoso.Etl") instead of just the package name. Generated code has no
+            hand-editing expectation -- rerun freely; nothing here reads or writes
+            hand-maintained files the way 'conformance' claims do.
+
             Exit codes: 0 success, 1 diff found (diff) / gate 1 failed (conformance
             --check), 2 usage/extraction error, 3 a package's coverage was below
-            --fail-under (extract only).
+            --fail-under (extract only) / generate produced one or more gaps (generate).
 
             Not implemented -- need SSISDB catalog access this engagement does not have
             (plan §11 decision 4); use 'diff' against a deployed .ispac instead:

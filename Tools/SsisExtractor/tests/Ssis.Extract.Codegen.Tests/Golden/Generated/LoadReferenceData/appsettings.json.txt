@@ -1,0 +1,22 @@
+{
+  "FileSource": {
+    "Files": {
+      "Department": {
+        "SourceFolder": "D:\\PoC\\SSIS\\Data\\Input\\Department",
+        "SourceFileName": "Departments.csv"
+      },
+      "Designation": {
+        "SourceFolder": "D:\\PoC\\SSIS\\Data\\Input\\Designation",
+        "SourceFileName": "Designations.csv"
+      }
+    }
+  },
+  "TargetDatabase": {
+    "AuthMode": "Windows",
+    "ApplicationName": "LoadReferenceData"
+  },
+  "Notification": {
+    "OnFailureRecipients": [],
+    "OnSuccessRecipients": []
+  }
+}

@@ -165,7 +165,7 @@
       "WasRedacted": false
     },
     {
-      "ConnectionString": "Data Source=.\\SQLFORPOC;User ID=ssis_loader;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Auto Translate=False;",
+      "ConnectionString": "Data Source=.\\SQLFORPOC_2022;User ID=ssis_loader;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Auto Translate=False;",
       "CreationName": "OLEDB",
       "DelayValidation": null,
       "Description": "Destination SQL Server database.",
@@ -180,7 +180,7 @@
         },
         "FilePath": null,
         "Provider": "MSOLEDBSQL.1",
-        "Server": ".\\SQLFORPOC",
+        "Server": ".\\SQLFORPOC_2022",
         "UserId": "ssis_loader"
       },
       "PropertyExpressions": [],
@@ -1895,7 +1895,7 @@
     "MaximumErrorCount": null,
     "TransactionOption": null
   },
-  "FileSizeBytes": 55140,
+  "FileSizeBytes": 55145,
   "LastModifiedProductVersion": "17.0.1016.0",
   "LastWriteTimeUtc": "<normalized>",
   "LocaleId": "1033",
@@ -1924,7 +1924,7 @@
   "ProtectionLevelName": "DontSaveSensitive",
   "ProtectionLevelRaw": 0,
   "RefId": "Package",
-  "Sha256": "c031114c4fe9e055778b60ee188621075e26957f37afc3f48f09c33cba874242",
+  "Sha256": "51d999ba21733176148d4ffda4875ef1f2115e316de8c9c2bf844557b7e27cc5",
   "SourceDtsxPath": "<normalized>",
   "Unmapped": [
     {

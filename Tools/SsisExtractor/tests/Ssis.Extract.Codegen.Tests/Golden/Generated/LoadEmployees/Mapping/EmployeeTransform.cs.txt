@@ -1,0 +1,22 @@
+using Etl.Core.Abstractions;
+using Etl.Core.Ssis;
+using LoadEmployees.Csv;
+using LoadEmployees.Model;
+using LoadEmployees.Ssis;
+
+namespace LoadEmployees.Mapping;
+
+public sealed class EmployeeTransform : IRowTransform<EmployeeCsvRow, Employee>
+{
+    public Employee Map(EmployeeCsvRow row, in RowContext ctx) => new()
+    {
+        EmployeeID = row.EmployeeID,
+        Department = row.Department,
+        HireDate = row.HireDate,
+        Salary = row.Salary,
+        FullName = WidthGuard.Wstr($"{row.FirstName} {row.LastName}", 101, nameof(Employee.FullName), ctx.RowNumber),
+        Location = WidthGuard.Wstr($"{row.City}, {row.State}", 60, nameof(Employee.Location), ctx.RowNumber),
+        EmployeeKey = WidthGuard.Wstr($"{SsisFn.Upper(SsisFn.Substring(row.Department, 1, 3))}-{SsisFn.Str(row.EmployeeID)}", 20, nameof(Employee.EmployeeKey), ctx.RowNumber),
+        LoadedAtUtc = ctx.LoadedAtUtc,
+    };
+}

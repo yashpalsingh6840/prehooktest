@@ -1,0 +1,25 @@
+using Microsoft.EntityFrameworkCore;
+
+namespace LoadEmployees.Model;
+
+public sealed class LoadEmployeesDbContext(DbContextOptions<LoadEmployeesDbContext> options) : DbContext(options)
+{
+    public DbSet<Employee> Employees => Set<Employee>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Employee>(entity =>
+        {
+            entity.ToTable("Employee", "dbo");
+            entity.HasKey(e => e.EmployeeID);
+            entity.Property(e => e.EmployeeID).ValueGeneratedNever();
+            entity.Property(e => e.Department).HasMaxLength(50);
+            entity.Property(e => e.HireDate).HasColumnType("date");
+            entity.Property(e => e.Salary).HasColumnType("decimal(18,2)");
+            entity.Property(e => e.FullName).HasMaxLength(101);
+            entity.Property(e => e.Location).HasMaxLength(60);
+            entity.Property(e => e.EmployeeKey).HasMaxLength(20);
+            entity.Property(e => e.LoadedAtUtc).HasColumnType("datetime2(3)");
+        });
+    }
+}

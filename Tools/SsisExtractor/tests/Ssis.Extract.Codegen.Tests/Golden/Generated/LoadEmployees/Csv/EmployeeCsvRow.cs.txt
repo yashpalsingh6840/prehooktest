@@ -1,0 +1,27 @@
+using Etl.Core.Ssis;
+
+namespace LoadEmployees.Csv;
+
+public sealed class EmployeeCsvRow
+{
+    public int EmployeeID { get; set; }
+
+    [SsisWidth(50)]
+    public string FirstName { get; set; } = "";
+
+    [SsisWidth(50)]
+    public string LastName { get; set; } = "";
+
+    [SsisWidth(50)]
+    public string Department { get; set; } = "";
+
+    public DateOnly HireDate { get; set; }
+
+    public decimal Salary { get; set; }
+
+    [SsisWidth(50)]
+    public string City { get; set; } = "";
+
+    [SsisWidth(2)]
+    public string State { get; set; } = "";
+}

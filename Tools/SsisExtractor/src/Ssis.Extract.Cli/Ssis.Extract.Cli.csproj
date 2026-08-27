@@ -5,6 +5,7 @@
     <ProjectReference Include="..\Ssis.Extract.Dtsx\Ssis.Extract.Dtsx.csproj" />
     <ProjectReference Include="..\Ssis.Extract.Sql\Ssis.Extract.Sql.csproj" />
     <ProjectReference Include="..\Ssis.Runtime.Expressions\Ssis.Runtime.Expressions.csproj" />
+    <ProjectReference Include="..\Ssis.Extract.Codegen\Ssis.Extract.Codegen.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

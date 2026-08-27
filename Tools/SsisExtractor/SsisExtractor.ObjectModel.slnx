@@ -15,6 +15,7 @@
   <Folder Name="/src/">
     <Project Path="src/Ssis.Extract.ObjectModel/Ssis.Extract.ObjectModel.csproj" />
     <Project Path="src/Ssis.Expression.Oracle/Ssis.Expression.Oracle.csproj" />
+    <Project Path="src/Ssis.Extract.FixtureBuilder/Ssis.Extract.FixtureBuilder.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Ssis.Extract.ObjectModel.Tests/Ssis.Extract.ObjectModel.Tests.csproj" />

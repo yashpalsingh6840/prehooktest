@@ -128,7 +128,7 @@
       "Required": false,
       "Scope": "Project",
       "Sensitive": false,
-      "Value": "Data Source=.\\SQLFORPOC;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;"
+      "Value": "Data Source=.\\SQLFORPOC_2022;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;"
     }
   ],
   "ProductVersion": "17.0.1016.0",
