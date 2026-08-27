@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff]");
             return 2;
         }
 
@@ -116,9 +116,13 @@ internal static class Program
         {
             return BuildEmailDomainFixture(args[0]);
         }
+        if (fixtureName == "datediff")
+        {
+            return BuildDateDiffFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', or 'email-domain'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', or 'datediff'.");
             return 2;
         }
 
@@ -640,6 +644,97 @@ internal static class Program
         // identical note; confirmed empirically, 1252 throws 0xC0204025).
         inst.SetOutputColumnDataTypeProperties(output.ID, newCol.ID, DataType.DT_WSTR, 200, 0, 0, 0);
         var expr = "FINDSTRING(TRIM(Email),\"@\",1) > 0 ? SUBSTRING(TRIM(Email),FINDSTRING(TRIM(Email),\"@\",1) + 1,100) : \"(none)\"";
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "FriendlyExpression", expr);
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "Expression", expr);
+
+        return meta;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand) -> Derived Column (TenureDays &lt;-
+    /// DATEDIFF("dd",SignupDate,GETDATE())) -> OLE DB Destination.
+    ///
+    /// <para>Deliberately NOT the full RBC_Demo_ETL DER_Enrich.TenureDays expression (which
+    /// wraps this in ISNULL(SignupDate) ? -1 : ...) -- see
+    /// <c>synthetic-datediff-tables.sql</c>'s own header for why: building this fixture with
+    /// the full ternary surfaced a real, separate, pre-existing gap (no SQL row/entity emitter
+    /// tracks column nullability, so ISNULL's own "x is null" fails to compile against the
+    /// resulting non-nullable DateOnly), unrelated to DATEDIFF itself and deliberately NOT
+    /// fixed here. This fixture instead proves DATEDIFF's own arithmetic end to end
+    /// (oracle-verified 2026-08-27: sign convention is end-start, counts calendar-day-BOUNDARY
+    /// crossings not elapsed 24-hour periods) against a NOT NULL column, sidestepping that
+    /// unrelated gap -- the full ISNULL+DATEDIFF expression is still proven correct at the
+    /// TEXT level by a dedicated ExpressionTranslatorTests case.</para>
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-datediff-tables.sql</c> already created
+    /// and seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c> -- seed CLOSE TO RUN TIME (same
+    /// UTC calendar day), see that script's own header for why. Lives under
+    /// tests/Ssis.Extract.Tests/Fixtures/ (test-tier, not SSDT-registered), same as
+    /// SyntheticEmailDomain.dtsx.
+    /// </summary>
+    private static int BuildDateDiffFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticDateDiff" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, SignupDate FROM dbo.SyntheticDateDiffInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnTenureDays(pipe, mainOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticDateDiffTarget]");
+        AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A Derived Column that passes every upstream column through untouched and adds ONE new
+    /// column, <c>TenureDays &lt;- DATEDIFF("dd",SignupDate,GETDATE())</c> -- see
+    /// <see cref="BuildDateDiffFixture"/>'s own doc comment for why the ISNULL(...) wrapper the
+    /// real package's own expression has is deliberately omitted here. Same
+    /// passthrough/InsertOutputColumnAt mechanics as <see cref="BuildDerivedColumnLiteralTag"/>.
+    /// </summary>
+    private static IDTSComponentMetaData100 BuildDerivedColumnTenureDays(MainPipe pipe, IDTSOutput100 upstreamOutput)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.DerivedColumn";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        meta.Name = "DER_Enrich";
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var output = meta.OutputCollection[0];
+        var newCol = inst.InsertOutputColumnAt(output.ID, 0, "TenureDays", "");
+        inst.SetOutputColumnDataTypeProperties(output.ID, newCol.ID, DataType.DT_I4, 0, 0, 0, 0);
+        var expr = "DATEDIFF(\"dd\",SignupDate,GETDATE())";
         inst.SetOutputColumnProperty(output.ID, newCol.ID, "FriendlyExpression", expr);
         inst.SetOutputColumnProperty(output.ID, newCol.ID, "Expression", expr);
 

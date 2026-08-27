@@ -164,6 +164,7 @@ public static class TransformEmitter
         if (csharpExpression.Contains("SsisFn.Trim(")) functionsUsed.Add("Trim");
         if (csharpExpression.Contains("SsisFn.Substring(")) functionsUsed.Add("Substring");
         if (csharpExpression.Contains("SsisFn.FindString(")) functionsUsed.Add("FindString");
+        if (csharpExpression.Contains("SsisFn.DateDiffDays(")) functionsUsed.Add("DateDiffDays");
         if (csharpExpression.Contains("SsisFn.Str(")) functionsUsed.Add("Str");
     }
 

@@ -235,18 +235,34 @@ public class ExpressionTranslatorTests
     }
 
     [Fact]
-    public void TranslateColumn_ReportsAGap_WhenATernaryBranchIsUnsupported()
+    public void TranslateColumn_TranslatesTheRealTenureDaysExpression_NowThatDatediffIsSupported()
     {
-        // DATEDIFF is real SSIS syntax and the runtime evaluator does NOT support it either
-        // (never oracle-verified) -- confirms the ternary degrades per-branch rather than
-        // guessing, and confirms the whenFalse branch is what's actually checked here.
+        // RBC_Demo_ETL's own Package_Transforms.dtsx, DER_Enrich.TenureDays, verbatim -- was the
+        // deliberately-unsupported example in this test before DATEDIFF was added (2026-08-27);
+        // also proves GETDATE() nested inside another call's argument resolves to
+        // ctx.LoadedAtUtc, not just at a column's own root (TranslateColumn's separate check).
         var ast = SsisExpression.Parse("ISNULL(SignupDate) ? -1 : DATEDIFF(\"dd\",SignupDate,GETDATE())");
         var refs = Refs(("SignupDate", "row.SignupDate", SsisType.DbDate));
 
         var result = ExpressionTranslator.TranslateColumn(ast, "Order", "TenureDays", refs);
 
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal("((row.SignupDate is null) ? -(1) : SsisFn.DateDiffDays(row.SignupDate, ctx.LoadedAtUtc))", ok.CSharpExpression);
+    }
+
+    [Fact]
+    public void TranslateColumn_ReportsAGap_ForADatediffPartOtherThanDd()
+    {
+        // Only "dd" is oracle-verified against the real evaluator (Ssis.Runtime.Expressions.
+        // Functions.DateDiff makes the identical restriction) -- any other part must degrade,
+        // never guess T-SQL-by-analogy semantics that were never actually measured.
+        var ast = SsisExpression.Parse("DATEDIFF(\"mm\",SignupDate,GETDATE())");
+        var refs = Refs(("SignupDate", "row.SignupDate", SsisType.DbDate));
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "TenureMonths", refs);
+
         var gap = Assert.IsType<NotTranslatable>(result);
-        Assert.Contains("FunctionCall", gap.Reason);
+        Assert.Contains("\"dd\"", gap.Reason);
     }
 
     [Fact]

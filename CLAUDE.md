@@ -803,7 +803,7 @@ A second, unrelated real bug (`GateRunner` not setting the job process's working
 which silently broke the job's own `appsettings.json` lookup and surfaced as an
 unrelated-looking Windows-auth failure) was also caught and fixed the same session.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile))
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -2249,6 +2249,102 @@ SUBSTRING shape renders identical text). Regression: 93/93 in `Ssis.Extract.Code
 **Remaining known gaps, unchanged:** Flat File Destination, Excel Source, ForEach Loop
 containers, Conditional Split -> Sort -> Merge, `DATEDIFF` (needs new oracle work), Data
 Conversion component support (needs new row-type-generation modeling).
+
+### `DATEDIFF("dd", ...)` support -- new oracle work, plus a genuine new gap found (2026-08-27)
+
+The immediate next pick after numeric `+`, same session -- the one remaining piece of
+`TenureDays` (`ISNULL(SignupDate_dt) ? -1 : DATEDIFF("dd",SignupDate_dt,GETDATE())`), and the
+first gap this session that genuinely needed NEW semantics derivation rather than wiring up
+something already oracle-verified (`DATEDIFF` was entirely absent from `Functions.cs`'s
+`ReturnTypes` table before this).
+
+**New oracle corpus block, `src/Ssis.Expression.Oracle/Program.cs`** (8 cases, run against the
+real SSIS 22 evaluator on this machine): resolved three real open questions rather than
+guessing by T-SQL analogy the way `DatePart`'s own older, explicitly-disclaimed code does for
+every part except `"yy"`. Measured: sign convention is `end - start` (swapping the two args
+negates the result); `"dd"` counts calendar-**DAY-BOUNDARY** crossings, exactly like T-SQL's
+own `DATEDIFF("dd",...)`, NOT elapsed 24-hour periods (23:00 -> next day 01:00, only 2 hours
+elapsed, measured as `1`, not `0`); `DT_DBDATE`/`DT_DBTIMESTAMP` mix freely with no explicit
+cast needed (matches `SignupDate_dt`/`GETDATE()`'s own real shapes). Corpus rows added at
+`tests/Ssis.Runtime.Expressions.Tests/Fixtures/ssis-expression-oracle.tsv` lines 123-130 (a
+byte-preserving PowerShell insert, not a hand edit -- see trap 18), `Functions.DateDiff`
+implements exactly this (only `"dd"` -- any other part is a hard error, deliberately NOT
+extrapolated the way `DatePart` was, since day-boundary counting is genuinely easy to get wrong
+for other parts and none of them are measured). 149/149 in
+`Ssis.Runtime.Expressions.Tests` (was 141).
+
+**`ExpressionTranslator` additions:** a `DATEDIFF` case (`TranslateDateDiff`, rejecting any
+datepart literal other than `"dd"` rather than guessing) mapping to a new
+`SsisFn.DateDiffDays`; and -- a real, previously-latent gap this closed along the way, not
+scope creep -- `GETUTCDATE()`/`GETDATE()` used to be recognized ONLY at a column's own root
+(`TranslateColumn`'s own top-level check), never when NESTED inside another call's argument.
+The real `TenureDays` expression needs exactly that (`GETDATE()` as `DATEDIFF`'s own third
+argument), so the identical case was added to `TranslateScalar`'s switch too.
+
+**Verified against the real motivating case, regenerating `Package_Transforms.dtsx` a fourth
+time:** `CustomerEnriched.TenureDays` is now GONE from the gap list entirely -- confirmed by
+reading the emitted transform: `TenureDays = ((row.SignupDate_dt is null) ? -(1) :
+SsisFn.DateDiffDays(row.SignupDate_dt, ctx.LoadedAtUtc))`. Combined with the numeric-`+`
+round's `EmailDomain` fix, `DFT_DerivedAndSplit`'s entire EXPRESSION-TRANSLATION story is now
+complete -- every computed column in that flow generates correctly. What still blocks that flow
+from reaching a runnable `Program.cs` is purely the separate, already-documented Data
+Conversion row-type gap (`CustomerID_i4`/`SignupDate_dt` don't exist on the generated CSV row
+type) -- unrelated to expression translation, unchanged by this round.
+
+**A second, genuinely new, previously-invisible gap was found building this round's own
+fixture, not shipped as a guess:** `SqlRowReaderEmitter`/`EntityEmitter`/`SqlRowEmitter` never
+track column NULLABILITY at all -- confirmed by grepping every one of them for
+"Nullable"/"IsNullable" and finding nothing. A SQL `DATE NULL` column still generates as a
+non-nullable C# `DateOnly`, so `ISNULL(x)`'s own `(x is null)` translation (already correct at
+the text level, unit-tested and proven in isolation) fails to COMPILE (`CS0037: Cannot convert
+null to 'DateOnly'`) once real code is actually built against it -- caught only by actually
+building the generated project, exactly the discipline this whole "verify end-to-end, not just
+unit tests" approach exists to catch. **Not specific to dates or to DATEDIFF** -- the identical
+failure would hit ANY nullable value-typed column (a nullable `int`, `decimal`, `bool`, ...)
+wrapped in `ISNULL(...)` anywhere in this generator's output; strings are unaffected only
+because a reference type is nullable regardless. A real architectural question (should EVERY
+generated property become nullable, or only ones actually referenced via `ISNULL`/compared to
+NULL -- and if the latter, from what evidence, since nullability isn't tracked in the pipeline
+model at all today) -- deliberately left unfixed and named here rather than folded into this
+round, same "don't let one fix become two" discipline as Conditional Split's own
+Lookup-before-split ordering fix.
+
+**A related, DIRECTLY-in-scope type mismatch WAS fixed, unlike the nullability gap above:**
+`SsisFn.DateDiffDays` needed a second overload, `DateDiffDays(DateOnly start, DateTime end)`
+(`start.ToDateTime(TimeOnly.MinValue)` then the same day-boundary math), because a `DATE`
+column generates as `DateOnly` while `GETDATE()`/`ctx.LoadedAtUtc` is always `DateTime` -- this
+is inherent to DATEDIFF itself (it always needs to bridge whatever concrete types its two date
+arguments resolve to), not a symptom of the nullability gap, so fixing it here was correctly in
+scope where the nullability gap was not.
+
+**Own dedicated fixture, redesigned once the nullability gap above was discovered:**
+`tests/Ssis.Extract.Tests/Fixtures/SyntheticDateDiff.dtsx` (`Ssis.Extract.FixtureBuilder`'s new
+`datediff` mode) -- deliberately NOT the full `ISNULL(...) ? -1 : DATEDIFF(...)` expression
+(that would hit the nullability gap and fail to compile, for reasons unrelated to DATEDIFF
+itself); instead `TenureDays <- DATEDIFF("dd",SignupDate,GETDATE())` against a `NOT NULL DATE`
+column, proving DATEDIFF's own arithmetic in isolation. The full real expression is still
+proven correct at the TEXT level by a dedicated `ExpressionTranslatorTests` case
+(`TranslateColumn_TranslatesTheRealTenureDaysExpression_...`). **Generated, built against a
+copy of `Etl.Core` (0 warnings/0 errors -- the `DateOnly` overload fix confirmed necessary and
+sufficient), and actually RUN against `.\SQLFORPOC_2022`**: 3 seed rows with dates computed
+relative to `SYSUTCDATETIME()` at seed time (not hardcoded literals, so the fixture stays valid
+regardless of what day it's run on) -- read back afterward: `2026-08-17 -> TenureDays=10`
+(10 days ago), `2026-08-27 -> TenureDays=0` (today), `2026-09-01 -> TenureDays=-5` (5 days in
+the FUTURE, specifically included to prove the negative-sign convention end to end, not just
+the positive case). Backing tables:
+`tests/Ssis.Extract.Tests/Fixtures/synthetic-datediff-tables.sql`.
+
+Also added: two `ExpressionTranslatorTests` (the full real `TenureDays` expression now
+translating, replacing what used to be this test suite's own "deliberately unsupported"
+example; a still-genuinely-unsupported non-`"dd"` datepart degrading to a gap, preserving that
+coverage) and one `SsisFnEmitterTests` (both `DateDiffDays` overloads emitted together).
+Regression: 95/95 in `Ssis.Extract.Codegen.Tests` (was 94), 149/149 in
+`Ssis.Runtime.Expressions.Tests` (was 141), same 3 pre-existing unrelated failures elsewhere.
+
+**Remaining known gaps, updated:** Flat File Destination, Excel Source, ForEach Loop
+containers, Conditional Split -> Sort -> Merge, Data Conversion component support (row-type
+generation), and the newly-named nullable-value-typed-column gap above. `DATEDIFF` itself is
+closed for the one evidenced datepart (`"dd"`) -- any other datepart remains a deliberate gap.
 
 ## Traps already hit once — don't re-derive these
 

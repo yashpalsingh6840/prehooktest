@@ -270,6 +270,22 @@ internal static class Program
         "(DT_WSTR,50)(DT_DBTIMESTAMP)\"2020-02-29 13:45:00.123\"",
         "(DT_WSTR,20)(DT_DBDATE)\"2020-02-29\"",
 
+        // --- DATEDIFF("dd", ...): the only datepart evidenced (RBC_Demo_ETL's own
+        // Package_Transforms.dtsx, DER_Enrich.TenureDays). Questions this block resolves:
+        // sign convention (date2-date1 like T-SQL, or the reverse), whether it counts elapsed
+        // 24-hour periods or calendar-day-boundary crossings (T-SQL's own DATEDIFF("dd",...)
+        // counts boundaries -- 23:00 to 01:00 next day is 1, not 0, despite only 2 hours
+        // elapsed), NULL propagation, and whether DT_DBDATE/DT_DBTIMESTAMP can mix without an
+        // explicit cast (SignupDate_dt is DT_DBDATE, GETDATE() returns DT_DBTIMESTAMP).
+        "DATEDIFF(\"dd\",(DT_DBDATE)\"2020-01-01\",(DT_DBDATE)\"2020-01-05\")",
+        "DATEDIFF(\"dd\",(DT_DBDATE)\"2020-01-05\",(DT_DBDATE)\"2020-01-01\")",
+        "DATEDIFF(\"dd\",(DT_DBDATE)\"2020-01-01\",(DT_DBDATE)\"2020-01-01\")",
+        "DATEDIFF(\"dd\",NULL(DT_DBDATE),(DT_DBDATE)\"2020-01-01\")",
+        "DATEDIFF(\"dd\",(DT_DBDATE)\"2020-01-01\",NULL(DT_DBDATE))",
+        "DATEDIFF(\"dd\",(DT_DBTIMESTAMP)\"2020-01-01 23:00:00\",(DT_DBTIMESTAMP)\"2020-01-02 01:00:00\")",
+        "DATEDIFF(\"dd\",(DT_DBDATE)\"2020-01-01\",(DT_DBTIMESTAMP)\"2020-01-01 23:59:00\")",
+        "DATEDIFF(\"dd\",(DT_DBDATE)\"2020-01-01\",(DT_DBTIMESTAMP)\"2020-01-02 00:00:01\")",
+
         // --- arithmetic typing: integer division truncates, mixed int/float promotes,
         // there is no implicit string<->number coercion in either direction ---
         "5/2",

@@ -27,6 +27,7 @@ public static class SsisFnEmitter
         if (functionsUsed.Contains("Trim")) bodies.Add(TrimBody());
         if (functionsUsed.Contains("Substring")) bodies.Add(SubstringBody());
         if (functionsUsed.Contains("FindString")) bodies.Add(FindStringBody());
+        if (functionsUsed.Contains("DateDiffDays")) bodies.Add(DateDiffDaysBody());
         if (functionsUsed.Contains("Str")) bodies.Add(StrBody());
 
         var lines = new List<string>();
@@ -109,6 +110,26 @@ public static class SsisFnEmitter
         "        }",
         "        return index + 1;",
         "    }",
+    ];
+
+    private static List<string> DateDiffDaysBody() =>
+    [
+        "    /// <summary>",
+        "    /// DATEDIFF(\"dd\", start, end) -- the only date part measured against the real SSIS",
+        "    /// evaluator. Counts calendar-DAY-BOUNDARY crossings, exactly like T-SQL's own",
+        "    /// DATEDIFF(\"dd\",...), NOT elapsed 24-hour periods -- measured: 23:00 to next day",
+        "    /// 01:00 (2 hours elapsed) is 1, not 0. Sign convention is end - start.",
+        "    /// </summary>",
+        "    public static int DateDiffDays(DateTime start, DateTime end) => (end.Date - start.Date).Days;",
+        "",
+        "    /// <summary>",
+        "    /// Overload for a DATE-typed SQL column reference, which this generator maps to",
+        "    /// System.DateOnly (SqlRowReaderEmitter/EntityEmitter's own convention) rather than",
+        "    /// DateTime -- the real evidenced call, DATEDIFF(\"dd\",SignupDate,GETDATE()), mixes a",
+        "    /// DATE column (start) with GETDATE()/ctx.LoadedAtUtc (end, always DateTime). Same",
+        "    /// day-boundary-crossing semantics as the DateTime overload above.",
+        "    /// </summary>",
+        "    public static int DateDiffDays(DateOnly start, DateTime end) => (end.Date - start.ToDateTime(TimeOnly.MinValue)).Days;",
     ];
 
     private static List<string> StrBody() =>

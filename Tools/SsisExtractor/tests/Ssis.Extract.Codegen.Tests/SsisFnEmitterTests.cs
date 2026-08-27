@@ -44,6 +44,22 @@ public class SsisFnEmitterTests
     }
 
     [Fact]
+    public void Emit_ProducesBothDateDiffDaysOverloads_ForTheDateOnlyAndDateTimeShapes()
+    {
+        // Two overloads because a DATE-typed SQL column reference generates as DateOnly
+        // (SqlRowReaderEmitter/EntityEmitter's own convention) while GETDATE()/GETUTCDATE()
+        // always maps to ctx.LoadedAtUtc, a DateTime -- the real evidenced call,
+        // DATEDIFF("dd",SignupDate,GETDATE()), mixes both.
+        var result = SsisFnEmitter.Emit("Package.Ssis", new HashSet<string> { "DateDiffDays" });
+
+        var file = Assert.Single(result.Files);
+        Assert.Contains("public static int DateDiffDays(DateTime start, DateTime end)", file.Content);
+        Assert.Contains("public static int DateDiffDays(DateOnly start, DateTime end)", file.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+    [Fact]
     public void Emit_OmitsTheGlobalizationUsing_WhenStrIsNotNeeded()
     {
         var result = SsisFnEmitter.Emit("LoadReferenceData.Ssis", new HashSet<string> { "Upper" });

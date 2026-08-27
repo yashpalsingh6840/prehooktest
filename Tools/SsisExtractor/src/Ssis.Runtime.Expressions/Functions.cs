@@ -31,6 +31,7 @@ public static class Functions
         ["YEAR"] = SsisType.I4,
         ["MONTH"] = SsisType.I4,
         ["DAY"] = SsisType.I4,
+        ["DATEDIFF"] = SsisType.I4,
     };
 
     public static SsisValue Call(string name, List<SsisValue> args)
@@ -73,6 +74,7 @@ public static class Functions
             "TOKEN" => Token(name, args, wantCount: false),
             "TOKENCOUNT" => Token(name, args, wantCount: true),
             "DATEPART" => DatePart(name, args),
+            "DATEDIFF" => DateDiff(name, args),
             "YEAR" => SsisValue.OfInt(Date(name, args, 0).Year),
             "MONTH" => SsisValue.OfInt(Date(name, args, 0).Month),
             "DAY" => SsisValue.OfInt(Date(name, args, 0).Day),
@@ -214,5 +216,29 @@ public static class Functions
             "ss" or "s" or "second" => SsisValue.OfInt(date.Second),
             _ => throw new SsisExpressionError($"{fn}: unrecognised date part '{part}'"),
         };
+    }
+
+    /// <summary>
+    /// DATEDIFF(datepart, startDate, endDate) -- only "dd" is measured against the real
+    /// evaluator (2026-08-27, oracle corpus rows added specifically for RBC_Demo_ETL's own
+    /// Package_Transforms.dtsx, DER_Enrich.TenureDays -- the only real evidenced call). Counts
+    /// calendar-DAY-BOUNDARY crossings, exactly like T-SQL's own DATEDIFF("dd",...) -- NOT
+    /// elapsed 24-hour periods: measured 23:00 -&gt; next day 01:00 (only 2 hours elapsed) =&gt; 1,
+    /// not 0. Sign convention is endDate - startDate (measured: swapping the two arguments
+    /// negates the result). DT_DBDATE and DT_DBTIMESTAMP mix freely with no explicit cast
+    /// needed (measured directly, matching TenureDays' own SignupDate_dt/GETDATE() shapes).
+    /// Any OTHER datepart literal is a hard error, not a guessed T-SQL-by-analogy value --
+    /// unlike DatePart above, no other part has been measured here.
+    /// </summary>
+    private static SsisValue DateDiff(string fn, List<SsisValue> args)
+    {
+        Arity(fn, args, 3);
+        var part = Str(fn, args, 0);
+        if (!string.Equals(part, "dd", StringComparison.OrdinalIgnoreCase))
+            throw new SsisExpressionError($"{fn}: only the \"dd\" date part is measured against the real evaluator -- add a corpus case before supporting '{part}'");
+
+        var start = Date(fn, args, 1);
+        var end = Date(fn, args, 2);
+        return SsisValue.OfInt((end.Date - start.Date).Days);
     }
 }

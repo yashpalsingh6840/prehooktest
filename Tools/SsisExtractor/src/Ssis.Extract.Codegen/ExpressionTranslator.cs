@@ -146,6 +146,12 @@ public static class ExpressionTranslator
         // separately below, never through this switch).
         IntLiteral i => new TranslatedOk(i.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)),
 
+        // Mirrors TranslateColumn's own top-level GETUTCDATE/GETDATE check -- that one only
+        // ever fires when the call IS the whole column expression; this covers the same call
+        // NESTED inside another expression, e.g. DATEDIFF("dd",SignupDate_dt,GETDATE())'s own
+        // end-date argument (RBC_Demo_ETL's Package_Transforms, DER_Enrich.TenureDays).
+        FunctionCall { Name: "GETUTCDATE" or "GETDATE", Args.Count: 0 } => new TranslatedOk("ctx.LoadedAtUtc"),
+
         FunctionCall { Name: "UPPER", Args.Count: 1 } upper => WrapOneArgFunction("SsisFn.Upper", upper.Args[0], references),
 
         FunctionCall { Name: "TRIM", Args.Count: 1 } trim => WrapOneArgFunction("SsisFn.Trim", trim.Args[0], references),
@@ -162,6 +168,14 @@ public static class ExpressionTranslator
         // start/length) because the one real evidenced call always nests another function --
         // FINDSTRING(TRIM(Email),"@",1) (RBC_Demo_ETL's Package_Transforms, CSPLIT_Validity).
         FunctionCall { Name: "FINDSTRING", Args.Count: 3 } findstring => TranslateFindString(findstring, references),
+
+        // Only "dd" -- the one datepart oracle-verified against the real evaluator
+        // (Ssis.Runtime.Expressions.Functions.DateDiff makes the identical restriction; see its
+        // own doc comment for the measured semantics: day-BOUNDARY crossings, not elapsed
+        // 24-hour periods, endDate - startDate). Real evidenced call:
+        // DATEDIFF("dd",SignupDate_dt,GETDATE()) (RBC_Demo_ETL's Package_Transforms,
+        // DER_Enrich.TenureDays). Any other datepart literal degrades rather than guesses.
+        FunctionCall { Name: "DATEDIFF", Args.Count: 3 } datediff => TranslateDateDiff(datediff, references),
 
         Cast { Type: SsisType.WStr or SsisType.Str } cast => TranslateIntToStringCast(cast, references),
 
@@ -295,6 +309,7 @@ public static class ExpressionTranslator
         ["TRIM"] = SsisType.WStr,
         ["SUBSTRING"] = SsisType.WStr,
         ["FINDSTRING"] = SsisType.I4,
+        ["DATEDIFF"] = SsisType.I4,
     };
 
     private static SsisType? TryResolveOperandType(
@@ -329,6 +344,25 @@ public static class ExpressionTranslator
     private static TranslatedExpression TranslateFindString(
         FunctionCall node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references) =>
         TranslateFunctionArgs("SsisFn.FindString", node.Args, references);
+
+    /// <summary>DATEDIFF(datepart, start, end) -- the datepart argument must be a literal
+    /// string (SSIS's own syntax requires this, same as DATEPART), checked case-insensitively
+    /// against "dd" (the only measured value). start/end translated via TranslateValue so a
+    /// nested GETDATE()/GETUTCDATE() (the real evidenced end-date argument) resolves through
+    /// the switch case above.</summary>
+    private static TranslatedExpression TranslateDateDiff(
+        FunctionCall node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+    {
+        if (node.Args[0] is not StringLiteral { Value: var part } || !string.Equals(part, "dd", StringComparison.OrdinalIgnoreCase))
+            return new NotTranslatable("DATEDIFF is only supported with the \"dd\" date part -- the only one oracle-verified against the real evaluator");
+
+        var start = TranslateValue(node.Args[1], references);
+        if (start is NotTranslatable) return start;
+        var end = TranslateValue(node.Args[2], references);
+        if (end is NotTranslatable) return end;
+
+        return new TranslatedOk($"SsisFn.DateDiffDays({((TranslatedOk)start).CSharpExpression}, {((TranslatedOk)end).CSharpExpression})");
+    }
 
     private static TranslatedExpression TranslateFunctionArgs(
         string csharpFunction, IReadOnlyList<ExprNode> args, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
