@@ -14,6 +14,7 @@ public class ProgramEmitterTests
             RootNamespace: "LoadEmployees",
             DbContextTypeName: "EmployeeDbContext",
             PreLoadStatements: plan.PreLoadStatements,
+            PreLoadFileActions: plan.PreLoadFileActions,
             Steps:
             [
                 new ProgramFlowStep(new ProgramFlowSpec(flow.TaskName, new CsvFlowSource(flow.FlatFileSource!.Name, "Employees"), "EmployeeCsvRow", "Employee", "EmployeeTransform")),
@@ -31,7 +32,8 @@ public class ProgramEmitterTests
         Assert.Contains("return new CsvRowSource<EmployeeCsvRow>(\"FF_SRC_Employees\", csvOptions, new EmployeeCsvRowMap());", file.Content);
         Assert.Contains("var employeeFlow = new DataFlowStep<EmployeeCsvRow, Employee>(", file.Content);
         Assert.Contains("PreLoadStatements: [\"TRUNCATE TABLE dbo.Employee;\"],", file.Content);
-        Assert.Contains("Steps: [employeeFlow]);", file.Content);
+        Assert.Contains("Steps: [employeeFlow],", file.Content);
+        Assert.Contains("PreLoadFileActions: []);", file.Content);
         Assert.Contains("return ExitCode.Success;", file.Content);
         Assert.Contains("return ExitCode.LoadFailed;", file.Content);
 
@@ -49,6 +51,7 @@ public class ProgramEmitterTests
             RootNamespace: "LoadReferenceData",
             DbContextTypeName: "ReferenceDataDbContext",
             PreLoadStatements: plan.PreLoadStatements,
+            PreLoadFileActions: plan.PreLoadFileActions,
             Steps:
             [
                 new ProgramFlowStep(new ProgramFlowSpec(plan.Flows[0].TaskName, new CsvFlowSource(plan.Flows[0].FlatFileSource!.Name, "Department"), "DepartmentCsvRow", "Department", "DepartmentTransform")),
@@ -65,7 +68,8 @@ public class ProgramEmitterTests
         Assert.Contains(
             "PreLoadStatements: [\"TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;\"],",
             file.Content);
-        Assert.Contains("Steps: [departmentFlow, designationFlow]);", file.Content);
+        Assert.Contains("Steps: [departmentFlow, designationFlow],", file.Content);
+        Assert.Contains("PreLoadFileActions: []);", file.Content);
 
         // Department must be wired (and appear in Steps) before Designation -- matches the
         // real package's own topological order (PackagePlanner already proved this ordering
@@ -79,7 +83,7 @@ public class ProgramEmitterTests
     [Fact]
     public void Emit_ReportsAGap_WhenNoFlowsAreGiven()
     {
-        var request = new ProgramRequest("Empty", "Empty", "EmptyDbContext", [], []);
+        var request = new ProgramRequest("Empty", "Empty", "EmptyDbContext", [], [], []);
 
         var result = ProgramEmitter.Emit(request);
 
@@ -95,6 +99,7 @@ public class ProgramEmitterTests
             RootNamespace: "SyntheticParallelShapes",
             DbContextTypeName: "SyntheticParallelShapesDbContext",
             PreLoadStatements: ["IF OBJECT_ID('dbo.SyntheticLoadATemp') IS NULL CREATE TABLE dbo.SyntheticLoadATemp (ID INT);"],
+            PreLoadFileActions: [],
             Steps:
             [
                 new ProgramFlowStep(new ProgramFlowSpec("DFT_LoadA", new CsvFlowSource("FF_SRC_LoadA", "LoadA"), "LoadACsvRow", "LoadA", "LoadATransform")),
@@ -108,7 +113,8 @@ public class ProgramEmitterTests
         Assert.Contains(
             "var sQL_UpdateLoadAStep = new ExecuteSqlStep(\"SQL_UpdateLoadA\", \"UPDATE dbo.SyntheticLoadATemp SET EntryDate = EntryDate;\", sp.GetRequiredService<ILogger<ExecuteSqlStep>>());",
             file.Content);
-        Assert.Contains("Steps: [loadAFlow, sQL_UpdateLoadAStep]);", file.Content);
+        Assert.Contains("Steps: [loadAFlow, sQL_UpdateLoadAStep],", file.Content);
+        Assert.Contains("PreLoadFileActions: []);", file.Content);
 
         // The local variable declaration order must also put the SQL step after the flow --
         // it references the local, so declaring it out of order wouldn't even compile.
@@ -126,6 +132,7 @@ public class ProgramEmitterTests
             RootNamespace: "SyntheticOleDbSourceTransform",
             DbContextTypeName: "SyntheticOleDbSourceTransformDbContext",
             PreLoadStatements: [],
+            PreLoadFileActions: [],
             Steps:
             [
                 new ProgramFlowStep(new ProgramFlowSpec(

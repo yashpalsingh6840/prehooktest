@@ -198,4 +198,38 @@ public class PackagePlannerTests
         Assert.Same(highBranch.Destination, lowBranch.Destination);
         Assert.Equal("[dbo].[SyntheticRemergeTarget]", highBranch.Destination.OleDbDestination?.OpenRowset);
     }
+
+    [Fact]
+    public void Plan_ResolvesFileSystemTasksInBothPositions_PreLoadAndPostFlow()
+    {
+        // SyntheticFileSystemTask.dtsx: SQL_PreLoad (TRUNCATE) -> FST_PreLoadCopy (pre-load) ->
+        // DFT_Load -> FST_PostLoadCopy (post-flow). Confirmed beyond this test by actually
+        // building and running the generated exe against .\SQLFORPOC_2022 and reading both
+        // archived files plus the target table back afterward -- see
+        // Tools/SsisExtractor/CLAUDE.md's "File System Task" section.
+        var package = LoadSyntheticFixture("SyntheticFileSystemTask.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        Assert.Equal(["TRUNCATE TABLE dbo.SyntheticFileSystemTaskTarget;"], plan.PreLoadStatements);
+
+        var preLoadAction = Assert.Single(plan.PreLoadFileActions);
+        Assert.Equal("Copy", preLoadAction.Operation);
+        Assert.EndsWith("source.txt", preLoadAction.SourcePath);
+        Assert.EndsWith("archived-preload.txt", preLoadAction.DestinationPath);
+        Assert.True(preLoadAction.Overwrite);
+
+        var postFlowStep = Assert.Single(plan.Steps, s => s is FileSystemStep);
+        var fsStep = (FileSystemStep)postFlowStep;
+        Assert.Equal("FST_PostLoadCopy", fsStep.TaskName);
+        Assert.Equal("Copy", fsStep.Action.Operation);
+        Assert.EndsWith("archived-postflow.txt", fsStep.Action.DestinationPath);
+
+        // The post-flow File System Task must come after the flow in Steps -- same ordering
+        // guarantee SqlStep already has (Plan_RoutesAnExecuteSqlTaskAfterADataFlow_...).
+        var flowStepIndex = plan.Steps.FindIndex(s => s is FlowStep);
+        var fsStepIndex = plan.Steps.FindIndex(s => s is FileSystemStep);
+        Assert.True(fsStepIndex > flowStepIndex);
+    }
 }

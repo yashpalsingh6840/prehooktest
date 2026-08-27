@@ -35,7 +35,8 @@ public class PackageGeneratorTests
         Assert.Contains(
             "var sQL_PostLoadStep = new ExecuteSqlStep(\"SQL_PostLoad\", \"UPDATE dbo.SyntheticPostFlowTarget SET Name = UPPER(Name);\", sp.GetRequiredService<ILogger<ExecuteSqlStep>>());",
             programFile.Content);
-        Assert.Contains("Steps: [syntheticPostFlowTargetFlow, sQL_PostLoadStep]);", programFile.Content);
+        Assert.Contains("Steps: [syntheticPostFlowTargetFlow, sQL_PostLoadStep],", programFile.Content);
+        Assert.Contains("PreLoadFileActions: []);", programFile.Content);
         Assert.Contains("PreLoadStatements: [\"TRUNCATE TABLE dbo.SyntheticPostFlowTarget;\"],", programFile.Content);
 
         CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
@@ -155,6 +156,31 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WiresBothFileSystemTaskPositions_PreLoadAndPostFlow()
+    {
+        // SyntheticFileSystemTask.dtsx: SQL_PreLoad -> FST_PreLoadCopy (pre-load) -> DFT_Load ->
+        // FST_PostLoadCopy (post-flow). Confirmed beyond this test by actually building and
+        // running the generated exe against .\SQLFORPOC_2022 -- see
+        // Tools/SsisExtractor/CLAUDE.md's "File System Task" section.
+        var package = LoadSyntheticFixture("SyntheticFileSystemTask.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains("var fST_PostLoadCopyStep = new FileSystemStep(\"FST_PostLoadCopy\", new FileSystemPreLoadAction(FileSystemOperation.Copy,", programFile.Content);
+        Assert.Contains("Steps: [syntheticFileSystemTaskTargetFlow, fST_PostLoadCopyStep],", programFile.Content);
+        Assert.Contains("PreLoadFileActions: [new FileSystemPreLoadAction(FileSystemOperation.Copy,", programFile.Content);
+        Assert.Contains("archived-preload.txt", programFile.Content);
+        Assert.Contains("archived-postflow.txt", programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Only the unavoidable, non-blocking Notification gap -- this fixture is fully
+        // generatable.
+        var gap = Assert.Single(result.Gaps);
+        Assert.Equal("SyntheticFileSystemTask.Notification", gap.Location);
+    }
+
+    [Fact]
     public void Generate_WiresAConditionalSplit_IntoProgramCsWithOneBranchPerDestination()
     {
         // SyntheticConditionalSplit.dtsx: OLE DB Source -> Derived Column (LoadedAtUtc) ->
@@ -187,7 +213,8 @@ public class PackageGeneratorTests
         Assert.Contains("new ConditionalSplitBranch<DFT_ConditionalSplitDemoSqlRow, SyntheticLowValue>(", programFile.Content);
         Assert.Contains("new SyntheticHighValueTransform(),", programFile.Content);
         Assert.Contains("new SyntheticLowValueTransform(),", programFile.Content);
-        Assert.Contains("Steps: [dFT_ConditionalSplitDemoSplit]);", programFile.Content);
+        Assert.Contains("Steps: [dFT_ConditionalSplitDemoSplit],", programFile.Content);
+        Assert.Contains("PreLoadFileActions: []);", programFile.Content);
 
         CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
 

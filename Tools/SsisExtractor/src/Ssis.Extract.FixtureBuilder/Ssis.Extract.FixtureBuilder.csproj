@@ -33,4 +33,18 @@
   -->
   <Import Project="..\..\..\..\Build\Ssis.Gac.props" />
 
+  <!--
+    Microsoft.SqlServer.FileSystemTask - the managed implementation of Microsoft.FileSystemTask
+    (confirmed via a live probe: a File System Task's own InnerObject.GetType().Assembly),
+    not one of the three general-purpose assemblies Ssis.Gac.props already provides. Reuses that
+    file's own $(SsisGacVersion)/$(_SsisGacMsil) probe results rather than re-deriving them, so
+    this reference tracks the same detected version automatically.
+  -->
+  <ItemGroup Condition="'$(SsisGacVersion)' != ''">
+    <Reference Include="Microsoft.SqlServer.FileSystemTask">
+      <HintPath>$(_SsisGacMsil)\Microsoft.SqlServer.FileSystemTask\$(_SsisVerDir)\Microsoft.SqlServer.FileSystemTask.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
 </Project>

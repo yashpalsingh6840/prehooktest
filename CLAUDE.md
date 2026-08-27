@@ -803,7 +803,7 @@ A second, unrelated real bug (`GateRunner` not setting the job process's working
 which silently broke the job's own `appsettings.json` lookup and surfaced as an
 unrelated-looking Windows-auth failure) was also caught and fixed the same session.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified)
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -1807,6 +1807,115 @@ Conditional Split structural fix plus its one directly-blocking condition-shape 
 failures elsewhere (someone's own in-progress SSDT edits to `SSIS/LoadReferenceData.dtsx`/
 `SSIS/SSIS.dtproj`, not this session's or the extractor's); `Ssis.Extract.ObjectModel.Tests`
 unaffected (4/4).
+
+### File System Task -- pre-load and post-flow support (2026-08-27)
+
+The third gap closed from testing `ssisx` against `SSIS_From_Sandeep`: `Package_Advanced.dtsx`'s
+`FST_ArchiveWorkbook` (archives the source workbook before `DFT_ExcelImport` reads it, inside
+`SEQ_Prepare` alongside `SQL_TruncateTargets`) had no bespoke payload at all and fell into
+generic `UnmappedTask`. Turned out to need more than a codegen change: `FST_ArchiveWorkbook`
+runs BEFORE any Data Flow Task, and `Etl.Core`'s `IEtlPackage.PreLoadStatements` was SQL-text-
+only, run inside the same transaction as everything else (`uow.ExecuteSqlAsync`) -- a file copy
+categorically can't join that list. Scoped, with the user's explicit sign-off, as "full support
+(pre-load and post-flow)" rather than post-flow-only (which wouldn't have closed the actual
+discovered case).
+
+**Extraction (`Ssis.Extract.Model`/`Ssis.Extract.Dtsx`):** `FileSystemTaskPayload` added --
+`OperationRaw`/`SourcePathRaw`/`SourceIsVariable`/`SourceConnectionName`/`DestinationPathRaw`/
+`DestinationIsVariable`/`DestinationConnectionName`/`OverwriteDestination`. Confirmed via a live
+object-model probe before writing any reader code (same trap-12 discipline), not assumed from
+the one real example: `<FileSystemData>` and its attributes carry no namespace prefix (same as
+`<ScriptProject>`); `TaskOperationType` is genuinely OMITTED from the XML for the schema's
+default (`CopyFile`) -- present as the literal enum name (`MoveFile`, `DeleteFile`, ...)
+otherwise; `TaskSourcePath`/`TaskDestinationPath` can independently be a literal path, a
+`Namespace::VariableName` reference (`TaskIsSourceVariable`/`TaskIsDestinationVariable`), or --
+the real evidenced shape -- a FILE connection manager's DTSID, resolved the same way
+`ExecuteSqlTaskPayload.ConnectionRefRaw`/`ConnectionName` already are. Verified against the real
+package: `SourceConnectionName: "CM_FILE_SourceWorkbook"`, `DestinationConnectionName:
+"CM_FILE_ArchivedWorkbook"`, `OverwriteDestination: true`, `OperationRaw: null` -- Package_Advanced
+went from 99% to 100% coverage.
+
+**Etl.Core (`D:\PoC\SSIS_Rewrite`, a separate repo -- see "First commit" note below):**
+`FileSystemPreLoadAction`/`FileSystemOperation` (Copy/Move/Delete/Rename/CreateDirectory -- the
+subset of SSIS's own `DTSFileSystemOperation` this generator translates; SetAttributes/
+CopyDirectory/MoveDirectory/DeleteDirectory/DeleteDirectoryContent are unevidenced, left out
+rather than guessed) in `Etl.Core.Abstractions`; `FileSystemActionRunner` (the one place an
+action is actually executed -- a thin `File.Copy`/`File.Move`/`File.Delete`/
+`Directory.CreateDirectory` switch, shared by both positions so the mapping exists exactly
+once) and `FileSystemStep : ILoadTask` (post-flow position, symmetric with `ExecuteSqlStep`) in
+`Etl.Core.Pipeline`. `IEtlPackage` gained `PreLoadFileActions` (pre-load position) as a
+**separate list from `PreLoadStatements`**, not a unified/renamed one -- deliberately additive:
+a C# default parameter value (`= null!` folded to `[]` in `EtlPackage`'s own init) means every
+existing `IEtlPackage` implementer/caller (the hand-written `LoadEmployees`/`LoadReferenceData`
+programs, their tests, `PackageRunnerTests`) needed ZERO changes, since neither package has a
+File System Task. `PackageRunner` runs `PreLoadStatements`, then `PreLoadFileActions`, then
+`Steps` -- matching the one real evidenced order (`SQL_TruncateTargets` always precedes
+`FST_ArchiveWorkbook`).
+
+**Codegen (`Ssis.Extract.Codegen`):** `PackagePlanner.WalkContainer` reuses the EXACT SAME
+pre-load-vs-post-flow position tracking Execute SQL Task already established (no new logic
+needed there) -- a File System Task in pre-load position lands in a new
+`PackagePlan.PreLoadFileActions: List<FileSystemActionPlan>`; one in post-flow position becomes
+a new `FileSystemStep : PackageStep`, in `Steps` at its real position. `ResolveFileSystemAction`
+maps the raw SSIS operation name to the supported subset (an unrecognized one is a named gap,
+never guessed) and resolves source/destination paths -- a connection-manager reference resolves
+to that CM's own `ConnectionString` (already a literal path for a FILE-type CM, no
+folder+filename split the way FLATFILE needs); a variable-driven path is always a fatal gap (no
+runtime-config mapping for an SSIS variable exists). `ProgramEmitter`/`ProgramRequest` gained
+`PreLoadFileActions`/`ProgramFileSystemStep`, reusing `FileSystemActionPlan` verbatim rather than
+a parallel `Program*`-namespaced DTO (unlike `ProgramFlowSpec`, there's no generator-owned NAMING
+decision on top of the planner's own fully-resolved literal operation/paths).
+
+**Verified two ways, same discipline as the Union-All-remerge fix above:**
+1. **The real motivating case** -- re-running `ssisx generate` against `SSIS_From_Sandeep`'s
+   actual `Package_Advanced.dtsx`: `FST_ArchiveWorkbook`'s own gap is gone entirely; the
+   package's remaining 3 blocking gaps (Excel Source, ForEach Loop, an OLE DB Command flow with
+   no destination) are all pre-existing and unrelated.
+2. **A new dedicated fixture**, `tests/Ssis.Extract.Tests/Fixtures/SyntheticFileSystemTask.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `file-system-task` mode): `SQL_PreLoad` (TRUNCATE) ->
+   `FST_PreLoadCopy` (pre-load) -> `DFT_Load` (Flat File Source -> Derived Column -> OLE DB
+   Destination) -> `FST_PostLoadCopy` (post-flow) -- both File System Tasks referencing FILE
+   connection managers by name, matching the real evidence. **Generated, built against a copy of
+   `Etl.Core` (0 warnings/errors), and actually RUN against `.\SQLFORPOC_2022` and the real
+   filesystem**: pre-load SQL truncated the table, the pre-load copy landed
+   `archived-preload.txt`, the Data Flow Task loaded 2 rows, and the post-flow copy landed
+   `archived-postflow.txt` -- all four steps in the correct order, confirmed by reading the
+   table and both files back afterward, not by trusting the exit code.
+
+**Two real object-model facts nailed down building the fixture** (`Ssis.Extract.FixtureBuilder`'s
+new `BuildFileSystemTaskFixture`/`AddFileSystemTask`), neither assumed:
+- `Microsoft.SqlServer.Dts.Tasks.FileSystemTask.FileSystemTask` lives in its own GAC assembly,
+  `Microsoft.SqlServer.FileSystemTask` -- not one of the three `Ssis.Gac.props` already
+  references for every other object-model project in this repo. Confirmed via
+  `InnerObject.GetType().Assembly` on a live probe task rather than guessed by analogy with
+  `Microsoft.SqlServer.ScriptTask`'s own separate-assembly precedent; added as FixtureBuilder's
+  own additional `<Reference>`, reusing `Ssis.Gac.props`'s already-detected `$(SsisGacVersion)`
+  rather than re-probing.
+- A FILE connection manager's `FileUsageType` has no strongly-typed interface to cast
+  `.InnerObject` to (confirmed by reflecting the whole assembly for anything matching
+  `*ConnectionManagerFile*` -- nothing exists) -- set via the same `.Properties["..."].SetValue(...)`
+  dynamic-property pattern `Microsoft.ExecuteSQLTask`'s own `Connection`/`SqlStatementSource`
+  already use elsewhere in this file, passing the cast `int` value per CLAUDE.md's own
+  pre-existing trap note ("`FileUsageType` wants the int enum, not its name").
+
+**A real byte-level mistake, caught and fixed rather than shipped:** patching
+`tests/Ssis.Extract.Tests/Golden/{LoadEmployees,LoadReferenceData}.spec.json` (both need a new
+`"FileSystemTask": null,` field, since `ExecutableSpec` gained the field and these are
+byte-exact golden comparisons) via the ordinary Edit tool introduced CRLF where the committed
+files used bare LF, ballooning a 2-line intended change into a ~3900-line diff -- exactly the
+class of bug CLAUDE.md's own trap 18 already documents for `.dtsx`/XML files, reproduced here
+for `.json` (these specific golden files carry `-text` in `.gitattributes` specifically because
+of a past incident of this same kind, per that file's own comment). Reverted and redone with a
+byte-preserving PowerShell read/regex-replace/write, confirmed by `git diff --stat` showing only
+the 2-3 intended lines per file afterward.
+
+**First commit note:** `D:\PoC\SSIS_Rewrite` (the Etl.Core rewrite repo) had never been
+committed at all since it was built 2026-08-25 -- discovered while trying to commit this
+feature's own Etl.Core changes. With the user's explicit sign-off, committed as that repo's
+first-ever commit (`d8f6231`), bundling the full skeleton (Etl.Core, LoadEmployees,
+LoadReferenceData, all tests) together with the File System Task additions -- there was no
+prior baseline to separate them from. Checked for secrets first (none; `ssis_loader`'s password
+lives in .NET User Secrets, never in the committed `appsettings.json` files).
 
 ## Traps already hit once — don't re-derive these
 

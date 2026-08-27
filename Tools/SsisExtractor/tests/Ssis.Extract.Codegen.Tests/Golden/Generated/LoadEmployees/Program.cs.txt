@@ -39,7 +39,8 @@ builder.Services.AddScoped<IEtlPackage>(sp =>
     return new EtlPackage(
         Name: PackageName,
         PreLoadStatements: ["TRUNCATE TABLE dbo.Employee;"],
-        Steps: [employeeFlow]);
+        Steps: [employeeFlow],
+        PreLoadFileActions: []);
 });
 
 using var host = builder.Build();

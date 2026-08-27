@@ -1,5 +1,6 @@
 using Ssis.Extract.Model.Package;
 using Ssis.Extract.Model.Pipeline;
+using Ssis.Extract.Model.Shared;
 
 namespace Ssis.Extract.Codegen;
 
@@ -44,18 +45,35 @@ public sealed record ConditionalSplitBranchPlan(string OutputName, string? Frien
 /// re-deriving which entry is the default.</summary>
 public sealed record ConditionalSplitPlan(PipelineComponentSpec Component, List<ConditionalSplitBranchPlan> Branches);
 
-/// <summary>One step after pre-load: either a Data Flow Task or an Execute SQL Task that runs
-/// AFTER at least one Data Flow Task has already run (a pre-load Execute SQL Task never
-/// appears here -- it only ever lands in <see cref="PackagePlan.PreLoadStatements"/>).</summary>
+/// <summary>One resolved File System Task action -- <see cref="Operation"/> is one of the
+/// <c>Etl.Core.Abstractions.FileSystemOperation</c> enum names this generator supports
+/// (Copy/Move/Delete/Rename/CreateDirectory), never the raw SSIS enum name verbatim.
+/// <see cref="SourcePath"/>/<see cref="DestinationPath"/> are already-resolved literal paths --
+/// a FILE connection manager's own <c>ConnectionString</c> when the task referenced one (the
+/// evidenced RBC_Demo_ETL shape), or the task's own raw path text otherwise. A variable-driven
+/// source/destination is a gate <see cref="PackagePlanner"/> reports, not something this record
+/// represents -- there is no runtime-config mapping for an SSIS variable to resolve against.</summary>
+public sealed record FileSystemActionPlan(string Operation, string SourcePath, string? DestinationPath, bool Overwrite);
+
+/// <summary>One step after pre-load: a Data Flow Task, an Execute SQL Task, or a File System
+/// Task that runs AFTER at least one Data Flow Task has already run (a pre-load one of either
+/// never appears here -- it only ever lands in <see cref="PackagePlan.PreLoadStatements"/>/
+/// <see cref="PackagePlan.PreLoadFileActions"/>).</summary>
 public abstract record PackageStep;
 public sealed record FlowStep(DataFlowPlan Flow) : PackageStep;
 public sealed record SqlStep(string TaskName, string Sql) : PackageStep;
+public sealed record FileSystemStep(string TaskName, FileSystemActionPlan Action) : PackageStep;
 
 /// <summary><see cref="Flows"/> is kept alongside <see cref="Steps"/>, duplicating every
 /// FlowStep's own DataFlowPlan, purely so callers that only ever cared about "all the flows,
 /// in order" (most existing tests and emitters) don't need to migrate to pattern-matching
 /// Steps.</summary>
-public sealed record PackagePlan(List<string> PreLoadStatements, List<DataFlowPlan> Flows, List<PackageStep> Steps, List<GenerationGap> Gaps);
+public sealed record PackagePlan(
+    List<string> PreLoadStatements,
+    List<FileSystemActionPlan> PreLoadFileActions,
+    List<DataFlowPlan> Flows,
+    List<PackageStep> Steps,
+    List<GenerationGap> Gaps);
 
 /// <summary>
 /// Walks one package's whole control-flow tree (<c>package.Executables</c>/<c>package.Dag</c>,
@@ -108,13 +126,14 @@ public static class PackagePlanner
     {
         var gaps = new List<GenerationGap>();
         var preLoadStatements = new List<string>();
+        var preLoadFileActions = new List<FileSystemActionPlan>();
         var flows = new List<DataFlowPlan>();
         var steps = new List<PackageStep>();
 
-        WalkContainer(package.Executables, package.Dag, package.PrecedenceConstraints,
-            preLoadStatements, flows, steps, gaps, containerIsPostFlow: false);
+        WalkContainer(package.Executables, package.Dag, package.PrecedenceConstraints, package.ConnectionManagers,
+            preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: false);
 
-        return new PackagePlan(preLoadStatements, flows, steps, gaps);
+        return new PackagePlan(preLoadStatements, preLoadFileActions, flows, steps, gaps);
     }
 
     /// <summary>Returns true if, by the time this container finishes (from its parent's point
@@ -122,7 +141,9 @@ public static class PackagePlanner
     /// was already true coming in, or because one ran somewhere inside.</summary>
     private static bool WalkContainer(
         List<ExecutableSpec> children, ControlFlowDagSpec dag, List<PrecedenceConstraintSpec> constraints,
-        List<string> preLoadStatements, List<DataFlowPlan> flows, List<PackageStep> steps,
+        List<ConnectionManagerSpec> connectionManagers,
+        List<string> preLoadStatements, List<FileSystemActionPlan> preLoadFileActions,
+        List<DataFlowPlan> flows, List<PackageStep> steps,
         List<GenerationGap> gaps, bool containerIsPostFlow)
     {
         var byRefId = children.ToDictionary(e => e.RefId);
@@ -162,8 +183,8 @@ public static class PackagePlanner
 
             if (executable.ExecutableType == "STOCK:SEQUENCE")
             {
-                var childRanAfterFlow = WalkContainer(executable.Children, executable.Dag, executable.PrecedenceConstraints,
-                    preLoadStatements, flows, steps, gaps, containerIsPostFlow: isPostFlow);
+                var childRanAfterFlow = WalkContainer(executable.Children, executable.Dag, executable.PrecedenceConstraints, connectionManagers,
+                    preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: isPostFlow);
                 if (childRanAfterFlow)
                 {
                     flowOrAfter.Add(refId);
@@ -199,6 +220,23 @@ public static class PackagePlanner
                 continue;
             }
 
+            if (executable.FileSystemTask is { } fileSystemTask)
+            {
+                var action = ResolveFileSystemAction(executable.ObjectName ?? refId, fileSystemTask, connectionManagers, gaps);
+                if (action is null) continue; // ResolveFileSystemAction already added the gap
+
+                if (isPostFlow)
+                {
+                    steps.Add(new FileSystemStep(executable.ObjectName ?? refId, action));
+                    flowOrAfter.Add(refId);
+                }
+                else
+                {
+                    preLoadFileActions.Add(action);
+                }
+                continue;
+            }
+
             if (executable.DataFlowTask is { } dataFlowTask)
             {
                 var flow = PlanDataFlow(executable.ObjectName ?? refId, dataFlowTask.Pipeline, gaps);
@@ -213,10 +251,81 @@ public static class PackagePlanner
             }
 
             gaps.Add(new GenerationGap(executable.ObjectName ?? refId,
-                $"executable type '{executable.ExecutableType}' is neither a Data Flow Task nor an Execute SQL Task -- not supported by this planner yet"));
+                $"executable type '{executable.ExecutableType}' is not supported by this planner yet -- only Data Flow Task, Execute SQL Task, and File System Task are"));
         }
 
         return containerIsPostFlow || sawDataFlowInThisContainer;
+    }
+
+    /// <summary>
+    /// Resolves one File System Task's operation and paths, or reports why it can't be
+    /// generated. <see cref="FileSystemTaskPayload.SourceIsVariable"/>/<c>DestinationIsVariable</c>
+    /// is always fatal -- no runtime-config mapping exists for an SSIS variable's value. A path
+    /// that resolves to neither a variable nor a connection manager is used as a literal
+    /// (matches an object-model-confirmed shape, see FileSystemTaskPayload's own doc comment),
+    /// though no real evidenced package uses this form yet.
+    /// </summary>
+    private static FileSystemActionPlan? ResolveFileSystemAction(
+        string taskName, FileSystemTaskPayload payload, List<ConnectionManagerSpec> connectionManagers, List<GenerationGap> gaps)
+    {
+        var operation = payload.OperationRaw switch
+        {
+            null => "Copy", // schema default, omitted from the XML when unset
+            "CopyFile" => "Copy",
+            "MoveFile" => "Move",
+            "DeleteFile" => "Delete",
+            "RenameFile" => "Rename",
+            "CreateDirectory" => "CreateDirectory",
+            _ => null,
+        };
+        if (operation is null)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"File System Task operation '{payload.OperationRaw}' is not supported yet -- only Copy/Move/Delete/Rename/CreateDirectory File are"));
+            return null;
+        }
+
+        var source = ResolveFileSystemPath(taskName, "source", payload.SourcePathRaw, payload.SourceIsVariable, payload.SourceConnectionName, connectionManagers, gaps);
+        if (source is null) return null; // ResolveFileSystemPath already added the gap
+
+        string? destination = null;
+        if (operation is "Copy" or "Move" or "Rename")
+        {
+            destination = ResolveFileSystemPath(taskName, "destination", payload.DestinationPathRaw, payload.DestinationIsVariable, payload.DestinationConnectionName, connectionManagers, gaps);
+            if (destination is null) return null; // ResolveFileSystemPath already added the gap
+        }
+
+        return new FileSystemActionPlan(operation, source, destination, payload.OverwriteDestination ?? false);
+    }
+
+    private static string? ResolveFileSystemPath(
+        string taskName, string role, string? pathRaw, bool? isVariable, string? connectionName,
+        List<ConnectionManagerSpec> connectionManagers, List<GenerationGap> gaps)
+    {
+        if (isVariable == true)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"File System Task's {role} path is driven by a variable ('{pathRaw}') -- not supported yet, no runtime-config mapping for an SSIS variable exists"));
+            return null;
+        }
+
+        if (connectionName is not null)
+        {
+            var cm = connectionManagers.FirstOrDefault(c => c.ObjectName == connectionName);
+            if (cm?.ConnectionString is { } path) return path;
+
+            gaps.Add(new GenerationGap(taskName,
+                $"File System Task's {role} connection manager '{connectionName}' has no design-time default path -- not supported"));
+            return null;
+        }
+
+        if (string.IsNullOrEmpty(pathRaw))
+        {
+            gaps.Add(new GenerationGap(taskName, $"File System Task has no {role} path"));
+            return null;
+        }
+
+        return pathRaw;
     }
 
     private static DataFlowPlan? PlanDataFlow(string taskName, PipelineSpec pipeline, List<GenerationGap> gaps)

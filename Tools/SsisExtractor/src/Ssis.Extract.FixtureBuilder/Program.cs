@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task]");
             return 2;
         }
 
@@ -100,9 +100,13 @@ internal static class Program
         {
             return BuildConditionalSplitRemergeFixture(args[0]);
         }
+        if (fixtureName == "file-system-task")
+        {
+            return BuildFileSystemTaskFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', or 'conditional-split-remerge'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', or 'file-system-task'.");
             return 2;
         }
 
@@ -666,6 +670,103 @@ internal static class Program
         inst.SetOutputColumnProperty(output.ID, newCol.ID, "Expression", literalExpr);
 
         return meta;
+    }
+
+    /// <summary>
+    /// SQL_PreLoad (TRUNCATE) -> FST_PreLoadCopy (a pre-load File System Task, Copy) ->
+    /// DFT_Load (Flat File Source -> Derived Column -> OLE DB Destination) -> FST_PostLoadCopy
+    /// (a post-flow File System Task, Copy). Proves PackagePlanner's two File System Task
+    /// positions -- pre-load (RBC_Demo_ETL's own FST_ArchiveWorkbook shape: SQL_TruncateTargets
+    /// always precedes it, inside the same Sequence Container) and post-flow (not evidenced on
+    /// any real package yet, but Etl.Core.Pipeline.FileSystemStep supports it symmetrically with
+    /// ExecuteSqlStep's own pre-load/post-flow split, so it's proven here rather than left
+    /// theoretical). Both File System Tasks reference FILE connection managers by name, matching
+    /// FST_ArchiveWorkbook's real shape -- not a literal/variable path, the two OTHER supported
+    /// shapes this tool never got real evidence for.
+    /// </summary>
+    private static int BuildFileSystemTaskFixture(string outputPath)
+    {
+        var filesDir = Path.Combine(TestFixturesDir(), "synthetic-file-system-task-files");
+        var sourcePath = Path.Combine(filesDir, "source.txt");
+        if (!File.Exists(sourcePath))
+        {
+            Console.Error.WriteLine($"error: expected source file at {sourcePath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-file-system-task-csv", "SyntheticFileSystemTaskLoad.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticFileSystemTask" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var sourceFileCm = pkg.Connections.Add("FILE");
+        sourceFileCm.Name = "CM_FILE_Source";
+        sourceFileCm.ConnectionString = sourcePath;
+        // No FileUsageType set -- matches FST_ArchiveWorkbook's real SOURCE connection manager
+        // (CM_FILE_SourceWorkbook), which carries none either; the default (0, ExistingFile) is
+        // correct for a copy source that must already exist.
+
+        var preLoadDestCm = pkg.Connections.Add("FILE");
+        preLoadDestCm.Name = "CM_FILE_PreLoadArchive";
+        preLoadDestCm.ConnectionString = Path.Combine(filesDir, "archived-preload.txt");
+        // Set via .Properties[...], not a strongly-typed interface -- there is no
+        // IDTSConnectionManagerFile100 (confirmed by reflecting the assembly for any type
+        // matching *ConnectionManagerFile*; none exists). CLAUDE.md's own trap notes
+        // FileUsageType "wants the int enum, not its name" -- passing the cast int value here,
+        // not the bare enum symbol, matches that lesson.
+        preLoadDestCm.Properties["FileUsageType"].SetValue(preLoadDestCm, (int)Microsoft.SqlServer.Dts.Runtime.DTSFileConnectionUsageType.CreateFile);
+
+        var postFlowDestCm = pkg.Connections.Add("FILE");
+        postFlowDestCm.Name = "CM_FILE_PostFlowArchive";
+        postFlowDestCm.ConnectionString = Path.Combine(filesDir, "archived-postflow.txt");
+        postFlowDestCm.Properties["FileUsageType"].SetValue(postFlowDestCm, (int)Microsoft.SqlServer.Dts.Runtime.DTSFileConnectionUsageType.CreateFile);
+
+        var preLoadTask = AddExecuteSql(pkg, "SQL_PreLoad", sqlCm, "TRUNCATE TABLE dbo.SyntheticFileSystemTaskTarget;");
+        var preLoadCopyTask = AddFileSystemTask(pkg, "FST_PreLoadCopy", sourceFileCm, preLoadDestCm, overwrite: true);
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_FileSystemTaskCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 50, 0, 0));
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        BuildFlatFileToOleDbLoad((MainPipe)dftHost.InnerObject, csvCm, sqlCm, "[dbo].[SyntheticFileSystemTaskTarget]");
+
+        var postFlowCopyTask = AddFileSystemTask(pkg, "FST_PostLoadCopy", sourceFileCm, postFlowDestCm, overwrite: true);
+
+        pkg.PrecedenceConstraints.Add(preLoadTask, (Executable)preLoadCopyTask);
+        pkg.PrecedenceConstraints.Add((Executable)preLoadCopyTask, dftHost);
+        pkg.PrecedenceConstraints.Add(dftHost, (Executable)postFlowCopyTask);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    private static Microsoft.SqlServer.Dts.Runtime.TaskHost AddFileSystemTask(
+        RtPackage pkg, string name, ConnectionManager sourceCm, ConnectionManager destCm, bool overwrite)
+    {
+        var host = (RtTaskHost)pkg.Executables.Add("Microsoft.FileSystemTask");
+        host.Name = name;
+        var inner = (Microsoft.SqlServer.Dts.Tasks.FileSystemTask.FileSystemTask)host.InnerObject;
+        // Operation left at its default (CopyFile) -- confirmed via a live probe that this is
+        // genuinely omitted from the saved XML rather than written as "CopyFile" (see
+        // FileSystemTaskPayload's own doc comment), so a fixture wanting Copy specifically
+        // should not set it at all, matching how the real evidenced package looks.
+        inner.Source = sourceCm.Name;
+        inner.Destination = destCm.Name;
+        inner.OverwriteDestinationFile = overwrite;
+        return host;
     }
 
     /// <summary>

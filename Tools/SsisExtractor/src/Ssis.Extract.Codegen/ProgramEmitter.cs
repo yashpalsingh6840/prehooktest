@@ -25,11 +25,18 @@ public sealed record ProgramFlowSpec(
 public sealed record ProgramConditionalSplitBranch(string OutputName, string EntityName, string TransformClassName);
 
 /// <summary>One entry in a package's post-pre-load step sequence, in execution order --
-/// a data flow, an Execute SQL Task that runs after at least one data flow, or a Conditional
-/// Split (one source routed to N branches, each its own destination).</summary>
+/// a data flow, an Execute SQL Task or File System Task that runs after at least one data flow,
+/// or a Conditional Split (one source routed to N branches, each its own destination).</summary>
 public abstract record ProgramStep;
 public sealed record ProgramFlowStep(ProgramFlowSpec Flow) : ProgramStep;
 public sealed record ProgramSqlStep(string StepName, string Sql) : ProgramStep;
+
+/// <summary>Reuses PackagePlanner's own FileSystemActionPlan verbatim rather than a parallel
+/// Program*-namespaced DTO -- unlike ProgramFlowSpec/ProgramConditionalSplitBranch, there is no
+/// generator-owned NAMING decision to add on top (no entity/transform class name), just literal
+/// operation/paths already fully resolved by the planner.</summary>
+public sealed record ProgramFileSystemStep(string StepName, FileSystemActionPlan Action) : ProgramStep;
+
 public sealed record ProgramConditionalSplitStep(
     string StepName,
     FlowSourceSpec Source,
@@ -42,6 +49,7 @@ public sealed record ProgramRequest(
     string RootNamespace,
     string DbContextTypeName,
     List<string> PreLoadStatements,
+    List<FileSystemActionPlan> PreLoadFileActions,
     List<ProgramStep> Steps);
 
 /// <summary>
@@ -130,6 +138,12 @@ public static class ProgramEmitter
                     lines.Add($"    var {sqlLocal} = new ExecuteSqlStep(\"{sqlStep.StepName}\", {CSharpStringLiteral(sqlStep.Sql)}, sp.GetRequiredService<ILogger<ExecuteSqlStep>>());");
                     lines.Add("");
                     break;
+                case ProgramFileSystemStep fsStep:
+                    var fsLocal = SqlStepLocalName(fsStep.StepName); // same lowercase-first convention, generic enough to reuse
+                    orderedLocalNames.Add(fsLocal);
+                    lines.Add($"    var {fsLocal} = new FileSystemStep(\"{fsStep.StepName}\", {FileSystemActionExpr(fsStep.Action)}, sp.GetRequiredService<ILogger<FileSystemStep>>());");
+                    lines.Add("");
+                    break;
                 case ProgramConditionalSplitStep splitStep:
                     var splitLocal = SplitStepLocalName(splitStep.StepName);
                     orderedLocalNames.Add(splitLocal);
@@ -167,7 +181,8 @@ public static class ProgramEmitter
         lines.Add("    return new EtlPackage(");
         lines.Add("        Name: PackageName,");
         lines.Add($"        PreLoadStatements: [{string.Join(", ", request.PreLoadStatements.Select(CSharpStringLiteral))}],");
-        lines.Add($"        Steps: [{string.Join(", ", orderedLocalNames)}]);");
+        lines.Add($"        Steps: [{string.Join(", ", orderedLocalNames)}],");
+        lines.Add($"        PreLoadFileActions: [{string.Join(", ", request.PreLoadFileActions.Select(FileSystemActionExpr))}]);");
         lines.Add("});");
         lines.Add("");
 
@@ -206,6 +221,10 @@ public static class ProgramEmitter
     /// (letters/digits/underscore), so no further sanitizing is needed.</summary>
     private static string SqlStepLocalName(string taskName) =>
         char.ToLowerInvariant(taskName[0]) + taskName[1..] + "Step";
+
+    /// <summary>e.g. <c>new FileSystemPreLoadAction(FileSystemOperation.Copy, "C:\...", "D:\...", true)</c> -- shared by pre-load emission and the post-flow ProgramFileSystemStep case, since both need the exact same literal expression.</summary>
+    private static string FileSystemActionExpr(FileSystemActionPlan action) =>
+        $"new FileSystemPreLoadAction(FileSystemOperation.{action.Operation}, {CSharpStringLiteral(action.SourcePath)}, {(action.DestinationPath is null ? "null" : CSharpStringLiteral(action.DestinationPath))}, {(action.Overwrite ? "true" : "false")})";
 
     /// <summary>Same convention as SqlStepLocalName -- "CSPL_HighLow" -> "cSPL_HighLowSplit".</summary>
     private static string SplitStepLocalName(string taskName) =>

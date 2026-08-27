@@ -165,6 +165,9 @@ public static class PackageGenerator
                 case SqlStep sqlStep:
                     programSteps.Add(new ProgramSqlStep(sqlStep.TaskName, sqlStep.Sql));
                     break;
+                case FileSystemStep fileSystemStep:
+                    programSteps.Add(new ProgramFileSystemStep(fileSystemStep.TaskName, fileSystemStep.Action));
+                    break;
             }
         }
 
@@ -175,6 +178,7 @@ public static class PackageGenerator
                 RootNamespace: ns,
                 DbContextTypeName: $"{package.ObjectName}DbContext",
                 PreLoadStatements: plan.PreLoadStatements,
+                PreLoadFileActions: plan.PreLoadFileActions,
                 Steps: programSteps)));
 
             if (authMode is null)

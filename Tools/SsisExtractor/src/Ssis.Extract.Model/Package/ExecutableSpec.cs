@@ -67,4 +67,5 @@ public sealed class ExecutableSpec
     public UnmappedTaskPayload? UnmappedTask { get; init; }
     public ScriptTaskPayload? ScriptTask { get; init; }
     public ForEachLoopPayload? ForEachLoop { get; init; }
+    public FileSystemTaskPayload? FileSystemTask { get; init; }
 }

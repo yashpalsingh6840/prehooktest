@@ -200,6 +200,7 @@ public static partial class DtsxPackageReader
         DataFlowTaskPayload? dataFlowPayload = null;
         UnmappedTaskPayload? unmappedPayload = null;
         ScriptTaskPayload? scriptTaskPayload = null;
+        FileSystemTaskPayload? fileSystemTaskPayload = null;
 
         var objectData = exEl.Element(Dts + "ObjectData");
         if (objectData is not null)
@@ -207,6 +208,10 @@ public static partial class DtsxPackageReader
             if (executableType == "Microsoft.ExecuteSQLTask")
             {
                 sqlPayload = ReadExecuteSqlTask(objectData, cmDtsIdToName);
+            }
+            else if (executableType == "Microsoft.FileSystemTask")
+            {
+                fileSystemTaskPayload = ReadFileSystemTask(objectData, cmDtsIdToName);
             }
             else if (executableType == "Microsoft.Pipeline")
             {
@@ -276,6 +281,43 @@ public static partial class DtsxPackageReader
             UnmappedTask = unmappedPayload,
             ScriptTask = scriptTaskPayload,
             ForEachLoop = forEachLoopPayload,
+            FileSystemTask = fileSystemTaskPayload,
+        };
+    }
+
+    /// <summary>
+    /// <c>Microsoft.FileSystemTask</c>'s own <c>&lt;FileSystemData&gt;</c> -- no namespace
+    /// prefix on the element or its attributes, same as <c>&lt;ScriptProject&gt;</c> (confirmed
+    /// against a real object-model-built probe package, not assumed from the one real example
+    /// this was first evidenced on). <see cref="FileSystemTaskPayload.OperationRaw"/> is
+    /// genuinely absent from the XML for the schema's default (CopyFile) -- see that type's own
+    /// doc comment.
+    /// </summary>
+    internal static FileSystemTaskPayload ReadFileSystemTask(XElement objectData, Dictionary<string, string> cmDtsIdToName)
+    {
+        var el = objectData.Element("FileSystemData");
+        if (el is null) return new FileSystemTaskPayload();
+
+        var sourceRaw = el.Attr("TaskSourcePath");
+        var sourceIsVariable = el.AttrBool("TaskIsSourceVariable");
+        var sourceConnectionName = sourceIsVariable != true && sourceRaw is not null && cmDtsIdToName.TryGetValue(sourceRaw, out var srcName)
+            ? srcName : null;
+
+        var destRaw = el.Attr("TaskDestinationPath");
+        var destIsVariable = el.AttrBool("TaskIsDestinationVariable");
+        var destConnectionName = destIsVariable != true && destRaw is not null && cmDtsIdToName.TryGetValue(destRaw, out var destName)
+            ? destName : null;
+
+        return new FileSystemTaskPayload
+        {
+            OperationRaw = el.Attr("TaskOperationType"),
+            SourcePathRaw = sourceRaw,
+            SourceIsVariable = sourceIsVariable,
+            SourceConnectionName = sourceConnectionName,
+            DestinationPathRaw = destRaw,
+            DestinationIsVariable = destIsVariable,
+            DestinationConnectionName = destConnectionName,
+            OverwriteDestination = el.AttrBool("TaskOverwriteDestFile"),
         };
     }
 

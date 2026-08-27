@@ -49,6 +49,38 @@ public sealed class SqlResultBindingSpec
 }
 
 /// <summary>
+/// <c>Microsoft.FileSystemTask</c>. Confirmed via the real object model before any XML was
+/// hand-written (same "ask the runtime, don't guess" discipline as trap 12), not just read off
+/// a single real package's own saved XML: <see cref="OperationRaw"/> is OMITTED from
+/// <c>&lt;FileSystemData&gt;</c> when it's <c>CopyFile</c> (the enum's default value, confirmed
+/// by building a probe package with the operation left unset and reading the saved XML back --
+/// no <c>TaskOperationType</c> attribute at all), and present as the literal enum name
+/// (<c>"MoveFile"</c>, <c>"DeleteFile"</c>, ...) otherwise. <see cref="SourcePathRaw"/>/
+/// <see cref="DestinationPathRaw"/> can each independently be a literal path, a
+/// <c>Namespace::VariableName</c> reference (when <see cref="SourceIsVariable"/>/
+/// <see cref="DestinationIsVariable"/> is true), or -- the shape RBC_Demo_ETL's own real
+/// FST_ArchiveWorkbook uses -- a FILE connection manager's DTSID, resolved the same way
+/// <see cref="ExecuteSqlTaskPayload.ConnectionRefRaw"/>/<c>ConnectionName</c> already are.
+/// </summary>
+public sealed class FileSystemTaskPayload
+{
+    /// <summary>e.g. "MoveFile", "DeleteFile" -- null (not "CopyFile") when the schema default applies; see this type's own doc comment.</summary>
+    public string? OperationRaw { get; init; }
+
+    public string? SourcePathRaw { get; init; }
+    public bool? SourceIsVariable { get; init; }
+
+    /// <summary>Resolved from <see cref="SourcePathRaw"/> against this package's own connection managers by DtsId, same as <see cref="ExecuteSqlTaskPayload.ConnectionName"/> -- null when the source isn't a variable and doesn't resolve to a known connection manager (a literal path, or a dangling reference).</summary>
+    public string? SourceConnectionName { get; init; }
+
+    public string? DestinationPathRaw { get; init; }
+    public bool? DestinationIsVariable { get; init; }
+    public string? DestinationConnectionName { get; init; }
+
+    public bool? OverwriteDestination { get; init; }
+}
+
+/// <summary>
 /// <c>Microsoft.Pipeline</c> (Data Flow Task, plan §4.7). Slice 2 kept this as an opaque
 /// raw-XML marker; slice 3 parses it fully into <see cref="Pipeline"/> (every component,
 /// generically, plus bespoke semantics for the types this PoC has evidence for) and derives
