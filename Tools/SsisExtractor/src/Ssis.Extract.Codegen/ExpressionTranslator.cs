@@ -133,6 +133,22 @@ public static class ExpressionTranslator
 
         Cast { Type: SsisType.WStr or SsisType.Str } cast => TranslateIntToStringCast(cast, references),
 
+        // Ternary (cond ? whenTrue : whenFalse) -- the AST/evaluator already exist and are
+        // oracle-verified (Ssis.Runtime.Expressions.Ast.Conditional, gate 2's own corpus rows
+        // 23-24: "TRUE ? "a" : "b"" and the NULL-condition case), this just wires them into C#.
+        // The condition reuses TranslateCondition verbatim -- same comparisons/&&/||/!/ISNULL
+        // surface a Conditional Split case gets, nothing new. Real evidenced call:
+        // FINDSTRING(TRIM(Email),"@",1) > 0 ? SUBSTRING(...) : "(none)" (RBC_Demo_ETL's
+        // Package_Transforms, DER_Enrich.EmailDomain).
+        Conditional ternary => TranslateTernary(ternary, references),
+
+        // Confirmed the parser never folds this into a literal (-1 is always
+        // UnaryExpr(Negate, IntLiteral(1)), per Parser.cs) -- real evidenced need: TenureDays'
+        // own "ISNULL(SignupDate_dt) ? -1 : DATEDIFF(...)". Pure numeric negation, oracle-
+        // verified (Ssis.Runtime.Expressions.Evaluator's own Negate case; corpus row "-5 % 3").
+        // Unlike BinaryOp.Add, negation has no string-vs-numeric ambiguity to resolve.
+        UnaryExpr { Op: UnaryOp.Negate } negate => TranslateNegate(negate, references),
+
         _ => new NotTranslatable($"unsupported expression shape: {node.GetType().Name}"),
     };
 
@@ -277,6 +293,33 @@ public static class ExpressionTranslator
             translatedArgs.Add(((TranslatedOk)t).CSharpExpression);
         }
         return new TranslatedOk($"SsisFn.FindString({string.Join(", ", translatedArgs)})");
+    }
+
+    /// <summary>Both branches are translated via TranslateValue (not TranslateScalar directly)
+    /// so a branch that's itself a concat chain would work too -- not evidenced in any real
+    /// package, but costs nothing and matches how TranslateColumn's own top-level dispatch
+    /// already recurses.</summary>
+    private static TranslatedExpression TranslateTernary(
+        Conditional node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+    {
+        var condition = TranslateCondition(node.Condition, references);
+        if (condition is NotTranslatable) return condition;
+
+        var whenTrue = TranslateValue(node.WhenTrue, references);
+        if (whenTrue is NotTranslatable) return whenTrue;
+
+        var whenFalse = TranslateValue(node.WhenFalse, references);
+        if (whenFalse is NotTranslatable) return whenFalse;
+
+        return new TranslatedOk(
+            $"({((TranslatedOk)condition).CSharpExpression} ? {((TranslatedOk)whenTrue).CSharpExpression} : {((TranslatedOk)whenFalse).CSharpExpression})");
+    }
+
+    private static TranslatedExpression TranslateNegate(
+        UnaryExpr node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+    {
+        var inner = TranslateScalar(node.Operand, references);
+        return inner is NotTranslatable ? inner : new TranslatedOk($"-({((TranslatedOk)inner).CSharpExpression})");
     }
 
     /// <summary>

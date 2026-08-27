@@ -803,7 +803,7 @@ A second, unrelated real bug (`GateRunner` not setting the job process's working
 which silently broke the job's own `appsettings.json` lookup and surfaced as an
 unrelated-looking Windows-auth failure) was also caught and fixed the same session.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end)
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -2097,6 +2097,84 @@ session's or the extractor's).
 Destination, Excel Source, ForEach Loop containers, Conditional Split -> Sort -> Merge (all
 pre-existing), plus the two newly-named ones above (ternary/`DATEDIFF` value expressions, Data
 Conversion component support).
+
+### Ternary (`cond ? whenTrue : whenFalse`) and unary negate in ExpressionTranslator (2026-08-27)
+
+Picked up immediately after FINDSTRING/TRIM, same session, same discipline: check whether the
+semantics are already oracle-verified before doing any new derivation work. They were --
+`Ssis.Runtime.Expressions.Ast.Conditional` and `UnaryExpr{Op: Negate}` already exist, are already
+parsed, and are already evaluated by `Evaluator.cs` (`EvaluateConditional`'s own "Measured:"
+comment documents the NULL-condition rule; `-5 % 3 => -2` in the gate-2 oracle corpus exercises
+Negate). Nothing needed re-deriving via the Windows-only `Ssis.Expression.Oracle` -- this was
+purely wiring `ExpressionTranslator` through to already-proven behavior, the same shape of task
+as FINDSTRING/TRIM.
+
+**What was added:** `ExpressionTranslator.TranslateScalar` gained `Conditional` (a new
+`TranslateTernary`: condition translated via the existing `TranslateCondition` verbatim -- same
+comparisons/&&/||/!/ISNULL surface a Conditional Split case already gets, nothing new; both
+branches translated via `TranslateValue`, not `TranslateScalar` directly, so a branch that's
+itself a concat chain would work too, though that's not evidenced anywhere) and
+`UnaryExpr{Op: Negate}` (a new `TranslateNegate`, wrapping the operand in `-(...)`). Both are
+pure, self-contained value-context translations -- no `SsisFn.*` helper needed for either (a C#
+ternary and C# unary minus ARE the semantics, unlike FINDSTRING/TRIM which needed a helper
+method), so no `SsisFnEmitter`/`CollectSsisFunctions` changes were needed this round.
+
+**Verified against the real motivating case, regenerating `Package_Transforms.dtsx` twice (once
+per fix) to watch the gap reason sharpen with each addition -- confirms real progress, not just
+"stopped erroring":**
+1. Before this round: `CustomerEnriched.EmailDomain`/`.TenureDays` both reported "unsupported
+   expression shape: Conditional" -- the ternary itself was the very first thing blocking either
+   column, nothing past it was even attempted.
+2. After adding ternary alone: `EmailDomain` sharpened to "unsupported expression shape:
+   FunctionCall" (its `whenTrue` branch, `SUBSTRING(TRIM(Email), FINDSTRING(TRIM(Email),"@",1) +
+   1, 100)`, has a non-literal SUBSTRING start argument -- `ExpressionTranslator`'s SUBSTRING
+   case still requires literal `IntLiteral` start/length, a real, SEPARATE, deliberately
+   untouched gap this round, see below). `TenureDays` sharpened to "unsupported expression
+   shape: UnaryExpr" -- its own `-1` literal, confirming the parser genuinely never folds unary
+   minus into a literal (`Parser.cs`'s own `ParseUnary`, verified by reading it directly rather
+   than assumed).
+3. After adding negate too: `TenureDays` sharpened again, to "unsupported expression shape:
+   FunctionCall" -- now cleanly isolated on `DATEDIFF` itself (never oracle-verified, a genuinely
+   new, separate function to prove before it can be wired up), with nothing else in its way.
+
+**Two deliberately untouched, newly-precise gaps, named rather than folded into this round:**
+- **`SUBSTRING` with a non-literal start argument is a real, DEEPER problem than it looks, not
+  just "loosen a literal requirement."** The real evidenced call needs `FINDSTRING(...) + 1` as
+  the start -- a `BinaryExpr(Add)` between a `FunctionCall` and an `IntLiteral`. But
+  `TranslateValue`'s own dispatcher treats EVERY `BinaryOp.Add` as string concatenation
+  unconditionally (`TranslateConcat`, wrapping the result in `$"...{...}..."`) -- correct for
+  every evidenced case so far (all string operands), but flatly wrong for integer arithmetic:
+  routing `FINDSTRING(...) + 1` through `TranslateConcat` would silently produce
+  `$"{SsisFn.FindString(...)}1"` (string concatenation of the count and the literal "1") instead
+  of `SsisFn.FindString(...) + 1` (integer addition) -- a real semantic bug, not a translation
+  gap, if guessed rather than designed. Fixing this properly needs operand-type-aware `+`
+  dispatch (numeric-vs-string), the same kind of resolution `TranslateComparison` already does
+  for `==`/`<` -- a real design decision, correctly out of scope for this round's "wire up
+  already-proven semantics" scope.
+- **`DATEDIFF` has never been oracle-verified** -- absent from `Functions.cs`'s `ReturnTypes`
+  dictionary entirely, unlike every other function `ExpressionTranslator` already supports.
+  Needs new Windows-only `Ssis.Expression.Oracle` work (date-part sign convention, which
+  `"dd"`/`"yyyy"`-style literals are supported) before it can be wired up at all -- a
+  new-semantics task, not a plumbing task, so a different shape of work than everything else
+  this round.
+
+**Own dedicated fixture, built to prove ternary/negate in isolation, unblocked by both gaps
+above:** `tests/Ssis.Extract.Tests/Fixtures/SyntheticTernary.dtsx`
+(`Ssis.Extract.FixtureBuilder`'s new `ternary` mode) -- OLE DB Source (SqlCommand) -> Derived
+Column with two computed columns (`Category <- Amount > 1000 ? "High" : "Low"`; `SignFlag <-
+Amount < 0 ? -1 : 1`, deliberately using only already-supported building blocks, not the real
+package's own SUBSTRING/DATEDIFF-dependent branches) -> OLE DB Destination. **Generated, built
+against a copy of `Etl.Core` (0 warnings/0 errors), and actually RUN against
+`.\SQLFORPOC_2022`**: 4 seed rows (below/above/at-the-boundary Amount, plus one negative) --
+read back afterward, not just trusted from the exit code: `500.00 -> Low/1`, `1500.00 ->
+High/1`, `-250.00 -> Low/-1` (the negate branch genuinely exercised), `1000.00 -> Low/1` (the
+exact boundary, `>` is strictly-greater). Backing tables:
+`tests/Ssis.Extract.Tests/Fixtures/synthetic-ternary-tables.sql`.
+
+Also added: three `ExpressionTranslatorTests` (ternary of string literals; ternary+negate, the
+exact real-case shape; a ternary branch degrading to a gap rather than guessing, using DATEDIFF
+as the deliberately-still-unsupported function). Regression: 89/89 in
+`Ssis.Extract.Codegen.Tests` (was 86), same 3 pre-existing unrelated failures elsewhere.
 
 ## Traps already hit once — don't re-derive these
 

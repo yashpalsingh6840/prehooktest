@@ -206,6 +206,50 @@ public class ExpressionTranslatorTests
     }
 
     [Fact]
+    public void TranslateColumn_TranslatesTernary_OfStringLiterals()
+    {
+        // The real SyntheticTernary.dtsx case: Amount > 1000 ? "High" : "Low".
+        var ast = SsisExpression.Parse("Amount > 1000 ? \"High\" : \"Low\"");
+        var refs = Refs(("Amount", "row.Amount", SsisType.Numeric));
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "Category", refs);
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal("((row.Amount > 1000) ? \"High\" : \"Low\")", ok.CSharpExpression);
+    }
+
+    [Fact]
+    public void TranslateColumn_TranslatesTernaryWithNegate_TheExactRealCaseShape()
+    {
+        // RBC_Demo_ETL's own Package_Transforms.dtsx, DER_Enrich.TenureDays uses this exact
+        // shape (ISNULL(...) ? -1 : DATEDIFF(...)) -- DATEDIFF itself is a separate, still-open
+        // gap (never oracle-verified), so this test isolates just the ternary/negate half with
+        // an already-supported whenFalse branch.
+        var ast = SsisExpression.Parse("Amount < 0 ? -1 : 1");
+        var refs = Refs(("Amount", "row.Amount", SsisType.Numeric));
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "SignFlag", refs);
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal("((row.Amount < 0) ? -(1) : 1)", ok.CSharpExpression);
+    }
+
+    [Fact]
+    public void TranslateColumn_ReportsAGap_WhenATernaryBranchIsUnsupported()
+    {
+        // DATEDIFF is real SSIS syntax and the runtime evaluator does NOT support it either
+        // (never oracle-verified) -- confirms the ternary degrades per-branch rather than
+        // guessing, and confirms the whenFalse branch is what's actually checked here.
+        var ast = SsisExpression.Parse("ISNULL(SignupDate) ? -1 : DATEDIFF(\"dd\",SignupDate,GETDATE())");
+        var refs = Refs(("SignupDate", "row.SignupDate", SsisType.DbDate));
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "TenureDays", refs);
+
+        var gap = Assert.IsType<NotTranslatable>(result);
+        Assert.Contains("FunctionCall", gap.Reason);
+    }
+
+    [Fact]
     public void TranslateCondition_ReportsAGap_WhenNeitherOperandHasAResolvableType()
     {
         // Both operands translate fine as VALUES (UPPER() resolves through Name/Other), but a

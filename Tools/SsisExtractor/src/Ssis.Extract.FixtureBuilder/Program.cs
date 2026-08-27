@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary]");
             return 2;
         }
 
@@ -108,9 +108,13 @@ internal static class Program
         {
             return BuildFindStringTrimFixture(args[0]);
         }
+        if (fixtureName == "ternary")
+        {
+            return BuildTernaryFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', or 'findstring-trim'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', or 'ternary'.");
             return 2;
         }
 
@@ -449,6 +453,104 @@ internal static class Program
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         Console.WriteLine($"wrote {outputPath}");
         return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand) -> Derived Column (Category &lt;- Amount &gt; 1000 ? "High" :
+    /// "Low"; SignFlag &lt;- Amount &lt; 0 ? -1 : 1) -> OLE DB Destination.
+    ///
+    /// <para>Built to prove ExpressionTranslator's ternary (Conditional) and unary-negate
+    /// support (added 2026-08-27) end to end, from ONLY already-supported building blocks --
+    /// a numeric comparison, string literals, an int literal negation. RBC_Demo_ETL's own
+    /// Package_Transforms.dtsx (DER_Enrich.EmailDomain/.TenureDays) is where ternary/negate were
+    /// actually discovered, but that package's own ternary branches ALSO depend on two separate,
+    /// still-open gaps (SUBSTRING with a non-literal start argument, DATEDIFF) that would mask
+    /// whether ternary/negate themselves work if this fixture reused those expressions verbatim
+    /// -- so this fixture deliberately uses simpler branches instead, proving the STRUCTURAL
+    /// ternary/negate support in isolation.</para>
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-ternary-tables.sql</c> already created and
+    /// seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>. Lives under
+    /// tests/Ssis.Extract.Tests/Fixtures/ (test-tier, not SSDT-registered), same as
+    /// SyntheticFindStringTrim.dtsx.
+    /// </summary>
+    private static int BuildTernaryFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticTernary" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Amount FROM dbo.SyntheticTernaryInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnTernary(pipe, mainOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticTernaryTarget]");
+        AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A Derived Column that passes every upstream column through untouched and adds TWO new
+    /// columns -- <c>Category &lt;- Amount &gt; 1000 ? "High" : "Low"</c> (ternary of string
+    /// literals) and <c>SignFlag &lt;- Amount &lt; 0 ? -1 : 1</c> (ternary + unary negate, int) --
+    /// proving both new expression shapes as VALUE-producing expressions in one component, the
+    /// same shape RBC_Demo_ETL's own DER_Enrich uses for multiple computed columns. Same
+    /// passthrough/InsertOutputColumnAt mechanics as <see cref="BuildDerivedColumnLiteralTag"/>.
+    /// </summary>
+    private static IDTSComponentMetaData100 BuildDerivedColumnTernary(MainPipe pipe, IDTSOutput100 upstreamOutput)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.DerivedColumn";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        meta.Name = "DER_Enrich";
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var output = meta.OutputCollection[0];
+
+        var categoryCol = inst.InsertOutputColumnAt(output.ID, 0, "Category", "");
+        // DT_WSTR is Unicode -- codepage is 0, not 1252 (see BuildDerivedColumnLiteralTag's own
+        // identical note; confirmed empirically, 1252 throws 0xC0204025).
+        inst.SetOutputColumnDataTypeProperties(output.ID, categoryCol.ID, DataType.DT_WSTR, 10, 0, 0, 0);
+        var categoryExpr = "Amount > 1000 ? \"High\" : \"Low\"";
+        inst.SetOutputColumnProperty(output.ID, categoryCol.ID, "FriendlyExpression", categoryExpr);
+        inst.SetOutputColumnProperty(output.ID, categoryCol.ID, "Expression", categoryExpr);
+
+        var signFlagCol = inst.InsertOutputColumnAt(output.ID, 1, "SignFlag", "");
+        inst.SetOutputColumnDataTypeProperties(output.ID, signFlagCol.ID, DataType.DT_I4, 0, 0, 0, 0);
+        var signFlagExpr = "Amount < 0 ? -1 : 1";
+        inst.SetOutputColumnProperty(output.ID, signFlagCol.ID, "FriendlyExpression", signFlagExpr);
+        inst.SetOutputColumnProperty(output.ID, signFlagCol.ID, "Expression", signFlagExpr);
+
+        return meta;
     }
 
     /// <summary>
