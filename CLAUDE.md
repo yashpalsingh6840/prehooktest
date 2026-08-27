@@ -803,7 +803,7 @@ A second, unrelated real bug (`GateRunner` not setting the job process's working
 which silently broke the job's own `appsettings.json` lookup and surfaced as an
 unrelated-looking Windows-auth failure) was also caught and fixed the same session.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end)
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -1994,6 +1994,109 @@ connection at runtime, since no generated ADO NET flow has ever actually been ru
 session attempting this fixture again should treat the connection-manager-creation failure as
 the starting point, not re-derive it -- try capturing SSIS's own COM error stream/event
 listener rather than a bare try/catch, since the plain exception chain carries no detail at all.
+
+### FINDSTRING/TRIM in ExpressionTranslator (2026-08-27)
+
+The last of the gaps discovered testing against `SSIS_From_Sandeep`, and deliberately the
+smallest picked up this round: unlike the other four (Flat File Destination, Excel Source,
+ForEach Loop, Conditional Split -> Sort -> Merge), FINDSTRING/TRIM needed no new runtime
+abstraction and no reverse-engineering -- both functions' semantics were already oracle-verified
+and implemented in `Ssis.Runtime.Expressions/Functions.cs` (gate 2, 2026-08-18), so this was
+purely wiring `ExpressionTranslator`/`SsisFnEmitter` up to call through to C# equivalents of
+already-proven behavior.
+
+**What was added:** `ExpressionTranslator.TranslateScalar` gained `TRIM(x)` (via the existing
+`WrapOneArgFunction` helper, same shape as `UPPER`) and `FINDSTRING(x, search, occurrence)` (a
+new `TranslateFindString`, translating all three args recursively via `TranslateScalar` rather
+than requiring literals the way `SUBSTRING`'s start/length do -- necessary because the one real
+evidenced call always nests another function, `FINDSTRING(TRIM(Email),"@",1)`). Both map to new
+`SsisFn.Trim`/`SsisFn.FindString` bodies in `SsisFnEmitter`, ported directly from
+`Functions.cs`'s own already-tested algorithm (empty search string never matches, occurrence < 1
+is a hard error, matches may overlap). `TransformEmitter.CollectSsisFunctions` (made `internal`,
+not `private`, matching `MapPipelineTypeToSsisType`'s existing sharing precedent) detects both
+via the same `SsisFn.X(` string-match convention as `Upper`/`Substring`/`Str`.
+
+**A real, previously-latent bug was caught and fixed along the way, not shipped:**
+`RouterEmitter` (Conditional Split condition translation) never tracked or returned which
+`SsisFn.*` helpers a condition used, and never emitted a `using {ns}.Ssis;` line -- invisible
+until now because `ISNULL`/`!`/comparisons (the only condition shapes supported before this
+round) are all plain C# operators, never `SsisFn.*` calls. The moment a condition could contain
+`FINDSTRING(TRIM(...))`, this would have silently generated code calling an unqualified
+`SsisFn.FindString(...)` with no `using` and no guarantee `SsisFnEmitter` even emitted the
+`FindString`/`Trim` bodies at all (since `PackageGenerator`'s `functionsUsed` set was fed only
+from `TransformEmitter`, never from `RouterEmitter`). Fixed by giving `RouterEmitter.Emit` the
+same `TransformEmitResult`-shaped return (`RouterEmitResult(EmitResult, SsisFunctionsUsed)`),
+reusing `TransformEmitter.CollectSsisFunctions` on the condition's own emitted text, adding the
+`using` line when non-empty, and threading `routerResult.SsisFunctionsUsed` into
+`PackageGenerator`'s `branchFunctionsUsed` set -- committed only once every branch AND the router
+succeed, same all-or-nothing discipline `GenerateConditionalSplitFlow`'s own doc comment already
+established for `branchFiles`/`branchTables`.
+
+**Verified against the real motivating case, same first check every gap this session used:**
+re-running `ssisx generate` against `SSIS_From_Sandeep`'s actual `Package_Transforms.dtsx`:
+`DFT_DerivedAndSplit`'s Conditional Split (`CSPLIT_Validity`) and its `FullName` Derived Column
+(`(DT_WSTR,200)(TRIM(FirstName) + " " + TRIM(LastName))`) both now generate correctly --
+confirmed by reading the emitted `CSPLIT_ValidityRouter.cs`/`CustomerEnrichedValidTransform.cs`
+directly: `SsisFn.FindString(SsisFn.Trim(row.Email), "@", 1) > 0` and
+`WidthGuard.Wstr($"{SsisFn.Trim(row.FirstName)} {SsisFn.Trim(row.LastName)}", 200, ...)`, both
+with a correct `using Package_Transforms.Ssis;`, and `Ssis/SsisFn.cs` contains exactly `Trim`/
+`FindString` (not `Upper`/`Substring`, unused by this component) -- proof the whole plumbing
+chain (translate -> collect -> emit -> wire) works end to end, not just the isolated translator.
+
+**Honest limit, found by the same regeneration, not hidden:** `DFT_DerivedAndSplit`'s OTHER two
+computed columns (`CustomerEnriched.EmailDomain`, a ternary `FINDSTRING(...) > 0 ? SUBSTRING(...)
+: "(none)"`, and `.TenureDays`, `ISNULL(...) ? -1 : DATEDIFF(...)`) still correctly degrade to
+`GenerationGap`s -- `ExpressionTranslator` has no ternary/ConditionalExpr support at all, and
+`DATEDIFF` isn't in the function switch. Both are separate, unrelated gaps (a value-level `? :`
+translator, and a new function), correctly out of scope for this round; `TransformEmitter`
+degrades per-COLUMN not per-component (confirmed by reading its own `Emit` loop), which is why
+`FullName` succeeding and `EmailDomain`/`TenureDays` failing coexist in the same Derived Column
+without one blocking the other.
+
+**A second, genuinely separate gap was also newly exposed by this same regeneration, not caused
+by it, and deliberately NOT fixed this round:** `DCONV_Types` (`Microsoft.DataConvert`, a Data
+Conversion component upstream of `CSPLIT_Validity`) converts raw CSV columns (`CustomerID`,
+`SignupDate`) into renamed/retyped ones (`CustomerID_i4`, `SignupDate_dt`) that downstream
+expressions/passthrough columns reference by their NEW name. Building the full generated project
+against a copy of `Etl.Core` failed with `CS1061` ("`DFT_DerivedAndSplitCsvRow` does not contain
+a definition for `CustomerID_i4`") -- the generated CSV row type is built only from the Flat File
+source's own raw declared columns; nothing in `PipelineResolver`/`LineageBuilder`/the row-type
+emitters accounts for a Data Conversion component sitting in between. This is a new, unmodeled
+component type (never evidenced before `SSIS_From_Sandeep`), unrelated to expression translation
+-- left as a named, separate gap for a future round rather than folded into this one, the same
+"don't let one fix become two" discipline as Conditional Split's own Lookup-ordering fix.
+
+**Own dedicated fixture, built to prove FINDSTRING/TRIM in isolation, unblocked by the Data
+Conversion gap above:** `tests/Ssis.Extract.Tests/Fixtures/SyntheticFindStringTrim.dtsx`
+(`Ssis.Extract.FixtureBuilder`'s new `findstring-trim` mode) -- OLE DB Source (SqlCommand) ->
+Derived Column (`TrimmedEmail <- TRIM(Email)`, shared, proving TRIM as a VALUE-producing
+expression, not just inside a condition) -> Conditional Split (case
+`FINDSTRING(TRIM(Email),"@",1) > 0` -> Valid; default -> Invalid, the exact nested shape from the
+real package, minus the `ISNULL`/`CustomerID_i4` half already proven working last session) -> 2
+OLE DB Destinations. **Generated, built against a copy of `Etl.Core` (0 warnings/0 errors), and
+actually RUN against `.\SQLFORPOC_2022`**: 3 seed rows (one with leading+trailing whitespace
+around a real `@`, one with leading whitespace only, one with no `@` at all) -- read back
+afterward, not just trusted from the exit code: `SyntheticFindStringTrimValid` got
+`ID=1 ("  alice@example.com  " -> "alice@example.com")` and
+`ID=3 (" carol@sample.org" -> "carol@sample.org")`, `SyntheticFindStringTrimInvalid` got
+`ID=2 ("bobexample.com", no "@")` -- TRIM's own whitespace-stripping effect visible in the stored
+`TrimmedEmail` column, FINDSTRING's own routing decision correct, both proven by real row content
+rather than an assumption. Backing tables:
+`tests/Ssis.Extract.Tests/Fixtures/synthetic-findstring-trim-tables.sql`.
+
+Also added: two `ExpressionTranslatorTests` (TRIM as a value expression; the exact real-case
+`FINDSTRING(TRIM(...))>0` nested condition) and one `RouterEmitterTests` proving the router-level
+fix specifically -- that emitting a condition using both functions produces a correct `using`
+line and reports `{"FindString", "Trim"}` as the functions used, not just that
+`ExpressionTranslator` alone gets the right string. Regression: 86/86 in
+`Ssis.Extract.Codegen.Tests` (was 83), same 3 pre-existing unrelated failures elsewhere (someone
+else's in-progress SSDT edits to `SSIS/LoadReferenceData.dtsx`/`SSIS/SSIS.dtproj`, not this
+session's or the extractor's).
+
+**Remaining gaps from the `SSIS_From_Sandeep` sweep, unchanged by this round:** Flat File
+Destination, Excel Source, ForEach Loop containers, Conditional Split -> Sort -> Merge (all
+pre-existing), plus the two newly-named ones above (ternary/`DATEDIFF` value expressions, Data
+Conversion component support).
 
 ## Traps already hit once — don't re-derive these
 

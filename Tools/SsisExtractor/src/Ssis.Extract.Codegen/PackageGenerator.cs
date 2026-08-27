@@ -327,10 +327,10 @@ public static class PackageGenerator
         }
 
         var routerClassName = SanitizeIdentifier(split.Component.Name) + "Router";
-        var routerResult = RouterEmitter.Emit($"{ns}.Mapping", routerClassName, rowTypeNamespace, rowTypeName, split);
-        if (routerResult.Files.Count == 0)
+        var routerResult = RouterEmitter.Emit($"{ns}.Mapping", routerClassName, rowTypeNamespace, rowTypeName, $"{ns}.Ssis", split);
+        if (routerResult.Result.Files.Count == 0)
         {
-            gaps.AddRange(routerResult.Gaps);
+            gaps.AddRange(routerResult.Result.Gaps);
             return null;
         }
 
@@ -413,7 +413,8 @@ public static class PackageGenerator
         files.AddRange(branchFiles);
         tables.AddRange(branchTables);
         foreach (var fn in branchFunctionsUsed) functionsUsed.Add(fn);
-        files.AddRange(routerResult.Files);
+        foreach (var fn in routerResult.SsisFunctionsUsed) functionsUsed.Add(fn);
+        files.AddRange(routerResult.Result.Files);
 
         if (authMode is null && resolvedAuth is { } resolved)
             (authMode, userId, targetServer, targetDatabase) = resolved;

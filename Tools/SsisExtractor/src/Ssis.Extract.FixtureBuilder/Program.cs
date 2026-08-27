@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim]");
             return 2;
         }
 
@@ -104,9 +104,13 @@ internal static class Program
         {
             return BuildFileSystemTaskFixture(args[0]);
         }
+        if (fixtureName == "findstring-trim")
+        {
+            return BuildFindStringTrimFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', or 'file-system-task'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', or 'findstring-trim'.");
             return 2;
         }
 
@@ -445,6 +449,145 @@ internal static class Program
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         Console.WriteLine($"wrote {outputPath}");
         return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand) -> Derived Column (TrimmedEmail &lt;- TRIM(Email), shared,
+    /// upstream of the split -- proves TRIM as a VALUE-producing expression, not just inside a
+    /// condition) -> Conditional Split (one case, "FINDSTRING(TRIM(Email),\"@\",1) &gt; 0" ->
+    /// Valid; default -> Invalid) -> 2 OLE DB Destinations.
+    ///
+    /// <para>Built to prove ExpressionTranslator's FINDSTRING/TRIM support (added 2026-08-27)
+    /// end to end, in the exact nested shape discovered testing ssisx against a real
+    /// ~30-component-type third-party portfolio (SSIS_From_Sandeep, 2026-08-27):
+    /// RBC_Demo_ETL's own Package_Transforms.dtsx, CSPLIT_Validity's "Valid" case, is literally
+    /// <c>!ISNULL(CustomerID_i4) &amp;&amp; FINDSTRING(TRIM(Email),"@",1) &gt; 0</c> -- this
+    /// fixture keeps the FINDSTRING(TRIM(...)) nesting but drops the ISNULL/CustomerID_i4 half
+    /// (already proven working last session) and, more importantly, the Data Conversion
+    /// component that produces CustomerID_i4/SignupDate_dt in the real package. Regenerating
+    /// the real package after adding FINDSTRING/TRIM surfaced a SEPARATE, pre-existing,
+    /// previously-invisible gap: a Data Conversion component's renamed/retyped output columns
+    /// (e.g. CustomerID_i4) are referenced by downstream expressions exactly like any other
+    /// pipeline column, but the generated CSV row type is built only from the Flat File source's
+    /// own raw declared columns, so referencing a Data Conversion output fails to compile
+    /// (CS1061, "does not contain a definition for 'CustomerID_i4'"). That's a new, unmodeled
+    /// component type (Microsoft.DataConvert), unrelated to expression translation -- CLAUDE.md
+    /// documents it as a separate, deliberately out-of-scope gap for a future round, and this
+    /// fixture is built without it specifically so it proves FINDSTRING/TRIM in isolation,
+    /// unblocked by that unrelated gap.</para>
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-findstring-trim-tables.sql</c> already
+    /// created and seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>. Lives under
+    /// tests/Ssis.Extract.Tests/Fixtures/ (test-tier, not SSDT-registered), same as
+    /// SyntheticConditionalSplit.dtsx.
+    /// </summary>
+    private static int BuildFindStringTrimFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticFindStringTrim" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_FindStringTrimDemo";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Email FROM dbo.SyntheticFindStringTrimInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnTrimmedEmail(pipe, srcOutput);
+        var derivedOutput = derivedMeta.OutputCollection[0];
+
+        var splitMeta = pipe.ComponentMetaDataCollection.New();
+        splitMeta.ComponentClassID = "Microsoft.ConditionalSplit";
+        var splitInst = splitMeta.Instantiate();
+        splitInst.ProvideComponentProperties(); // resets Name to the class default -- must set Name after this, see AddOleDbComponent's comment
+        splitMeta.Name = "CSPLIT_Validity";
+
+        AttachPath(pipe, derivedOutput, splitMeta.InputCollection[0]);
+        splitInst.AcquireConnections(null);
+        splitInst.ReinitializeMetaData();
+        splitInst.ReleaseConnections();
+
+        var splitInput = splitMeta.InputCollection[0];
+        var splitVirtualInput = splitInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in splitVirtualInput.VirtualInputColumnCollection)
+        {
+            splitInst.SetUsageType(splitInput.ID, splitVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var defaultOutput = splitMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        defaultOutput.Name = "Invalid";
+
+        var caseOutput = splitInst.InsertOutput(DTSInsertPlacement.IP_AFTER, 0);
+        caseOutput.Name = "Valid";
+        // Same nested FINDSTRING(TRIM(...)) shape as RBC_Demo_ETL's own CSPLIT_Validity,
+        // verbatim minus the ISNULL/CustomerID_i4 half (a separate, already-proven feature).
+        var conditionText = "FINDSTRING(TRIM(Email),\"@\",1) > 0";
+        splitInst.SetOutputProperty(caseOutput.ID, "FriendlyExpression", conditionText);
+        splitInst.SetOutputProperty(caseOutput.ID, "Expression", conditionText);
+        splitInst.SetOutputProperty(caseOutput.ID, "EvaluationOrder", 0);
+
+        var validDestMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticFindStringTrimValid]");
+        AttachPath(pipe, caseOutput, validDestMeta.InputCollection[0]);
+        ResolveOleDbMetadata(validDestMeta, isDestination: true);
+
+        var invalidDestMeta = AddOleDbComponent(pipe, "OLE DB Destination 1", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticFindStringTrimInvalid]");
+        AttachPath(pipe, defaultOutput, invalidDestMeta.InputCollection[0]);
+        ResolveOleDbMetadata(invalidDestMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A Derived Column that passes every upstream column through untouched and adds ONE new
+    /// string column, <c>TrimmedEmail &lt;- TRIM(Email)</c> -- proves TRIM as a VALUE-producing
+    /// expression (as opposed to inside a Conditional Split condition, which
+    /// <see cref="BuildFindStringTrimFixture"/>'s case expression separately proves). Same
+    /// passthrough/InsertOutputColumnAt mechanics as <see cref="BuildDerivedColumnLiteralTag"/>,
+    /// just a function-call expression instead of a literal.
+    /// </summary>
+    private static IDTSComponentMetaData100 BuildDerivedColumnTrimmedEmail(MainPipe pipe, IDTSOutput100 upstreamOutput)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.DerivedColumn";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        meta.Name = "DER_TrimEmail";
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var output = meta.OutputCollection[0];
+        var newCol = inst.InsertOutputColumnAt(output.ID, 0, "TrimmedEmail", "");
+        // DT_WSTR is Unicode -- codepage is 0, not 1252 (that's DT_STR's own non-Unicode
+        // convention). Passing 1252 here threw 0xC0204025, confirmed empirically (see
+        // BuildDerivedColumnLiteralTag's own identical note).
+        inst.SetOutputColumnDataTypeProperties(output.ID, newCol.ID, DataType.DT_WSTR, 200, 0, 0, 0);
+        var expr = "TRIM(Email)";
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "FriendlyExpression", expr);
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "Expression", expr);
+
+        return meta;
     }
 
     /// <summary>

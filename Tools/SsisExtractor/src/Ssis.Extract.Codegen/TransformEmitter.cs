@@ -155,10 +155,15 @@ public static class TransformEmitter
         return ExpressionTranslator.TranslateColumn(ast, entityName, destinationColumnName, references);
     }
 
-    private static void CollectSsisFunctions(string csharpExpression, HashSet<string> functionsUsed)
+    /// <summary>Internal (not private) so RouterEmitter can reuse the exact same SsisFn.*
+    /// detection for Conditional Split condition translation instead of duplicating it -- same
+    /// sharing precedent as MapPipelineTypeToSsisType below.</summary>
+    internal static void CollectSsisFunctions(string csharpExpression, HashSet<string> functionsUsed)
     {
         if (csharpExpression.Contains("SsisFn.Upper(")) functionsUsed.Add("Upper");
+        if (csharpExpression.Contains("SsisFn.Trim(")) functionsUsed.Add("Trim");
         if (csharpExpression.Contains("SsisFn.Substring(")) functionsUsed.Add("Substring");
+        if (csharpExpression.Contains("SsisFn.FindString(")) functionsUsed.Add("FindString");
         if (csharpExpression.Contains("SsisFn.Str(")) functionsUsed.Add("Str");
     }
 

@@ -23,15 +23,46 @@ public class RouterEmitterTests
             ?? throw new InvalidOperationException("expected SyntheticConditionalSplit.dtsx's flow to have a ConditionalSplit");
     }
 
+    private static ConditionalSplitPlan LoadFindStringTrimConditionalSplitPlan()
+    {
+        var package = LoadSyntheticFixture("SyntheticFindStringTrim.dtsx");
+        var plan = PackagePlanner.Plan(package);
+        return Assert.Single(plan.Flows).ConditionalSplit
+            ?? throw new InvalidOperationException("expected SyntheticFindStringTrim.dtsx's flow to have a ConditionalSplit");
+    }
+
+    [Fact]
+    public void Emit_TranslatesFindStringTrimCondition_AndReportsBothSsisFunctionsUsed()
+    {
+        // The real-world motivating case: RBC_Demo_ETL's Package_Transforms.dtsx,
+        // CSPLIT_Validity's own condition nests TRIM inside FINDSTRING inside a comparison --
+        // proves RouterEmitter (not just ExpressionTranslator in isolation) correctly detects
+        // BOTH SsisFn.* calls in the emitted condition text and reports them for SsisFnEmitter,
+        // closing the gap where a condition-only usage of a function was previously invisible
+        // to the "which SsisFn helpers does this package need" tracking (RouterEmitter never
+        // used to return functions used at all -- TransformEmitter's own were the only source).
+        var split = LoadFindStringTrimConditionalSplitPlan();
+
+        var result = RouterEmitter.Emit("Generated.Mapping", "SplitRouter", "Generated.Sql", "SqlRow", "Generated.Ssis", split);
+
+        Assert.Empty(result.Result.Gaps);
+        var file = Assert.Single(result.Result.Files);
+        Assert.Contains("using Generated.Ssis;", file.Content);
+        Assert.Contains("SsisFn.FindString(SsisFn.Trim(row.Email), \"@\", 1) > 0", file.Content);
+        Assert.Equal(new HashSet<string> { "FindString", "Trim" }, result.SsisFunctionsUsed);
+
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
     [Fact]
     public void Emit_ProducesAnIfElseChain_InEvaluationOrder_EndingInTheDefaultBranchIndex()
     {
         var split = LoadConditionalSplitPlan();
 
-        var result = RouterEmitter.Emit("Generated.Mapping", "SplitRouter", "Generated.Sql", "SqlRow", split);
+        var result = RouterEmitter.Emit("Generated.Mapping", "SplitRouter", "Generated.Sql", "SqlRow", "Generated.Ssis", split);
 
-        Assert.Empty(result.Gaps);
-        var file = Assert.Single(result.Files);
+        Assert.Empty(result.Result.Gaps);
+        var file = Assert.Single(result.Result.Files);
         Assert.Equal("Mapping/SplitRouter.cs", file.RelativePath);
 
         Assert.Contains("public sealed class SplitRouter : IRowRouter<SqlRow>", file.Content);
@@ -47,7 +78,7 @@ public class RouterEmitterTests
     {
         var split = LoadConditionalSplitPlan();
 
-        var file = Assert.Single(RouterEmitter.Emit("Generated.Mapping", "SplitRouter", "Generated.Sql", "SqlRow", split).Files);
+        var file = Assert.Single(RouterEmitter.Emit("Generated.Mapping", "SplitRouter", "Generated.Sql", "SqlRow", "Generated.Ssis", split).Result.Files);
 
         Assert.DoesNotContain('\r', file.Content);
         Assert.EndsWith("\n", file.Content);
@@ -68,10 +99,10 @@ public class RouterEmitterTests
             real.Branches[1],
         ]);
 
-        var result = RouterEmitter.Emit("Generated.Mapping", "SplitRouter", "Generated.Sql", "SqlRow", untranslatable);
+        var result = RouterEmitter.Emit("Generated.Mapping", "SplitRouter", "Generated.Sql", "SqlRow", "Generated.Ssis", untranslatable);
 
-        Assert.Empty(result.Files);
-        var gap = Assert.Single(result.Gaps);
+        Assert.Empty(result.Result.Files);
+        var gap = Assert.Single(result.Result.Gaps);
         Assert.Contains("HighValue", gap.Reason);
     }
 }

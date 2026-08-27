@@ -20,13 +20,19 @@ namespace Ssis.Extract.Codegen;
 /// </summary>
 public static class RouterEmitter
 {
-    public static EmitResult Emit(string ns, string routerClassName, string rowTypeNamespace, string rowTypeName, ConditionalSplitPlan split)
+    /// <summary>Mirrors TransformEmitter.TransformEmitResult -- a condition can reference an
+    /// SsisFn.* helper (e.g. FINDSTRING/TRIM) exactly like a Derived Column expression can, so
+    /// the caller needs the same "which functions did this emit actually use" signal to pass
+    /// through to SsisFnEmitter.</summary>
+    public sealed record RouterEmitResult(EmitResult Result, IReadOnlySet<string> SsisFunctionsUsed);
+
+    public static RouterEmitResult Emit(string ns, string routerClassName, string rowTypeNamespace, string rowTypeName, string ssisFnNamespace, ConditionalSplitPlan split)
     {
         var splitComponent = split.Component;
         if (splitComponent.Inputs.Count != 1)
         {
-            return new EmitResult([], [new GenerationGap(routerClassName,
-                $"Conditional Split '{splitComponent.Name}' has {splitComponent.Inputs.Count} input(s), expected exactly 1")]);
+            return new RouterEmitResult(new EmitResult([], [new GenerationGap(routerClassName,
+                $"Conditional Split '{splitComponent.Name}' has {splitComponent.Inputs.Count} input(s), expected exactly 1")]), new HashSet<string>());
         }
 
         var references = new Dictionary<string, (string CSharpExpression, SsisType Type)>();
@@ -41,13 +47,14 @@ public static class RouterEmitter
         // PackagePlanner.PlanConditionalSplit); every earlier entry is a case, already in
         // EvaluationOrder.
         var conditions = new List<string>();
+        var functionsUsed = new HashSet<string>();
         for (var i = 0; i < split.Branches.Count - 1; i++)
         {
             var branch = split.Branches[i];
             if (branch.FriendlyExpression is null)
             {
-                return new EmitResult([], [new GenerationGap(routerClassName,
-                    $"case '{branch.OutputName}' has no FriendlyExpression to translate")]);
+                return new RouterEmitResult(new EmitResult([], [new GenerationGap(routerClassName,
+                    $"case '{branch.OutputName}' has no FriendlyExpression to translate")]), new HashSet<string>());
             }
 
             ExprNode ast;
@@ -57,18 +64,20 @@ public static class RouterEmitter
             }
             catch (SsisExpressionError ex)
             {
-                return new EmitResult([], [new GenerationGap(routerClassName,
-                    $"case '{branch.OutputName}': could not parse expression '{branch.FriendlyExpression}': {ex.Message}")]);
+                return new RouterEmitResult(new EmitResult([], [new GenerationGap(routerClassName,
+                    $"case '{branch.OutputName}': could not parse expression '{branch.FriendlyExpression}': {ex.Message}")]), new HashSet<string>());
             }
 
             var translated = ExpressionTranslator.TranslateCondition(ast, references);
             if (translated is NotTranslatable notTranslatable)
             {
-                return new EmitResult([], [new GenerationGap(routerClassName,
-                    $"case '{branch.OutputName}': {notTranslatable.Reason}")]);
+                return new RouterEmitResult(new EmitResult([], [new GenerationGap(routerClassName,
+                    $"case '{branch.OutputName}': {notTranslatable.Reason}")]), new HashSet<string>());
             }
 
-            conditions.Add(((TranslatedOk)translated).CSharpExpression);
+            var conditionExpr = ((TranslatedOk)translated).CSharpExpression;
+            TransformEmitter.CollectSsisFunctions(conditionExpr, functionsUsed);
+            conditions.Add(conditionExpr);
         }
 
         var defaultIndex = split.Branches.Count - 1;
@@ -76,20 +85,23 @@ public static class RouterEmitter
         {
             $"using {rowTypeNamespace};",
             "using Etl.Core.Abstractions;",
-            "",
-            $"namespace {ns};",
-            "",
-            $"public sealed class {routerClassName} : IRowRouter<{rowTypeName}>",
-            "{",
-            $"    public int SelectBranch({rowTypeName} row, in RowContext ctx)",
-            "    {",
         };
+        if (functionsUsed.Count > 0) lines.Add($"using {ssisFnNamespace};");
+        lines.Add("");
+        lines.Add($"namespace {ns};");
+        lines.Add("");
+        lines.Add($"public sealed class {routerClassName} : IRowRouter<{rowTypeName}>");
+        lines.Add("{");
+        lines.Add($"    public int SelectBranch({rowTypeName} row, in RowContext ctx)");
+        lines.Add("    {");
         for (var i = 0; i < conditions.Count; i++)
             lines.Add($"        if ({conditions[i]}) return {i};");
         lines.Add($"        return {defaultIndex}; // {split.Branches[defaultIndex].OutputName}");
         lines.Add("    }");
         lines.Add("}");
 
-        return new EmitResult([new GeneratedFile($"Mapping/{routerClassName}.cs", Rendering.JoinLines(lines))], []);
+        return new RouterEmitResult(
+            new EmitResult([new GeneratedFile($"Mapping/{routerClassName}.cs", Rendering.JoinLines(lines))], []),
+            functionsUsed);
     }
 }

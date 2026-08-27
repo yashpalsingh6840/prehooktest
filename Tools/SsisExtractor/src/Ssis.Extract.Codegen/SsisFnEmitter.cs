@@ -24,7 +24,9 @@ public static class SsisFnEmitter
 
         var bodies = new List<List<string>>();
         if (functionsUsed.Contains("Upper")) bodies.Add(UpperBody());
+        if (functionsUsed.Contains("Trim")) bodies.Add(TrimBody());
         if (functionsUsed.Contains("Substring")) bodies.Add(SubstringBody());
+        if (functionsUsed.Contains("FindString")) bodies.Add(FindStringBody());
         if (functionsUsed.Contains("Str")) bodies.Add(StrBody());
 
         var lines = new List<string>();
@@ -73,6 +75,39 @@ public static class SsisFnEmitter
         "        var zeroBasedStart = oneBasedStart - 1;",
         "        var take = Math.Min(length, value.Length - zeroBasedStart);",
         "        return value.Substring(zeroBasedStart, take);",
+        "    }",
+    ];
+
+    private static List<string> TrimBody() =>
+    [
+        "    /// <summary>TRIM() -- matches .NET's Trim() exactly per the oracle corpus (docs/gate2-schema.md).</summary>",
+        "    public static string Trim(string value) => value.Trim();",
+    ];
+
+    private static List<string> FindStringBody() =>
+    [
+        "    /// <summary>",
+        "    /// FINDSTRING(expression, searchString, occurrence), 1-based like SSIS. occurrence &lt; 1",
+        "    /// is a hard error, not a clamp. An empty search string never matches -- always returns",
+        "    /// 0, regardless of occurrence. Matches may overlap: FindString(\"abcabc\", \"bc\", 2) == 5.",
+        "    /// </summary>",
+        "    public static int FindString(string value, string search, int occurrence)",
+        "    {",
+        "        if (occurrence < 1)",
+        "            throw new ArgumentOutOfRangeException(nameof(occurrence), occurrence,",
+        "                \"SSIS FINDSTRING errors when occurrence < 1.\");",
+        "",
+        "        if (search.Length == 0) return 0;",
+        "",
+        "        var searchFrom = 0;",
+        "        var index = -1;",
+        "        for (var count = 0; count < occurrence; count++)",
+        "        {",
+        "            index = value.IndexOf(search, searchFrom, StringComparison.Ordinal);",
+        "            if (index < 0) return 0;",
+        "            searchFrom = index + 1;",
+        "        }",
+        "        return index + 1;",
         "    }",
     ];
 

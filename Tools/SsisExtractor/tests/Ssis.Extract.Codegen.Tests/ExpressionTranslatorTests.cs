@@ -179,6 +179,33 @@ public class ExpressionTranslatorTests
     }
 
     [Fact]
+    public void TranslateColumn_TranslatesTrim_AsAValueProducingFunction()
+    {
+        var ast = SsisExpression.Parse("TRIM(Email)");
+        var refs = Refs(("Email", "row.Email", SsisType.WStr));
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Customer", "TrimmedEmail", refs);
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal("SsisFn.Trim(row.Email)", ok.CSharpExpression);
+    }
+
+    [Fact]
+    public void TranslateCondition_TranslatesFindStringNestedInsideTrim_TheExactRealCaseShape()
+    {
+        // RBC_Demo_ETL's own Package_Transforms.dtsx, CSPLIT_Validity's "Valid" case (minus the
+        // ISNULL/CustomerID_i4 half, already proven working last session):
+        // FINDSTRING(TRIM(Email),"@",1) > 0
+        var ast = SsisExpression.Parse("FINDSTRING(TRIM(Email),\"@\",1) > 0");
+        var refs = Refs(("Email", "row.Email", SsisType.WStr));
+
+        var result = ExpressionTranslator.TranslateCondition(ast, refs);
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal("(SsisFn.FindString(SsisFn.Trim(row.Email), \"@\", 1) > 0)", ok.CSharpExpression);
+    }
+
+    [Fact]
     public void TranslateCondition_ReportsAGap_WhenNeitherOperandHasAResolvableType()
     {
         // Both operands translate fine as VALUES (UPPER() resolves through Name/Other), but a

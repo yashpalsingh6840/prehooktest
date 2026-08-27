@@ -121,8 +121,15 @@ public static class ExpressionTranslator
 
         FunctionCall { Name: "UPPER", Args.Count: 1 } upper => WrapOneArgFunction("SsisFn.Upper", upper.Args[0], references),
 
+        FunctionCall { Name: "TRIM", Args.Count: 1 } trim => WrapOneArgFunction("SsisFn.Trim", trim.Args[0], references),
+
         FunctionCall { Name: "SUBSTRING", Args: [var strArg, IntLiteral start, IntLiteral length] } =>
             TranslateSubstring(strArg, start.Value, length.Value, references),
+
+        // Args are translated recursively (not required to be literals, unlike SUBSTRING's
+        // start/length) because the one real evidenced call always nests another function --
+        // FINDSTRING(TRIM(Email),"@",1) (RBC_Demo_ETL's Package_Transforms, CSPLIT_Validity).
+        FunctionCall { Name: "FINDSTRING", Args.Count: 3 } findstring => TranslateFindString(findstring, references),
 
         Cast { Type: SsisType.WStr or SsisType.Str } cast => TranslateIntToStringCast(cast, references),
 
@@ -253,6 +260,23 @@ public static class ExpressionTranslator
         return inner is NotTranslatable
             ? inner
             : new TranslatedOk($"SsisFn.Substring({((TranslatedOk)inner).CSharpExpression}, {start}, {length})");
+    }
+
+    /// <summary>FINDSTRING(value, search, occurrence) -- all three args translated recursively
+    /// (see the switch case above for why), then passed straight to SsisFn.FindString, which
+    /// carries the oracle-verified semantics (Ssis.Runtime.Expressions.Functions.FindString):
+    /// occurrence &lt; 1 errors, an empty search string never matches, matches may overlap.</summary>
+    private static TranslatedExpression TranslateFindString(
+        FunctionCall node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+    {
+        var translatedArgs = new List<string>();
+        foreach (var arg in node.Args)
+        {
+            var t = TranslateScalar(arg, references);
+            if (t is NotTranslatable) return t;
+            translatedArgs.Add(((TranslatedOk)t).CSharpExpression);
+        }
+        return new TranslatedOk($"SsisFn.FindString({string.Join(", ", translatedArgs)})");
     }
 
     /// <summary>
