@@ -64,7 +64,7 @@ public class RouterEmitterTests
         // gap rather than emitting something wrong.
         var untranslatable = new ConditionalSplitPlan(real.Component,
         [
-            new ConditionalSplitBranchPlan(real.Branches[0].OutputName, "UPPER(Amount)", real.Branches[0].Destination),
+            new ConditionalSplitBranchPlan(real.Branches[0].OutputName, "UPPER(Amount)", real.Branches[0].DerivedColumns, real.Branches[0].Destination),
             real.Branches[1],
         ]);
 

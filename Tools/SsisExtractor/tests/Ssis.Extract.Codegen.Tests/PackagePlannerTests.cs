@@ -158,4 +158,44 @@ public class PackagePlannerTests
         // for any code path that only looks at it (see DataFlowPlan's own doc comment).
         Assert.Equal(branches[1].Destination, flow.DestinationComponent);
     }
+
+    [Fact]
+    public void Plan_WalksThroughPerBranchDerivedColumnsAndAUnionAll_ToTheSameSharedDestination()
+    {
+        // SyntheticConditionalSplitRemerge.dtsx: OLE DB Source -> Derived Column (LoadedAtUtc,
+        // shared) -> Conditional Split (one case, "Amount > 1000" -> High; default -> Low) ->
+        // each branch through its OWN Derived Column (Segment <- "High"/"Low") -> Union All ->
+        // ONE shared OLE DB Destination. Confirmed beyond this test by actually building and
+        // running the generated exe against .\SQLFORPOC_2022 -- see
+        // Tools/SsisExtractor/CLAUDE.md's "Conditional Split -- multi-hop Union All remerge"
+        // section (this fixture itself is not confirmed dtexec-executable, an unrelated,
+        // documented SSIS object-model quirk in how it was built; ssisx never depends on
+        // that, and the generated C# was verified end to end regardless).
+        var package = LoadSyntheticFixture("SyntheticConditionalSplitRemerge.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var flow = Assert.Single(plan.Flows);
+        Assert.NotNull(flow.ConditionalSplit);
+
+        var branches = flow.ConditionalSplit!.Branches;
+        Assert.Equal(2, branches.Count);
+
+        var highBranch = Assert.Single(branches, b => b.OutputName == "High");
+        Assert.Equal("Amount > 1000", highBranch.FriendlyExpression);
+        var highTag = Assert.Single(highBranch.DerivedColumns);
+        Assert.Equal("DER_TagHigh", highTag.Name);
+
+        var lowBranch = Assert.Single(branches, b => b.OutputName == "Low");
+        Assert.Null(lowBranch.FriendlyExpression);
+        var lowTag = Assert.Single(lowBranch.DerivedColumns);
+        Assert.Equal("DER_TagLow", lowTag.Name);
+
+        // Both branches pass through the SAME Union All ('UNION_Recombine') to the SAME
+        // destination -- resolved structurally by the forward walk, no special-casing of the
+        // convergence needed.
+        Assert.Same(highBranch.Destination, lowBranch.Destination);
+        Assert.Equal("[dbo].[SyntheticRemergeTarget]", highBranch.Destination.OleDbDestination?.OpenRowset);
+    }
 }

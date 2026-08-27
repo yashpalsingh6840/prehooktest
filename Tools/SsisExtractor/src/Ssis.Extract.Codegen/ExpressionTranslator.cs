@@ -146,8 +146,34 @@ public static class ExpressionTranslator
         BinaryExpr { Op: BinaryOp.Or } or => TranslateLogical(or, "||", references),
         BinaryExpr { Op: BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt or BinaryOp.Gt or BinaryOp.Le or BinaryOp.Ge } cmp =>
             TranslateComparison(cmp, references),
-        _ => new NotTranslatable($"unsupported condition shape: {root.GetType().Name} -- only comparisons and &&/|| of comparisons are supported"),
+        UnaryExpr { Op: UnaryOp.Not } not => TranslateNot(not, references),
+        FunctionCall { Name: "ISNULL", Args.Count: 1 } isNull => TranslateIsNull(isNull, references),
+        _ => new NotTranslatable($"unsupported condition shape: {root.GetType().Name} -- only comparisons, &&/||, !, and ISNULL(...) are supported"),
     };
+
+    /// <summary>Recurses through TranslateCondition (not TranslateScalar) -- SSIS's `!` only
+    /// ever negates something boolean-shaped (a comparison, ISNULL(...), another `!`, or an
+    /// &&/|| chain), evidenced by the one real case that motivated this:
+    /// `!ISNULL(CustomerID_i4) &amp;&amp; FINDSTRING(...) &gt; 0` (RBC_Demo_ETL's Package_Transforms,
+    /// CSPLIT_Validity's "Valid" case). An operand that isn't itself a valid condition shape
+    /// degrades to NotTranslatable via the recursive call, never guessed.</summary>
+    private static TranslatedExpression TranslateNot(
+        UnaryExpr node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+    {
+        var inner = TranslateCondition(node.Operand, references);
+        return inner is NotTranslatable ? inner : new TranslatedOk($"!({((TranslatedOk)inner).CSharpExpression})");
+    }
+
+    /// <summary>`ISNULL(x)` used directly as a condition (as opposed to `ISNULL(x) ? a : b`,
+    /// not evidenced/supported here) -- translates its argument as a plain value and tests it
+    /// for C# `null`, which is correct regardless of whether the generated row property ends
+    /// up a reference type or a nullable value type.</summary>
+    private static TranslatedExpression TranslateIsNull(
+        FunctionCall node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+    {
+        var inner = TranslateScalar(node.Args[0], references);
+        return inner is NotTranslatable ? inner : new TranslatedOk($"({((TranslatedOk)inner).CSharpExpression} is null)");
+    }
 
     private static TranslatedExpression TranslateLogical(
         BinaryExpr node, string csharpOp, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)

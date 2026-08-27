@@ -123,7 +123,7 @@ public static class PackageGenerator
                 EntityName: entityName,
                 SsisFnNamespace: $"{ns}.Ssis",
                 Pipeline: flow.Pipeline,
-                DerivedColumn: flow.DerivedColumn,
+                DerivedColumns: [flow.DerivedColumn],
                 DestinationComponent: flow.DestinationComponent));
             Merge(files, gaps, transformResult.Result);
             foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
@@ -284,15 +284,19 @@ public static class PackageGenerator
     /// Generates a whole Conditional Split flow: one shared source (via <see cref="ResolveFlowSource"/>),
     /// the flow's own shared Derived Column (if any, unchanged from the single-destination path
     /// -- scope decision 1, CLAUDE.md), one router (<see cref="RouterEmitter"/>), and one
-    /// Model/Mapping/DbSet trio per branch. Buffers every branch's generated files/table/
-    /// functions-used locally and only commits them (plus the router's own file) to the real
-    /// <paramref name="files"/>/<paramref name="tables"/>/<paramref name="functionsUsed"/> once
-    /// EVERY branch and the router succeed -- scope decision 2 (no partial split generation).
-    /// A flow's own source-row-type file(s) (emitted eagerly by ResolveFlowSource, before any
-    /// branch is attempted) are the one exception: they describe the source, not any branch, so
-    /// they're valid output regardless of whether a branch downstream ends up failing -- an
-    /// orphaned-but-harmless Sql/Csv row-type file is not "half-wired" the way a partially-wired
-    /// Program.cs would be.
+    /// Model/Mapping/DbSet trio per DISTINCT destination -- two or more branches can resolve to
+    /// the SAME destination (a Union All remerge, see PackagePlanner.ResolveBranch), in which
+    /// case they share one entity/table but still get their own Mapping/*Transform.cs, combining
+    /// the flow's shared Derived Column with whatever per-branch Derived Column(s) that branch's
+    /// own chain passed through (e.g. a "tag" applied after the split). Buffers every branch's
+    /// generated files/table/functions-used locally and only commits them (plus the router's own
+    /// file) to the real <paramref name="files"/>/<paramref name="tables"/>/
+    /// <paramref name="functionsUsed"/> once EVERY branch and the router succeed -- scope
+    /// decision 2 (no partial split generation). A flow's own source-row-type file(s) (emitted
+    /// eagerly by ResolveFlowSource, before any branch is attempted) are the one exception: they
+    /// describe the source, not any branch, so they're valid output regardless of whether a
+    /// branch downstream ends up failing -- an orphaned-but-harmless Sql/Csv row-type file is not
+    /// "half-wired" the way a partially-wired Program.cs would be.
     /// </summary>
     private static ProgramConditionalSplitStep? GenerateConditionalSplitFlow(
         PackageSpec package, string ns, DataFlowPlan flow, ConditionalSplitPlan split,
@@ -309,7 +313,11 @@ public static class PackageGenerator
         var (rowTypeName, programSource) = sourceResult.Value;
         var rowTypeNamespace = programSource is CsvFlowSource ? $"{ns}.Csv" : $"{ns}.Sql";
 
-        if (flow.DerivedColumn is null)
+        // A split flow with neither a shared upstream Derived Column nor any per-branch one
+        // (see ConditionalSplitBranchPlan.DerivedColumns) is a direct-copy-with-routing flow --
+        // out of scope for the same reason a plain direct-copy flow is (the single-destination
+        // path's own gate, right above this method).
+        if (flow.DerivedColumn is null && split.Branches.All(b => b.DerivedColumns.Count == 0))
         {
             gaps.Add(new GenerationGap(flow.TaskName, "no Derived Column found in this Data Flow Task -- a direct-copy pipeline's transform is not generated yet, so this flow is not wired into Program.cs"));
             return null;
@@ -323,15 +331,14 @@ public static class PackageGenerator
             return null;
         }
 
-        var branchFiles = new List<GeneratedFile>();
-        var branchTables = new List<DbContextEmitter.TableSpec>();
-        var branchFunctionsUsed = new HashSet<string>();
-        var branches = new List<ProgramConditionalSplitBranch>();
-        (string AuthMode, string? UserId, string? Server, string? Database)? resolvedAuth = null;
-
+        // Phase A: validate every branch and resolve its entity name, without emitting
+        // anything yet -- entityNameCounts (below) is what lets Phase B tell a genuine
+        // convergence (two branches, same entity, via a shared destination) apart from the
+        // ordinary one-branch-one-destination shape, and getting that right needs every
+        // branch's name known up front.
+        var entityNames = new List<string>();
         foreach (var branch in split.Branches)
         {
-            // Same fast-load-only gate as the single-destination path, applied per branch.
             if (branch.Destination.OleDbDestination?.FastLoadMaxInsertCommitSize is null
                 && branch.Destination.OleDbDestination?.FastLoadOptions is null)
             {
@@ -341,12 +348,42 @@ public static class PackageGenerator
 
             var entityName = TryResolveEntityName(flow.TaskName, branch.Destination, gaps);
             if (entityName is null) return null;
+            entityNames.Add(entityName);
+        }
+        var entityNameCounts = entityNames
+            .GroupBy(n => n, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
 
-            var branchTransformClassName = entityName + "Transform";
-            Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branch.Destination));
+        var branchFiles = new List<GeneratedFile>();
+        var branchTables = new List<DbContextEmitter.TableSpec>();
+        var branchFunctionsUsed = new HashSet<string>();
+        var branches = new List<ProgramConditionalSplitBranch>();
+        var emittedDestinationRefIds = new HashSet<string>(StringComparer.Ordinal);
+        (string AuthMode, string? UserId, string? Server, string? Database)? resolvedAuth = null;
 
-            primaryKeysByDestination.TryGetValue(branch.Destination.RefId, out var primaryKey);
-            branchTables.Add(new DbContextEmitter.TableSpec(entityName, branch.Destination, primaryKey));
+        for (var i = 0; i < split.Branches.Count; i++)
+        {
+            var branch = split.Branches[i];
+            var entityName = entityNames[i];
+
+            // Two or more branches sharing an entity (a Union All remerge) still need distinct
+            // transform class names -- every other shape keeps today's plain "{Entity}Transform"
+            // unchanged, so this never renames an already-generated single-branch-per-destination
+            // fixture's output.
+            var branchTransformClassName = entityNameCounts[entityName] > 1
+                ? entityName + SanitizeIdentifier(branch.OutputName) + "Transform"
+                : entityName + "Transform";
+
+            if (emittedDestinationRefIds.Add(branch.Destination.RefId))
+            {
+                Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branch.Destination));
+                primaryKeysByDestination.TryGetValue(branch.Destination.RefId, out var primaryKey);
+                branchTables.Add(new DbContextEmitter.TableSpec(entityName, branch.Destination, primaryKey));
+            }
+
+            var derivedColumns = new List<PipelineComponentSpec>();
+            if (flow.DerivedColumn is not null) derivedColumns.Add(flow.DerivedColumn);
+            derivedColumns.AddRange(branch.DerivedColumns);
 
             var transformResult = TransformEmitter.Emit(new TransformRequest(
                 MappingNamespace: $"{ns}.Mapping",
@@ -357,7 +394,7 @@ public static class PackageGenerator
                 EntityName: entityName,
                 SsisFnNamespace: $"{ns}.Ssis",
                 Pipeline: flow.Pipeline,
-                DerivedColumn: flow.DerivedColumn,
+                DerivedColumns: derivedColumns,
                 DestinationComponent: branch.Destination));
             Merge(branchFiles, gaps, transformResult.Result);
             foreach (var fn in transformResult.SsisFunctionsUsed) branchFunctionsUsed.Add(fn);

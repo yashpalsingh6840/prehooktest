@@ -25,10 +25,18 @@ public sealed record DataFlowPlan(
 
 /// <summary>One non-default, non-error branch of a Conditional Split resolves to a
 /// <see cref="FriendlyExpression"/> (case) or null (the default, no condition of its own) plus
-/// the OLE DB Destination directly downstream of that output -- <see cref="Destination"/> is
-/// resolved by a one-hop walk of the pipeline's own &lt;paths&gt; from the output's RefId, the
-/// same evidenced StartId/EndId pattern RulesEngine.cs already uses for wiring checks.</summary>
-public sealed record ConditionalSplitBranchPlan(string OutputName, string? FriendlyExpression, PipelineComponentSpec Destination);
+/// the OLE DB Destination this branch's own rows eventually reach -- <see cref="Destination"/>
+/// is resolved by walking the pipeline's own &lt;paths&gt; forward from the output's RefId
+/// (the same evidenced StartId/EndId pattern RulesEngine.cs already uses for wiring checks),
+/// through any chain of Derived Column and/or Union All components, until an OLE DB
+/// Destination is reached. <see cref="DerivedColumns"/> is every Derived Column encountered
+/// along that walk, in order -- e.g. a per-branch "tag" transform applied after the split but
+/// before a Union All remerges two or more branches back to one shared destination. Empty when
+/// the branch connects straight to its destination (the original, still-most-common shape).
+/// Two or more branches CAN resolve to the same <see cref="Destination"/> instance (a Union
+/// All remerge) -- PackageGenerator, not this planner, is what dedupes the resulting
+/// entity/table emission and disambiguates the per-branch transform class names.</summary>
+public sealed record ConditionalSplitBranchPlan(string OutputName, string? FriendlyExpression, List<PipelineComponentSpec> DerivedColumns, PipelineComponentSpec Destination);
 
 /// <summary>One Conditional Split, fully resolved: every case in EvaluationOrder, THEN the
 /// default branch last (<see cref="Branches"/>[^1]) -- this ordering is what RouterEmitter and
@@ -270,6 +278,11 @@ public static class PackagePlanner
         return new ConditionalSplitPlan(splitComponent, branches);
     }
 
+    /// <summary>A branch's own chain to its destination is capped at this many hops so a
+    /// malformed/cyclic pipeline graph degrades to a gap instead of an infinite loop -- no real
+    /// package evidenced here needs more than 2 (one tag Derived Column, one Union All).</summary>
+    private const int MaxBranchChainHops = 8;
+
     private static ConditionalSplitBranchPlan? ResolveBranch(
         PipelineSpec pipeline, PipelineComponentSpec splitComponent, string outputName, string? friendlyExpression,
         string taskName, List<GenerationGap> gaps)
@@ -282,17 +295,60 @@ public static class PackagePlanner
             return null;
         }
 
-        var path = pipeline.Paths.FirstOrDefault(p => p.StartId == output.RefId);
-        var destination = path is null ? null : pipeline.Components.FirstOrDefault(c =>
-            c.ComponentClassId == "Microsoft.OLEDBDestination" && c.Inputs.Any(i => i.RefId == path.EndId));
+        // Walk forward from the split's own output, through any chain of Derived Column
+        // (recorded, since it may compute a destination column) and/or Union All (a pure
+        // physical merge point -- walked through transparently, contributing nothing to
+        // DerivedColumns) components, until an OLE DB Destination is reached. Two branches
+        // that both pass through the SAME Union All naturally resolve to the SAME destination
+        // instance here, with no special-casing needed for that convergence.
+        var derivedColumns = new List<PipelineComponentSpec>();
+        var currentOutputRefId = output.RefId;
 
-        if (destination is null)
+        for (var hop = 0; hop < MaxBranchChainHops; hop++)
         {
+            var path = pipeline.Paths.FirstOrDefault(p => p.StartId == currentOutputRefId);
+            if (path is null)
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"Conditional Split output '{outputName}' on '{splitComponent.Name}' does not connect to anything downstream -- not supported"));
+                return null;
+            }
+
+            var next = pipeline.Components.FirstOrDefault(c => c.Inputs.Any(i => i.RefId == path.EndId));
+            if (next is null)
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"Conditional Split output '{outputName}' on '{splitComponent.Name}' connects to an input this tool could not resolve to a component -- not supported"));
+                return null;
+            }
+
+            if (next.ComponentClassId == "Microsoft.OLEDBDestination")
+                return new ConditionalSplitBranchPlan(outputName, friendlyExpression, derivedColumns, next);
+
+            if (next.ComponentClassId is "Microsoft.DerivedColumn" or "Microsoft.UnionAll")
+            {
+                if (next.ComponentClassId == "Microsoft.DerivedColumn")
+                    derivedColumns.Add(next);
+
+                var nextOutput = next.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+                if (nextOutput is null)
+                {
+                    gaps.Add(new GenerationGap(taskName,
+                        $"Conditional Split output '{outputName}' on '{splitComponent.Name}' passes through '{next.Name}', which has no non-error output -- not supported"));
+                    return null;
+                }
+
+                currentOutputRefId = nextOutput.RefId;
+                continue;
+            }
+
             gaps.Add(new GenerationGap(taskName,
-                $"Conditional Split output '{outputName}' on '{splitComponent.Name}' does not connect directly to an OLE DB Destination -- not supported"));
+                $"Conditional Split output '{outputName}' on '{splitComponent.Name}' passes through '{next.Name}' ({next.ComponentClassId}) before reaching a destination -- not supported"));
             return null;
         }
 
-        return new ConditionalSplitBranchPlan(outputName, friendlyExpression, destination);
+        gaps.Add(new GenerationGap(taskName,
+            $"Conditional Split output '{outputName}' on '{splitComponent.Name}' does not reach an OLE DB Destination within {MaxBranchChainHops} hops -- not supported"));
+        return null;
     }
 }

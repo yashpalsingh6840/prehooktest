@@ -33,7 +33,7 @@ what was verified.
 Ways to execute with parameter overrides:
 - `Scripts/Run-Package.ps1` (PowerShell, compiles `PkgRun.cs` via `Add-Type`)
 - `Scripts/PkgRun.Console/` (C# console app, `PkgRun.Console.exe`)
-- **SSISDB catalog** — project deployed to `.\SQLFORPOC`, parameters bound
+- **SSISDB catalog** — project deployed to `.\SQLFORPOC_2022`, parameters bound
   to an Environment, executed server-side (see "SSISDB catalog" below)
 
 The first two are in-process wrappers around the same `Scripts/PkgRun.cs`
@@ -49,10 +49,21 @@ fail.
 
 ## This machine's environment (facts, not guesses — re-verify if stale)
 
-- SQL Server 2025 Developer Edition, named instance **`.\SQLFORPOC`**
-  (services `MSSQL$SQLFORPOC`, `SQLAgent$SQLFORPOC`, `SQLBrowser`,
-  `MsDtsServer170`). This is what `Project.params` defaults point at.
-- SSIS managed assemblies live in the **GAC**, version `17.0.0.0`,
+> **The dev box was replaced on 2026-08-21 and every fact in this section
+> changed.** What follows is the CURRENT machine (`IRIS-CSG-8214`, SQL Server
+> **2022**). The previous box (`IRIS-CSG-7247`, SQL Server 2025) is described
+> only where the contrast is load-bearing. See "Machine migration 2026-08-21"
+> below for what broke, what it looked like, and what was done about it —
+> that section is the one to read before re-deriving anything here.
+
+- SQL Server **2022** Developer Edition (`16.0.1000.6`), named instance
+  **`.\SQLFORPOC_2022`** (services `MSSQL$SQLFORPOC_2022`,
+  `SQLAgent$SQLFORPOC_2022`, `SQLBrowser`). This is what `Project.params`
+  defaults point at. **The instance name is not `.\SQLFORPOC` any more** —
+  that was the old box, and everything in the repo was repointed.
+- SSIS managed assemblies live in the **GAC**, version **`16.0.0.0`** (SQL
+  2022; a stale `13.0.0.0`/SQL 2016 set is also present side by side, which is
+  why "newest wins" is the right resolution rule and not "the only one there"),
   PublicKeyToken `89845dcd8080cc91`:
   - `Microsoft.SqlServer.ManagedDTS` — `GAC_MSIL`
   - `Microsoft.SqlServer.DTSPipelineWrap` — `GAC_MSIL`
@@ -60,29 +71,113 @@ fail.
     anything referencing it must build/run as **x64**, not AnyCPU/x86)
   - Resolve current paths with:
     `[System.Reflection.Assembly]::LoadWithPartialName('Microsoft.SqlServer.ManagedDTS').Location`
+  - **No csproj hardcodes any of this any more.** `Build/Ssis.Gac.props`
+    detects the installed version (newest of 17/16/15/14/13 present) and every
+    consuming project just imports it — `Scripts/PkgRun.Console`,
+    `Ssis.Extract.ObjectModel`, `Ssis.Expression.Oracle`. Pin deliberately with
+    `dotnet build -p:SsisGacVersion=13.0.0.0`. A missing GAC gives one clear
+    `SSISGAC001` error instead of MSB3245 plus ~30 misleading CS0234
+    "the namespace 'Dts' does not exist" errors.
+- The **text-file log-provider ProgID suffix is version-specific**:
+  `DTS.LogProviderTextFile.8` on SSIS 16.0, `.9` on 17.0, `.3`/`.4` in older
+  docs. `Scripts/PkgRun.cs` no longer hardcodes it — `TextFileLogProviderCreationName()`
+  asks `Application.LogProviderInfos` at run time. It has to be resolved, not
+  guessed: the wrong suffix fails only at RUN time, and that failure counts
+  toward `MaximumErrorCount`, flipping an otherwise-successful run to `Failure`.
 - VS 2022 Professional at
   `C:\Program Files\Microsoft Visual Studio\2022\Professional\`
-  (`devenv.com`, `MSBuild\Current\Bin\amd64\MSBuild.exe`).
+  (`devenv.com`, `MSBuild\Current\Bin\amd64\MSBuild.exe`), **with the SSIS
+  projects extension installed** (`Common7\IDE\Extensions\Microsoft\SSIS`), so
+  `devenv /Build SSIS.sln` builds the `.dtproj` → `.ispac` normally. VS 18
+  Community is also present but has no SSIS extension — use the 2022 path.
+- **The SMO `IntegrationServices` assemblies moved.** On the old box they were
+  in `...\170\Shared\MDS5xSMO` + `...\170\DTS\Binn`; neither exists here. They
+  now ship inside the VS SSIS extension:
+  `...\Common7\IDE\CommonExtensions\Microsoft\SSIS\170\Binn` (IntegrationServices
+  + IntegrationServicesEnum) and `...\SSIS\170\Extensions\SQLCommon`
+  (ConnectionInfo, Sdk.Sfc, Smo, Microsoft.Data.SqlClient). Do not hardcode
+  these either — `Scripts/New-SsisCatalog.ps1` discovers them (see below).
 - `dotnet` CLI has SDKs 9.x/10.x (Core/.NET 5+ only, **no .NET Framework
   SDK** installed) but full `net48` **reference assemblies** are present
   (`C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\
   .NETFramework\v4.8`), so `dotnet build` on an SDK-style `net48` csproj
   works fine even though `dotnet run`/execution of the resulting exe needs
   the classic CLR, not the `dotnet` muxer — run the built `.exe` directly.
-- Local `dtexec.exe` (both the SSDT `...\SSIS\170\Binn\` copy and a
-  leftover SQL 2016 v13 copy) **cannot launch any package**:
-  `Could not create DTS.Application` (`0x80040154`, COM class not
-  registered). **Still broken — and now known NOT to be a missing-feature
-  problem.** SQL Server Setup shows "Integration Services" as already
-  installed (greyed/checked under Shared Features), and a full
-  uninstall → reinstall of that feature plus two reboots did *not* fix it.
-  Presumed stuck/mismatched COM registration from this box having hosted
-  both SQL 2016 (v13) and 2025 (v17) shared DTS components. Not worth
-  chasing further — **catalog execution works and does not touch this COM
-  layer** (see below).
-- **An SSISDB catalog now exists** on `.\SQLFORPOC`, with the PoC project
-  deployed and running. See "SSISDB catalog" section below. This supersedes
-  the earlier note that no catalog existed.
+- **`DTS.Application` COM now WORKS — the old box's blocker is gone.** On
+  `IRIS-CSG-7247` every local `dtexec`/object-model launch died with
+  `Could not create DTS.Application` (`0x80040154`, COM class not registered),
+  and that was never root-caused (a full uninstall/reinstall of the
+  Integration Services feature plus two reboots did not fix it; it was written
+  off as stuck registration from that box having hosted both SQL 2016 v13 and
+  2025 v17 shared DTS components). On the current box
+  `New-Object Microsoft.SqlServer.Dts.Runtime.Application` succeeds and
+  `LogProviderInfos` enumerates — verified 2026-08-21. So the old advice
+  "never suggest local dtexec, it cannot work here" **no longer applies**, and
+  the long-standing "Not done" item about chasing that COM failure is closed by
+  the machine change rather than by any fix.
+- The SSISDB catalog and every database (`SsisPoC`, `SSISDB`) were on the OLD
+  box and **do not exist on this one** until rebuilt — see "Machine migration
+  2026-08-21" for the rebuild order. The "SSISDB catalog" section below still
+  describes the intended end state and the design; treat its "current state"
+  table as the target, not as a live inventory.
+
+## Machine migration 2026-08-21 (laptop replaced: SQL 2025 box → SQL 2022 box)
+
+The dev box was swapped. The reported symptom was "I don't have
+`Microsoft.SqlServer.Dts.Runtime` any more", which was **wrong as a diagnosis
+but right as an observation** — the assembly was installed and loadable the
+whole time, at `16.0.0.0` instead of `17.0.0.0`, and every csproj in the repo
+pinned `v4.0_17.0.0.0__89845dcd8080cc91` in a `HintPath`. That produced
+`MSB3245: Could not locate the assembly "Microsoft.SqlServer.ManagedDTS"`
+followed by ~30 `CS0234: the namespace 'Dts' does not exist`, which reads
+exactly like "SSIS isn't installed".
+
+**Lesson worth keeping: a pinned absolute path to a versioned GAC folder is a
+time bomb, and the error it produces actively misleads.** Everything that could
+be made self-detecting was:
+
+| Was pinned | Now |
+|---|---|
+| 3× csproj `HintPath` on `v4.0_17.0.0.0` | `Build/Ssis.Gac.props`, probes 17→16→15→14→13 |
+| `DTS.LogProviderTextFile.9` in `PkgRun.cs` | resolved from `Application.LogProviderInfos` |
+| SMO probe folders in CLAUDE.md prose | `Scripts/New-SsisCatalog.ps1`, discovers them |
+
+**What actually changed on the machine** (all verified, not assumed): instance
+`.\SQLFORPOC` → `.\SQLFORPOC_2022`; GAC assemblies `17.0.0.0` → `16.0.0.0`;
+log provider `.9` → `.8`; SMO assemblies moved out of `...\170\Shared\MDS5xSMO`
+into the VS SSIS extension; `DTS.Application` COM went from permanently broken
+to working; all databases gone.
+
+**Rebuild order** (each step verified 2026-08-21):
+
+```powershell
+# 0. SQL 2022 setup was missing the Integration Services SHARED FEATURE.
+#    Without it: no SSISDB (catalog.Create fails on a missing SSISDBBackup.bak)
+#    AND no Data Flow execution at all, even locally -- every package fails with
+#    "To run a SSIS package outside of SQL Server Data Tools you must install
+#    Standard Edition (64-bit) of Integration Services or higher."
+#    Diagnose by absence of ALL THREE: the MsDtsServer160 service,
+#    ...\160\DTS\Binn\SSISDBBackup.bak, and ...\160\DTS\Binn\ISServerExec.exe.
+#    A present ...\160\DTS\Binn\DTExec.exe proves nothing -- it ships with the
+#    VS extension/client tools, so the folder looks installed when it is not.
+#    Needs elevation; media was already on disk at C:\SQL2022\Evaluation_ENU.
+C:\SQL2022\Evaluation_ENU\SETUP.EXE /ACTION=Install /FEATURES=IS /IACCEPTSQLSERVERLICENSETERMS /QS
+
+sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\01_CreateTarget.sql          # SsisPoC + tables
+sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\04_CreateLoaderCredential.sql # ssis_loader + GRANTs
+sqlcmd -S ".\SQLFORPOC_2022" -E -Q "EXEC sp_configure 'clr enabled', 1; RECONFIGURE;"
+.\Scripts\New-SsisCatalog.ps1                                        # SSISDB + 'SSIS PoC' folder
+& "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.com" SSIS.sln /Build Development
+# deploy the .ispac via catalog.deploy_project (see "Deploying and executing")
+sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\02_SetupCatalogEnvironment.sql # Dev env + bindings
+sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\03_CreateControlFramework.sql  # ctl schema
+```
+
+`Sql\03` emits four *"The module 'usp_DispatchRunItems' depends on the missing
+object 'SSISDB.catalog.…'"* warnings if run before SSISDB exists. Those are
+deferred-name-resolution notices, **not** failures — the procs are created and
+work once the catalog is there. Order is therefore flexible, but running `02`
+before the catalog exists genuinely fails.
 
 ## Commands known to work
 
@@ -94,13 +189,13 @@ fail.
 dotnet build Scripts\PkgRun.Console\PkgRun.Console.csproj -c Release
 
 # reset target table
-sqlcmd -S ".\SQLFORPOC" -E -i Sql\01_CreateTarget.sql
+sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\01_CreateTarget.sql
 
 # (re)create the SSISDB Environment + bind project params to it
-sqlcmd -S ".\SQLFORPOC" -E -i Sql\02_SetupCatalogEnvironment.sql
+sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\02_SetupCatalogEnvironment.sql
 
 # (re)create the ctl control framework in SsisPoC
-sqlcmd -S ".\SQLFORPOC" -E -i Sql\03_CreateControlFramework.sql
+sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\03_CreateControlFramework.sql
 
 # deploy the .ispac WITHOUT Visual Studio or the wizard (works from anywhere,
 # including Linux/OpenShift, since it is just a proc call over TDS)
@@ -229,15 +324,23 @@ PowerShell for any `devenv.com`/MSBuild invocation whose output matters.
 
 ## SSISDB catalog (set up 2026-08-12 — working)
 
-Current state on `.\SQLFORPOC`:
+Current state on `.\SQLFORPOC_2022` (rebuilt from scratch 2026-08-21 - see "Machine migration"):
 
 | Thing | Value |
 |---|---|
 | Catalog | `SSISDB` (master key password: `Password@2233` — see warning below) |
 | Folder | `SSIS PoC` |
-| Project | `SSIS` (from `SSIS.dtproj`; packages `LoadEmployees.dtsx`, `LoadReferenceData.dtsx`) |
-| Environment | `Dev` — `SourceFolder`, `TargetConnectionString`, `AuditToken` (sensitive) |
-| Bindings | `SourceFolder` + `TargetConnectionString` → `'R'`; `SourceFileName` and all 4 package params left at design defaults so callers can override per run; `AuditToken` intentionally unbound (trap 13) |
+| Project | `SSIS` (from `SSIS.dtproj`; packages `LoadEmployees.dtsx`, `LoadReferenceData.dtsx`, **`ScriptTest.dtsx`** — the third came from an in-progress SSDT session and is now in the deployed project) |
+| Environment | `Dev` — `SourceFolder`, `TargetConnectionString`, `AuditToken` (sensitive), `TargetDbPassword` (sensitive) |
+| Bindings | `SourceFolder` + `TargetConnectionString` → `'R'`; `CM.CM_TargetDb.Password` → `TargetDbPassword` `'R'` on `LoadEmployees.dtsx`; `SourceFileName` and all 4 package params left at design defaults so callers can override per run; `AuditToken` intentionally unbound (trap 13) |
+
+Re-verified end to end on the new box (2026-08-21) after a from-scratch
+rebuild: RunId 1 `LOAD_EMPLOYEES` and RunId 2 `LOAD_REFERENCE_DATA` both
+`Succeeded` through `ctl.usp_StartPackage` via `SsisRunner --wait`, loading
+**12 / 8 / 10** rows — the same counts as the original 2026-08-12 run, and
+including the sensitive-credential path (`ssis_loader` authenticated from the
+encrypted `TargetDbPassword`, 116-byte ciphertext confirmed in
+`internal.environment_variables`).
 
 Verified working (2026-08-12): both packages executed server-side and loaded
 12 / 8 / 10 rows, driven end to end from the .NET runner.
@@ -277,10 +380,10 @@ $folders = @(
 $sqlClientAsm = [Reflection.Assembly]::LoadFrom("$($folders[0])\Microsoft.Data.SqlClient.dll")
 
 # 3. TrustServerCertificate=True is REQUIRED (see trap 10)
-"Data Source=.\SQLFORPOC;Integrated Security=SSPI;TrustServerCertificate=True;"
+"Data Source=.\SQLFORPOC_2022;Integrated Security=SSPI;TrustServerCertificate=True;"
 
 # 4. Server must have CLR enabled BEFORE Catalog.Create() (see trap 11)
-sqlcmd -S ".\SQLFORPOC" -E -Q "EXEC sp_configure 'clr enabled', 1; RECONFIGURE;"
+sqlcmd -S ".\SQLFORPOC_2022" -E -Q "EXEC sp_configure 'clr enabled', 1; RECONFIGURE;"
 ```
 
 Once `$is` (an `IntegrationServices` instance) exists, the object model is
@@ -601,7 +704,7 @@ error, 3 still-running (`--status` without `--wait` only). In `SSIS.sln`
 mapped to `Release|Any CPU` (trap 6 — any real platform label makes devenv
 silently skip it); `dotnet build` on the csproj alone works too.
 
-## Gate 3 prep (`Tools/Validation/`, added 2026-08-18 — golden corpus + comparison harness, built before a C# rewrite exists)
+## Gate 3 prep (`Tools/Validation/`, added 2026-08-18 — golden corpus + comparison harness, built before a C# rewrite exists; first real run against the actual rewrite 2026-08-20)
 
 A separate tool from the extractor, `ssis-validate` (`Tools/Validation/Ssis.Validate.Harness/`),
 built ahead of need: `Migration-Validation-Plan.md` §5 (gate 3, golden-dataset integration
@@ -670,7 +773,219 @@ not yet asserted against; `KeyColumn` auto-fill is a heuristic, not a fact, and 
 low-confidence candidate still needs a human; only two corpus entries exist) in
 `Tools/Validation/docs/gate3-harness.md` and `Tools/Validation/README.md`.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19)
+### The C# rewrite (`D:\PoC\SSIS_Migration`, its own separate repo) and the first real gate 3 pass (2026-08-20)
+
+A C# rewrite now exists — **not inside this repo**, at `D:\PoC\SSIS_Migration` (its own git
+repo, one commit `93bf360` as of this note). `net10.0`, three projects (`Etl.Core` shared
+library, `LoadEmployees`, `LoadReferenceData` console apps), `Host.CreateApplicationBuilder`
+for config (appsettings.json → env vars → command line → **User Secrets, added last, see the
+precedence gotcha below**), EF Core against the *same* `Sql/01_CreateTarget.sql` this repo
+already uses (no independent schema/migrations). Exit codes mirror SSIS's: 0
+success/1 load failed/2 config invalid. Root-level docs there (`MIGRATION_SUMMARY.md`,
+`VALIDATION_STRATEGY.md`, etc.) are earlier planning scaffolding, mostly aspirational — the
+actual `src/` code is more complete/precise than the plans (real EF Core mappings, a
+transactional truncate+load — a deliberate improvement over SSIS's separate auto-commit — and
+width-guard truncation checks matching the original Flat File Source columns exactly). No test
+project exists there.
+
+**Pointing `Tools/Validation`'s gate 3 harness at it, for real, produced two genuine PASSes**
+against a freshly created container — full account and exact commands in
+`Tools/Validation/docs/gate3-harness.md`'s own "first real gate 3 run" section, one fact worth
+repeating here because it generalizes beyond this PoC: **`Host.CreateApplicationBuilder(args)`
+already wires appsettings → env vars → command line internally; calling `AddUserSecrets`
+afterward (as `EtlHost.Create` does) makes secrets the highest-precedence source of all** —
+confirmed with an isolated scratch probe (no database touched), not assumed. So `LoadEmployees`'
+stored `TargetDatabase:Password` secret can never be overridden via `--job-arg`/env var; gate 3
+works around this by re-applying `Sql/04_CreateLoaderCredential.sql` (now
+`PackageConfig.AdditionalSchemaScripts`, new field) against the container so its `ssis_loader`
+login matches the same password already in the secret, rather than fighting the precedence.
+A second, unrelated real bug (`GateRunner` not setting the job process's working directory,
+which silently broke the job's own `appsettings.json` lookup and surfaced as an
+unrelated-looking Windows-auth failure) was also caught and fixed the same session.
+
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified)
+
+### Portfolio survey now reports generation readiness (2026-08-26)
+
+`ssisx report`'s portfolio digest (`Tools/SsisExtractor/src/Ssis.Extract.Cli/PortfolioDigest.cs`)
+answered complexity/findings/coverage questions but had nothing to say about the actual
+migration-sizing question: *how much of this portfolio can `ssisx generate` produce today?*
+Closed by calling `PackageGenerator.Generate` per package inside `ReportCommand` — pure,
+in-memory, no files written (`ssisx generate` itself is still what a caller runs for the real
+output) — and folding the resulting `GenerationGap`s into the digest (console/markdown/JSON)
+and a new `generation-readiness.md`. No `Run-Survey.ps1` changes needed: it already wraps
+`ssisx report`, so this flows through automatically.
+
+**One classification decision, discovered by actually running it, not designed up front:**
+`PackageGenerator` reports a `{Package}.Notification` gap unconditionally for every package
+with at least one flow ("a .dtsx carries no notification-recipient information") — no real
+`.dtsx` could ever satisfy it, and the generated project still compiles and runs fine with
+empty recipient lists. Counting it as blocking made "0 gaps" permanently unreachable: the
+first run against this PoC's own 4 packages showed **0/4 generatable**, including the two real,
+fully-supported packages. `PortfolioDigest.IsBlockingGap` excludes it from the headline
+"generatable" count (still listed per-package, tagged non-blocking, in `generation-readiness.md`)
+— re-run, this PoC now correctly reads **2/4 generatable** (`LoadEmployees`/`LoadReferenceData`;
+`ScriptTest`/`SyntheticParallelShapes` correctly still blocked on Script Task / direct-copy).
+
+**A second, unrelated real bug was caught building this, pre-existing and not something this
+change introduced:** every tuple-typed field in `PortfolioDigest.Digest` (`List<(string Key,
+int Count)>`, including the pre-existing `Packages` list) silently serialized to
+`portfolio-digest.json` as a list of empty `{}` objects — `System.Text.Json` only serializes
+PROPERTIES by default, and a `ValueTuple`'s `Key`/`Count` are public FIELDS. Invisible in the
+console/markdown output (both render via direct string interpolation over the tuples, never
+through JSON), only caught by actually reading the generated JSON file. Fixed by replacing
+every tuple field with a named record (`KeyCount`, `PackageDigestRow`) — this JSON file is one
+of the two artifacts this tool's whole design intends to leave a locked-down client site, so a
+silently empty export defeated the entire point.
+
+### `ssisx generate` (built 2026-08-25/26 — a new command, not covered elsewhere in this file)
+
+Turns a package's already-extracted spec into a runnable C# ETL project (`Ssis.Extract.Codegen`,
+8 pure emitters + `PackagePlanner`/`PackageGenerator` orchestration, wired into
+`ssisx generate --input <dir|.dtsx> --out <dir> [--recursive]`), targeting the hand-written
+`Etl.Core` skeleton at `D:\PoC\SSIS_Rewrite` (a sibling repo, never hardcoded into the
+generator itself — portability to a real client site with no such repo was a hard requirement
+throughout). Full design, all 5 build phases, and the 4-layer validation strategy (golden
+files, differential expression execution against the oracle, diff vs. hand-written, compile +
+Gate 3) are recorded in this session's own plan
+(`C:\Users\yashpal.singh01\.claude\plans\peppy-tumbling-tome.md`) and in this repo's agent
+memory under `ssis-generator-phase0-pause` —**not duplicated here**; this section is only the
+pointer plus the two facts most likely to matter to a future session picking this back up:
+
+- **Gate 3 (`Tools/Validation/Ssis.Validate.Harness`) has been run against `ssisx generate`'s
+  own output, not just the hand-written rewrite.** Both real PoC packages PASS end to end
+  (8/10/12 rows, exact match against the golden corpus) when generated, built against a copy
+  of `Etl.Core`, and pointed at `.\SQLFORPOC_2022` — proof, not just a clean `dotnet build`.
+- **Nested Sequence Containers are now supported (2026-08-26), closing the "root-level only"
+  limitation `PackagePlanner`'s own doc comment used to state.** Verified via an isolated
+  object-model probe first (confirmed `STOCK:SEQUENCE`'s real saved-XML shape before writing
+  any planner code against it, same discipline as trap 12) and a new synthetic fixture,
+  `tests/Ssis.Extract.Tests/Fixtures/SyntheticNestedContainer.dtsx` (a Sequence Container
+  wrapping an Execute SQL Task + Data Flow Task, plus a second root-level Data Flow Task after
+  it) — the fixture deliberately uses a Derived Column (`LoadedAtUtc <- GETUTCDATE()`, the same
+  shape both real packages already use) rather than a direct copy, since a direct-copy
+  pipeline hits a separate, already-known, unrelated generator gap that would have masked
+  whether nesting itself worked. Generating and building this fixture end to end (`dotnet
+  build`, 0 warnings/errors against `TreatWarningsAsErrors=true`) is what actually proves it,
+  not just the unit tests. A ForEach/For Loop container (`STOCK:FOREACHLOOP`) is deliberately
+  NOT walked the same way — it still reports its own explicit gap, since `Etl.Core` has no
+  per-iteration loop abstraction and silently flattening its children would generate code that
+  runs them once each instead of per iteration (wrong, not just incomplete).
+
+### Three new component types (2026-08-26): non-preload Execute SQL Task, OLE DB Source, full-cache Lookup
+
+Conditional Split was deliberately deferred — asked the user first, since it needs a genuinely
+new multi-sink/row-router abstraction in `Etl.Core` (`DataFlowStep`/`IBulkSink` are one-source/
+one-sink by construction), a real architectural decision, not just new emitter code. The other
+three were scoped and built this round, each Gate-3-verified (build + run against
+`.\SQLFORPOC_2022`, not just a clean `dotnet build`) except Lookup, which by design never
+reaches a runnable `Program.cs` at all (see below) — nothing to Gate 3 there.
+
+**Execute SQL Task after a Data Flow Task.** `PackagePlanner` used to route *every* Execute SQL
+Task into `PreLoadStatements` unconditionally, regardless of position — the exact gap
+`SyntheticParallelShapes.dtsx`'s own Branch 1 (`SQL_CreateLoadATemp → DFT_LoadA →
+SQL_UpdateLoadA`) was built to make concrete. Fixed with a new `PackageStep`/`FlowStep`/`SqlStep`
+sequence (`PackagePlan.Steps`, alongside the unchanged `Flows`) and a real correctness fix along
+the way: **a naive single global "have we seen any flow yet" flag was tried first and produced a
+wrong answer on that very fixture** — `SQL_CreateLoadATemp` has no precedence relationship at
+all to the package's other two independent top-level branches (`DFT_DirectCopy`/
+`DFT_ErrorRouting`), but the flag still misclassified it as post-flow purely because those two
+unrelated branches happened to sort earlier in the merged topological order. Caught by actually
+running the planner against the real fixture and reading the output (`PreLoadStatements` came
+back empty), not assumed correct from the design. Replaced with real precedence-constraint-based
+reachability: a per-container predecessor map (`ExecutableSpec.PrecedenceConstraints`/
+`PackageSpec.PrecedenceConstraints`, never walked before this) computed in one forward pass over
+`dag.TopologicalOrder`, correctly scoped to actual ordering edges instead of declaration order. A
+Sequence Container's own "did a flow happen anywhere inside me" result propagates to its
+siblings in the parent, the same way a bare Data Flow Task would. `Etl.Core.Pipeline.
+ExecuteSqlStep : ILoadTask` needed no interface change (`ILoadTask.RunAsync(uow, load, ct)` was
+already generic enough) and runs inside the same transaction as everything else, unlike a
+pre-load statement. **No new fixture for the planner-level fix** — `SyntheticParallelShapes.dtsx`
+already had the right shape — but Gate 3 needed one: that fixture's own post-flow Execute SQL
+Task follows a Data Flow Task with no Derived Column (a separate, unrelated, already-known gap),
+so it never reaches a wired `Program.cs`. Built a new, minimal, dedicated fixture instead
+(`tests/Ssis.Extract.Tests/Fixtures/SyntheticPostFlowSql.dtsx`: `SQL_PreLoad → DFT_Load
+(Flat File Source → Derived Column → OLE DB Destination) → SQL_PostLoad`) — generated, built
+0 warnings/0 errors against a copy of `Etl.Core`, and actually run against `.\SQLFORPOC_2022`:
+loaded 3 rows lowercase, `SQL_PostLoad`'s own `UPDATE ... SET Name = UPPER(Name)` genuinely ran
+afterward, confirmed by reading the table back (`ALICE`/`BOB`/`CAROL`).
+
+**OLE DB Source.** `DataFlowPlan` gained an `OleDbSource` field alongside `FlatFileSource` (no
+new enum — same side-by-side-nullable-fields shape the record already used).  Two new emitters,
+`SqlRowEmitter`/`SqlRowReaderEmitter` (the SQL-source mirror of `CsvRowEmitter`/
+`ClassMapEmitter`), name row-type properties from the pipeline BUFFER's own output-column name
+(`PipelineResolver.Resolve(PipelineOutputSpec)`, not the destination-input overload
+`EntityEmitter` uses) — this is what `TransformEmitter`'s `row.ColumnName` passthrough
+references downstream, so it has to match. `SqlRowReaderEmitter` reads every column by name
+(`reader.GetOrdinal(name)`), never by position. `PackageGenerator.BuildSqlFlowSource` handles the
+two evidenced `OleDbSourcePayload.AccessMode` values differently: `0` (OpenRowset) — the
+generator BUILDS the SELECT itself (`SELECT [Ext] AS [Comp], ... FROM {OpenRowset}`), guaranteeing
+every `GetOrdinal` call resolves; `2` (SqlCommand) — the author's own SQL is emitted verbatim
+(this tool never rewrites recorded SQL text) plus a non-fatal `GenerationGap` stating the
+generated code ASSUMES the result set's column names/aliases already match the buffer's own
+column names — an honest, stated assumption, not a silent guess. A source targeting a different
+server/database than its own flow's destination is a fatal gap (no second connection is wired
+up) rather than an invented, unevidenced config shape. New `Etl.Core` types:
+`Data/SqlRowSource.cs` (`IRowSource<TRow>`, owns its own `SqlConnection` — `IRowSource.ReadAsync`
+gets no `IUnitOfWork`/connection to reuse, same separation a real OLE DB Source's read
+connection has from the destination's transactional one) and `Data/SqlSourceOptions.cs`. New
+fixture, `tests/Ssis.Extract.Tests/Fixtures/SyntheticOleDbSourceTransform.dtsx` (OLE DB Source,
+SqlCommand mode → Derived Column → OLE DB Destination) — hit one real, unrelated, pre-existing
+limitation building it: the destination table's key column was named `OrderID`, and
+`PrimaryKeyInference`'s naming-convention heuristic only matches `"<table>ID"` or the fallback
+`"ID"`, so EF Core refused to build the model at RUN time (`dotnet build` was clean) with
+"requires a primary key to be defined." Fixed by renaming the fixture's own column to `ID`, not
+by touching the heuristic — a real client table either already follows this convention (as both
+this PoC's own tables do) or gets a documented `Unknown`-confidence gap for a human to fill in,
+same as always. Verified end to end: generated, built 0 warnings/errors, ran against
+`.\SQLFORPOC_2022`, read 3 real rows via `SqlRowSource<TRow>` over an actual SQL query, computed
+the Derived Column audit stamp, bulk-inserted — confirmed by reading the target table back.
+
+**Lookup, full-cache only — the central design decision was what NOT to guess.** Confirmed
+(again, via a real object-model round-trip, documented under "Synthetic component-coverage
+fixtures" below) that SSIS does not persist a Lookup's join key anywhere in the saved `.dtsx` at
+all. A guessed join key would compile, run, and silently produce wrong joined data on every row
+— exactly the failure category "gaps not guesses" exists to prevent, and strictly worse than not
+generating the flow. A `NotImplementedException`-stub `Map()` was considered and also rejected
+for the same reason: it ships a `Program.cs` that LOOKS complete and only fails the first time it
+actually runs. **What's generated instead:** everything that's 100% derivable and independently
+compiling — a new `LookupCacheEmitter` produces `Mapping/{Lookup}Cache.cs`, a `ReferenceRow` type
+(from `LookupPayload.ReferenceColumns`, read by POSITION since the SQL's own SELECT list order is
+the only ordering this tool has evidence for) plus a generic `LoadAsync<TKey>(connectionString,
+keySelector, ct)` that runs the Lookup's own `SqlCommand` verbatim — deferring "what's the key"
+entirely to hand-written caller code, so the scaffold needs zero guessed information. This flow's
+`TransformEmitter`/`Program.cs` wiring are deliberately NOT generated (extends the existing
+"no Derived Column found → flow not wired" precedent to a new trigger), with one clear
+flow-level `GenerationGap` explaining exactly what a human needs to do to finish it by hand. A
+`CacheType` other than full cache (`0`) tightens the gap instead of emitting a mismatched
+scaffold — no per-row query semantics are generated. **No new fixture needed** —
+`tests/Ssis.Extract.Tests/Fixtures/SyntheticLookupSplit.dtsx` (already checked in: OLE DB Source
+→ Lookup → Conditional Split → 3 destinations) already exercises this correctly: the flow reaches
+`PackageGenerator`, hits the Lookup gate, and is skipped; Conditional Split's mere presence causes
+no separate gap since nothing inspects `ConditionalSplitPayload` yet. **No Gate 3 run either, by
+design** — nothing is wired into a runnable `Program.cs`, so there's nothing to execute end to
+end; verified instead via unit tests plus a one-time throwaway `dotnet build` of the generated
+`LookupCache.cs` against the real `Microsoft.Data.SqlClient` package (not just a Roslyn syntax
+check), confirming it compiles against real types.
+
+Full extractor suite after all three: same 3 pre-existing unrelated failures (see
+[[ssis-poc-unrelated-inprogress-files]]), 54/54 in `Ssis.Extract.Codegen.Tests` (was 44),
+nothing regressed. `Etl.Core.Tests`/`LoadEmployees.Tests`/`LoadReferenceData.Tests` (sibling
+`SSIS_Rewrite` repo) also all green after the three new `Etl.Core` files (`ExecuteSqlStep`,
+`SqlRowSource`, `SqlSourceOptions`).
+
+**2026-08-25 — a fourth synthetic fixture (`SyntheticParallelShapes.dtsx`, real parallel
+control flow + a direct-copy pipeline + Flat File error-output routing through a Script
+Component) plus a client-facing portfolio survey (`Tools/SsisExtractor/scripts/`).** The
+fixture is checked into `SSIS/` itself (not `tests/.../Fixtures/`, unlike the three earlier
+ones) so it shows up in SSDT's Solution Explorer and actually builds/executes — full gotcha
+catalog (six of them: `ProvideComponentProperties()` resets `.Name`, `DelayValidation`
+needed for an uncompiled Script Component, `ProtectionLevel` must match the project
+explicitly) in `Tools/SsisExtractor/docs/report-schema.md`'s "Synthetic parallel-shapes
+fixture" section. The survey — `Run-Survey.ps1`/`.bat` + `Publish-Survey.ps1`, full usage in
+`Tools/SsisExtractor/README.md`'s "Portfolio survey" section — is what actually leaves this
+repo for a client's own machine; do not rediscover its self-contained-single-file publish
+requirement from scratch, it's documented there.
 
 **2026-08-19 — primary-key candidate detection, closing a gate-3 gap.** `ssisx report` now
 writes `primary-keys.json`/`.md` (`Ssis.Extract.Dtsx.PrimaryKeyInference`), a best-effort
@@ -1201,6 +1516,298 @@ generated `[Fact]` methods, verified to actually **compile and pass**
 against a real xUnit project referencing the library — copied out and run
 end to end, not just eyeballed.
 
+### Conditional Split — multi-destination routing (2026-08-26)
+
+The last of the four component types scoped after the "three new component types" round
+(deliberately deferred there — see that section's own opening note — because it needed a
+genuinely new multi-sink abstraction in `Etl.Core`, not just a new emitter). Planned via
+`EnterPlanMode`/`ExitPlanMode`, plan written to and preserved at
+`C:\Users\yashpal.singh01\.claude\plans\spicy-conjuring-cocke.md` for the exact record shapes.
+The extraction/model side needed **zero changes** — `Ssis.Extract.Dtsx.PipelineReader.cs`
+already fully parsed `Microsoft.ConditionalSplit` into `ConditionalSplitPayload`
+(`DefaultOutputName`, ordered `Cases`) in an earlier round; the entire gap was in
+`Ssis.Extract.Codegen` (zero references to `ConditionalSplit` anywhere, confirmed by grep) and
+in `Etl.Core` (`DataFlowStep<TRow,TEntity>` is single-sink by construction).
+
+**`Etl.Core` additions** (`Abstractions/IRowRouter.cs`, `Abstractions/IConditionalSplitBranch.cs`,
+`Pipeline/ConditionalSplitBranch.cs`, `Pipeline/ConditionalSplitStep.cs`), parallel to
+`DataFlowStep<TRow,TEntity>` — that type is untouched, every existing single-sink flow is
+unaffected. `IRowRouter<TRow>.SelectBranch(row, in ctx)` returns a 0-based branch index,
+evaluated in `EvaluationOrder`; the last branch is always the default. `IConditionalSplitBranch<TRow>`
+is deliberately **not generic in TEntity** — `ConditionalSplitStep<TRow>` holds a list of
+branches whose destination tables (and so `TEntity` types) can differ, and only a
+non-generic-in-TEntity interface can live in one heterogeneous list.
+
+**Buffer-then-sequential-flush, not streaming — a deliberate, accepted limitation.**
+`IUnitOfWork` exposes one shared `SqlConnection`/`SqlTransaction` for the whole package run
+(`D:\PoC\SSIS_Rewrite\src\Etl.Core\Data\UnitOfWork.cs`), and two `SqlBulkCopy` operations can't
+safely run concurrently against it. So `ConditionalSplitStep<TRow>` reads the source once,
+routes each row into its branch's own in-memory `List<TEntity>` buffer
+(`ConditionalSplitBranch<TRow,TEntity>.Add`), and only once the source is exhausted does each
+branch bulk-insert its own buffer, one at a time (`FlushAsync`). A branch that received zero
+rows skips its own flush entirely (no empty `SqlBulkCopy` call). This trades true end-to-end
+streaming for correctness under the existing single-connection design.
+
+**Codegen additions**, in `Tools/SsisExtractor/src/Ssis.Extract.Codegen/`:
+- `PackagePlanner.cs`: `DataFlowPlan` gains `ConditionalSplitPlan? ConditionalSplit`
+  (`PipelineComponentSpec Component, List<ConditionalSplitBranchPlan> Branches` — cases first in
+  `EvaluationOrder`, default branch always last). Each branch's downstream `OLEDBDestination` is
+  resolved by a **one-hop walk of the pipeline's own `<paths>`** from the case/default output's
+  own RefId (`pipeline.Paths.FirstOrDefault(p => p.StartId == output.RefId)`, then match the
+  destination whose input RefId equals that path's `EndId`) — the same evidenced
+  `StartId`/`EndId` pattern `RulesEngine.cs` already used for wiring checks, not new machinery.
+  Any branch that fails to resolve is **fatal for the whole flow**, not partial generation — one
+  `GenerationGap`, `PlanDataFlow` returns `null`.
+- **The Lookup gate must run BEFORE the ConditionalSplit check**, and this is a real ordering
+  bug caught by the existing test suite, not designed up front: `SyntheticLookupSplit.dtsx` has
+  BOTH a Lookup and a Conditional Split in the same flow (OLE DB Source → Lookup → Conditional
+  Split → 2 destinations, plus the Lookup's own No-Match output bypassing the split entirely to
+  a 3rd destination). Checking `ConditionalSplit` first made `PackageGenerator` try to wire the
+  whole flow via the split, silently ignoring the Lookup's own unrecoverable-join-key problem —
+  caught immediately by `Generate_ProducesAReferenceTableCacheScaffold_ForALookup_...` (a
+  pre-existing test, not one written for this feature) failing. Fixed by hoisting the Lookup
+  check to the very top of the per-flow loop, ahead of both `ConditionalSplit` and
+  entity-name/source resolution — safe because `LookupCacheEmitter` only ever needed the Lookup
+  component itself, never `entityName`/`DestinationComponent`.
+- `PackageGenerator.GenerateConditionalSplitFlow`: buffers every branch's `EntityEmitter`/
+  `TransformEmitter`/`DbContextEmitter.TableSpec` output locally and only commits it to the real
+  `files`/`tables` lists once **every** branch and the router succeed — no half-wired split
+  scaffolding for a flow that ultimately fails. One exception, explicitly accepted: the flow's
+  own source-row-type file(s) (`Sql/{X}Row.cs` etc.) are emitted eagerly, before any branch is
+  attempted, since they describe the source, not any one branch, and are valid output even if a
+  branch later fails — an orphaned-but-harmless row-type file is not "half-wired" the way a
+  partially-wired `Program.cs` would be.
+- New `ExpressionTranslator.TranslateCondition` (alongside the existing `TranslateColumn`),
+  translating a case's `FriendlyExpression` into a C# boolean expression: `&&`/`||` recurse and
+  join with the same C# operators (**two-valued**, not SSIS's three-valued NULL-aware logic — a
+  NULL-producing operand is `NotTranslatable`, never guessed); numeric comparisons map straight
+  to C# operators; string `==`/`!=` become `string.Equals(..., StringComparison.Ordinal)`,
+  string `<`/`>`/`<=`/`>=` become `string.Compare(..., StringComparison.InvariantCulture)` —
+  reusing the exact, already-oracle-verified semantics from `Ssis.Runtime.Expressions`' own gate-2
+  corpus, not re-derived. Comparison kind is decided from whichever operand resolves a known
+  `SsisType` (a `Reference` via the caller's dictionary, or a literal); an `IntLiteral` value
+  translation (`"1000"`) was also added to the shared `TranslateScalar` switch — no evidenced
+  Derived Column expression had ever needed a bare integer literal as a value before this.
+- New `RouterEmitter.cs`, emitting `Mapping/{Name}Router.cs` (an `IRowRouter<TRow>` if/else-if
+  chain). References are resolved directly from the Conditional Split component's own single
+  input's columns — `PipelineInputColumnSpec.CachedName`/`CachedDataType`, no `LineageBuilder`
+  join needed — **not** the same lineage-based approach `TransformEmitter` uses for Derived
+  Column, because a routing condition runs on the flow's own source row exactly as the split
+  sees it, before any per-branch transform. This is also where the central scope boundary lives:
+  **a case referencing a value only a Derived Column computes (never a real, named buffer
+  column at the split's own input) has no entry in this dictionary and degrades to a translation
+  gap, never a guess** — the flow's shared, upstream Derived Column (if any) still runs and
+  still feeds every branch's own transform unchanged; only the ROUTING CONDITION itself is
+  restricted to passthrough columns.
+- `ProgramEmitter.cs`: new `ProgramConditionalSplitStep`/`ProgramConditionalSplitBranch`
+  records. The existing per-flow `IRowSource<TRow>` registration switch was factored into a
+  shared `EmitRowSourceRegistration` helper (a Conditional Split reads from exactly the same
+  kind of source a single-destination flow does) so it's written once, called from both paths.
+  `Program.cs`'s `IEtlPackage` factory wires one `ConditionalSplitBranch<TRow,TEntity>` local per
+  branch plus one router resolve plus one `ConditionalSplitStep<TRow>` local, following the same
+  `sp.GetRequiredService<...>()` DI-registration style `DataFlowStep`'s locals already use.
+
+**New fixture, `SyntheticConditionalSplit.dtsx`** (`Ssis.Extract.FixtureBuilder`'s new
+`conditional-split` mode) — needed because `SyntheticLookupSplit.dtsx`'s own Conditional Split
+is masked by its Lookup (proves the READER, never codegen, per the ordering bug above). OLE DB
+Source (SqlCommand mode) → Derived Column (`LoadedAtUtc <- GETUTCDATE()`, upstream of the split,
+shared by both branches) → Conditional Split (one case, `Amount > 1000` → `HighValue`; default →
+`LowValue`) → 2 OLE DB Destinations. Building it surfaced three real, non-obvious object-model
+facts, none guessed — confirmed via reflection and empirically before/while writing the fixture
+code, same "ask the runtime, don't guess" discipline as trap 12:
+- `IDTSDesigntimeComponent100.SetOutputProperty`/`.InsertOutput` both exist (reflected off this
+  GAC's DTSPipelineWrap 16.0.0.0 first), and `IDTSOutput100.Name` has a public setter (no
+  `IDTSName100` cast needed, unlike a flat-file column).
+- **`IsDefaultOut` is READ-ONLY** — calling `SetOutputProperty(id, "IsDefaultOut", true)` throws
+  `COMException 0xC0204006`. The component manages it itself: the one non-error output
+  `ReinitializeMetaData()` creates automatically is marked `IsDefaultOut="true"` in the saved
+  XML purely by virtue of never being given an `Expression` of its own, once a real case exists
+  alongside it — nothing needs to (or can) set this property directly.
+- **`InsertOutput`'s second parameter is an anchor output ID, not a "no anchor" sentinel** —
+  passing an existing output's own ID (to insert "before" it) also threw `0xC0204006`; `0`
+  (append at the end) is what actually works.
+- `SetOutputProperty("Expression", ...)` is **not stored verbatim**, unlike Derived Column's own
+  Expression/FriendlyExpression pair — the component validates the literal text against the
+  input's real columns and rewrites it into the `#{lineageId}` form at save time (confirmed by
+  reading the saved XML), the exact same lineageId-substituted shape
+  `SyntheticLookupSplit.dtsx`'s own real Conditional Split already has.
+  `FriendlyExpression` is stored as the literal text given, unchanged — the only one this
+  tool's reader/`RouterEmitter` ever consumes.
+
+**Verified end to end against real seeded rows on `.\SQLFORPOC_2022`, boundary case included**
+(`ID=3, Amount=1000.00` — `Amount > 1000` is strictly-greater, so this row must land in
+`LowValue`, not `HighValue`): `ssisx generate` + `dotnet build` against a copy of `Etl.Core` (0
+warnings/0 errors) + run, then read both tables back directly rather than trusting the exit
+code. Exact result: `SyntheticHighValue` got `ID=2 (1500.00)`/`ID=4 (2500.50)`,
+`SyntheticLowValue` got `ID=1 (500.00)`/`ID=3 (1000.00)` — every row in its correct branch,
+including the boundary. `LoadEmployees`/`LoadReferenceData` goldens confirmed byte-identical
+after regenerating (neither package has a Conditional Split). Full regression: 67/67 in
+`Ssis.Extract.Codegen.Tests` (was 54), same 3 pre-existing unrelated failures elsewhere; 23/23
+in `Etl.Core.Tests` (was 20) plus `LoadEmployees.Tests`/`LoadReferenceData.Tests` unaffected
+(7/7, 11/11).
+
+**Not done, deliberately out of scope for this round:** per-branch Derived Columns (only a
+single, shared, upstream-of-the-split Derived Column is supported — matches every fixture built
+so far, but a branch-specific transform would need new machinery); true streaming for a
+Conditional Split (see the buffer-then-flush limitation above); three-valued NULL-aware
+condition logic.
+
+### Testing against a real third-party portfolio (`SSIS_From_Sandeep`, 2026-08-27) — a genuine outside test, not another synthetic fixture
+
+A colleague's own KT-reference project, `SSIS_From_Sandeep/RBC_Demo_ETL/` (its own nested git
+repo, untouched by this repo's own git history — the same caution as the "Unrelated in-progress
+PoC files" note elsewhere in this file, though this one is a deliberate deliverable, not
+in-progress SSDT drift): 5
+packages, ~30 SSIS component types across roughly the SAME vocabulary the extractor's own PoC
+never exercised (File System Task, ForEach Loop, Excel Source, ADO NET Source/Destination,
+Merge, Sort, Merge Join, Aggregate, Multicast, Row Count, OLE DB Command, Conditional Split,
+Lookup, Data Conversion). This is exactly the "3-5 representative real client packages" plan §11
+decision 2 named as the biggest unresolved accuracy lever, back when only the PoC's own 2
+straight-line packages existed to test against — closed here for real, not with another
+synthetic fixture.
+
+**`ssisx extract`/`report` — clean, no crashes, 98.67%-100% coverage across all 5 packages.**
+One genuinely new modeling gap surfaced: File System Task has no bespoke payload yet, falls into
+generic `UnmappedTask` (captured verbatim, not semantically parsed) — everything else, including
+Package_Legacy's own `.dtsConfig`, was already-documented/out-of-scope. Duplicate-package
+handling worked correctly on `Package.Scripts.WORKING.dtsx` (a parameter-inlined duplicate of
+`Package.dtsx`, reported in `load-failures.md`, not silently dropped). One expected, non-bug SQL
+parse failure: an OLE DB Command's `?` ODBC-style placeholder isn't valid standalone T-SQL, so
+ScriptDom correctly rejects it read in isolation.
+
+**`ssisx generate` — 0/5 packages fully generatable, and every reason is either already-known or
+newly real:** Script Task/ForEach Loop/direct-copy-pipeline/Lookup's refuse-to-guess-a-join-key
+all confirmed on real data as designed. New, previously-undiscovered generator gaps: File System
+Task, Excel Source, and ADO NET destinations are all unsupported (no fixture had ever exercised
+them); and — the one actually closed this session — a Conditional Split whose branches feed a
+further transform before remerging to ONE shared destination (`Package_Transforms.dtsx`'s
+`DFT_DerivedAndSplit`: `CSPLIT_Validity` → `DER_TagValid`/`DER_TagInvalid` → `UNION_Recombine` →
+one `OLEDST_CustomerEnriched`) was a materially different, arguably more common shape than the
+"each branch keeps its own destination" pattern the original Conditional Split support
+(2026-08-26, above) was built for.
+
+**A real classification bug was also caught and fixed**, not just a missing feature: the OLE DB
+Source SqlCommand-mode advisory gap ("verify column names before running" — see the "Three new
+component types" section above) is meant to be non-fatal, same category as the `.Notification`
+gap, but `PortfolioDigest.IsBlockingGap` only special-cased `.Notification`'s `Location` suffix,
+so any package with a SqlCommand-mode source always read as blocked in the readiness digest —
+the exact miscount class the `.Notification` exclusion was created to prevent, just missed for
+the newer gap. Fixed by adding `GenerationGap.IsBlocking` (`bool`, defaults `true`) instead of
+string-matching `Location`/`Reason`, so `PortfolioDigest`/`ReportCommand` no longer need to
+recognize each non-fatal gap shape by name. Verified via the full test suite (unaffected — only
+2 call sites ever needed `IsBlocking: false`) and by re-running the digest against
+`SSIS_From_Sandeep`: `Package`'s blocking-gap count corrected from 5 to 4, with the SqlCommand
+gap now tagged `_(non-blocking)_` in `generation-readiness.md`.
+
+### Conditional Split — multi-hop Union-All remerge (2026-08-27)
+
+Closes the `DFT_DerivedAndSplit` gap above. `PackagePlanner.ResolveBranch` no longer requires a
+case/default output to connect to an OLE DB Destination in exactly one hop — it now walks
+forward through any chain of `Microsoft.DerivedColumn` (recorded, in order, as the branch's own
+`ConditionalSplitBranchPlan.DerivedColumns`) and/or `Microsoft.UnionAll` (a pure physical
+merge point, walked through transparently) components until it reaches a destination, capped at
+8 hops. Two branches that both pass through the SAME Union All naturally resolve to the SAME
+destination instance — no special-casing of the convergence needed, it falls out of the walk
+structurally. Any OTHER component type mid-chain (Sort, Merge, Lookup, a nested Conditional
+Split, …) is still a fatal gap for that branch, named explicitly — this deliberately leaves
+`DFT_MergeSortedBranches`'s own `Split → Sort → Merge` shape unsupported, a different, harder
+gap for another round (Merge needs matched sort keys, not just a physical pass-through).
+
+`TransformEmitter.TransformRequest.DerivedColumn` (singular) became `DerivedColumns`
+(`IReadOnlyList<PipelineComponentSpec>`) — `computedByName` now merges every list entry's own
+computed output columns (first-registered wins on a name collision, not evidenced in any real
+package). `PackageGenerator.GenerateConditionalSplitFlow` was restructured into two phases:
+Phase A resolves every branch's entity name up front (needed to detect convergence before
+deciding anything); Phase B emits, deduping `EntityEmitter`/`DbContextEmitter.TableSpec` to once
+per DISTINCT destination `RefId` (not once per branch), and disambiguating the transform class
+name (`{Entity}{OutputName}Transform` instead of the collision-prone plain `{Entity}Transform`)
+only for branches whose entity name is genuinely shared — every non-colliding branch keeps
+today's plain naming unchanged, so no prior fixture's golden output moved. The direct-copy gate
+(`no Derived Column found`) now fires only when NEITHER the flow's shared upstream Derived
+Column NOR any branch's own per-branch chain contributed anything — a split whose only transform
+work happens per-branch (this fixture's own shape) is not a direct-copy flow.
+
+**A second, real bug was caught wiring this into `Program.cs`, not shipped:** two branches
+sharing an entity would both register `IRowTransform<TRow,TEntity>` for the exact same closed
+generic type via `builder.Services.AddScoped<...>()`. The built-in DI container doesn't throw on
+a duplicated registration — `GetRequiredService<T>()` silently resolves to whichever was
+registered LAST, so every colliding branch would have run the SAME (wrong, for at least one of
+them) transform. Fixed by dropping the whole `AddScoped<IRowTransform<...>>`/
+`GetRequiredService<IRowTransform<...>>()` pair for Conditional Split branches — a generated
+transform class never has constructor dependencies (`TransformEmitter.BuildFile` emits none), so
+each `ConditionalSplitBranch<...>` now constructs its own transform directly (`new
+{TransformClassName}()`) instead, for EVERY branch uniformly, not just colliding ones — simpler
+generated code and the whole footgun class removed at once, matching the same "don't special-
+case a problem you can eliminate structurally" instinct as the Union-All-convergence walk above.
+
+**Verified two ways, not one:**
+1. **The real motivating case** — re-running `ssisx generate` against `SSIS_From_Sandeep`'s
+   actual `Package_Transforms.dtsx` after this fix: `DFT_DerivedAndSplit`'s own gap disappeared
+   entirely at the structural level, moving to a purely orthogonal expression-translation gap
+   (`FINDSTRING`/`TRIM` inside the split's OWN case condition — see below) — proof the
+   planner/generator layer now works correctly on genuine, real, SSDT-authored XML, which is
+   stronger evidence than a hand-built fixture since there's no question the shape is legal.
+2. **A new dedicated fixture**, `tests/Ssis.Extract.Tests/Fixtures/SyntheticConditionalSplitRemerge.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `conditional-split-remerge` mode): OLE DB Source →
+   Derived Column (`LoadedAtUtc`, shared) → Conditional Split (`Amount > 1000` → High; default →
+   Low) → each branch through its OWN literal-tag Derived Column (`Segment <- "High"`/`"Low"`) →
+   Union All → one `dbo.SyntheticRemergeTarget`. Kept deliberately simpler than the real
+   package's own condition (no FINDSTRING/TRIM dependency) so it proves the STRUCTURAL remerge
+   support in isolation. **Generated, built against a copy of `Etl.Core` (0 warnings/errors), and
+   actually RUN against `.\SQLFORPOC_2022`**: `ID=1 (500.00)/Low`, `ID=2 (1500.00)/High`, `ID=3
+   (1000.00)/Low` — the exact boundary, `>` is strictly-greater — `ID=4 (2500.50)/High`, every
+   row correct including the boundary, both branches' own `SqlBulkCopy` landing in the same
+   table with no NULLs. `Model/SyntheticRemergeTarget.cs` emitted once (not twice);
+   `Mapping/SyntheticRemergeTargetHighTransform.cs`/`...LowTransform.cs` each correctly combine
+   the shared `LoadedAtUtc` with their own `Segment` literal; `Program.cs` shows exactly one
+   `AddBulkSink<SyntheticRemergeTarget>()`, no per-branch `AddScoped<IRowTransform<...>>`, and
+   both `new {Branch}Transform()` calls sharing one `GetRequiredService<IBulkSink<...>>()`. This
+   is genuinely stronger evidence than a dtexec pass would have been — it proves the actual
+   GENERATED code is correct, which is the real deliverable.
+
+**One object-model quirk chased and ultimately left unresolved, stated rather than hidden:** the
+fixture itself is NOT confirmed dtexec-executable. A real run fails SSIS's own pipeline
+validation with `"CSPLIT_Amount.Inputs[Conditional Split Input].Columns[...] has lineage ID N
+that was not previously used in the Data Flow task"` — a metadata inconsistency on the SPLIT's
+own input, introduced somewhere by attaching a Derived Column directly downstream of one of its
+case/default outputs (something no prior fixture in this file does; every earlier Conditional
+Split output goes straight to a destination). Two hypotheses were tried and ruled out by
+comparing real runs, not assumed: re-running the split's own `ReinitializeMetaData()` after
+adding the case output, and resolving the Union All's two inputs in one pass vs. incrementally —
+neither changed the outcome. Left unresolved rather than papered over with an unverified guess,
+same "a gap must be visible" discipline as everywhere else in this tool — and it doesn't matter
+for `ssisx`'s own correctness: `extract`/`generate` parse the saved XML directly (plan §2.1) and
+never invoke SSIS's own object model, so they read this fixture correctly regardless, and the
+feature's real-world runtime correctness is independently proven by the real Sandeep package
+(SSDT-designer-built, so guaranteed valid) plus the fixture's own generated-code run above. Two
+real API facts WERE nailed down for anyone extending Union All support further: a second input
+is created via the raw `unionMeta.InputCollection.New()`, NOT the component-level
+`IDTSDesigntimeComponent100.InsertInput(...)` Conditional Split's own `InsertOutput` made a
+reasonable pattern to try first (`InsertInput` throws `COMException 0xC020800E` unconditionally
+for `Microsoft.UnionAll`); and `DT_WSTR`'s own `SetOutputColumnDataTypeProperties` codepage
+argument must be `0`, not `1252` (that's `DT_STR`'s non-Unicode convention — passing 1252 for
+`DT_WSTR` throws `0xC0204025`).
+
+**Real-world condition-translation gap found and partly closed along the way:**
+`DFT_DerivedAndSplit`'s own `CSPLIT_Validity` case is `!ISNULL(CustomerID_i4) &&
+FINDSTRING(TRIM(Email),"@",1) > 0` — the first real Conditional Split condition this tool has
+seen that isn't a bare comparison. `ExpressionTranslator.TranslateCondition` gained two new
+cases: `UnaryExpr{Op: Not}` (recurses through `TranslateCondition`, negates with `!(...)` — SSIS
+`!` only ever negates something boolean-shaped) and `FunctionCall{Name: "ISNULL", Args.Count: 1}`
+used directly as a condition (translates its argument as a value, tests it for C# `null` —
+correct regardless of whether the generated row property ends up a reference type or a nullable
+value type). This fully unblocks `!ISNULL(...)`. `FINDSTRING`/`TRIM` as VALUE-producing function
+calls remain unsupported (`TranslateScalar`'s switch still only knows `UPPER`/`SUBSTRING`) —
+deliberately NOT added this round; expanding `ExpressionTranslator`'s general SSIS function
+coverage is a separate, larger body of work (these same functions are also needed inside
+ordinary Derived Column expressions, not just conditions), scoped out to keep this round to the
+Conditional Split structural fix plus its one directly-blocking condition-shape gap.
+
+**Regression:** 69/69 in `Ssis.Extract.Codegen.Tests` (was 67), same 3 pre-existing unrelated
+failures elsewhere (someone's own in-progress SSDT edits to `SSIS/LoadReferenceData.dtsx`/
+`SSIS/SSIS.dtproj`, not this session's or the extractor's); `Ssis.Extract.ObjectModel.Tests`
+unaffected (4/4).
+
 ## Traps already hit once — don't re-derive these
 
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
@@ -1226,11 +1833,12 @@ end to end, not just eyeballed.
    ISServer option."). Separately, dtexec's own parser breaks on any `/Par`
    value containing more than one embedded `;` (confirmed empirically),
    which is fatal for connection strings even under `/ISServer` — needs the
-   extra escaped-quote-wrapping shown in README. **A catalog now exists, so
-   `/ISServer` is finally testable — but it has not been tried yet**, and
-   local `dtexec` is independently broken by the COM issue, which may block
-   it regardless. Prefer `catalog.start_execution` from T-SQL; it avoids
-   both the parser quirk and the COM problem entirely.
+   extra escaped-quote-wrapping shown in README. **`dtexec` itself now runs
+   fine** — `DTExec.exe /Project SSIS.ispac /Package LoadReferenceData.dtsx`
+   returned `DTSER_SUCCESS (0)` on 2026-08-21, so the COM blocker that made
+   this moot on the old box is gone. `/ISServer` still has not been tried.
+   The `/Par` restrictions above are unchanged and are the real reason to
+   prefer `catalog.start_execution` from T-SQL.
 5. **PowerShell + `dtexec` argument breakage on paste** was two compounding
    issues: backtick line-continuation is fragile on copy/paste (trailing
    whitespace after a backtick silently ends the "continuation"), and
@@ -1361,6 +1969,31 @@ end to end, not just eyeballed.
     `Microsoft.Data.SqlClient`** — the process dies at startup with
     `NotSupportedException: Globalization Invariant Mode is not supported`.
     Tempting on a container-targeted console app; don't.
+18. **Never `sed -i` a `.dtsx` or `Project.params`.** Git-bash `sed -i`
+    rewrites the file with LF endings, and unlike `.sql`/`.ps1`/`.cs` (which
+    git normalizes, so the damage is invisible in `git diff`) the SSIS XML
+    files are **not** EOL-normalized here. Two consequences, and the second is
+    the one that wastes an hour:
+    - every line shows as changed — a one-word edit becomes a 955-insertion /
+      955-deletion diff that buries the real change and, on a file with
+      uncommitted work in it, makes the real change unreviewable.
+    - it silently changes the file's **byte length and SHA-256**, which are
+      fields in the extractor's own `spec.json`. Golden tests then fail on
+      `FileSizeBytes`/`Sha256` and read like an extractor regression rather
+      than an editing accident. (Observed exactly: 55140 → 54190 = 955 CR
+      bytes dropped, plus 5 bytes of genuine edit.)
+
+    Use a byte-preserving replace instead — read all bytes, decode UTF-8,
+    regex-replace, write all bytes back:
+    ```powershell
+    $b=[IO.File]::ReadAllBytes($p); $t=[Text.Encoding]::UTF8.GetString($b)
+    [IO.File]::WriteAllBytes($p,[Text.Encoding]::UTF8.GetBytes($t -replace 'old','new'))
+    ```
+    And when a golden file needs the same edit, patch it the same way rather
+    than regenerating with `SSISX_REGENERATE_GOLDEN=1` — a full regeneration
+    also absorbs any unrelated uncommitted package edits into the baseline,
+    which is how someone else's in-progress SSDT work gets silently blessed as
+    the reference output.
 
 ## Not done (only pursue if asked again)
 
@@ -1390,7 +2023,12 @@ end to end, not just eyeballed.
   `SSIS Server Maintenance Job` has not been checked. A verbose retry
   generated **769 messages vs 34** for one small package, so this matters
   sooner than it looks.
-- The root cause of local `dtexec.exe`'s COM registration failure is still
-  unresolved: the "missing Integration Services feature" theory was
-  **disproven** (feature is installed; uninstall/reinstall + reboots did
-  not help). Not worth more effort — catalog execution works without it.
+- ~~The root cause of local `dtexec.exe`'s COM registration failure~~ —
+  **closed 2026-08-21 by the machine change, not by a fix.** It never
+  reproduced on the new box. Its root cause on the old box remains unknown and
+  is now unknowable; if it ever reappears, note that the "missing Integration
+  Services feature" theory was disproven *there* (feature was installed,
+  uninstall/reinstall + reboots did not help) — but on the NEW box a genuinely
+  missing Integration Services feature caused a *different* and much clearer
+  failure ("you must install Standard Edition (64-bit) of Integration Services
+  or higher"), so don't conflate the two.

@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge]");
             return 2;
         }
 
@@ -96,9 +96,13 @@ internal static class Program
         {
             return BuildConditionalSplitFixture(args[0]);
         }
+        if (fixtureName == "conditional-split-remerge")
+        {
+            return BuildConditionalSplitRemergeFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', or 'conditional-split'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', or 'conditional-split-remerge'.");
             return 2;
         }
 
@@ -437,6 +441,231 @@ internal static class Program
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         Console.WriteLine($"wrote {outputPath}");
         return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand) -> Derived Column (LoadedAtUtc &lt;- GETUTCDATE(), shared,
+    /// upstream of the split) -> Conditional Split (one case, "Amount &gt; 1000" -> High;
+    /// default -> Low) -> each branch through its OWN Derived Column (Segment &lt;- "High" /
+    /// "Low", a literal) -> Union All -> ONE shared OLE DB Destination.
+    ///
+    /// <para>Built to prove ssisx generate's Conditional Split support for the "two branches
+    /// remerge to one shared destination" shape -- distinct from
+    /// <see cref="BuildConditionalSplitFixture"/>, whose two branches each keep their own
+    /// destination. Real-world motivation: RBC_Demo_ETL's Package_Transforms.dtsx
+    /// (DFT_DerivedAndSplit) has exactly this shape (CSPLIT_Validity -> DER_TagValid/
+    /// DER_TagInvalid -> UNION_Recombine -> OLEDST_CustomerEnriched), discovered testing
+    /// ssisx against a real ~30-component-type client-shaped portfolio (SSIS_From_Sandeep,
+    /// 2026-08-27). That package's own case condition additionally needs FINDSTRING/TRIM,
+    /// which ExpressionTranslator does not support yet -- a separate, unrelated gap; this
+    /// fixture's condition ("Amount &gt; 1000") and per-branch tags (literals) are kept
+    /// deliberately simple so it proves the STRUCTURAL remerge support in isolation.</para>
+    ///
+    /// <para><b>Microsoft.UnionAll's object-model shape, confirmed empirically before/while
+    /// writing this</b> (same "ask the runtime, don't guess" discipline as trap 12), not
+    /// assumed from RBC_Demo_ETL's SESSION-HANDOFF.md prose alone (which only names the
+    /// symptom -- "Union All auto-maps its first input only; later inputs need
+    /// OutputColumnLineageID" -- not the exact API calls):
+    /// <list type="bullet">
+    /// <item>A second input is added via the raw collection method
+    /// <c>unionMeta.InputCollection.New()</c> -- NOT the component-level
+    /// <c>IDTSDesigntimeComponent100.InsertInput(...)</c> Conditional Split's own
+    /// <c>InsertOutput</c> made a reasonable pattern to try first: Union All's own
+    /// <c>InsertInput</c> throws <c>COMException 0xC020800E</c> unconditionally, called
+    /// before or after the first input has a live connection -- confirmed both orderings
+    /// fail identically, so this is a real difference between how these two components
+    /// manage a variable-count collection, not a call-order mistake.</item>
+    /// <item>Both paths are attached before the first <c>ReinitializeMetaData()</c> call, which
+    /// then resolves both inputs in one pass -- auto-mapping the FIRST input's columns to
+    /// newly created, identically-named output columns (the same auto-map-by-name behavior a
+    /// Merge/Merge Join's first input gets), but NOT the second's (confirmed:
+    /// <c>OutputColumnLineageID</c> reads back unset on the second input's own columns) -- each
+    /// of those must be mapped explicitly, matching output columns BY NAME, via
+    /// <c>SetInputColumnProperty(inputId, colId, "OutputColumnLineageID", outputColumn.LineageID)</c>.</item>
+    /// </list>
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-conditional-split-remerge-tables.sql</c>
+    /// already created and seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>. Lives under
+    /// tests/Ssis.Extract.Tests/Fixtures/ (test-tier, not SSDT-registered), same as
+    /// SyntheticConditionalSplit.dtsx.</para>
+    ///
+    /// <para><b>Known limitation, stated rather than hidden: this fixture is NOT confirmed
+    /// dtexec-executable.</b> A real run fails SSIS's own pipeline validation with
+    /// <c>"CSPLIT_Amount.Inputs[Conditional Split Input].Columns[...] has lineage ID N that
+    /// was not previously used in the Data Flow task"</c> -- a metadata inconsistency on the
+    /// SPLIT's own input, introduced somewhere by attaching a Derived Column directly
+    /// downstream of one of its case/default outputs (something no other fixture in this file
+    /// does; every other Conditional Split output goes straight to a destination). Tried and
+    /// ruled out as the cause: re-running the split's own <c>ReinitializeMetaData()</c> after
+    /// adding the case output, and resolving the Union All's two inputs in one pass vs.
+    /// incrementally -- neither changed the outcome, so this is left unresolved rather than
+    /// papered over with an unverified guess. This does NOT block using the fixture: `ssisx
+    /// extract`/`generate` parse the saved XML directly (plan §2.1) and never invoke SSIS's own
+    /// object model or its execution-time validation, so they read this fixture correctly
+    /// regardless. The feature's real-world runtime correctness is independently confirmed via
+    /// RBC_Demo_ETL's own Package_Transforms.dtsx instead (SSDT-designer-built, so guaranteed
+    /// valid and executable) -- see CLAUDE.md's "Conditional Split -- multi-hop Union All
+    /// remerge" section. Same acceptable tier as this file's own
+    /// <see cref="BuildPassthroughScriptComponent"/>, which states outright it is "never
+    /// compiled/executed... structural evidence for the extractor, not a runnable pipeline."</para>
+    /// </summary>
+    private static int BuildConditionalSplitRemergeFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticConditionalSplitRemerge" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_ConditionalSplitRemergeDemo";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Amount FROM dbo.SyntheticRemergeInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var sharedDerivedMeta = BuildDerivedColumnLoadedAtUtc(pipe, srcOutput);
+        var sharedDerivedOutput = sharedDerivedMeta.OutputCollection[0];
+
+        var splitMeta = pipe.ComponentMetaDataCollection.New();
+        splitMeta.ComponentClassID = "Microsoft.ConditionalSplit";
+        var splitInst = splitMeta.Instantiate();
+        splitInst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        splitMeta.Name = "CSPLIT_Amount";
+
+        AttachPath(pipe, sharedDerivedOutput, splitMeta.InputCollection[0]);
+        splitInst.AcquireConnections(null);
+        splitInst.ReinitializeMetaData();
+        splitInst.ReleaseConnections();
+
+        var splitInput = splitMeta.InputCollection[0];
+        var splitVirtualInput = splitInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in splitVirtualInput.VirtualInputColumnCollection)
+        {
+            splitInst.SetUsageType(splitInput.ID, splitVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var defaultOutput = splitMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        defaultOutput.Name = "Low";
+
+        var caseOutput = splitInst.InsertOutput(DTSInsertPlacement.IP_AFTER, 0);
+        caseOutput.Name = "High";
+        splitInst.SetOutputProperty(caseOutput.ID, "FriendlyExpression", "Amount > 1000");
+        splitInst.SetOutputProperty(caseOutput.ID, "Expression", "Amount > 1000");
+        splitInst.SetOutputProperty(caseOutput.ID, "EvaluationOrder", 0);
+
+        var highTagMeta = BuildDerivedColumnLiteralTag(pipe, caseOutput, "Segment", "High");
+        var lowTagMeta = BuildDerivedColumnLiteralTag(pipe, defaultOutput, "Segment", "Low");
+
+        var unionMeta = pipe.ComponentMetaDataCollection.New();
+        unionMeta.ComponentClassID = "Microsoft.UnionAll";
+        var unionInst = unionMeta.Instantiate();
+        unionInst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        unionMeta.Name = "UNION_Recombine";
+
+        // Second input created BEFORE any path is attached/ReinitializeMetaData is called --
+        // confirmed empirically: calling InsertInput AFTER the first input already had a live
+        // upstream connection threw 0xC020800E ("component does not support inserting new
+        // inputs" -- Union All apparently only accepts this while still in its just-
+        // constructed state). Both paths are then attached, and metadata resolved for BOTH in
+        // a single ReinitializeMetaData() pass -- resolving incrementally (attach path 1,
+        // resolve, attach path 2, resolve again) left the split's OWN unrelated input with a
+        // stale lineage ID at dtexec validation time ("has lineage ID N that was not previously
+        // used"), confirmed by comparing both orderings against a real run.
+        var unionSecondInputId = unionMeta.InputCollection.New().ID;
+
+        AttachPath(pipe, highTagMeta.OutputCollection[0], unionMeta.InputCollection[0]);
+        AttachPath(pipe, lowTagMeta.OutputCollection[0], unionMeta.InputCollection.GetObjectByID(unionSecondInputId));
+        unionInst.AcquireConnections(null);
+        unionInst.ReinitializeMetaData();
+        unionInst.ReleaseConnections();
+
+        // Re-fetched by ID, not by reusing the pre-RIMD references -- COM RCWs from this
+        // object model are not guaranteed stable across a ReinitializeMetaData() call (same
+        // lesson CLAUDE.md's object-model oracle notes learned comparing .Parent references by
+        // ID, not by ReferenceEquals).
+        var unionFirstInput = unionMeta.InputCollection[0];
+        var unionFirstVirtualInput = unionFirstInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in unionFirstVirtualInput.VirtualInputColumnCollection)
+        {
+            unionInst.SetUsageType(unionFirstInput.ID, unionFirstVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var unionSecondInput = unionMeta.InputCollection.GetObjectByID(unionSecondInputId);
+        var unionSecondVirtualInput = unionSecondInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in unionSecondVirtualInput.VirtualInputColumnCollection)
+        {
+            unionInst.SetUsageType(unionSecondInput.ID, unionSecondVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        // The second input's columns are NOT auto-mapped by ReinitializeMetaData() -- each
+        // must be pointed at the matching (by name) output column the first input already
+        // created, via OutputColumnLineageID. Confirmed empirically: without this, values
+        // from the second (Low) branch arrive NULL at the destination -- exactly the failure
+        // mode RBC_Demo_ETL's own SESSION-HANDOFF.md names.
+        var unionOutput = unionMeta.OutputCollection[0];
+        foreach (IDTSInputColumn100 inCol in unionSecondInput.InputColumnCollection)
+        {
+            var matchingOutputCol = unionOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>()
+                .FirstOrDefault(oc => oc.Name == inCol.Name)
+                ?? throw new InvalidOperationException($"fixture build error: Union All has no output column named '{inCol.Name}' to map the second input's own column onto.");
+            unionInst.SetInputColumnProperty(unionSecondInput.ID, inCol.ID, "OutputColumnLineageID", matchingOutputCol.LineageID);
+        }
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticRemergeTarget]");
+        AttachPath(pipe, unionOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A Derived Column that passes every upstream column through untouched and adds ONE new
+    /// string column set to a fixed literal, e.g. <c>Segment &lt;- "High"</c> -- the same shape
+    /// RBC_Demo_ETL's own DER_TagValid/DER_TagInvalid use to tag a Conditional Split branch
+    /// before a Union All remerges it. Structurally identical to
+    /// <see cref="BuildDerivedColumnLoadedAtUtc"/> (same passthrough/InsertOutputColumnAt
+    /// mechanics), just a string literal expression instead of GETUTCDATE().
+    /// </summary>
+    private static IDTSComponentMetaData100 BuildDerivedColumnLiteralTag(
+        MainPipe pipe, IDTSOutput100 upstreamOutput, string columnName, string literalValue)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.DerivedColumn";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        meta.Name = $"DER_Tag{literalValue}";
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var output = meta.OutputCollection[0];
+        var newCol = inst.InsertOutputColumnAt(output.ID, 0, columnName, "");
+        // DT_WSTR is Unicode -- codepage is 0, not 1252 (that's DT_STR's own non-Unicode
+        // convention). Passing 1252 here threw 0xC0204025 ("invalid data type properties"),
+        // confirmed empirically.
+        inst.SetOutputColumnDataTypeProperties(output.ID, newCol.ID, DataType.DT_WSTR, 10, 0, 0, 0);
+        var literalExpr = $"\"{literalValue}\"";
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "FriendlyExpression", literalExpr);
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "Expression", literalExpr);
+
+        return meta;
     }
 
     /// <summary>

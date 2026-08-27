@@ -104,9 +104,6 @@ public static class ProgramEmitter
             EmitRowSourceRegistration(lines, split.RowTypeName, split.Source);
             lines.Add($"builder.Services.AddScoped<IRowRouter<{split.RowTypeName}>, {split.RouterClassName}>();");
             lines.Add("");
-            foreach (var branch in split.Branches)
-                lines.Add($"builder.Services.AddScoped<IRowTransform<{split.RowTypeName}, {branch.EntityName}>, {branch.TransformClassName}>();");
-            lines.Add("");
         }
 
         lines.Add("builder.Services.AddScoped<IEtlPackage>(sp =>");
@@ -147,7 +144,18 @@ public static class ProgramEmitter
                         var comma = i < splitStep.Branches.Count - 1 ? "," : "";
                         lines.Add($"            new ConditionalSplitBranch<{splitStep.RowTypeName}, {branch.EntityName}>(");
                         lines.Add($"                \"{branch.OutputName}\",");
-                        lines.Add($"                sp.GetRequiredService<IRowTransform<{splitStep.RowTypeName}, {branch.EntityName}>>(),");
+                        // Constructed directly, not via sp.GetRequiredService<IRowTransform<...>>() --
+                        // two or more branches can share EntityName (a Union All remerge, see
+                        // PackagePlanner.ResolveBranch/PackageGenerator.GenerateConditionalSplitFlow),
+                        // in which case they'd all close over the SAME generic IRowTransform<TRow,TEntity>
+                        // registration; the built-in DI container resolves GetRequiredService<T>() to
+                        // the LAST one registered for a duplicated service type rather than throwing, so
+                        // every such branch would silently run whichever transform happened to register
+                        // last. A generated transform class never has constructor dependencies (see
+                        // TransformEmitter.BuildFile), so `new` is always safe here -- simpler than a
+                        // keyed-DI registration, and correct for every branch shape, not just colliding
+                        // ones.
+                        lines.Add($"                new {branch.TransformClassName}(),");
                         lines.Add($"                sp.GetRequiredService<IBulkSink<{branch.EntityName}>>()){comma}");
                     }
                     lines.Add("        ],");

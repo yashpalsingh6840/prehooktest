@@ -16,18 +16,23 @@ public sealed record TransformRequest(
     string EntityName,
     string SsisFnNamespace,
     PipelineSpec Pipeline,
-    PipelineComponentSpec DerivedColumn,
+    IReadOnlyList<PipelineComponentSpec> DerivedColumns,
     PipelineComponentSpec DestinationComponent);
 
 /// <summary>
 /// Emits one Data Flow Task's Derived Column transform, e.g.
 /// LoadEmployees.Mapping.EmployeeTransform. A destination column is treated as COMPUTED when
-/// its name matches one of the Derived Column's own output columns (its Expression gets
-/// translated via ExpressionTranslator); every other destination column is a plain
-/// passthrough (<c>row.ColumnName</c>) -- this mirrors CLAUDE.md's own passthrough-lineage
-/// finding (a synchronous transform's untouched columns are never re-emitted as its own
-/// output columns) and matches the hand-written EmployeeTransform/DepartmentTransform/
-/// DesignationTransform exactly.
+/// its name matches one of <see cref="TransformRequest.DerivedColumns"/>' own output columns
+/// (its Expression gets translated via ExpressionTranslator); every other destination column
+/// is a plain passthrough (<c>row.ColumnName</c>) -- this mirrors CLAUDE.md's own
+/// passthrough-lineage finding (a synchronous transform's untouched columns are never
+/// re-emitted as its own output columns) and matches the hand-written EmployeeTransform/
+/// DepartmentTransform/DesignationTransform exactly (both call sites there pass a single-
+/// element list). A Conditional Split branch that passes through its own "tag" Derived Column
+/// after the split (see PackagePlanner.ResolveBranch) passes that column here too, alongside
+/// any Derived Column shared upstream of the split -- computed columns are merged across every
+/// list entry, first-registered wins on a name collision (not evidenced in any real package;
+/// each Derived Column step normally adds distinct new columns).
 /// </summary>
 public static class TransformEmitter
 {
@@ -40,11 +45,17 @@ public static class TransformEmitter
         var lineage = LineageBuilder.Build(request.Pipeline);
         var columnTypes = BuildColumnTypeLookup(request.Pipeline);
 
-        var computedByName = request.DerivedColumn.Outputs
-            .Where(o => o.IsErrorOut != true)
-            .SelectMany(o => o.Columns)
-            .Where(c => c.Expression is not null)
-            .ToDictionary(c => c.Name);
+        var computedByName = new Dictionary<string, PipelineOutputColumnSpec>();
+        foreach (var derivedColumn in request.DerivedColumns)
+        {
+            foreach (var column in derivedColumn.Outputs
+                .Where(o => o.IsErrorOut != true)
+                .SelectMany(o => o.Columns)
+                .Where(c => c.Expression is not null))
+            {
+                computedByName.TryAdd(column.Name, column);
+            }
+        }
 
         var resolved = PipelineResolver.ResolveDestinationInput(request.DestinationComponent);
         foreach (var unresolved in resolved.Unresolved)

@@ -19,7 +19,7 @@ public class TransformEmitterTests
             EntityName: "Employee",
             SsisFnNamespace: "LoadEmployees.Ssis",
             Pipeline: pipeline,
-            DerivedColumn: derivedColumn,
+            DerivedColumns: [derivedColumn],
             DestinationComponent: destination);
 
         var result = TransformEmitter.Emit(request);
@@ -65,7 +65,7 @@ public class TransformEmitterTests
             "LoadReferenceData.Csv", "DepartmentCsvRow",
             "LoadReferenceData.Model", "Department",
             "LoadReferenceData.Ssis",
-            pipeline, derivedColumn, destination);
+            pipeline, [derivedColumn], destination);
 
         var result = TransformEmitter.Emit(request);
 
@@ -95,7 +95,7 @@ public class TransformEmitterTests
             "LoadReferenceData.Csv", "DesignationCsvRow",
             "LoadReferenceData.Model", "Designation",
             "LoadReferenceData.Ssis",
-            pipeline, derivedColumn, destination);
+            pipeline, [derivedColumn], destination);
 
         var result = TransformEmitter.Emit(request);
 

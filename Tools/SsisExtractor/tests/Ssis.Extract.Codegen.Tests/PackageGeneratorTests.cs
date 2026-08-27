@@ -102,6 +102,59 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_MergesTwoBranchesIntoOneSharedEntityAndTable_WhenAUnionAllRemergesThem()
+    {
+        // SyntheticConditionalSplitRemerge.dtsx: two branches, each through their own "tag"
+        // Derived Column, remerge via a Union All into ONE shared OLE DB Destination -- the
+        // real-world shape RBC_Demo_ETL's Package_Transforms.dtsx (DFT_DerivedAndSplit) has.
+        // Confirmed beyond this test by actually building and running the generated exe
+        // against .\SQLFORPOC_2022 and reading dbo.SyntheticRemergeTarget back afterward,
+        // including the exact "Amount > 1000" boundary row (ID=3, Amount=1000.00 -> Low, not
+        // High) -- see Tools/SsisExtractor/CLAUDE.md's "Conditional Split -- multi-hop Union
+        // All remerge" section.
+        var package = LoadSyntheticFixture("SyntheticConditionalSplitRemerge.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        // ONE entity/table, not two -- both branches converge on the same destination.
+        Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticRemergeTarget.cs");
+
+        // Two DISTINCT transforms, disambiguated by branch output name since they'd otherwise
+        // both be "SyntheticRemergeTargetTransform".
+        var highFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticRemergeTargetHighTransform.cs");
+        var lowFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticRemergeTargetLowTransform.cs");
+
+        // Each transform combines the flow's shared Derived Column (LoadedAtUtc) with its OWN
+        // per-branch one (Segment) -- proving TransformEmitter's merged-DerivedColumns list
+        // resolves columns from both, not just one.
+        Assert.Contains("LoadedAtUtc = ctx.LoadedAtUtc,", highFile.Content);
+        Assert.Contains("Segment = \"High\",", highFile.Content);
+        Assert.Contains("LoadedAtUtc = ctx.LoadedAtUtc,", lowFile.Content);
+        Assert.Contains("Segment = \"Low\",", lowFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(highFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(lowFile.Content);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        // ONE AddBulkSink<> call, not two -- PortfolioDigest/ProgramEmitter already dedupe by
+        // entity name (unaffected by this change), reconfirmed here for the converged case.
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(programFile.Content, "AddBulkSink<SyntheticRemergeTarget>"));
+        // No per-branch IRowTransform<> DI registration -- see ProgramEmitter's own comment on
+        // why (two branches sharing an entity would collide on the same closed generic).
+        Assert.DoesNotContain("AddScoped<IRowTransform<", programFile.Content);
+        Assert.Contains("new SyntheticRemergeTargetHighTransform(),", programFile.Content);
+        Assert.Contains("new SyntheticRemergeTargetLowTransform(),", programFile.Content);
+        // Both branches still share the one bulk sink for the one shared table.
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(programFile.Content, "GetRequiredService<IBulkSink<SyntheticRemergeTarget>>\\(\\)").Count);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Only the two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption
+        // and Notification. Confirms PortfolioDigest.IsBlockingGap would count this package as
+        // fully generatable (0 blocking gaps), not just "produces some files".
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+    }
+
+    [Fact]
     public void Generate_WiresAConditionalSplit_IntoProgramCsWithOneBranchPerDestination()
     {
         // SyntheticConditionalSplit.dtsx: OLE DB Source -> Derived Column (LoadedAtUtc) ->
@@ -124,11 +177,16 @@ public class PackageGeneratorTests
         Assert.Contains("builder.Services.AddBulkSink<SyntheticHighValue>();", programFile.Content);
         Assert.Contains("builder.Services.AddBulkSink<SyntheticLowValue>();", programFile.Content);
         Assert.Contains("builder.Services.AddScoped<IRowRouter<DFT_ConditionalSplitDemoSqlRow>, ConditionalSplitRouter>();", programFile.Content);
-        Assert.Contains("builder.Services.AddScoped<IRowTransform<DFT_ConditionalSplitDemoSqlRow, SyntheticHighValue>, SyntheticHighValueTransform>();", programFile.Content);
-        Assert.Contains("builder.Services.AddScoped<IRowTransform<DFT_ConditionalSplitDemoSqlRow, SyntheticLowValue>, SyntheticLowValueTransform>();", programFile.Content);
+        // No per-branch IRowTransform<> DI registration -- each branch's transform is
+        // constructed directly (`new`) below, since two branches can share EntityName (a Union
+        // All remerge) and would otherwise collide on the same closed generic registration.
+        Assert.DoesNotContain("AddScoped<IRowTransform<DFT_ConditionalSplitDemoSqlRow, SyntheticHighValue>", programFile.Content);
+        Assert.DoesNotContain("AddScoped<IRowTransform<DFT_ConditionalSplitDemoSqlRow, SyntheticLowValue>", programFile.Content);
         Assert.Contains("var dFT_ConditionalSplitDemoSplit = new ConditionalSplitStep<DFT_ConditionalSplitDemoSqlRow>(", programFile.Content);
         Assert.Contains("new ConditionalSplitBranch<DFT_ConditionalSplitDemoSqlRow, SyntheticHighValue>(", programFile.Content);
         Assert.Contains("new ConditionalSplitBranch<DFT_ConditionalSplitDemoSqlRow, SyntheticLowValue>(", programFile.Content);
+        Assert.Contains("new SyntheticHighValueTransform(),", programFile.Content);
+        Assert.Contains("new SyntheticLowValueTransform(),", programFile.Content);
         Assert.Contains("Steps: [dFT_ConditionalSplitDemoSplit]);", programFile.Content);
 
         CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
