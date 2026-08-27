@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain]");
             return 2;
         }
 
@@ -112,9 +112,13 @@ internal static class Program
         {
             return BuildTernaryFixture(args[0]);
         }
+        if (fixtureName == "email-domain")
+        {
+            return BuildEmailDomainFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', or 'ternary'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', or 'email-domain'.");
             return 2;
         }
 
@@ -549,6 +553,95 @@ internal static class Program
         var signFlagExpr = "Amount < 0 ? -1 : 1";
         inst.SetOutputColumnProperty(output.ID, signFlagCol.ID, "FriendlyExpression", signFlagExpr);
         inst.SetOutputColumnProperty(output.ID, signFlagCol.ID, "Expression", signFlagExpr);
+
+        return meta;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand) -> Derived Column (EmailDomain &lt;-
+    /// FINDSTRING(TRIM(Email),"@",1) &gt; 0 ? SUBSTRING(TRIM(Email),
+    /// FINDSTRING(TRIM(Email),"@",1) + 1,100) : "(none)") -> OLE DB Destination.
+    ///
+    /// <para>Reproduces RBC_Demo_ETL's own Package_Transforms.dtsx (DER_Enrich.EmailDomain)
+    /// expression VERBATIM, not a simplified stand-in -- unlike SyntheticFindStringTrim.dtsx and
+    /// SyntheticTernary.dtsx (each deliberately simpler, to isolate one feature before the rest
+    /// existed), by this point every piece this expression needs (FINDSTRING, TRIM, ternary,
+    /// numeric '+', a SUBSTRING start argument that's itself a computed expression) is supported,
+    /// so this fixture closes the loop on the actual real-world column rather than a stand-in
+    /// for it.</para>
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-email-domain-tables.sql</c> already created
+    /// and seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>. Lives under
+    /// tests/Ssis.Extract.Tests/Fixtures/ (test-tier, not SSDT-registered), same as
+    /// SyntheticTernary.dtsx.
+    /// </summary>
+    private static int BuildEmailDomainFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticEmailDomain" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Email FROM dbo.SyntheticEmailDomainInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnEmailDomain(pipe, mainOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticEmailDomainTarget]");
+        AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A Derived Column that passes every upstream column through untouched and adds ONE new
+    /// column, the verbatim RBC_Demo_ETL DER_Enrich.EmailDomain expression -- see
+    /// <see cref="BuildEmailDomainFixture"/>'s own doc comment for why it's reproduced exactly
+    /// rather than simplified. Same passthrough/InsertOutputColumnAt mechanics as
+    /// <see cref="BuildDerivedColumnLiteralTag"/>.
+    /// </summary>
+    private static IDTSComponentMetaData100 BuildDerivedColumnEmailDomain(MainPipe pipe, IDTSOutput100 upstreamOutput)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.DerivedColumn";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        meta.Name = "DER_Enrich";
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var output = meta.OutputCollection[0];
+        var newCol = inst.InsertOutputColumnAt(output.ID, 0, "EmailDomain", "");
+        // DT_WSTR is Unicode -- codepage is 0, not 1252 (see BuildDerivedColumnLiteralTag's own
+        // identical note; confirmed empirically, 1252 throws 0xC0204025).
+        inst.SetOutputColumnDataTypeProperties(output.ID, newCol.ID, DataType.DT_WSTR, 200, 0, 0, 0);
+        var expr = "FINDSTRING(TRIM(Email),\"@\",1) > 0 ? SUBSTRING(TRIM(Email),FINDSTRING(TRIM(Email),\"@\",1) + 1,100) : \"(none)\"";
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "FriendlyExpression", expr);
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "Expression", expr);
 
         return meta;
     }

@@ -59,11 +59,38 @@ public static class ExpressionTranslator
         return TranslateValue(root, references);
     }
 
+    /// <summary>SSIS's `+` is overloaded exactly like Ssis.Runtime.Expressions.Evaluator.Add
+    /// (oracle-verified: string+string concats, numeric+numeric adds with type promotion --
+    /// "1 + NULL(DT_I4)" and "(DT_WSTR,20)(1 + 2.5)" => "3.5" are both in the gate-2 corpus) --
+    /// this dispatch mirrors that, deciding by whichever operand's type is resolvable, same
+    /// pattern TranslateComparison already uses for string-vs-numeric comparison semantics.
+    /// Defaults to string concat when NEITHER operand's type is resolvable (e.g. two bare
+    /// function calls with no known return type) -- preserves every previously-evidenced concat
+    /// case exactly, since none of them had a numeric operand.</summary>
     private static TranslatedExpression TranslateValue(
-        ExprNode node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references) =>
-        node is BinaryExpr { Op: BinaryOp.Add }
-            ? TranslateConcat(node, references)
-            : TranslateScalar(node, references);
+        ExprNode node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+    {
+        if (node is not BinaryExpr { Op: BinaryOp.Add } add) return TranslateScalar(node, references);
+
+        var operandType = TryResolveOperandType(add.Left, references) ?? TryResolveOperandType(add.Right, references);
+        return operandType is not null && operandType is not (SsisType.WStr or SsisType.Str)
+            ? TranslateArithmeticAdd(add, references)
+            : TranslateConcat(node, references);
+    }
+
+    /// <summary>Real evidenced call: SUBSTRING's own start argument, FINDSTRING(TRIM(Email),
+    /// "@",1) + 1 (RBC_Demo_ETL's Package_Transforms, DER_Enrich.EmailDomain). Both sides
+    /// recurse via TranslateValue (not TranslateScalar) so a chained a+b+c of numeric terms
+    /// would also work, though that's not evidenced anywhere.</summary>
+    private static TranslatedExpression TranslateArithmeticAdd(
+        BinaryExpr node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+    {
+        var left = TranslateValue(node.Left, references);
+        if (left is NotTranslatable) return left;
+        var right = TranslateValue(node.Right, references);
+        if (right is NotTranslatable) return right;
+        return new TranslatedOk($"({((TranslatedOk)left).CSharpExpression} + {((TranslatedOk)right).CSharpExpression})");
+    }
 
     /// <summary>Flattens a left-associative chain of string `+` into one interpolated string
     /// literal, e.g. FirstName + " " + LastName -> $"{row.FirstName} {row.LastName}" -- matches
@@ -123,8 +150,13 @@ public static class ExpressionTranslator
 
         FunctionCall { Name: "TRIM", Args.Count: 1 } trim => WrapOneArgFunction("SsisFn.Trim", trim.Args[0], references),
 
-        FunctionCall { Name: "SUBSTRING", Args: [var strArg, IntLiteral start, IntLiteral length] } =>
-            TranslateSubstring(strArg, start.Value, length.Value, references),
+        // Args translated recursively via TranslateValue, not required to be literals -- the
+        // real evidenced call needs a computed start, SUBSTRING(TRIM(Email),
+        // FINDSTRING(TRIM(Email),"@",1) + 1, 100) (same package/column as FINDSTRING's own
+        // comment above). A plain literal start/length (the only shape evidenced before this)
+        // still translates identically -- TranslateScalar's own IntLiteral case renders the same
+        // text either way, so no existing golden output changes.
+        FunctionCall { Name: "SUBSTRING", Args.Count: 3 } substring => TranslateSubstring(substring, references),
 
         // Args are translated recursively (not required to be literals, unlike SUBSTRING's
         // start/length) because the one real evidenced call always nests another function --
@@ -253,12 +285,25 @@ public static class ExpressionTranslator
         };
     }
 
+    /// <summary>Return type per function this translator itself supports -- deliberately NOT
+    /// Ssis.Runtime.Expressions.Functions.ReturnTypes (that one covers the full oracle corpus,
+    /// including functions this translator can't emit yet, like DATEDIFF -- resolving one of
+    /// those here would claim a type this translator can't actually produce code for).</summary>
+    private static readonly Dictionary<string, SsisType> KnownFunctionReturnTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["UPPER"] = SsisType.WStr,
+        ["TRIM"] = SsisType.WStr,
+        ["SUBSTRING"] = SsisType.WStr,
+        ["FINDSTRING"] = SsisType.I4,
+    };
+
     private static SsisType? TryResolveOperandType(
         ExprNode node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references) => node switch
     {
         Reference r => references.TryGetValue(r.Name, out var resolved) ? resolved.Type : null,
         StringLiteral => SsisType.WStr,
         IntLiteral => SsisType.I4,
+        FunctionCall f => KnownFunctionReturnTypes.TryGetValue(f.Name, out var t) ? t : null,
         _ => null,
     };
 
@@ -269,30 +314,33 @@ public static class ExpressionTranslator
         return inner is NotTranslatable ? inner : new TranslatedOk($"{csharpFunction}({((TranslatedOk)inner).CSharpExpression})");
     }
 
+    /// <summary>SUBSTRING(value, start, length) -- all three args translated recursively via
+    /// TranslateValue (see the switch case above for why: start can be a computed arithmetic
+    /// expression, not just a literal). Passed straight to SsisFn.Substring, which carries the
+    /// existing 1-based/start-&lt;1-errors/clamp-at-end-of-string semantics.</summary>
     private static TranslatedExpression TranslateSubstring(
-        ExprNode strArg, long start, long length, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
-    {
-        var inner = TranslateScalar(strArg, references);
-        return inner is NotTranslatable
-            ? inner
-            : new TranslatedOk($"SsisFn.Substring({((TranslatedOk)inner).CSharpExpression}, {start}, {length})");
-    }
+        FunctionCall node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references) =>
+        TranslateFunctionArgs("SsisFn.Substring", node.Args, references);
 
     /// <summary>FINDSTRING(value, search, occurrence) -- all three args translated recursively
     /// (see the switch case above for why), then passed straight to SsisFn.FindString, which
     /// carries the oracle-verified semantics (Ssis.Runtime.Expressions.Functions.FindString):
     /// occurrence &lt; 1 errors, an empty search string never matches, matches may overlap.</summary>
     private static TranslatedExpression TranslateFindString(
-        FunctionCall node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        FunctionCall node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references) =>
+        TranslateFunctionArgs("SsisFn.FindString", node.Args, references);
+
+    private static TranslatedExpression TranslateFunctionArgs(
+        string csharpFunction, IReadOnlyList<ExprNode> args, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
     {
         var translatedArgs = new List<string>();
-        foreach (var arg in node.Args)
+        foreach (var arg in args)
         {
-            var t = TranslateScalar(arg, references);
+            var t = TranslateValue(arg, references);
             if (t is NotTranslatable) return t;
             translatedArgs.Add(((TranslatedOk)t).CSharpExpression);
         }
-        return new TranslatedOk($"SsisFn.FindString({string.Join(", ", translatedArgs)})");
+        return new TranslatedOk($"{csharpFunction}({string.Join(", ", translatedArgs)})");
     }
 
     /// <summary>Both branches are translated via TranslateValue (not TranslateScalar directly)

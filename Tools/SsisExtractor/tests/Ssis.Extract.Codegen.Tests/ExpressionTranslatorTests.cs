@@ -250,17 +250,86 @@ public class ExpressionTranslatorTests
     }
 
     [Fact]
-    public void TranslateCondition_ReportsAGap_WhenNeitherOperandHasAResolvableType()
+    public void TranslateCondition_TranslatesStringEquality_WhenBothOperandsAreKnownFunctionCalls()
     {
-        // Both operands translate fine as VALUES (UPPER() resolves through Name/Other), but a
-        // FunctionCall result carries no SsisType of its own -- TranslateCondition can't decide
-        // string-vs-numeric comparison semantics from either side.
+        // Superseded by TryResolveOperandType now knowing UPPER's own return type (added
+        // alongside numeric '+' dispatch, 2026-08-27) -- both operands translate fine as VALUES
+        // and the comparison itself now resolves as string-vs-numeric via that same lookup,
+        // where before neither side had ANY resolvable type. A genuine capability increase, not
+        // just a side effect: this exact shape was NotTranslatable before this change.
         var ast = SsisExpression.Parse("UPPER(Name) == UPPER(Other)");
         var refs = Refs(("Name", "row.Name", SsisType.WStr), ("Other", "row.Other", SsisType.WStr));
 
         var result = ExpressionTranslator.TranslateCondition(ast, refs);
 
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal(
+            "string.Equals(SsisFn.Upper(row.Name), SsisFn.Upper(row.Other), System.StringComparison.Ordinal)",
+            ok.CSharpExpression);
+    }
+
+    [Fact]
+    public void TranslateCondition_ReportsAGap_WhenNeitherOperandHasAResolvableType()
+    {
+        // A nested (DT_WSTR,n) int-to-string cast translates fine as a VALUE
+        // (TranslateIntToStringCast), but TryResolveOperandType has no Cast case -- genuinely
+        // still unresolvable on either side, unlike UPPER/TRIM/SUBSTRING/FINDSTRING above, all
+        // of which now resolve via KnownFunctionReturnTypes.
+        var ast = SsisExpression.Parse("(DT_WSTR,10)A == (DT_WSTR,10)B");
+        var refs = Refs(("A", "row.A", SsisType.I4), ("B", "row.B", SsisType.I4));
+
+        var result = ExpressionTranslator.TranslateCondition(ast, refs);
+
         var gap = Assert.IsType<NotTranslatable>(result);
         Assert.Contains("no operand with a resolvable type", gap.Reason);
+    }
+
+    [Fact]
+    public void TranslateColumn_TranslatesNumericAddition_NotStringConcat_ForANonStringOperand()
+    {
+        // The real motivating case: SUBSTRING's own start argument,
+        // FINDSTRING(TRIM(Email),"@",1) + 1 (RBC_Demo_ETL's Package_Transforms,
+        // DER_Enrich.EmailDomain) -- FINDSTRING returns I4, so '+' must be numeric addition, not
+        // string concatenation (which would have produced the wrong, nonsensical
+        // $"{SsisFn.FindString(...)}1" before this fix).
+        var ast = SsisExpression.Parse("FINDSTRING(TRIM(Email),\"@\",1) + 1");
+        var refs = Refs(("Email", "row.Email", SsisType.WStr));
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "X", refs);
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal("(SsisFn.FindString(SsisFn.Trim(row.Email), \"@\", 1) + 1)", ok.CSharpExpression);
+    }
+
+    [Fact]
+    public void TranslateColumn_TranslatesSubstringWithAComputedStartArgument_TheExactRealCaseShape()
+    {
+        // RBC_Demo_ETL's own Package_Transforms.dtsx, DER_Enrich.EmailDomain's whenTrue branch:
+        // SUBSTRING(TRIM(Email), FINDSTRING(TRIM(Email),"@",1) + 1, 100) -- start is no longer
+        // required to be a literal IntLiteral.
+        var ast = SsisExpression.Parse("SUBSTRING(TRIM(Email),FINDSTRING(TRIM(Email),\"@\",1) + 1,100)");
+        var refs = Refs(("Email", "row.Email", SsisType.WStr));
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "EmailDomain", refs);
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal(
+            "SsisFn.Substring(SsisFn.Trim(row.Email), (SsisFn.FindString(SsisFn.Trim(row.Email), \"@\", 1) + 1), 100)",
+            ok.CSharpExpression);
+    }
+
+    [Fact]
+    public void TranslateColumn_TranslatesSubstringWithLiteralArgs_IdenticallyToBefore()
+    {
+        // Regression guard: the previously-only-supported shape (both start/length literal)
+        // must render byte-identical text after generalizing to accept computed args -- proves
+        // no existing golden output moved.
+        var ast = SsisExpression.Parse("UPPER(SUBSTRING(Department,1,3))");
+        var refs = Refs(("Department", "row.Department", SsisType.WStr));
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Employee", "X", refs);
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal("SsisFn.Upper(SsisFn.Substring(row.Department, 1, 3))", ok.CSharpExpression);
     }
 }
