@@ -148,9 +148,17 @@ internal static class Program
         {
             return BuildExcelSourceFixture(args[0]);
         }
+        if (fixtureName == "oledb-command")
+        {
+            return BuildOleDbCommandFixture(args[0]);
+        }
+        if (fixtureName == "multicast")
+        {
+            return BuildMulticastFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', or 'excel-source'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'excel-source', 'oledb-command', or 'multicast'.");
             return 2;
         }
 
@@ -2352,6 +2360,152 @@ internal static class Program
         }
 
         return cm;
+    }
+
+    /// <summary>
+    /// OLE DB Source (<c>SELECT CustomerID FROM dbo.SyntheticOleDbCommandTarget</c>) -> OLE DB
+    /// Command (<c>UPDATE dbo.SyntheticOleDbCommandTarget SET Flagged = 1 WHERE CustomerID = ?</c>,
+    /// one parameter) -- NO destination component at all, proving the "the command itself is the
+    /// flow's sink" shape end to end, the exact real evidence from
+    /// SSIS_From_Sandeep's own Package_Advanced.dtsx (DFT_FlagCustomers). Added 2026-08-28.
+    ///
+    /// Requires the backing table from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-oledb-command-tables.sql</c> already created
+    /// on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildOleDbCommandFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticOleDbCommand" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_FlagCustomers";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT CustomerID FROM dbo.SyntheticOleDbCommandTarget");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var cmdMeta = pipe.ComponentMetaDataCollection.New();
+        cmdMeta.ComponentClassID = "Microsoft.OLEDBCommand";
+        var cmdInst = cmdMeta.Instantiate();
+        cmdInst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        cmdMeta.Name = "OLECMD_SetFlag";
+
+        var cmdConn = cmdMeta.RuntimeConnectionCollection[0];
+        cmdConn.ConnectionManagerID = sqlCm.ID;
+        cmdConn.ConnectionManager = DtsConvert.GetExtendedInterface(sqlCm);
+
+        cmdInst.SetComponentProperty("SqlCommand", "UPDATE dbo.SyntheticOleDbCommandTarget SET Flagged = 1 WHERE CustomerID = ?");
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, cmdMeta.InputCollection[0]);
+
+        cmdInst.AcquireConnections(null);
+        cmdInst.ReinitializeMetaData();
+        cmdInst.ReleaseConnections();
+
+        var cmdInput = cmdMeta.InputCollection[0];
+        var externalParam = cmdInput.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>().Single();
+
+        var virtualInput = cmdInput.GetVirtualInput();
+        var vcol = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>().First(v => v.Name == "CustomerID");
+        cmdInst.SetUsageType(cmdInput.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        var matchColumn = cmdInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "CustomerID");
+        cmdInst.MapInputColumn(cmdInput.ID, matchColumn.ID, externalParam.ID);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source -> Multicast -> {OLE DB Destination, Flat File Destination} -- fans EVERY
+    /// row unconditionally to BOTH a table load and a flat file audit copy, the exact real
+    /// evidenced shape from SSIS_From_Sandeep's own Package_Legacy.dtsx (DFT_FixedWidthImport,
+    /// Multicast -> {FFDST_AuditTrail_APPEND, OLE DB Destination}). Added 2026-08-28.
+    ///
+    /// Requires the backing table from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-multicast-tables.sql</c> already created on
+    /// <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildMulticastFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticMulticast" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var outputDir = Path.Combine(TestFixturesDir(), "synthetic-multicast-output");
+        Directory.CreateDirectory(outputDir);
+        var outputCsvPath = Path.Combine(outputDir, "audit-trail.csv");
+        var fileCm = AddFlatFileDestinationConnectionManager(pkg, "CM_Audit", outputCsvPath,
+            format: "Delimited", columnNamesInFirstDataRow: true,
+            ("ID", 20, false), ("Name", 50, true));
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_FixedWidthImport";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Name FROM dbo.SyntheticMulticastSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mcMeta = pipe.ComponentMetaDataCollection.New();
+        mcMeta.ComponentClassID = "Microsoft.Multicast";
+        var mcInst = mcMeta.Instantiate();
+        mcInst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        mcMeta.Name = "MC_Fanout";
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, mcMeta.InputCollection[0]);
+
+        mcInst.AcquireConnections(null);
+        mcInst.ReinitializeMetaData();
+        mcInst.ReleaseConnections();
+
+        // Multicast auto-provisions a fresh "spare" output the instant an existing one gets a
+        // path attached -- confirmed empirically via a debug probe (NOT guessed): exactly ONE
+        // output exists right after ReinitializeMetaData; attaching a path to it immediately
+        // grows the collection to two; attaching a path to THAT new one grows it to three, the
+        // last one left permanently unconnected. This exactly matches the real evidenced XML
+        // (SSIS_From_Sandeep's own MCAST_FixedRows: two real, path-connected outputs plus a
+        // third with dangling="true") -- so no InsertOutput call is needed or wanted here, unlike
+        // Conditional Split's own recipe (which this method originally, incorrectly, copied).
+        var firstOutput = mcMeta.OutputCollection.Cast<IDTSOutput100>().Single();
+
+        var oleDbDestMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticMulticastTarget]");
+        AttachPath(pipe, firstOutput, oleDbDestMeta.InputCollection[0]);
+        ResolveOleDbMetadata(oleDbDestMeta, isDestination: true);
+
+        var secondOutput = mcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.ID != firstOutput.ID);
+
+        var flatFileDestMeta = pipe.ComponentMetaDataCollection.New();
+        flatFileDestMeta.ComponentClassID = "Microsoft.FlatFileDestination";
+        var ffInst = flatFileDestMeta.Instantiate();
+        ffInst.ProvideComponentProperties();
+        flatFileDestMeta.Name = "FFDST_AuditTrail_APPEND";
+        var ffConn = flatFileDestMeta.RuntimeConnectionCollection[0];
+        ffConn.ConnectionManagerID = fileCm.ID;
+        ffConn.ConnectionManager = DtsConvert.GetExtendedInterface(fileCm);
+        ffInst.SetComponentProperty("Overwrite", false);
+        AttachPath(pipe, secondOutput, flatFileDestMeta.InputCollection[0]);
+        ResolveOleDbMetadata(flatFileDestMeta, isDestination: true);
+        // A third output now exists, unconnected/"dangling" -- left as-is, matching the real
+        // evidenced shape exactly. Ssis.Extract.Codegen.PackagePlanner.PlanMulticast must skip it.
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
     }
 
     private static IDTSComponentMetaData100 AddOleDbComponent(

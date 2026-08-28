@@ -41,6 +41,15 @@ public sealed class PipelineOutputSpec
     public string? SynchronousInputId { get; init; }
     public string? ExclusionGroup { get; init; }
     public bool? DeleteOutputOnPathDetached { get; init; }
+
+    /// <summary>True when this output has no downstream path attached at all -- a genuine,
+    /// real SSIS concept for a component that auto-provisions a fresh "spare" output the moment
+    /// an existing one gets connected (confirmed real from Microsoft.Multicast's own saved XML:
+    /// a component with N real branches always has N+1 outputs, the last permanently unconnected
+    /// and marked <c>dangling="true"</c>). Added 2026-08-28 so PackagePlanner.PlanMulticast can
+    /// skip this trailing spare rather than trying (and failing) to resolve it as a real branch.</summary>
+    public bool? Dangling { get; init; }
+
     public List<PipelineOutputColumnSpec> Columns { get; init; } = [];
     public List<PipelineExternalMetadataColumnSpec> ExternalMetadataColumns { get; init; } = [];
 

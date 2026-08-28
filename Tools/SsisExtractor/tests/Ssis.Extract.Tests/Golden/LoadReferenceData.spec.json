@@ -612,6 +612,7 @@
               "Lookup": null,
               "MergeJoin": null,
               "Name": "FF_SRC_Department",
+              "OleDbCommand": null,
               "OleDbDestination": null,
               "OleDbSource": null,
               "Outputs": [
@@ -793,6 +794,7 @@
                       "TruncationRowDisposition": "FailComponent"
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": null,
                   "ExclusionGroup": null,
@@ -906,6 +908,7 @@
                       "TruncationRowDisposition": null
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": null,
                   "ExclusionGroup": null,
@@ -996,6 +999,7 @@
               "Lookup": null,
               "MergeJoin": null,
               "Name": "DER_DepartmentKey",
+              "OleDbCommand": null,
               "OleDbDestination": null,
               "OleDbSource": null,
               "Outputs": [
@@ -1072,6 +1076,7 @@
                       "TruncationRowDisposition": "FailComponent"
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": "Default Output of the Derived Column Transformation",
                   "ExclusionGroup": "1",
@@ -1121,6 +1126,7 @@
                       "TruncationRowDisposition": null
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": "Error Output of the Derived Column Transformation",
                   "ExclusionGroup": "1",
@@ -1326,6 +1332,7 @@
               "Lookup": null,
               "MergeJoin": null,
               "Name": "OLEDST_Department",
+              "OleDbCommand": null,
               "OleDbDestination": {
                 "AccessMode": 3,
                 "ColumnMappings": [
@@ -1415,6 +1422,7 @@
                       "TruncationRowDisposition": null
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": null,
                   "ExclusionGroup": "1",
@@ -1846,6 +1854,7 @@
               "Lookup": null,
               "MergeJoin": null,
               "Name": "FF_SRC_Designation",
+              "OleDbCommand": null,
               "OleDbDestination": null,
               "OleDbSource": null,
               "Outputs": [
@@ -2027,6 +2036,7 @@
                       "TruncationRowDisposition": "FailComponent"
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": null,
                   "ExclusionGroup": null,
@@ -2140,6 +2150,7 @@
                       "TruncationRowDisposition": null
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": null,
                   "ExclusionGroup": null,
@@ -2230,6 +2241,7 @@
               "Lookup": null,
               "MergeJoin": null,
               "Name": "DER_DesignationKey",
+              "OleDbCommand": null,
               "OleDbDestination": null,
               "OleDbSource": null,
               "Outputs": [
@@ -2306,6 +2318,7 @@
                       "TruncationRowDisposition": "FailComponent"
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": "Default Output of the Derived Column Transformation",
                   "ExclusionGroup": "1",
@@ -2355,6 +2368,7 @@
                       "TruncationRowDisposition": null
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": "Error Output of the Derived Column Transformation",
                   "ExclusionGroup": "1",
@@ -2560,6 +2574,7 @@
               "Lookup": null,
               "MergeJoin": null,
               "Name": "OLEDST_Designation",
+              "OleDbCommand": null,
               "OleDbDestination": {
                 "AccessMode": 3,
                 "ColumnMappings": [
@@ -2649,6 +2664,7 @@
                       "TruncationRowDisposition": null
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": null,
                   "ExclusionGroup": "1",

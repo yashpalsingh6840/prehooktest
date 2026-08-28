@@ -31,7 +31,36 @@ public sealed record DataFlowPlan(
     /// <see cref="OleDbSource"/> since it needs a completely different runtime read path
     /// (ExcelDataReader, not a SQL connection) and so its own dispatch in
     /// <see cref="PackageGenerator.ResolveFlowSource"/>.</summary>
-    PipelineComponentSpec? ExcelSource = null);
+    PipelineComponentSpec? ExcelSource = null,
+    /// <summary>Added 2026-08-28 testing this tool against a real third-party portfolio
+    /// (SSIS_From_Sandeep's Package_Advanced.dtsx, DFT_FlagCustomers) -- a
+    /// <c>Microsoft.OLEDBCommand</c> with no destination component at all; the command itself is
+    /// the flow's sink, run once per source row. When this is populated,
+    /// <see cref="DestinationComponent"/> is a placeholder pointing at the command component
+    /// itself (never actually treated as a destination -- <see cref="PackageGenerator"/>
+    /// branches on this field before ever consulting <see cref="DestinationComponent"/> for
+    /// real, the same convention <see cref="Lookup"/>'s own doc comment already established).</summary>
+    OleDbCommandPlan? OleDbCommand = null,
+    /// <summary>Added 2026-08-28 testing this tool against a real third-party portfolio
+    /// (SSIS_From_Sandeep's Package_Legacy.dtsx, DFT_FixedWidthImport) -- a
+    /// <c>Microsoft.Multicast</c> fanning one row to every branch unconditionally. Populated
+    /// instead of <see cref="ConditionalSplit"/> when this flow's fan-out has no routing
+    /// decision at all; the two are mutually exclusive in one flow.
+    /// <see cref="DestinationComponent"/> points at the LAST branch's destination, same
+    /// non-authoritative-placeholder convention <see cref="ConditionalSplit"/> already
+    /// established.</summary>
+    MulticastPlan? Multicast = null);
+
+/// <summary>A resolved <c>Microsoft.OLEDBCommand</c> flow -- <see cref="SqlTemplate"/> has every
+/// <c>?</c> placeholder rewritten to EF Core's own "{0}", "{1}", ... raw-SQL parameter syntax,
+/// positionally matching <see cref="ParameterColumnNames"/> (the command's own declared input
+/// columns, in order -- the well-documented default when the component's ParameterMapping
+/// property is empty; a non-empty one is a named gap in <see cref="PackagePlanner"/>, never
+/// guessed).</summary>
+public sealed record OleDbCommandPlan(
+    PipelineComponentSpec Component,
+    string SqlTemplate,
+    IReadOnlyList<string> ParameterColumnNames);
 
 /// <summary>One side (Left or Right) of a Merge Join, resolved back through its own Sort and
 /// (if present) Data Conversion to the true source component -- mirrors
@@ -73,6 +102,14 @@ public sealed record ConditionalSplitBranchPlan(string OutputName, string? Frien
 /// ProgramEmitter both rely on to build the if/else-if chain and the branch-index list without
 /// re-deriving which entry is the default.</summary>
 public sealed record ConditionalSplitPlan(PipelineComponentSpec Component, List<ConditionalSplitBranchPlan> Branches);
+
+/// <summary>One Multicast, fully resolved: every output is an unconditional branch (no
+/// evaluation order, no default -- every row goes to every branch). Reuses
+/// <see cref="ConditionalSplitBranchPlan"/> for the branch shape (destination + any per-branch
+/// Derived Column/Union-All/Sort/Merge chain, via the same <c>ResolveBranch</c> walker) with
+/// <c>FriendlyExpression</c> always null -- there is no condition to translate, so
+/// <see cref="PackageGenerator"/>'s Multicast emission never calls RouterEmitter at all.</summary>
+public sealed record MulticastPlan(PipelineComponentSpec Component, List<ConditionalSplitBranchPlan> Branches);
 
 /// <summary>One resolved File System Task action -- <see cref="Operation"/> is one of the
 /// <c>Etl.Core.Abstractions.FileSystemOperation</c> enum names this generator supports
@@ -515,20 +552,92 @@ public static class PackagePlanner
             if (conditionalSplit is null) return null; // PlanConditionalSplit already added the gap
         }
 
+        // Mutually exclusive with Conditional Split -- only looked for when no split was found,
+        // matching every real evidenced flow (each has one or the other, never both).
+        MulticastPlan? multicast = null;
+        if (conditionalSplit is null)
+        {
+            var multicastComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.Multicast");
+            if (multicastComponent is not null)
+            {
+                multicast = PlanMulticast(taskName, pipeline, multicastComponent, gaps);
+                if (multicast is null) return null; // PlanMulticast already added the gap
+            }
+        }
+
         var destination = conditionalSplit is not null
             ? conditionalSplit.Branches[^1].Destination // the default branch, resolved last
-            : pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.OLEDBDestination")
-                ?? pipeline.Components.FirstOrDefault(c => c.AdoNetDestination is not null)
-                ?? pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.FlatFileDestination");
+            : multicast is not null
+                ? multicast.Branches[^1].Destination
+                : pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.OLEDBDestination")
+                    ?? pipeline.Components.FirstOrDefault(c => c.AdoNetDestination is not null)
+                    ?? pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.FlatFileDestination");
 
         if (destination is null)
         {
+            // No bulk-insert-shaped destination -- before giving up, check for the OTHER real
+            // evidenced flow terminus: an OLE DB Command, which IS its own sink (one parameterized
+            // SQL execution per row, no destination table at all). Only tried when the ordinary
+            // destination search already failed, so every existing destination-based flow is
+            // completely unaffected.
+            var commandComponents = pipeline.Components.Where(c => c.ComponentClassId == "Microsoft.OLEDBCommand").ToList();
+            if (commandComponents.Count == 1 && conditionalSplit is null)
+            {
+                var oleDbCommandPlan = ResolveOleDbCommand(taskName, commandComponents[0], gaps);
+                if (oleDbCommandPlan is null) return null; // ResolveOleDbCommand already added the gap
+                // Multicast is never populated here -- destination being null already implies no
+                // multicast was found either, per the mutual-exclusion check above.
+                return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup,
+                    conditionalSplit, commandComponents[0], dataConversion, ExcelSource: excelSource, OleDbCommand: oleDbCommandPlan);
+            }
+
             gaps.Add(new GenerationGap(taskName,
-                "no OLE DB Destination, ADO NET Destination, or Flat File Destination found in this Data Flow Task -- only [Flat File Source|OLE DB Source|ADO NET Source|Excel Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination|Flat File Destination] is supported yet"));
+                "no OLE DB Destination, ADO NET Destination, Flat File Destination, or OLE DB Command found in this Data Flow Task -- only [Flat File Source|OLE DB Source|ADO NET Source|Excel Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination|Flat File Destination|OLE DB Command] is supported yet"));
             return null;
         }
 
-        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, ExcelSource: excelSource);
+        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, ExcelSource: excelSource, Multicast: multicast);
+    }
+
+    /// <summary>Resolves one <c>Microsoft.OLEDBCommand</c> component into an <see cref="OleDbCommandPlan"/>
+    /// -- rewrites its raw SqlCommand text's <c>?</c> placeholders into EF Core's own "{0}", "{1}",
+    /// ... positional raw-SQL syntax, matched against the component's own declared input columns
+    /// in DECLARATION order (the well-documented default when ParameterMapping is empty).
+    /// A non-empty ParameterMapping, or a placeholder count that doesn't match the declared input
+    /// column count, is a named gap -- neither is evidenced in any real package seen so far, and
+    /// guessing a remapping would risk binding the wrong value to the wrong parameter.</summary>
+    private static OleDbCommandPlan? ResolveOleDbCommand(string taskName, PipelineComponentSpec command, List<GenerationGap> gaps)
+    {
+        var payload = command.OleDbCommand;
+        if (string.IsNullOrEmpty(payload?.SqlCommand))
+        {
+            gaps.Add(new GenerationGap(taskName, $"OLE DB Command '{command.Name}' has no SqlCommand text -- not supported"));
+            return null;
+        }
+
+        if (!string.IsNullOrEmpty(payload.ParameterMapping))
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"OLE DB Command '{command.Name}' has a non-empty ParameterMapping ('{payload.ParameterMapping}') -- only the declaration-order default (empty ParameterMapping) is supported"));
+            return null;
+        }
+
+        var placeholderCount = payload.SqlCommand.Count(ch => ch == '?');
+        if (placeholderCount != payload.Parameters.Count)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"OLE DB Command '{command.Name}' has {placeholderCount} '?' placeholder(s) but {payload.Parameters.Count} declared input column(s) -- not supported"));
+            return null;
+        }
+
+        var sqlTemplate = payload.SqlCommand;
+        for (var i = 0; i < placeholderCount; i++)
+        {
+            var index = sqlTemplate.IndexOf('?');
+            sqlTemplate = sqlTemplate[..index] + "{" + i + "}" + sqlTemplate[(index + 1)..];
+        }
+
+        return new OleDbCommandPlan(command, sqlTemplate, payload.Parameters.Select(p => p.Name).ToList());
     }
 
     /// <summary>Resolves a Merge Join's own two independent source chains (each walked BACKWARD
@@ -682,6 +791,35 @@ public static class PackagePlanner
         return new ConditionalSplitPlan(splitComponent, branches);
     }
 
+    /// <summary>Resolves a Multicast: every non-error output is its own unconditional branch (no
+    /// evaluation order, no default -- reuses the exact same forward chain-walk
+    /// <see cref="ResolveBranch"/> already uses for Conditional Split, just called once per
+    /// output with no condition attached).</summary>
+    private static MulticastPlan? PlanMulticast(string taskName, PipelineSpec pipeline, PipelineComponentSpec multicastComponent, List<GenerationGap> gaps)
+    {
+        // A Multicast auto-provisions a fresh "spare" output the instant an existing one gets a
+        // path attached -- confirmed real via an object-model probe (see
+        // Ssis.Extract.FixtureBuilder's own BuildMulticastFixture): a component with N real
+        // branches always has N+1 outputs, the trailing one permanently unconnected and marked
+        // dangling="true" in the saved XML. Skipped here, not treated as a branch to resolve.
+        var outputs = multicastComponent.Outputs.Where(o => o.IsErrorOut != true && o.Dangling != true).ToList();
+        if (outputs.Count == 0)
+        {
+            gaps.Add(new GenerationGap(taskName, $"Multicast '{multicastComponent.Name}' has no outputs -- not supported"));
+            return null;
+        }
+
+        var branches = new List<ConditionalSplitBranchPlan>();
+        foreach (var output in outputs)
+        {
+            var branch = ResolveBranch(pipeline, multicastComponent, output.Name, friendlyExpression: null, taskName, gaps, componentKind: "Multicast");
+            if (branch is null) return null; // ResolveBranch already added the gap
+            branches.Add(branch);
+        }
+
+        return new MulticastPlan(multicastComponent, branches);
+    }
+
     /// <summary>A branch's own chain to its destination is capped at this many hops so a
     /// malformed/cyclic pipeline graph degrades to a gap instead of an infinite loop -- no real
     /// package evidenced here needs more than 2 (one tag Derived Column, one Union All).</summary>
@@ -689,13 +827,13 @@ public static class PackagePlanner
 
     private static ConditionalSplitBranchPlan? ResolveBranch(
         PipelineSpec pipeline, PipelineComponentSpec splitComponent, string outputName, string? friendlyExpression,
-        string taskName, List<GenerationGap> gaps)
+        string taskName, List<GenerationGap> gaps, string componentKind = "Conditional Split")
     {
         var output = splitComponent.Outputs.FirstOrDefault(o => o.Name == outputName);
         if (output is null)
         {
             gaps.Add(new GenerationGap(taskName,
-                $"Conditional Split output '{outputName}' on '{splitComponent.Name}' was not found among its own outputs"));
+                $"{componentKind} output '{outputName}' on '{splitComponent.Name}' was not found among its own outputs"));
             return null;
         }
 
@@ -721,7 +859,7 @@ public static class PackagePlanner
             if (path is null)
             {
                 gaps.Add(new GenerationGap(taskName,
-                    $"Conditional Split output '{outputName}' on '{splitComponent.Name}' does not connect to anything downstream -- not supported"));
+                    $"{componentKind} output '{outputName}' on '{splitComponent.Name}' does not connect to anything downstream -- not supported"));
                 return null;
             }
 
@@ -729,11 +867,16 @@ public static class PackagePlanner
             if (next is null)
             {
                 gaps.Add(new GenerationGap(taskName,
-                    $"Conditional Split output '{outputName}' on '{splitComponent.Name}' connects to an input this tool could not resolve to a component -- not supported"));
+                    $"{componentKind} output '{outputName}' on '{splitComponent.Name}' connects to an input this tool could not resolve to a component -- not supported"));
                 return null;
             }
 
-            if (next.ComponentClassId == "Microsoft.OLEDBDestination" || next.AdoNetDestination is not null)
+            // Widened to include Flat File Destination for Multicast (added 2026-08-28): the real
+            // evidenced shape (RBC_Demo_ETL's own DFT_FixedWidthImport) fans one Multicast to a
+            // Flat File Destination AND an OLE DB Destination from the same component -- no
+            // Conditional Split fixture ever needed this branch target before, but the check is a
+            // strict widening (adds an acceptance case, restricts nothing), so it's safe here too.
+            if (next.ComponentClassId is "Microsoft.OLEDBDestination" or "Microsoft.FlatFileDestination" || next.AdoNetDestination is not null)
                 return new ConditionalSplitBranchPlan(outputName, friendlyExpression, derivedColumns, next);
 
             if (next.ComponentClassId is "Microsoft.DerivedColumn" or "Microsoft.UnionAll" or "Microsoft.Sort" or "Microsoft.Merge")
@@ -745,7 +888,7 @@ public static class PackagePlanner
                 if (nextOutput is null)
                 {
                     gaps.Add(new GenerationGap(taskName,
-                        $"Conditional Split output '{outputName}' on '{splitComponent.Name}' passes through '{next.Name}', which has no non-error output -- not supported"));
+                        $"{componentKind} output '{outputName}' on '{splitComponent.Name}' passes through '{next.Name}', which has no non-error output -- not supported"));
                     return null;
                 }
 
@@ -754,12 +897,12 @@ public static class PackagePlanner
             }
 
             gaps.Add(new GenerationGap(taskName,
-                $"Conditional Split output '{outputName}' on '{splitComponent.Name}' passes through '{next.Name}' ({next.ComponentClassId}) before reaching a destination -- not supported"));
+                $"{componentKind} output '{outputName}' on '{splitComponent.Name}' passes through '{next.Name}' ({next.ComponentClassId}) before reaching a destination -- not supported"));
             return null;
         }
 
         gaps.Add(new GenerationGap(taskName,
-            $"Conditional Split output '{outputName}' on '{splitComponent.Name}' does not reach an OLE DB Destination within {MaxBranchChainHops} hops -- not supported"));
+            $"{componentKind} output '{outputName}' on '{splitComponent.Name}' does not reach an OLE DB Destination within {MaxBranchChainHops} hops -- not supported"));
         return null;
     }
 }

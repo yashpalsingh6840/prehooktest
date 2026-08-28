@@ -89,15 +89,34 @@ public static class TransformEmitter
         // pairing. Reported as a gap rather than guessing a cast: this tool has no oracle
         // evidence for which numeric coercion (truncate/round/checked) the real OLE DB provider
         // performs, and a wrong guess would silently corrupt data instead of failing loudly.
+        // A Flat File Destination has no real narrowing risk at all -- every column it writes is
+        // fundamentally text (its own connection manager types EVERY column DT_WSTR regardless of
+        // what feeds it, confirmed real from this destination type's own connection-manager
+        // builder), unlike an OLE DB Destination's binary/typed columns where a genuine coercion
+        // decision (round/truncate/checked) is needed. So a Flat File Destination never GAPS a
+        // type mismatch -- it widens via ToString() instead (flatFileStringConversionColumns,
+        // consumed by the plain-passthrough case below). Confirmed as a real, previously-latent
+        // gap (this check originally reported it, then a raw `row.ID` assignment still failed
+        // CS0029 int->string once the gap was merely suppressed) by actually generating and
+        // building this exact pairing: a Multicast branch's own int ID column feeding a Flat File
+        // Destination.
+        var isFlatFileDestination = request.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination";
         var inputColumnsByRefId = request.DestinationComponent.Inputs.FirstOrDefault()?.Columns
             .ToDictionary(c => c.RefId) ?? [];
         var mismatchedTypeColumns = new HashSet<string>();
+        var flatFileStringConversionColumns = new HashSet<string>();
         foreach (var column in resolved.Columns)
         {
             if (column.Type is null) continue;
             if (!inputColumnsByRefId.TryGetValue(column.PipelineColumnRefId, out var inputColumn)) continue;
             var sourceType = SsisPipelineTypeMap.Resolve(inputColumn.CachedDataType);
             if (sourceType is null || sourceType.ClrTypeName == column.Type.ClrTypeName) continue;
+
+            if (isFlatFileDestination)
+            {
+                flatFileStringConversionColumns.Add(column.PipelineColumnName);
+                continue;
+            }
 
             mismatchedTypeColumns.Add(column.PipelineColumnName);
             gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
@@ -131,6 +150,16 @@ public static class TransformEmitter
 
                 var expr = ((TranslatedOk)converted).CSharpExpression;
                 CollectSsisFunctions(expr, functionsUsed);
+                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+            }
+            else if (flatFileStringConversionColumns.Contains(column.PipelineColumnName))
+            {
+                // A nullable-inferred source column needs a null-conditional ToString() (empty
+                // string for a genuine NULL) rather than a plain one, which would NullReferenceException.
+                var isNullable = request.NullableColumnNames?.Contains(column.PipelineColumnName) == true;
+                var expr = isNullable
+                    ? $"row.{column.PipelineColumnName}?.ToString() ?? \"\""
+                    : $"row.{column.PipelineColumnName}.ToString()";
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
             else if (!mismatchedTypeColumns.Contains(column.PipelineColumnName))

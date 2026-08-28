@@ -51,6 +51,8 @@ public static class PackageGenerator
         var tables = new List<DbContextEmitter.TableSpec>();
         var wiredFlows = new Dictionary<DataFlowPlan, ProgramFlowSpec>();
         var wiredSplits = new Dictionary<DataFlowPlan, ProgramConditionalSplitStep>();
+        var wiredMulticasts = new Dictionary<DataFlowPlan, ProgramMulticastStep>();
+        var wiredOleDbCommands = new Dictionary<DataFlowPlan, ProgramOleDbCommandStep>();
         var fileSourceEntries = new List<FileSourceEntryRequest>();
         var functionsUsed = new HashSet<string>();
         string? authMode = null;
@@ -90,6 +92,28 @@ public static class PackageGenerator
                     package, ns, flow, mergeJoin, fileSourceEntries, files, tables, functionsUsed,
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase);
                 if (mergeJoinFlow is not null) wiredFlows[flow] = mergeJoinFlow;
+                continue;
+            }
+
+            if (flow.Multicast is { } multicast)
+            {
+                var multicastStep = GenerateMulticastFlow(
+                    package, ns, flow, multicast, fileSourceEntries, files, tables, functionsUsed,
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                if (multicastStep is not null) wiredMulticasts[flow] = multicastStep;
+                continue;
+            }
+
+            // No destination table/entity/EF at all -- the command itself is the flow's sink, so
+            // this bypasses every SQL-destination-shaped step below entirely (fast-load gate,
+            // EntityEmitter, DbContextEmitter.TableSpec, TransformEmitter) the same way the
+            // Lookup path bypasses them.
+            if (flow.OleDbCommand is { } oleDbCommandPlan)
+            {
+                var oleDbCommandStep = GenerateOleDbCommandFlow(
+                    package, ns, flow, oleDbCommandPlan, fileSourceEntries, files, gaps,
+                    ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                if (oleDbCommandStep is not null) wiredOleDbCommands[flow] = oleDbCommandStep;
                 continue;
             }
 
@@ -190,14 +214,20 @@ public static class PackageGenerator
         // DbContext type regardless of whether anything maps to a SQL table (see
         // DbContextEmitter's own updated doc comment). Still correctly skipped when NOTHING
         // wired at all (an all-gapped package), matching existing behavior.
-        if (tables.Count > 0 || wiredFlows.Count > 0 || wiredSplits.Count > 0)
+        // An OLE DB Command flow contributes no table of its own, but its own OleDbCommandStep
+        // still runs through IUnitOfWork.ExecuteSqlAsync -- the same shared, DbContext-backed
+        // connection/transaction as everything else in the package -- so a package whose ONLY
+        // successfully-wired flow is an OLE DB Command still needs a (possibly table-less)
+        // DbContext generated, same reasoning as the Flat File Destination case right above.
+        if (tables.Count > 0 || wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0)
             Merge(files, gaps, DbContextEmitter.Emit($"{ns}.Model", $"{package.ObjectName}DbContext", tables));
 
         Merge(files, gaps, SsisFnEmitter.Emit($"{ns}.Ssis", functionsUsed));
 
         // Built by walking plan.Steps (not wiredFlows.Values) so a SqlStep between two flows
-        // keeps its real position -- a flow that never made it into wiredFlows/wiredSplits
-        // (failed a gate above) simply contributes nothing here, same as it always has.
+        // keeps its real position -- a flow that never made it into wiredFlows/wiredSplits/
+        // wiredMulticasts/wiredOleDbCommands (failed a gate above) simply contributes nothing
+        // here, same as it always has.
         var programSteps = new List<ProgramStep>();
         foreach (var step in plan.Steps)
         {
@@ -208,6 +238,12 @@ public static class PackageGenerator
                     break;
                 case FlowStep { Flow: var flow } when wiredSplits.TryGetValue(flow, out var programSplit):
                     programSteps.Add(programSplit);
+                    break;
+                case FlowStep { Flow: var flow } when wiredMulticasts.TryGetValue(flow, out var programMulticast):
+                    programSteps.Add(programMulticast);
+                    break;
+                case FlowStep { Flow: var flow } when wiredOleDbCommands.TryGetValue(flow, out var programOleDbCommand):
+                    programSteps.Add(programOleDbCommand);
                     break;
                 case SqlStep sqlStep:
                     programSteps.Add(new ProgramSqlStep(sqlStep.TaskName, sqlStep.Sql));
@@ -224,7 +260,7 @@ public static class PackageGenerator
             }
         }
 
-        if (wiredFlows.Count > 0 || wiredSplits.Count > 0)
+        if (wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0)
         {
             Merge(files, gaps, ProgramEmitter.Emit(new ProgramRequest(
                 PackageName: package.ObjectName,
@@ -344,9 +380,12 @@ public static class PackageGenerator
     /// "{entityName}" for a single-destination flow and a sanitized flow/task name for a split
     /// (which has no single destination entity to key it off). <paramref name="destinationForSqlCheck"/>
     /// is the destination BuildSqlFlowSource compares an OLE DB Source's server/database
-    /// against -- the flow's own destination, or a split's default branch's destination.</summary>
+    /// against -- the flow's own destination, or a split's default branch's destination. Null
+    /// when the flow has no SQL destination at all (an OLE DB Command flow, or a Multicast whose
+    /// only branches are Flat File Destinations) -- BuildSqlFlowSource skips the check entirely
+    /// in that case, the same reasoning already established for a Flat File Destination.</summary>
     private static (string RowTypeName, FlowSourceSpec Source)? ResolveFlowSource(
-        PackageSpec package, string ns, string rowTypeBaseName, DataFlowPlan flow, PipelineComponentSpec destinationForSqlCheck,
+        PackageSpec package, string ns, string rowTypeBaseName, DataFlowPlan flow, PipelineComponentSpec? destinationForSqlCheck,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GenerationGap> gaps,
         IReadOnlySet<string>? nullableColumnNames = null)
     {
@@ -661,13 +700,225 @@ public static class PackageGenerator
         return new ProgramConditionalSplitStep(flow.TaskName, programSource, rowTypeName, routerClassName, branches);
     }
 
+    /// <summary>Mirrors <see cref="GenerateConditionalSplitFlow"/>'s own Phase A/B shape (resolve
+    /// every branch's entity name up front, then emit, committing only if everything succeeds) --
+    /// the two real differences are that there's no RouterEmitter call at all (Multicast has no
+    /// condition to translate) and each branch is independently checked for whether it targets a
+    /// Flat File Destination (the real evidenced shape, RBC_Demo_ETL's own DFT_FixedWidthImport,
+    /// fans to BOTH an OLE DB Destination and a Flat File Destination from one Multicast -- no
+    /// evidenced Conditional Split ever needed this, so that method's own branches are still
+    /// assumed uniformly SQL-sunk).</summary>
+    private static ProgramMulticastStep? GenerateMulticastFlow(
+        PackageSpec package, string ns, DataFlowPlan flow, MulticastPlan multicast,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files,
+        List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
+        Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+    {
+        var flowBaseName = SanitizeIdentifier(flow.TaskName);
+        var defaultDestination = multicast.Branches[^1].Destination;
+        var defaultIsFlatFile = defaultDestination.ComponentClassId == "Microsoft.FlatFileDestination";
+
+        var nullableColumnNames = ResolveNullableColumnNames(flow);
+
+        // A null destinationForSqlCheck is passed when every branch is a Flat File Destination --
+        // there is no SQL destination anywhere in this flow to compare the source's connection
+        // against, the same reasoning BuildSqlFlowSource's own null-destinationComponent case
+        // documents for an OLE DB Command flow.
+        var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow,
+            defaultIsFlatFile ? null : defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames);
+        if (sourceResult is null) return null;
+        var (rowTypeName, programSource) = sourceResult.Value;
+        var rowTypeNamespace = programSource is CsvFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql";
+
+        // Phase A: validate every branch and resolve its entity name, without emitting anything
+        // yet -- same convergence-detection shape as GenerateConditionalSplitFlow's own Phase A.
+        var entityNames = new List<string>();
+        var branchIsFlatFile = new List<bool>();
+        foreach (var branch in multicast.Branches)
+        {
+            var isFlatFile = branch.Destination.ComponentClassId == "Microsoft.FlatFileDestination";
+            branchIsFlatFile.Add(isFlatFile);
+
+            if (!isFlatFile && !DestinationInfo.IsFastLoadConfigured(branch.Destination))
+            {
+                gaps.Add(new GenerationGap(flow.TaskName, $"Multicast branch '{branch.OutputName}': destination '{branch.Destination.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
+                return null;
+            }
+
+            // Keyed off the DESTINATION component's own name, not the branch's output name --
+            // consistent with the SQL branch's own convention (entityName comes from the
+            // destination table, never the branch) so two branches that converge to the SAME
+            // Flat File Destination (via a Union All) naturally compute the identical entity
+            // name too, the same convergence-detection shape entityNameCounts below relies on.
+            var entityName = isFlatFile
+                ? SanitizeIdentifier(flow.TaskName) + SanitizeIdentifier(branch.Destination.Name)
+                : TryResolveEntityName(flow.TaskName, branch.Destination, gaps);
+            if (entityName is null) return null;
+            entityNames.Add(entityName);
+        }
+        var entityNameCounts = entityNames
+            .GroupBy(n => n, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+
+        var branchFiles = new List<GeneratedFile>();
+        var branchTables = new List<DbContextEmitter.TableSpec>();
+        var branchFunctionsUsed = new HashSet<string>();
+        var branches = new List<ProgramMulticastBranch>();
+        var emittedDestinationRefIds = new HashSet<string>(StringComparer.Ordinal);
+        (string AuthMode, string? UserId, string? Server, string? Database)? resolvedAuth = null;
+
+        for (var i = 0; i < multicast.Branches.Count; i++)
+        {
+            var branch = multicast.Branches[i];
+            var entityName = entityNames[i];
+            var isFlatFile = branchIsFlatFile[i];
+
+            var branchTransformClassName = entityNameCounts[entityName] > 1
+                ? entityName + SanitizeIdentifier(branch.OutputName) + "Transform"
+                : entityName + "Transform";
+
+            FlowSinkSpec? sink = null;
+            if (emittedDestinationRefIds.Add(branch.Destination.RefId))
+            {
+                Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branch.Destination, nullableColumnNames));
+                if (isFlatFile)
+                {
+                    var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, branch.Destination, entityName, fileSourceEntries, gaps);
+                    if (flatFileSink is null) return null; // ResolveFlatFileSink already added the reason
+                    sink = flatFileSink;
+                }
+                else
+                {
+                    primaryKeysByDestination.TryGetValue(branch.Destination.RefId, out var primaryKey);
+                    branchTables.Add(new DbContextEmitter.TableSpec(entityName, branch.Destination, primaryKey));
+                    sink = new SqlFlowSink();
+                }
+            }
+
+            var derivedColumns = new List<PipelineComponentSpec>();
+            if (flow.DerivedColumn is not null) derivedColumns.Add(flow.DerivedColumn);
+            derivedColumns.AddRange(branch.DerivedColumns);
+
+            var transformResult = TransformEmitter.Emit(new TransformRequest(
+                MappingNamespace: $"{ns}.Mapping",
+                TransformClassName: branchTransformClassName,
+                RowTypeNamespace: rowTypeNamespace,
+                RowTypeName: rowTypeName,
+                EntityNamespace: $"{ns}.Model",
+                EntityName: entityName,
+                SsisFnNamespace: $"{ns}.Ssis",
+                Pipeline: flow.Pipeline,
+                DerivedColumns: derivedColumns,
+                DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+                DestinationComponent: branch.Destination,
+                NullableColumnNames: nullableColumnNames));
+            Merge(branchFiles, gaps, transformResult.Result);
+            foreach (var fn in transformResult.SsisFunctionsUsed) branchFunctionsUsed.Add(fn);
+
+            if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
+
+            // sink is only null when this destination RefId was already emitted by an earlier
+            // branch (a convergence) -- that earlier branch shares this one's own entityName (see
+            // the naming comment above), so ProgramEmitter's own DistinctBy(EntityName) is what
+            // actually picks which branch's Sink value gets used for the shared DI registration;
+            // this placeholder is a type-correct stand-in for the branch record, never read for
+            // real data.
+            sink ??= isFlatFile
+                ? new FlatFileFlowSink(entityName, false, null, [])
+                : new SqlFlowSink();
+
+            branches.Add(new ProgramMulticastBranch(branch.OutputName, entityName, branchTransformClassName, sink));
+
+            if (!isFlatFile && resolvedAuth is null && ResolveDatabaseAuth(package, branch.Destination) is { } auth)
+                resolvedAuth = auth;
+        }
+
+        // Every branch succeeded -- commit the buffered output for real.
+        files.AddRange(branchFiles);
+        tables.AddRange(branchTables);
+        foreach (var fn in branchFunctionsUsed) functionsUsed.Add(fn);
+
+        if (authMode is null && resolvedAuth is { } resolved)
+            (authMode, userId, targetServer, targetDatabase) = resolved;
+
+        return new ProgramMulticastStep(flow.TaskName, programSource, rowTypeName, branches);
+    }
+
+    /// <summary>Resolves an OLE DB Command flow -- no destination component, no EF entity, no
+    /// IBulkSink; the command runs once per source row via Etl.Core.Pipeline.
+    /// OleDbCommandStep&lt;TRow&gt;, on the same shared connection/transaction as everything else
+    /// in the package (IUnitOfWork.ExecuteSqlAsync). Validates that the command's own connection
+    /// manager targets the SAME server/database as the flow's own source -- there is no
+    /// destination here to compare against, so this is the one remaining place a second,
+    /// untracked connection could otherwise slip through unnoticed.</summary>
+    private static ProgramOleDbCommandStep? GenerateOleDbCommandFlow(
+        PackageSpec package, string ns, DataFlowPlan flow, OleDbCommandPlan commandPlan,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GenerationGap> gaps,
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+    {
+        var sourceComponent = flow.OleDbSource ?? flow.ExcelSource ?? flow.FlatFileSource;
+        if (sourceComponent is null)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName, $"OLE DB Command '{commandPlan.Component.Name}' has no resolvable upstream source -- not supported"));
+            return null;
+        }
+
+        var commandCmName = commandPlan.Component.OleDbCommand?.ConnectionName;
+        var commandParsed = commandCmName is not null ? FindConnectionManager(package, commandCmName)?.Parsed : null;
+        var sourceCmName = SourceInfo.ConnectionName(sourceComponent);
+        var sourceParsed = sourceCmName is not null ? FindConnectionManager(package, sourceCmName)?.Parsed : null;
+        if (commandParsed is null || sourceParsed is null || commandParsed.Server != sourceParsed.Server || commandParsed.Database != sourceParsed.Database)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"OLE DB Command '{commandPlan.Component.Name}' targets a different server/database than this flow's own source -- a second connection is not supported for a command-only flow"));
+            return null;
+        }
+
+        var flowBaseName = SanitizeIdentifier(flow.TaskName);
+        var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow, destinationForSqlCheck: null, fileSourceEntries, files, gaps);
+        if (sourceResult is null) return null; // ResolveFlowSource already added the reason
+        var (rowTypeName, programSource) = sourceResult.Value;
+
+        // Every parameter must resolve to a real column on the resolved row type -- matched by
+        // NAME (the command's own input column cachedName, which is itself cached FROM the
+        // upstream source's own output column name at design time, confirmed real from the
+        // evidenced XML) since there is no intervening transform between source and command in
+        // any evidenced shape.
+        var sourceOutput = sourceComponent.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+        if (sourceOutput is null)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName, $"Source '{sourceComponent.Name}' has no non-error output -- not supported"));
+            return null;
+        }
+        var rowColumnNames = PipelineResolver.Resolve(sourceOutput).Columns.Select(c => c.PipelineColumnName).ToHashSet(StringComparer.Ordinal);
+        var unresolved = commandPlan.ParameterColumnNames.Where(p => !rowColumnNames.Contains(p)).ToList();
+        if (unresolved.Count > 0)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"OLE DB Command '{commandPlan.Component.Name}' references column(s) not found on its own source's output ({string.Join(", ", unresolved)}) -- not supported"));
+            return null;
+        }
+
+        // commandParsed is guaranteed non-null here -- the earlier server/database check already
+        // required it to resolve (and to match the source's own connection).
+        if (authMode is null)
+        {
+            (authMode, userId, targetServer, targetDatabase) = commandParsed!.AuthMode == "SqlLogin"
+                ? ("SqlServer", commandParsed.UserId, commandParsed.Server, commandParsed.Database)
+                : ("Windows", null, commandParsed.Server, commandParsed.Database);
+        }
+
+        return new ProgramOleDbCommandStep(flow.TaskName, programSource, rowTypeName, commandPlan.SqlTemplate, commandPlan.ParameterColumnNames);
+    }
+
     /// <summary>Resolves an OLE DB or ADO NET Source into a SqlFlowSource -- dispatches to
     /// <see cref="BuildOleDbFlowSource"/> or <see cref="BuildAdoNetFlowSource"/> after the one
     /// check both share: a resolvable connection manager targeting the same server/database as
     /// the flow's own destination (a second source connection is not supported yet).</summary>
     private static SqlFlowSource? BuildSqlFlowSource(
         PackageSpec package, string taskName, PipelineComponentSpec source,
-        PipelineComponentSpec destinationComponent, List<GenerationGap> gaps)
+        PipelineComponentSpec? destinationComponent, List<GenerationGap> gaps)
     {
         var sourceCmName = SourceInfo.ConnectionName(source);
         if (sourceCmName is not { } cmName || FindConnectionManager(package, cmName) is not { } sourceCm
@@ -681,8 +932,11 @@ public static class PackageGenerator
         // its own connection is a file path, not a SQL connection -- so this check, which exists
         // to catch a SQL source/SQL destination pair that would silently need a second untracked
         // connection, doesn't apply: a Flat File Destination flow's SQL source is already the
-        // only SQL connection this flow uses.
-        if (destinationComponent.ComponentClassId != "Microsoft.FlatFileDestination")
+        // only SQL connection this flow uses. A null destinationComponent (an OLE DB Command
+        // flow, which has no destination component at all -- see OleDbCommandPlan's own doc
+        // comment) is the same situation: the source's own connection is already the only SQL
+        // connection this flow uses, so there's nothing to compare it against either.
+        if (destinationComponent is not null && destinationComponent.ComponentClassId != "Microsoft.FlatFileDestination")
         {
             var destCmName = DestinationInfo.ConnectionName(destinationComponent);
             var destParsed = destCmName is not null ? FindConnectionManager(package, destCmName)?.Parsed : null;

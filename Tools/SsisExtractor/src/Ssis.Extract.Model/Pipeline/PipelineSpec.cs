@@ -93,6 +93,11 @@ public sealed class PipelineComponentSpec
     /// (SSIS_From_Sandeep) -- <c>Microsoft.ExcelSource</c>, see <see cref="ExcelSourcePayload"/>'s
     /// own doc comment.</summary>
     public ExcelSourcePayload? ExcelSource { get; init; }
+
+    /// <summary>Added 2026-08-28 testing this tool against a real third-party portfolio
+    /// (SSIS_From_Sandeep) -- <c>Microsoft.OLEDBCommand</c>, see <see cref="OleDbCommandPayload"/>'s
+    /// own doc comment.</summary>
+    public OleDbCommandPayload? OleDbCommand { get; init; }
 }
 
 /// <summary>A component's reference to a connection manager. <see cref="ConnectionManagerRefRaw"/> is the pipeline's own reference shape (a refId path, e.g. "Package.ConnectionManagers[CM_EmployeesCsv]") -- notably NOT the DTSID-GUID form Execute SQL Task uses (see <c>ExecuteSqlTaskPayload.ConnectionRefRaw</c>'s doc comment); resolved the same way, by matching against <c>ConnectionManagerSpec.RefId</c> this time instead of <c>DtsId</c>.</summary>

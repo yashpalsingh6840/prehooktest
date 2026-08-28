@@ -511,4 +511,71 @@ public class PackageGeneratorTests
         var gap = Assert.Single(result.Gaps);
         Assert.Equal("SyntheticExcelSource.Notification", gap.Location);
     }
+
+    [Fact]
+    public void Generate_WiresAnOleDbCommandFlow_WithNoEntityOrDbTable()
+    {
+        // SyntheticOleDbCommand.dtsx: OLE DB Source -> OLE DB Command, no destination component
+        // at all -- proves the whole new flow shape: no EntityEmitter/DbContextEmitter.TableSpec/
+        // TransformEmitter output, a table-less DbContext still generated (IUnitOfWork still
+        // needs one), and no Mapping/ folder or using at all. Confirmed beyond this test by
+        // actually building the generated exe against a copy of Etl.Core and running it against
+        // .\SQLFORPOC_2022 -- all 3 seeded rows correctly flagged -- see
+        // Tools/SsisExtractor/CLAUDE.md's own "OLE DB Command + Multicast" section.
+        var package = LoadSyntheticFixture("SyntheticOleDbCommand.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        Assert.DoesNotContain(result.Files, f => f.RelativePath.StartsWith("Mapping/", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Files, f => f.RelativePath.StartsWith("Model/") && !f.RelativePath.EndsWith("DbContext.cs"));
+        Assert.Contains(result.Files, f => f.RelativePath == "Model/SyntheticOleDbCommandDbContext.cs");
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.DoesNotContain("using SyntheticOleDbCommand.Mapping;", programFile.Content);
+        Assert.Contains(
+            "var dFT_FlagCustomersStep = new OleDbCommandStep<DFT_FlagCustomersSqlRow>(",
+            programFile.Content);
+        Assert.Contains(
+            "\"UPDATE dbo.SyntheticOleDbCommandTarget SET Flagged = 1 WHERE CustomerID = {0}\",",
+            programFile.Content);
+        Assert.Contains("row => new object?[] { row.CustomerID },", programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Only the unavoidable non-blocking gaps: the SqlCommand-mode advisory and Notification.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticOleDbCommand.Notification");
+    }
+
+    [Fact]
+    public void Generate_WiresAMulticastFlow_FanningToBothASqlAndAFlatFileBulkSink()
+    {
+        // SyntheticMulticast.dtsx: OLE DB Source -> Multicast -> {OLE DB Destination, Flat File
+        // Destination}. Proves the whole round's own real discovery: a Multicast branch's own
+        // int ID column feeding a Flat File Destination needed a ToString() widening, not a
+        // type-mismatch gap (a Flat File Destination has no real narrowing risk -- every column
+        // it writes is text). Confirmed beyond this test by actually building the generated exe
+        // against a copy of Etl.Core and running it against .\SQLFORPOC_2022 -- all 3 rows
+        // landed correctly in BOTH the table and the audit CSV -- see
+        // Tools/SsisExtractor/CLAUDE.md's own "OLE DB Command + Multicast" section.
+        var package = LoadSyntheticFixture("SyntheticMulticast.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains("var dFT_FixedWidthImportSplit = new MulticastStep<DFT_FixedWidthImportSqlRow>(", programFile.Content);
+        Assert.Contains("builder.Services.AddBulkSink<SyntheticMulticastTarget>();", programFile.Content);
+        Assert.Contains("builder.Services.AddScoped<IBulkSink<DFT_FixedWidthImportFFDST_AuditTrail_APPEND>>(sp =>", programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        var flatFileTransform = Assert.Single(result.Files, f => f.RelativePath == "Mapping/DFT_FixedWidthImportFFDST_AuditTrail_APPENDTransform.cs");
+        // The ToString() widening itself -- an int source column assigned to the flat file
+        // destination's own string-typed entity property.
+        Assert.Contains("ID = row.ID.ToString(),", flatFileTransform.Content);
+        CodeAssertions.AssertNoSyntaxErrors(flatFileTransform.Content);
+
+        // No numeric-passthrough-coercion gap for the flat file branch's own ID column -- only
+        // the unavoidable non-blocking gaps (SqlCommand-mode advisory, Notification).
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticMulticast.Notification");
+    }
 }

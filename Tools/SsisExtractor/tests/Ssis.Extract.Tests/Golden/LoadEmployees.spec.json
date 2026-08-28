@@ -664,6 +664,7 @@
               "Lookup": null,
               "MergeJoin": null,
               "Name": "DER_MergeColumns",
+              "OleDbCommand": null,
               "OleDbDestination": null,
               "OleDbSource": null,
               "Outputs": [
@@ -810,6 +811,7 @@
                       "TruncationRowDisposition": "FailComponent"
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": "Default Output of the Derived Column Transformation",
                   "ExclusionGroup": "1",
@@ -859,6 +861,7 @@
                       "TruncationRowDisposition": null
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": "Error Output of the Derived Column Transformation",
                   "ExclusionGroup": "1",
@@ -949,6 +952,7 @@
               "Lookup": null,
               "MergeJoin": null,
               "Name": "FF_SRC_Employees",
+              "OleDbCommand": null,
               "OleDbDestination": null,
               "OleDbSource": null,
               "Outputs": [
@@ -1235,6 +1239,7 @@
                       "TruncationRowDisposition": "FailComponent"
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": null,
                   "ExclusionGroup": null,
@@ -1375,6 +1380,7 @@
                       "TruncationRowDisposition": null
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": null,
                   "ExclusionGroup": null,
@@ -1618,6 +1624,7 @@
               "Lookup": null,
               "MergeJoin": null,
               "Name": "OLEDST_Employee",
+              "OleDbCommand": null,
               "OleDbDestination": {
                 "AccessMode": 3,
                 "ColumnMappings": [
@@ -1712,6 +1719,7 @@
                       "TruncationRowDisposition": null
                     }
                   ],
+                  "Dangling": null,
                   "DeleteOutputOnPathDetached": null,
                   "Description": null,
                   "ExclusionGroup": "1",

@@ -95,6 +95,34 @@ public sealed record ProgramConditionalSplitStep(
     string RouterClassName,
     List<ProgramConditionalSplitBranch> Branches) : ProgramStep;
 
+/// <summary>One branch of a generated Multicast step -- unlike <see cref="ProgramConditionalSplitBranch"/>,
+/// carries its own <see cref="Sink"/> because the real evidenced Multicast shape (RBC_Demo_ETL's
+/// own DFT_FixedWidthImport) fans to TWO DIFFERENT destination kinds from one component (a Flat
+/// File Destination and an OLE DB Destination) -- no evidenced Conditional Split ever needed
+/// this, so that record's own branches are still assumed uniformly SQL-sunk.</summary>
+public sealed record ProgramMulticastBranch(string OutputName, string EntityName, string TransformClassName, FlowSinkSpec Sink);
+
+/// <summary>One Multicast: one source, every row copied unconditionally to every branch -- no
+/// IRowRouter at all, unlike <see cref="ProgramConditionalSplitStep"/>.</summary>
+public sealed record ProgramMulticastStep(
+    string StepName,
+    FlowSourceSpec Source,
+    string RowTypeName,
+    List<ProgramMulticastBranch> Branches) : ProgramStep;
+
+/// <summary>An OLE DB Command flow -- no destination table, no EF entity, no IBulkSink at all;
+/// the command itself is the flow's sink, run once per source row via
+/// Etl.Core.Pipeline.OleDbCommandStep&lt;TRow&gt;. <see cref="SqlTemplate"/> already has every
+/// <c>?</c> rewritten to EF Core's own "{0}", "{1}", ... raw-SQL placeholder syntax (see
+/// PackagePlanner.OleDbCommandPlan), matched positionally against <see cref="ParameterColumnNames"/>
+/// (the row type's own property names, in the same order).</summary>
+public sealed record ProgramOleDbCommandStep(
+    string StepName,
+    FlowSourceSpec Source,
+    string RowTypeName,
+    string SqlTemplate,
+    IReadOnlyList<string> ParameterColumnNames) : ProgramStep;
+
 public sealed record ProgramRequest(
     string PackageName,
     string RootNamespace,
@@ -119,11 +147,14 @@ public static class ProgramEmitter
     {
         var flows = request.Steps.OfType<ProgramFlowStep>().Select(s => s.Flow).ToList();
         var splits = request.Steps.OfType<ProgramConditionalSplitStep>().ToList();
-        if (flows.Count == 0 && splits.Count == 0)
+        var multicasts = request.Steps.OfType<ProgramMulticastStep>().ToList();
+        var oleDbCommands = request.Steps.OfType<ProgramOleDbCommandStep>().ToList();
+        if (flows.Count == 0 && splits.Count == 0 && multicasts.Count == 0 && oleDbCommands.Count == 0)
             return new EmitResult([], [new GenerationGap(request.PackageName, "no Data Flow Task could be planned for this package")]);
 
         var allSources = new List<FlowSourceSpec>();
-        foreach (var source in flows.Select(f => f.Source).Concat(splits.Select(s => s.Source)))
+        foreach (var source in flows.Select(f => f.Source).Concat(splits.Select(s => s.Source))
+                     .Concat(multicasts.Select(m => m.Source)).Concat(oleDbCommands.Select(c => c.Source)))
         {
             allSources.Add(source);
             if (source is MergeJoinFlowSource mj) { allSources.Add(mj.LeftSource); allSources.Add(mj.RightSource); }
@@ -136,7 +167,14 @@ public static class ProgramEmitter
         // Merge Join flow needs these usings even when BOTH its sides happen to be CSV-sourced
         // (the real evidenced case).
         var usesSql = allSources.Any(s => s is SqlFlowSource or MergeJoinFlowSource);
-        var usesFlatFileSink = flows.Any(f => f.Sink is FlatFileFlowSink);
+        var usesFlatFileSink = flows.Any(f => f.Sink is FlatFileFlowSink) || multicasts.Any(m => m.Branches.Any(b => b.Sink is FlatFileFlowSink));
+        // An OLE DB Command flow is the one flow shape with no IRowTransform/TransformEmitter
+        // output at all -- a package whose ONLY flow is an OLE DB Command has no Mapping/
+        // folder generated, so this using must be conditional (unlike Model, which always
+        // exists: DbContextEmitter emits a table-less DbContext even then). Confirmed real: an
+        // OLE DB Command-only package failed CS0234 ("namespace 'Mapping' does not exist")
+        // before this fix, caught by actually building the generated project.
+        var usesMapping = flows.Count > 0 || splits.Count > 0 || multicasts.Count > 0;
 
         var lines = new List<string> { "using Etl.Core.Abstractions;" };
         if (usesCsv) lines.Add("using Etl.Core.Csv;");
@@ -148,7 +186,7 @@ public static class ProgramEmitter
         if (usesCsv) lines.Add($"using {request.RootNamespace}.Csv;");
         if (usesSql) lines.Add($"using {request.RootNamespace}.Sql;");
         if (usesExcel) lines.Add($"using {request.RootNamespace}.Excel;");
-        lines.Add($"using {request.RootNamespace}.Mapping;");
+        if (usesMapping) lines.Add($"using {request.RootNamespace}.Mapping;");
         lines.Add($"using {request.RootNamespace}.Model;");
         lines.Add("using Microsoft.Extensions.DependencyInjection;");
         lines.Add("using Microsoft.Extensions.Logging;");
@@ -162,13 +200,25 @@ public static class ProgramEmitter
 
         // A Conditional Split branch's own sink is always SQL -- no evidenced package combines
         // a split with a Flat File Destination -- so every branch entity keeps the plain
-        // AddBulkSink<T>() path unconditionally.
+        // AddBulkSink<T>() path unconditionally. A Multicast branch is NOT assumed uniformly SQL
+        // the same way -- the real evidenced shape fans to both an OLE DB Destination AND a Flat
+        // File Destination from one component, so its branches are partitioned by their own Sink.
+        // DistinctBy(EntityName), not just Distinct() -- two Multicast branches CAN converge to
+        // the same destination (a Union All), in which case they share one entityName but carry
+        // two ProgramMulticastBranch records; only the first's own Sink value holds the real
+        // data (see PackageGenerator.GenerateMulticastFlow's own comment), so picking any one
+        // distinct-by-name entry is correct and avoids emitting the same DI registration twice.
         var allBranchEntityNames = splits.SelectMany(s => s.Branches.Select(b => b.EntityName));
-        var sqlSinkEntityNames = flows.Where(f => f.Sink is SqlFlowSink).Select(f => f.EntityName).Concat(allBranchEntityNames).Distinct();
+        var multicastBranchesByEntity = multicasts.SelectMany(m => m.Branches).DistinctBy(b => b.EntityName).ToList();
+        var multicastSqlBranchEntityNames = multicastBranchesByEntity.Where(b => b.Sink is SqlFlowSink).Select(b => b.EntityName);
+        var sqlSinkEntityNames = flows.Where(f => f.Sink is SqlFlowSink).Select(f => f.EntityName)
+            .Concat(allBranchEntityNames).Concat(multicastSqlBranchEntityNames).Distinct();
         foreach (var entityName in sqlSinkEntityNames)
             lines.Add($"builder.Services.AddBulkSink<{entityName}>();");
         foreach (var flow in flows.Where(f => f.Sink is FlatFileFlowSink))
             EmitFlatFileSinkRegistration(lines, flow.EntityName, (FlatFileFlowSink)flow.Sink);
+        foreach (var branch in multicastBranchesByEntity.Where(b => b.Sink is FlatFileFlowSink))
+            EmitFlatFileSinkRegistration(lines, branch.EntityName, (FlatFileFlowSink)branch.Sink);
         lines.Add("builder.Services.AddEmailNotifications(builder.Configuration);");
         lines.Add("");
 
@@ -185,6 +235,14 @@ public static class ProgramEmitter
             lines.Add($"builder.Services.AddScoped<IRowRouter<{split.RowTypeName}>, {split.RouterClassName}>();");
             lines.Add("");
         }
+
+        // Multicast has no IRowRouter to register -- every row goes to every branch
+        // unconditionally, so only the shared row source is a DI service.
+        foreach (var multicast in multicasts)
+            EmitRowSourceRegistration(lines, multicast.RowTypeName, multicast.Source);
+
+        foreach (var cmd in oleDbCommands)
+            EmitRowSourceRegistration(lines, cmd.RowTypeName, cmd.Source);
 
         lines.Add("builder.Services.AddScoped<IEtlPackage>(sp =>");
         lines.Add("{");
@@ -256,6 +314,43 @@ public static class ProgramEmitter
                     }
                     lines.Add("        ],");
                     lines.Add($"        sp.GetRequiredService<ILogger<ConditionalSplitStep<{splitStep.RowTypeName}>>>());");
+                    lines.Add("");
+                    break;
+                case ProgramMulticastStep multicastStep:
+                    var multicastLocal = SplitStepLocalName(multicastStep.StepName); // same lowercase-first convention, generic enough to reuse
+                    orderedLocalNames.Add(multicastLocal);
+                    lines.Add($"    var {multicastLocal} = new MulticastStep<{multicastStep.RowTypeName}>(");
+                    lines.Add($"        \"{multicastStep.StepName}\",");
+                    lines.Add($"        sp.GetRequiredService<IRowSource<{multicastStep.RowTypeName}>>(),");
+                    lines.Add("        [");
+                    for (var i = 0; i < multicastStep.Branches.Count; i++)
+                    {
+                        var branch = multicastStep.Branches[i];
+                        var comma = i < multicastStep.Branches.Count - 1 ? "," : "";
+                        // Same "construct the transform directly, resolve the sink via DI" split
+                        // as ConditionalSplitStep's own branches, for the exact same reason (a
+                        // shared entity name across branches would otherwise collide on the
+                        // generic IRowTransform<TRow,TEntity> DI registration) -- IBulkSink<TEntity>
+                        // resolves correctly via DI regardless of whether it's a SqlBulkSink or a
+                        // FlatFileBulkSink, since both registration paths add the same service type.
+                        lines.Add($"            new ConditionalSplitBranch<{multicastStep.RowTypeName}, {branch.EntityName}>(");
+                        lines.Add($"                \"{branch.OutputName}\",");
+                        lines.Add($"                new {branch.TransformClassName}(),");
+                        lines.Add($"                sp.GetRequiredService<IBulkSink<{branch.EntityName}>>()){comma}");
+                    }
+                    lines.Add("        ],");
+                    lines.Add($"        sp.GetRequiredService<ILogger<MulticastStep<{multicastStep.RowTypeName}>>>());");
+                    lines.Add("");
+                    break;
+                case ProgramOleDbCommandStep cmdStep:
+                    var cmdLocal = SqlStepLocalName(cmdStep.StepName); // same lowercase-first convention, generic enough to reuse
+                    orderedLocalNames.Add(cmdLocal);
+                    lines.Add($"    var {cmdLocal} = new OleDbCommandStep<{cmdStep.RowTypeName}>(");
+                    lines.Add($"        \"{cmdStep.StepName}\",");
+                    lines.Add($"        sp.GetRequiredService<IRowSource<{cmdStep.RowTypeName}>>(),");
+                    lines.Add($"        {CSharpStringLiteral(cmdStep.SqlTemplate)},");
+                    lines.Add($"        row => new object?[] {{ {string.Join(", ", cmdStep.ParameterColumnNames.Select(c => $"row.{c}"))} }},");
+                    lines.Add($"        sp.GetRequiredService<ILogger<OleDbCommandStep<{cmdStep.RowTypeName}>>>());");
                     lines.Add("");
                     break;
             }

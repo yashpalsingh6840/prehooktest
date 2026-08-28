@@ -203,6 +203,35 @@ public sealed class ExcelSourcePayload
 }
 
 /// <summary>
+/// <c>Microsoft.OLEDBCommand</c> -- added 2026-08-28 testing this tool against
+/// SSIS_From_Sandeep's own <c>Package_Advanced.dtsx</c> (<c>DFT_FlagCustomers</c>'s
+/// <c>OLECMD_SetFlag</c>: <c>EXEC dbo.usp_SetCustomerFlag ?, N'flagged'</c>). Unlike every
+/// other bespoke destination-shaped payload in this file, this component has NO destination
+/// table at all -- it executes <see cref="SqlCommand"/> once per input row, with each
+/// <c>?</c> placeholder bound positionally to the matching entry in <see cref="Parameters"/>
+/// (the component's own <c>&lt;inputColumns&gt;</c>, in declaration order -- confirmed real
+/// from the evidenced XML). <see cref="ParameterMapping"/> is kept as raw text purely so
+/// codegen can detect a non-empty value and report a gap rather than guess a remapping --
+/// the one evidenced instance leaves it empty, relying on the declaration-order default.
+/// </summary>
+public sealed class OleDbCommandPayload
+{
+    public string? ConnectionName { get; init; }
+    public string? SqlCommand { get; init; }
+    public string? ParameterMapping { get; init; }
+    public int? CommandTimeout { get; init; }
+
+    /// <summary>The command's own input columns, in declaration order -- position N binds to the Nth <c>?</c> placeholder in <see cref="SqlCommand"/> when <see cref="ParameterMapping"/> is empty.</summary>
+    public List<OleDbCommandParameterSpec> Parameters { get; init; } = [];
+}
+
+public sealed class OleDbCommandParameterSpec
+{
+    public required string Name { get; init; }
+    public string? DataType { get; init; }
+}
+
+/// <summary>
 /// <c>Microsoft.Lookup</c> (plan §5.7 names it explicitly as a common gap component).
 /// Confirmed by building a real Lookup via the SSIS 17 object model against a live
 /// SqlServer reference table (docs/report-schema.md "Synthetic component-coverage

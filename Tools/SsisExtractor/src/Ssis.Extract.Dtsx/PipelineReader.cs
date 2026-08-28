@@ -79,6 +79,7 @@ internal static class PipelineReader
         SortPayload? sort = null;
         MergeJoinPayload? mergeJoin = null;
         ExcelSourcePayload? excelSource = null;
+        OleDbCommandPayload? oleDbCommand = null;
 
         // Script Component's own componentClassID is the generic "Microsoft.ManagedComponentHost"
         // -- not a Script-Component-specific ID the way every other bespoke type here is --
@@ -210,6 +211,20 @@ internal static class PipelineReader
                 ColumnMappings = mainOutput is null ? [] : BuildColumnMappings(
                     mainOutput.Columns.Select(c => (c.Name, c.ExternalMetadataColumnId)),
                     mainOutput.ExternalMetadataColumns),
+            };
+        }
+        else if (componentClassId == "Microsoft.OLEDBCommand")
+        {
+            var mainInput = inputs.FirstOrDefault();
+            oleDbCommand = new OleDbCommandPayload
+            {
+                ConnectionName = connectionName,
+                SqlCommand = NullIfEmpty(GetProperty(properties, "SqlCommand")),
+                ParameterMapping = NullIfEmpty(GetProperty(properties, "ParameterMapping")),
+                CommandTimeout = ParseInt(GetProperty(properties, "CommandTimeout")),
+                Parameters = (mainInput?.Columns ?? [])
+                    .Select(c => new OleDbCommandParameterSpec { Name = c.CachedName, DataType = c.CachedDataType })
+                    .ToList(),
             };
         }
         else if (componentClassId == "Microsoft.Lookup")
@@ -363,6 +378,7 @@ internal static class PipelineReader
             Sort = sort,
             MergeJoin = mergeJoin,
             ExcelSource = excelSource,
+            OleDbCommand = oleDbCommand,
         };
     }
 
@@ -439,6 +455,7 @@ internal static class PipelineReader
         SynchronousInputId = outputEl.Attr("synchronousInputId"),
         ExclusionGroup = outputEl.Attr("exclusionGroup"),
         DeleteOutputOnPathDetached = outputEl.AttrBool("deleteOutputOnPathDetached"),
+        Dangling = outputEl.AttrBool("dangling"),
         Columns = (outputEl.Element("outputColumns")?.Elements("outputColumn") ?? [])
             .Select(c =>
             {

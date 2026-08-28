@@ -372,4 +372,44 @@ public class PackagePlannerTests
         Assert.Null(flow.DerivedColumn);
         Assert.Equal("Microsoft.OLEDBDestination", flow.DestinationComponent.ComponentClassId);
     }
+
+    [Fact]
+    public void Plan_ResolvesAnOleDbCommand_AsTheFlowsOwnSink_WithNoDestinationComponentAtAll()
+    {
+        // SyntheticOleDbCommand.dtsx: OLE DB Source -> OLE DB Command, no destination component
+        // at all -- the exact real evidenced shape from SSIS_From_Sandeep's own
+        // Package_Advanced.dtsx (DFT_FlagCustomers). Before this round, the "no destination
+        // found" search always failed for this shape.
+        var package = LoadSyntheticFixture("SyntheticOleDbCommand.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var flow = Assert.Single(plan.Flows);
+        Assert.NotNull(flow.OleDbCommand);
+        Assert.Equal("OLECMD_SetFlag", flow.OleDbCommand!.Component.Name);
+        Assert.Equal("UPDATE dbo.SyntheticOleDbCommandTarget SET Flagged = 1 WHERE CustomerID = {0}", flow.OleDbCommand.SqlTemplate);
+        Assert.Equal(["CustomerID"], flow.OleDbCommand.ParameterColumnNames);
+    }
+
+    [Fact]
+    public void Plan_ResolvesAMulticast_FanningToTwoDifferentDestinationKinds_SkippingTheDanglingSpareOutput()
+    {
+        // SyntheticMulticast.dtsx: OLE DB Source -> Multicast -> {OLE DB Destination, Flat File
+        // Destination} -- the exact real evidenced shape from SSIS_From_Sandeep's own
+        // Package_Legacy.dtsx (DFT_FixedWidthImport). The real object model auto-provisions a
+        // THIRD, permanently unconnected "spare" output the moment both real branches are wired
+        // up (confirmed real from both this fixture's own saved XML and the real package's own
+        // MCAST_FixedRows) -- PlanMulticast must resolve exactly 2 branches, not 3.
+        var package = LoadSyntheticFixture("SyntheticMulticast.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var flow = Assert.Single(plan.Flows);
+        Assert.NotNull(flow.Multicast);
+        Assert.Equal(2, flow.Multicast!.Branches.Count);
+        Assert.Equal("Microsoft.OLEDBDestination", flow.Multicast.Branches[0].Destination.ComponentClassId);
+        Assert.Equal("Microsoft.FlatFileDestination", flow.Multicast.Branches[1].Destination.ComponentClassId);
+    }
 }
