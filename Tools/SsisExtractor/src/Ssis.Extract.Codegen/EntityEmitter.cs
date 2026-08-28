@@ -37,8 +37,12 @@ public static class EntityEmitter
             // A passthrough column's own source buffer name equals column.PipelineColumnName --
             // if THAT column is nullable-inferred (NullabilityInference), the source row's own
             // property is a nullable CLR type, so this entity's own property must be too or a
-            // plain assignment (SqlRowEmitter's row -> this) won't compile.
-            var isNullable = column.Type.ClrTypeName != "string" && (nullableColumnNames?.Contains(column.PipelineColumnName) ?? false);
+            // plain assignment (SqlRowEmitter's row -> this) won't compile. string is NOT
+            // excluded (see SqlRowEmitter's identical check, fixed 2026-08-28 for the same
+            // reason): this project generates with <Nullable>enable</Nullable> +
+            // TreatWarningsAsErrors, so a `string` property assigned a genuinely-null value is a
+            // build ERROR (CS8601), not just a runtime risk.
+            var isNullable = nullableColumnNames?.Contains(column.PipelineColumnName) ?? false;
             var typeName = isNullable ? column.Type.ClrTypeName + "?" : column.Type.ClrTypeName;
             var initializer = !isNullable && column.Type.ClrTypeName == "string" ? " = \"\";" : "";
             propertyLines.Add($"    public {typeName} {column.ExternalColumnName} {{ get; set; }}{initializer}");

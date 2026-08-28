@@ -43,6 +43,30 @@ public class EntityEmitterTests
     }
 
     [Fact]
+    public void Emit_MakesAStringPropertyNullable_WhenItsOwnColumnIsNullableInferred()
+    {
+        // Mirrors SqlRowEmitter's own identical fix (2026-08-28): this project generates with
+        // <Nullable>enable</Nullable> + TreatWarningsAsErrors, so a `string` property assigned a
+        // genuinely-null value is a build ERROR (CS8601), not just a runtime risk -- string must
+        // NOT be excluded from nullable-column treatment the way an earlier version of this
+        // emitter excluded it.
+        var package = TestFixtures.LoadPackage("LoadEmployees.dtsx");
+        var destination = TestFixtures.FindComponent(package, "Microsoft.OLEDBDestination", "OLEDST_Employee");
+
+        var result = EntityEmitter.Emit("LoadEmployees.Model", "Employee", destination,
+            nullableColumnNames: new HashSet<string> { "EmployeeKey" });
+
+        Assert.Empty(result.Gaps);
+        var file = Assert.Single(result.Files);
+        Assert.Contains("public string? EmployeeKey { get; set; }", file.Content);
+        Assert.DoesNotContain("EmployeeKey { get; set; } = \"\";", file.Content);
+        // Every other string column is unaffected -- not blanket-nullable, only the named one.
+        Assert.Contains("public string FullName { get; set; } = \"\";", file.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+    [Fact]
     public void Emit_UsesTheNamespaceAndEntityNamePassedIn()
     {
         var package = TestFixtures.LoadPackage("LoadReferenceData.dtsx");

@@ -2703,6 +2703,34 @@ nothing has yet exercised a nullable destination-entity string column), and Data
 target types other than DT_I4/DT_DBDATE. Both "Conditional Split condition nullability" and
 "CSV-source nullability", named as follow-ups above, are now closed/retired respectively.
 
+### `EntityEmitter`'s string-nullability exclusion, fixed (2026-08-28, same day)
+
+The smallest of the remaining named gaps, picked up immediately after the Data Conversion round
+above: `EntityEmitter` had the exact same `column.Type.ClrTypeName != "string"` exclusion
+`SqlRowEmitter` carried until it was fixed earlier the same day for a real, evidenced reason (a
+`string` property assigned a genuinely-null value is a build ERROR, `CS8601`, under this
+project's `<Nullable>enable</Nullable>` + `TreatWarningsAsErrors=true` -- not just a runtime
+risk). Nothing in this session's own fixtures had exercised a nullable destination-entity
+string column yet, so the mirrored bug in `EntityEmitter` was still live, just unobserved.
+
+Fixed identically: dropped the `!= "string"` guard from the `isNullable` computation, matching
+`SqlRowEmitter`'s own already-fixed logic and doc comment exactly. No behavior changes for any
+existing column -- only a column both (a) genuinely a `string` and (b) present in
+`nullableColumnNames` is affected, and no prior fixture had that combination.
+
+**Verified with a unit test, not a new end-to-end fixture** -- this is pure mechanical parity
+with an already-proven fix, not new semantics, so the same evidence bar didn't apply.
+`EntityEmitterTests.Emit_MakesAStringPropertyNullable_WhenItsOwnColumnIsNullableInferred` reuses
+the real `LoadEmployees` destination, passing `EmployeeKey` (a real string column) as
+nullable-inferred: asserts `public string? EmployeeKey { get; set; }` with no `= "";`
+initializer, while every other string column (`FullName`) is untouched. Regression: 107/107 in
+`Ssis.Extract.Codegen.Tests` (was 106), same 3 pre-existing unrelated failures elsewhere.
+
+**Remaining known gaps, updated once more:** Flat File Destination, Excel Source, ForEach Loop
+containers, Conditional Split -> Sort -> Merge, multi-source merge/join flows, and Data
+Conversion target types other than DT_I4/DT_DBDATE. `EntityEmitter`'s string-nullability
+exclusion, named above, is now closed.
+
 ## Traps already hit once — don't re-derive these
 
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
