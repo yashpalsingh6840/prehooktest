@@ -803,7 +803,7 @@ A second, unrelated real bug (`GateRunner` not setting the job process's working
 which silently broke the job's own `appsettings.json` lookup and surfaced as an
 unrelated-looking Windows-auth failure) was also caught and fixed the same session.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile); nullable value-typed column support added 2026-08-27, same session -- an evidence-based minimal version (infer nullable from ISNULL(x) usage, unwrap with .Value everywhere else, a real named tradeoff vs. full null-flow analysis) scoped to SQL sources/Derived Columns only, verified end-to-end with a genuine NULL row against .\SQLFORPOC_2022; Data Conversion component support added 2026-08-28, first for SQL-source/single-destination flows only (a real dtexec probe run first to measure IgnoreFailure's actual behavior -- never drops a row, nulls the one failing column -- then LineageBuilder extended with a new "DataConversion" edge kind, TransformEmitter wired to emit SsisFn.ToNullableI4/ToNullableDate against the raw source column, and a real, previously-latent SqlRowEmitter/SqlRowReaderEmitter bug fixed along the way), then same day extended to the Conditional-Split-cross-reference case that round's own closing claim had missed -- RouterEmitter and a Derived-Column-referencing-a-Data-Conversion-column path both wired to the same TranslateDataConversion resolution, retiring both "Conditional Split condition nullability" and "CSV-source nullability" as gaps (the latter turned out not to exist at all for this feature), fixing two more real bugs found only by building/running the real package's whole regenerated solution for the first time (a missing nullableColumnNames thread into EntityEmitter, and a Roslyn nullable-flow-analysis CS8629 needing a targeted null-forgiving `!`), and closing a third, previously-SILENT PackagePlanner gap (a multi-source Merge Join flow used to generate broken code with zero reported gaps) -- `DFT_DerivedAndSplit` now closes fully end-to-end, verified against both the real package (0 warnings/0 errors across its whole generated solution) and a new dedicated fixture run against `.\SQLFORPOC_2022`; `EntityEmitter`'s own string-nullability exclusion fixed 2026-08-28, mirroring `SqlRowEmitter`'s earlier fix, verified with a unit test rather than a new fixture since it's mechanical parity with an already-proven fix; Flat File Destination support added 2026-08-28 -- a new Etl.Core FlatFileBulkSink write-side abstraction, a codegen bypass for the whole EF Core/DbContext path (a flat file has no table), and a narrow direct-copy exemption scoped to this destination type only -- closing RBC_Demo_ETL's own DFT_ExportDelimited/DFT_ExportFixedWidth fully (0 warnings/0 errors building the real package's whole regenerated solution) plus a dedicated fixture run end-to-end against `.\SQLFORPOC_2022` that empirically confirmed real fixed-width padding/truncation behavior, fixing two more real bugs along the way (BuildSqlFlowSource's server/database check wrongly assumed every destination has one, and a "zero SQL tables in the whole package" case that left Program.cs referencing a DbContext type that was never generated); Sort + Merge Join support added 2026-08-28 -- a new Etl.Core MergeJoinRowSource abstraction (Merge Join modeled as an IRowSource, not a new step type, so it needed zero changes to DataFlowStep), a corrected-after-one-wrong-reading SortPayload (key designation lives on Sort's own INPUT columns, not output), and a hand-walked (not LineageBuilder-based, which would be ambiguous here) backward resolution from Merge Join's own output through Sort to each side's real source -- closing RBC_Demo_ETL's own DFT_SortAndMergeJoin fully (0 warnings/0 errors building the real package's whole regenerated solution), with the join algorithm itself verified via 5 genuine unit tests since a dedicated dtexec-runnable fixture hit an unresolved SSIS object-model quirk (Microsoft.MergeJoin auto-generating extra output columns, documented rather than resolved); Conditional Split -> Sort -> Merge support added 2026-08-28, same day -- a different, single-source shape than the Merge Join round, closed with two surgical fixes and zero new Etl.Core code (Sort/Merge are genuine name-preserving pass-throughs, so the pre-existing destination-column resolution needed no changes) -- closing RBC_Demo_ETL's own DFT_MergeSortedBranches fully (0 warnings/0 errors building the real package's whole regenerated solution), this time WITH a working dedicated fixture run end-to-end against .\SQLFORPOC_2022 (unlike the Merge Join round), after discovering Microsoft.Merge needs a third, different "add a second input" recipe from both Union All's and Merge Join's own (it already has two inputs from construction)); ForEach Loop container support added 2026-08-28, same day, sized against Excel Source first (picked as the smaller lift) -- closing RBC_Demo_ETL's own FEL_SampleFiles by recognizing its one evidenced body shape (a single Execute SQL Task whose SqlStatementSource is entirely PropertyExpression-driven) via a new, deliberately narrow Etl.Core.Pipeline.ForEachLoopStep and a small standalone expression translator (not a reuse of the pipeline-column-based ExpressionTranslator, since there is no buffer here), verified against the real package's own zero-gap planner resolution AND a genuinely working dedicated fixture run end-to-end against real files and .\SQLFORPOC_2022 (unlike the Merge Join round's own unresolved fixture attempt))
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile); nullable value-typed column support added 2026-08-27, same session -- an evidence-based minimal version (infer nullable from ISNULL(x) usage, unwrap with .Value everywhere else, a real named tradeoff vs. full null-flow analysis) scoped to SQL sources/Derived Columns only, verified end-to-end with a genuine NULL row against .\SQLFORPOC_2022; Data Conversion component support added 2026-08-28, first for SQL-source/single-destination flows only (a real dtexec probe run first to measure IgnoreFailure's actual behavior -- never drops a row, nulls the one failing column -- then LineageBuilder extended with a new "DataConversion" edge kind, TransformEmitter wired to emit SsisFn.ToNullableI4/ToNullableDate against the raw source column, and a real, previously-latent SqlRowEmitter/SqlRowReaderEmitter bug fixed along the way), then same day extended to the Conditional-Split-cross-reference case that round's own closing claim had missed -- RouterEmitter and a Derived-Column-referencing-a-Data-Conversion-column path both wired to the same TranslateDataConversion resolution, retiring both "Conditional Split condition nullability" and "CSV-source nullability" as gaps (the latter turned out not to exist at all for this feature), fixing two more real bugs found only by building/running the real package's whole regenerated solution for the first time (a missing nullableColumnNames thread into EntityEmitter, and a Roslyn nullable-flow-analysis CS8629 needing a targeted null-forgiving `!`), and closing a third, previously-SILENT PackagePlanner gap (a multi-source Merge Join flow used to generate broken code with zero reported gaps) -- `DFT_DerivedAndSplit` now closes fully end-to-end, verified against both the real package (0 warnings/0 errors across its whole generated solution) and a new dedicated fixture run against `.\SQLFORPOC_2022`; `EntityEmitter`'s own string-nullability exclusion fixed 2026-08-28, mirroring `SqlRowEmitter`'s earlier fix, verified with a unit test rather than a new fixture since it's mechanical parity with an already-proven fix; Flat File Destination support added 2026-08-28 -- a new Etl.Core FlatFileBulkSink write-side abstraction, a codegen bypass for the whole EF Core/DbContext path (a flat file has no table), and a narrow direct-copy exemption scoped to this destination type only -- closing RBC_Demo_ETL's own DFT_ExportDelimited/DFT_ExportFixedWidth fully (0 warnings/0 errors building the real package's whole regenerated solution) plus a dedicated fixture run end-to-end against `.\SQLFORPOC_2022` that empirically confirmed real fixed-width padding/truncation behavior, fixing two more real bugs along the way (BuildSqlFlowSource's server/database check wrongly assumed every destination has one, and a "zero SQL tables in the whole package" case that left Program.cs referencing a DbContext type that was never generated); Sort + Merge Join support added 2026-08-28 -- a new Etl.Core MergeJoinRowSource abstraction (Merge Join modeled as an IRowSource, not a new step type, so it needed zero changes to DataFlowStep), a corrected-after-one-wrong-reading SortPayload (key designation lives on Sort's own INPUT columns, not output), and a hand-walked (not LineageBuilder-based, which would be ambiguous here) backward resolution from Merge Join's own output through Sort to each side's real source -- closing RBC_Demo_ETL's own DFT_SortAndMergeJoin fully (0 warnings/0 errors building the real package's whole regenerated solution), with the join algorithm itself verified via 5 genuine unit tests since a dedicated dtexec-runnable fixture hit an unresolved SSIS object-model quirk (Microsoft.MergeJoin auto-generating extra output columns, documented rather than resolved); Conditional Split -> Sort -> Merge support added 2026-08-28, same day -- a different, single-source shape than the Merge Join round, closed with two surgical fixes and zero new Etl.Core code (Sort/Merge are genuine name-preserving pass-throughs, so the pre-existing destination-column resolution needed no changes) -- closing RBC_Demo_ETL's own DFT_MergeSortedBranches fully (0 warnings/0 errors building the real package's whole regenerated solution), this time WITH a working dedicated fixture run end-to-end against .\SQLFORPOC_2022 (unlike the Merge Join round), after discovering Microsoft.Merge needs a third, different "add a second input" recipe from both Union All's and Merge Join's own (it already has two inputs from construction)); ForEach Loop container support added 2026-08-28, same day, sized against Excel Source first (picked as the smaller lift) -- closing RBC_Demo_ETL's own FEL_SampleFiles by recognizing its one evidenced body shape (a single Execute SQL Task whose SqlStatementSource is entirely PropertyExpression-driven) via a new, deliberately narrow Etl.Core.Pipeline.ForEachLoopStep and a small standalone expression translator (not a reuse of the pipeline-column-based ExpressionTranslator, since there is no buffer here), verified against the real package's own zero-gap planner resolution AND a genuinely working dedicated fixture run end-to-end against real files and .\SQLFORPOC_2022 (unlike the Merge Join round's own unresolved fixture attempt); Excel Source support added 2026-08-28, same day -- a new ExcelDataReader-backed Etl.Core.Excel.ExcelRowSource abstraction (explicitly not the real, Windows-only ACE OLEDB provider, to keep generated output portable), plus lifting the pre-existing OLE DB/ADO NET "no Derived Column found -> direct-copy pipeline" gate that was separately blocking the real motivating flow, and a DbContextEmitter.HasNoKey() fix for tables with no EF-convention-shaped key column at all -- closing RBC_Demo_ETL's own DFT_ExcelImport down to one honestly-named, non-crashing numeric-type-mismatch gap (r8-vs-i4 on a plain passthrough column, a new, precisely-scoped gap rather than a guessed cast), verified against the real package (0 warnings/0 errors on everything except that one column) and a dedicated fixture built via the real SSIS object model against a genuine, checked-in copy of the real DripEligibility.xlsx, run end-to-end against .\SQLFORPOC_2022, landing all 9 real rows correctly)
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -3256,6 +3256,168 @@ in `Etl.Core.Tests` (was 29).
 than DT_I4/DT_DBDATE. ForEach Loop containers, named above, is now closed for the one evidenced
 body shape (a single expression-driven Execute SQL Task) -- a loop re-running a Data Flow Task
 per file remains unsupported and unevidenced.
+
+### Excel Source (2026-08-28) -- closes RBC_Demo_ETL's own `DFT_ExcelImport`, plus lifting the
+### OLE DB/ADO NET "direct-copy" gate that was blocking it for an unrelated reason
+
+The last named gap from the `SSIS_From_Sandeep` sweep, picked up same session after ForEach Loop,
+scoped live with the user first (`AskUserQuestion`): Excel Source needed a new third-party NuGet
+dependency (`ExcelDataReader`, since the real ACE OLEDB provider path is Windows-only and this
+generator's own output must stay portable), so it got sign-off before adding anything. Network
+access to nuget.org was confirmed working first (a real risk in this environment, not assumed).
+
+**The real evidenced shape, read from `Package_Advanced.dtsx`'s own `EXCEL_SRC_Drip` before
+writing any code:** `componentClassID="Microsoft.ExcelSource"` -- NOT the `ManagedComponentHost`
+discriminator ADO NET/Script Component use, a plain, distinct component type, and structurally
+IDENTICAL to `Microsoft.OLEDBSource` (same `OpenRowset`/`AccessMode`/`SqlCommand`/`CommandTimeout`
+property names, even the same connection role name, `"OleDbConnection"`). The one evidenced
+`AccessMode` is `0` (OpenRowset), with `OpenRowset="DripEligibility$"` -- the trailing `$` is the
+ADO/Jet convention marking "this is a worksheet, not a named range". Every column comes back
+`r8`(double)/`wstr`(string) -- Excel/ACE OLEDB has no narrower numeric type at all, confirmed
+from the real worksheet's own actual data (`CustomerID` is business-meaningful but still r8). The
+EXCEL connection manager's own `ConnectionString` is a full ACE OLEDB provider string
+(`Provider=Microsoft.ACE.OLEDB.12.0;Data Source=<path>.xlsx;Extended Properties="EXCEL 12.0
+XML;HDR=YES";`), not a bare path the way FLATFILE/FILE connection managers store one.
+
+**Extraction: `ExcelSourcePayload`** (`Ssis.Extract.Model.Pipeline.ComponentPayloads.cs`), wired
+into `PipelineReader.cs` on `componentClassId == "Microsoft.ExcelSource"` -- a straight mirror of
+`OleDbSourcePayload`, kept as its own type (not reused) since it's read via a different provider
+with its own real-world quirks (the `$` suffix, the rigid r8/wstr typing) and, more importantly,
+needs a completely different RUNTIME read path in codegen. `DtsxPackageReader.ParseConnectionString`
+gained a third parameter, `isExcel`, alongside the pre-existing `isFlatFileLike`: an EXCEL
+connection manager's own `"Data Source"` key is ALWAYS the workbook file path (unlike an ordinary
+OLEDB connection string, where `"Data Source"` names a SQL server host) -- so it's still parsed
+via the generic key=value path (Extended Properties/Provider are real signals worth keeping), but
+`ParsedConnectionString.FilePath` is ADDITIONALLY populated from the same `"Data Source"` value,
+letting codegen's existing `BuildFileSourceEntry` helper (built for CSV/FILE connection managers)
+work UNCHANGED for Excel too -- no separate Excel-specific path-resolution code needed anywhere.
+
+**Etl.Core: a new `Excel/` read-side abstraction**, deliberately NOT using the real ACE OLEDB
+provider (Windows-only, an install this rewrite must not depend on) -- `ExcelRowSource<TRow>`
+(`Etl.Core.Excel`) wraps the `ExcelDataReader` NuGet package instead, reading each cell already
+typed (double/string/DateTime/bool/null) from the worksheet's own cell format. Two real API facts
+nailed down building it, neither guessed:
+- `ExcelReaderFactory.CreateReader(stream)`'s own default configuration calls
+  `Encoding.GetEncoding(1252)` even for a modern `.xlsx` workbook -- throws
+  `NotSupportedException` without `CodePagesEncodingProvider` registered, the exact same gap
+  `CsvRowSource<TRow>` already had a fix for (`Etl.Core.Csv.CodePageSupport`, `internal`, so
+  reachable from `Etl.Core.Excel` in the same assembly without duplicating it).
+- The raw `IExcelDataReader` (no `.AsDataSet()` header-aware binding) has **no working column
+  NAME resolution at all** -- confirmed real, not assumed, via a direct probe: `GetName(i)` throws
+  `NotSupportedException` unconditionally. It is a plain positional grid, the same constraint a
+  Flat File Source already has (columns identified by POSITION, never name) -- unlike a SQL
+  SELECT's own named result columns. `ExcelSourceOptions.WorksheetName` itself IS still resolved
+  by name (`reader.Name`, which DOES work -- the sheet-selection API is separate from the
+  per-column API), looping `reader.NextResult()` until it matches (with the `$` suffix stripped).
+
+**Codegen: a new `ExcelRowEmitter`/`ExcelRowReaderEmitter` pair**, kept as their own files rather
+than reusing `SqlRowEmitter`/`SqlRowReaderEmitter` even though the ROW-TYPE shape is identical --
+`SqlRowReaderEmitter` reads via `DbDataReader.GetFieldValue<T>(reader.GetOrdinal(name))`, a
+`System.Data.Common.DbDataReader`-only convenience method with no `IDataRecord` equivalent, and
+(per the finding above) name-based ordinal lookup doesn't work here anyway. `ExcelRowReaderEmitter`
+reads by ORDINAL POSITION instead -- each column's index within `PipelineResolver.Resolve(output)`'s
+own `Columns` list, computed BEFORE any null-typed column is skipped, so a later column's true
+worksheet position is never shifted -- via a small `ClrTypeName -> IDataRecord method name`
+table (`GetDouble`/`GetString`/`GetInt32`/... ); an unmapped CLR type (DateOnly, Guid, byte[], ...)
+is a named gap, not guessed, since `IDataRecord` has no generic fallback. `PackageGenerator`
+gained `BuildExcelFlowSource` (AccessMode must be 0 -- a SqlCommand-mode Excel Source has no
+obvious SQL dialect to assume, per `ExcelSourcePayload`'s own doc comment -- and the worksheet's
+own HDR=YES/NO is read straight off `ParsedConnectionString.Extras["HDR"]`, a real, benign parser
+quirk: the generic `;`-split has no quote awareness, so `Extended Properties="EXCEL 12.0
+XML;HDR=YES"` splits ACROSS its own embedded `;`, landing `HDR` as its own extras key with a
+trailing stray `"` -- convenient, not a bug, since it means HDR is directly readable with no
+Excel-specific parsing at all). `ProgramEmitter` gained `ExcelFlowSource` (reusing the exact same
+`FileSourceOptions`/`FileSourceKey` mechanism a CSV source already uses -- a workbook is just
+another named folder/filename pair) and `usesExcel`-gated `using Etl.Core.Excel;`/`using
+{Root}.Excel;` lines, mirroring `usesCsv`/`usesSql` exactly. `GenerateCommand.cs`'s own fixed
+`Directory.Packages.props` template gained `ExcelDataReader`'s `PackageVersion` entry alongside
+`CsvHelper`'s.
+
+**Two real, previously-latent bugs found getting a genuine end-to-end run, neither visible from
+just building the real package's own structural resolution:**
+
+1. **The pre-existing "no Derived Column found -> direct-copy pipeline is not generated" gate for
+   OLE DB/ADO NET destinations was still standing** -- Flat File Destination got exempted from it
+   in an earlier round (2026-08-28, same day), but OLE DB never did, purely because nothing had
+   ever built+run one. `DFT_ExcelImport` (Excel Source straight to an OLE DB Destination, no
+   Derived Column at all) is exactly that shape, so closing Excel Source alone would have swapped
+   "unsupported source type" for this OTHER, unrelated pre-existing gap. Sized live with the user
+   again (`AskUserQuestion`) before touching it, since lifting a "deliberately conservative,
+   unproven" restriction is a real scope decision, not a mechanical follow-on -- confirmed first
+   that `TransformEmitter.Emit` already handles an empty `DerivedColumns`/`DataConversions` list
+   correctly for ANY destination shape (same reasoning Flat File Destination's own exemption
+   already established), then removed the gate entirely for the single-destination path (the
+   Conditional Split variant's own separate gate is untouched, out of scope this round). Proven,
+   not just argued: this is what actually let `DFT_ExcelImport` fully generate.
+2. **A genuinely new type-coercion gap, found only by actually BUILDING the real package's
+   generated output**: `DFT_ExcelImport`'s own `CustomerID` is buffered as `double` (Excel's own
+   rigid typing) but the real destination table's column is `int` -- SSIS's own OLE DB provider
+   coerces this implicitly at INSERT time, but a plain `row.CustomerID` passthrough in generated
+   C# hit a real `CS0266` (`double` -> `int` is not an implicit C# conversion), confirmed by
+   actually building a fixture reproducing this exact real pairing, not assumed. Fixed in
+   `TransformEmitter.Emit`: the destination's own input column CACHES the SOURCE's buffer type
+   (`PipelineInputColumnSpec.CachedDataType`, e.g. `"r8"`) independent of the destination's own
+   EXTERNAL (real table) column type (`"i4"`) -- these normally agree, and Excel Source is the
+   first real case where they don't. When they disagree, the column is reported as an explicit,
+   precise gap (naming both CLR types) and DROPPED from the assignments -- the same "per-column
+   gap, rest of the flow still generates" shape an untranslatable Derived Column expression
+   already uses -- rather than guessing which numeric coercion (truncate/round/checked) the real
+   OLE DB provider performs, since this tool has no oracle evidence for that rule.
+
+**A third, genuinely more consequential bug was found building this round's own dedicated
+fixture, not the real package** -- a real, previously-latent limitation of `DbContextEmitter`
+itself, unrelated to Excel Source specifically but only ever exposed by it: **its own doc comment
+claimed "EF works fine with a keyless-by-convention entity" whenever no `PrimaryKeyInference`
+candidate exists, but that was only ever true by ACCIDENT.** Every real table examined before this
+round happened to already carry a column matching EF Core's OWN separate, bare "Id"/"{Type}Id"
+key-discovery convention (e.g. `EmployeeID` satisfies `"{Employee}Id"` case-insensitively) even
+when `PrimaryKeyInference`'s own stricter integer-typed `"<table>ID"/"ID"` naming rule didn't
+confidently confirm it. This round's own fixture table (`CustomerID`/`DripEligible`/`ReviewedBy`,
+none named `Id`/`...Id`, and `CustomerID` is FLOAT so it couldn't match `PrimaryKeyInference`'s
+own integer-type requirement even if renamed) is genuinely the first with NEITHER -- confirmed by
+actually RUNNING the generated exe and hitting EF's own `InvalidOperationException: "... requires
+a primary key to be defined"` at FIRST USE, invisible to `dotnet build`, breaking the WHOLE
+package (not just this table) only at runtime. Fixed by emitting an explicit `entity.HasNoKey();`
+(exactly EF's own suggested fix, from that same exception's message) whenever neither
+`PrimaryKeyInference` NOR EF's own convention finds anything -- safe unconditionally, since
+`Etl.Core.Data.SqlBulkSink<TEntity>` never uses EF's change tracking at all, only
+`EntityTableMap`'s own schema-metadata read, which a keyless entity type still provides fine.
+
+**Verified two ways, same discipline as every other round:**
+1. **The real motivating case** -- regenerating `Package_Advanced.dtsx`: `DFT_ExcelImport` went
+   from "no bespoke payload, unsupported source" all the way to fully wired EXCEPT one honestly-
+   named, non-crashing gap (`CustomerID`'s own r8-vs-i4 mismatch) -- every other piece (row type,
+   reader, entity, transform, DbContext, `Program.cs`) generates correctly. The package's other
+   pre-existing gaps (`DFT_FlagCustomers`, no destination; the non-blocking `.Notification` gap)
+   are unrelated and unchanged.
+2. **A new dedicated fixture**, `tests/Ssis.Extract.Tests/Fixtures/SyntheticExcelSource.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `excel-source` mode) -- built via the REAL SSIS object
+   model against a genuine, checked-in copy of RBC_Demo_ETL's own `sample-data/
+   DripEligibility.xlsx` (`tests/Ssis.Extract.Tests/Fixtures/synthetic-excel-source.xlsx` --
+   reused verbatim rather than hand-built, since this project has no `.xlsx` WRITER anywhere and
+   the real file already IS real evidence), confirming `AddOleDbComponent`/`ResolveOleDbMetadata`
+   (this fixture-builder's existing shared helpers) work UNCHANGED for `Microsoft.ExcelSource` --
+   `ReinitializeMetaData()` genuinely reads the real worksheet schema through the real, confirmed-
+   installed ACE OLEDB provider. The backing table's `CustomerID` is deliberately `FLOAT`, not
+   `INT` (matching the worksheet's own real r8 type exactly), so this fixture proves the CORE
+   feature cleanly, without the separately-gapped r8-vs-i4 case masking it. **Generated, built
+   against a copy of `Etl.Core` (0 warnings/0 errors), and actually RUN against
+   `.\SQLFORPOC_2022`**: all 9 real rows from the real workbook landed correctly -- read back
+   afterward, not trusted from the exit code, and byte-for-byte matching an independent
+   `ExcelRowSource<TRow>` unit-test read of the same file (`Etl.Core.Tests.Excel.
+   ExcelRowSourceTests`, 4 tests, the real workbook copied in as a checked-in test asset).
+
+New tests: 4 `Etl.Core.Tests` (`ExcelRowSourceTests`, against the real workbook), 7
+`Ssis.Extract.Codegen.Tests` (`ExcelRowEmitterTests` x2, `ExcelRowReaderEmitterTests`,
+`PackagePlannerTests`/`PackageGeneratorTests` wiring tests, `TransformEmitterTests`' own
+type-mismatch-gap test, `DbContextEmitterTests`' own `HasNoKey()` test). Regression: 124/124 in
+`Ssis.Extract.Codegen.Tests` (was 117), same 3 pre-existing unrelated failures elsewhere; 37/37 in
+`Etl.Core.Tests` (was 33).
+
+**Remaining known gaps, updated once more:** Data Conversion target types other than
+DT_I4/DT_DBDATE, and the newly-named numeric-passthrough-coercion gap (a source/destination CLR
+type mismatch on a plain passthrough column, e.g. Excel's own r8-vs-i4). Excel Source and the
+OLE DB/ADO NET direct-copy gate, named above, are now closed.
 
 ## Traps already hit once — don't re-derive these
 

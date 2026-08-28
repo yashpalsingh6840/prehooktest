@@ -78,6 +78,7 @@ internal static class PipelineReader
         DataConvertPayload? dataConvert = null;
         SortPayload? sort = null;
         MergeJoinPayload? mergeJoin = null;
+        ExcelSourcePayload? excelSource = null;
 
         // Script Component's own componentClassID is the generic "Microsoft.ManagedComponentHost"
         // -- not a Script-Component-specific ID the way every other bespoke type here is --
@@ -185,6 +186,21 @@ internal static class PipelineReader
         {
             var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
             oleDbSource = new OleDbSourcePayload
+            {
+                ConnectionName = connectionName,
+                OpenRowset = NullIfEmpty(GetProperty(properties, "OpenRowset")),
+                SqlCommand = NullIfEmpty(GetProperty(properties, "SqlCommand")),
+                AccessMode = ParseInt(GetProperty(properties, "AccessMode")),
+                CommandTimeout = ParseInt(GetProperty(properties, "CommandTimeout")),
+                ColumnMappings = mainOutput is null ? [] : BuildColumnMappings(
+                    mainOutput.Columns.Select(c => (c.Name, c.ExternalMetadataColumnId)),
+                    mainOutput.ExternalMetadataColumns),
+            };
+        }
+        else if (componentClassId == "Microsoft.ExcelSource")
+        {
+            var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            excelSource = new ExcelSourcePayload
             {
                 ConnectionName = connectionName,
                 OpenRowset = NullIfEmpty(GetProperty(properties, "OpenRowset")),
@@ -346,6 +362,7 @@ internal static class PipelineReader
             DataConvert = dataConvert,
             Sort = sort,
             MergeJoin = mergeJoin,
+            ExcelSource = excelSource,
         };
     }
 

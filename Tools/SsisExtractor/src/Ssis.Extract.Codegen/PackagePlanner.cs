@@ -24,7 +24,14 @@ public sealed record DataFlowPlan(
     ConditionalSplitPlan? ConditionalSplit,
     PipelineComponentSpec DestinationComponent,
     PipelineComponentSpec? DataConversion = null,
-    MergeJoinPlan? MergeJoin = null);
+    MergeJoinPlan? MergeJoin = null,
+    /// <summary>Added 2026-08-28 testing this tool against a real third-party portfolio
+    /// (SSIS_From_Sandeep's Package_Advanced.dtsx, DFT_ExcelImport) -- a
+    /// <c>Microsoft.ExcelSource</c>, kept as its own field rather than folded into
+    /// <see cref="OleDbSource"/> since it needs a completely different runtime read path
+    /// (ExcelDataReader, not a SQL connection) and so its own dispatch in
+    /// <see cref="PackageGenerator.ResolveFlowSource"/>.</summary>
+    PipelineComponentSpec? ExcelSource = null);
 
 /// <summary>One side (Left or Right) of a Merge Join, resolved back through its own Sort and
 /// (if present) Data Conversion to the true source component -- mirrors
@@ -480,7 +487,7 @@ public static class PackagePlanner
         // DFT_DirectCopy) is also caught here, one step earlier than its pre-existing
         // "no Derived Column found" gate -- still correctly gapped, just with a clearer reason.
         var sourceComponents = pipeline.Components
-            .Where(c => c.ComponentClassId == "Microsoft.FlatFileSource" || SourceInfo.IsSqlSource(c))
+            .Where(c => c.ComponentClassId == "Microsoft.FlatFileSource" || c.ComponentClassId == "Microsoft.ExcelSource" || SourceInfo.IsSqlSource(c))
             .ToList();
         if (sourceComponents.Count > 1)
         {
@@ -491,6 +498,7 @@ public static class PackagePlanner
         }
 
         var flatFileSource = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.FlatFileSource");
+        var excelSource = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.ExcelSource");
         // OLE DB Source or ADO NET Source (Microsoft.DataReaderSourceAdapter, discriminated by
         // payload not ComponentClassId -- see AdoNetSourcePayload's own doc comment) -- either
         // way, a SQL-based source BuildSqlFlowSource resolves generically from here.
@@ -516,11 +524,11 @@ public static class PackagePlanner
         if (destination is null)
         {
             gaps.Add(new GenerationGap(taskName,
-                "no OLE DB Destination, ADO NET Destination, or Flat File Destination found in this Data Flow Task -- only [Flat File Source|OLE DB Source|ADO NET Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination|Flat File Destination] is supported yet"));
+                "no OLE DB Destination, ADO NET Destination, or Flat File Destination found in this Data Flow Task -- only [Flat File Source|OLE DB Source|ADO NET Source|Excel Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination|Flat File Destination] is supported yet"));
             return null;
         }
 
-        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion);
+        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, ExcelSource: excelSource);
     }
 
     /// <summary>Resolves a Merge Join's own two independent source chains (each walked BACKWARD

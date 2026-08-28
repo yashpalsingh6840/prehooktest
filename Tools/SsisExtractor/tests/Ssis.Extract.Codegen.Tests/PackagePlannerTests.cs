@@ -351,4 +351,25 @@ public class PackagePlannerTests
         Assert.Equal("SQL_LogFileName", loop.InnerTaskName);
         Assert.Contains("@[User::CurrentFile]", loop.SqlTemplate);
     }
+
+    [Fact]
+    public void Plan_ResolvesAnExcelSource_AsADirectCopyFlow_WithNoDerivedColumnNeeded()
+    {
+        // SyntheticExcelSource.dtsx: Microsoft.ExcelSource (reading the real, checked-in
+        // synthetic-excel-source.xlsx) -> OLE DB Destination, no transform at all -- a genuine
+        // direct-copy pipeline, the exact shape RBC_Demo_ETL's own DFT_ExcelImport has. Before
+        // this round, Microsoft.ExcelSource had no bespoke resolution at all (fell into the
+        // generic "no source found" gap), and OLE DB/ADO NET destinations separately required a
+        // Derived Column/Data Conversion regardless of source type.
+        var package = LoadSyntheticFixture("SyntheticExcelSource.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var flow = Assert.Single(plan.Flows);
+        Assert.NotNull(flow.ExcelSource);
+        Assert.Equal("Excel Source", flow.ExcelSource!.Name);
+        Assert.Null(flow.DerivedColumn);
+        Assert.Equal("Microsoft.OLEDBDestination", flow.DestinationComponent.ComponentClassId);
+    }
 }

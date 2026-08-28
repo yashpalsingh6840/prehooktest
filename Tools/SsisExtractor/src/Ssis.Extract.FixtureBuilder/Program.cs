@@ -144,9 +144,13 @@ internal static class Program
         {
             return BuildForEachFileLoopFixture(args[0]);
         }
+        if (fixtureName == "excel-source")
+        {
+            return BuildExcelSourceFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', or 'foreach-file-loop'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', or 'excel-source'.");
             return 2;
         }
 
@@ -2053,6 +2057,68 @@ internal static class Program
         sqlTaskHost.Properties["Connection"].SetValue(sqlTaskHost, sqlCm.Name);
         sqlTaskHost.Properties["SqlStatementSource"].SetExpression(sqlTaskHost,
             "\"INSERT INTO dbo.SyntheticForEachFileLoopLog (FileName) VALUES (N'\" + @[User::CurrentFile] + \"');\"");
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Excel Source (AccessMode=0/OpenRowset, the real evidenced shape) -> OLE DB Destination,
+    /// a genuine direct-copy pipeline (no transform at all) -- proving both Excel Source support
+    /// AND the 2026-08-28 removal of the "no Derived Column" gate for OLE DB destinations, added
+    /// alongside it for exactly this reason (RBC_Demo_ETL's own DFT_ExcelImport is the identical
+    /// shape). Reuses the REAL third-party <c>synthetic-excel-source.xlsx</c> (a checked-in copy
+    /// of RBC_Demo_ETL's own <c>sample-data/DripEligibility.xlsx</c>, not a hand-built stand-in --
+    /// this project has no .xlsx WRITER anywhere, and the real file is real evidence already) as
+    /// this fixture's own Excel connection manager data source, so <c>ReinitializeMetaData()</c>
+    /// resolves genuine worksheet columns (CustomerID/DripEligible/ReviewedBy) through the real
+    /// ACE OLEDB provider, confirmed installed and working on this machine before writing this
+    /// method (a plain <c>System.Data.OleDb.OleDbConnection</c> probe against the same file).
+    ///
+    /// <c>AddOleDbComponent</c>/<c>ResolveOleDbMetadata</c> work UNCHANGED for
+    /// <c>Microsoft.ExcelSource</c> -- confirmed real from RBC_Demo_ETL's own saved XML before
+    /// writing this method: an Excel Source component reuses OLE DB Source's exact own
+    /// OpenRowset/AccessMode custom property names and even its connection's own name,
+    /// "OleDbConnection".
+    /// </summary>
+    private static int BuildExcelSourceFixture(string outputPath)
+    {
+        var excelPath = Path.Combine(TestFixturesDir(), "synthetic-excel-source.xlsx");
+        if (!File.Exists(excelPath))
+        {
+            Console.Error.WriteLine($"error: expected the real sample .xlsx at {excelPath} -- this tool's checked-in test fixture is missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticExcelSource" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var excelCm = pkg.Connections.Add("EXCEL");
+        excelCm.Name = "CM_Excel_Fixture";
+        excelCm.ConnectionString = $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={excelPath};Extended Properties=\"EXCEL 12.0 XML;HDR=YES\";";
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_ExcelLoad";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        // "DripEligibility$" -- the real worksheet's own name inside the real checked-in
+        // workbook, confirmed from the earlier probe against RBC_Demo_ETL's own package.
+        var srcMeta = AddOleDbComponent(pipe, "Excel Source", "Microsoft.ExcelSource", excelCm,
+            accessMode: 0, openRowset: "DripEligibility$");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticExcelSourceTarget]");
+        AttachPath(pipe, mainOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));

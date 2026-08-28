@@ -170,6 +170,39 @@ public sealed class OleDbSourcePayload
 }
 
 /// <summary>
+/// <c>Microsoft.ExcelSource</c> -- added 2026-08-28 testing this tool against a real
+/// third-party portfolio (SSIS_From_Sandeep, <c>Package_Advanced.dtsx</c>'s own
+/// <c>EXCEL_SRC_Drip</c>). Structurally identical to <see cref="OleDbSourcePayload"/>
+/// (same property names -- <c>OpenRowset</c>/<c>SqlCommand</c>/<c>AccessMode</c>/
+/// <c>CommandTimeout</c> -- confirmed by reading the real component's own saved XML,
+/// which even reuses the connection's own name "OleDbConnection"), kept as its own type
+/// rather than reusing <see cref="OleDbSourcePayload"/> because the two are read via a
+/// different, Excel-specific ADO OLE DB provider (<c>Microsoft.ACE.OLEDB.12.0</c>) with
+/// its own real-world quirks (a worksheet is addressed as <c>OpenRowset="Sheet1$"</c> --
+/// the trailing <c>$</c> is the ADO/Jet convention for "this is a worksheet, not a named
+/// range" -- and every column comes back typed only as <c>r8</c>/<c>wstr</c>, since Excel
+/// itself has no real column-type concept). The one evidenced <see cref="AccessMode"/>
+/// value is <c>0</c> (OpenRowset) -- <c>SqlCommand</c>-mode Excel Source is unevidenced
+/// and, unlike OLE DB Source's own SqlCommand mode, has no obvious SQL dialect to assume
+/// (the Jet/ACE "SQL" over a worksheet is its own, non-standard dialect) so is a named,
+/// not guessed, gap if ever seen.
+/// </summary>
+public sealed class ExcelSourcePayload
+{
+    public string? ConnectionName { get; init; }
+
+    /// <summary>The worksheet, e.g. <c>"Sheet1$"</c> -- the trailing <c>$</c> is part of the real value, not stripped here (stripping happens in codegen, where the runtime API's own worksheet-naming convention is what decides whether it's needed).</summary>
+    public string? OpenRowset { get; init; }
+
+    public string? SqlCommand { get; init; }
+    public int? AccessMode { get; init; }
+    public int? CommandTimeout { get; init; }
+
+    /// <summary>Output columns ↔ external (worksheet) columns, built from the main (non-error) output's columns against their <c>externalMetadataColumns</c> -- same construction as <see cref="OleDbSourcePayload.ColumnMappings"/>.</summary>
+    public List<PipelineColumnMappingSpec> ColumnMappings { get; init; } = [];
+}
+
+/// <summary>
 /// <c>Microsoft.Lookup</c> (plan §5.7 names it explicitly as a common gap component).
 /// Confirmed by building a real Lookup via the SSIS 17 object model against a live
 /// SqlServer reference table (docs/report-schema.md "Synthetic component-coverage

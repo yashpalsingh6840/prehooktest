@@ -8,6 +8,12 @@ public abstract record FlowSourceSpec(string ComponentName);
 public sealed record CsvFlowSource(string ComponentName, string FileSourceKey) : FlowSourceSpec(ComponentName);
 public sealed record SqlFlowSource(string ComponentName, string CommandText) : FlowSourceSpec(ComponentName);
 
+/// <summary>An Excel Source, added 2026-08-28 testing this tool against a real third-party
+/// portfolio (SSIS_From_Sandeep). Uses the same <see cref="FileSourceOptions"/>/FileSourceKey
+/// mechanism a <see cref="CsvFlowSource"/> does for its file path (a workbook is just another
+/// named folder/filename pair), plus the worksheet name and whether to skip its own header row.</summary>
+public sealed record ExcelFlowSource(string ComponentName, string FileSourceKey, string WorksheetName, bool HasHeaderRow) : FlowSourceSpec(ComponentName);
+
 /// <summary>A Merge Join: two independent underlying sources (each itself a
 /// <see cref="CsvFlowSource"/>/<see cref="SqlFlowSource"/>, resolved exactly like a
 /// single-source flow's own), combined by a generated <c>Etl.Core.Data.MergeJoinRowSource</c>
@@ -123,6 +129,7 @@ public static class ProgramEmitter
             if (source is MergeJoinFlowSource mj) { allSources.Add(mj.LeftSource); allSources.Add(mj.RightSource); }
         }
         var usesCsv = allSources.Any(s => s is CsvFlowSource);
+        var usesExcel = allSources.Any(s => s is ExcelFlowSource);
         // A Merge Join's own combined row type always lands in the .Sql namespace/folder
         // (MergeJoinEmitter's own choice, independent of what its two SIDES are sourced from),
         // and MergeJoinRowSource<>/MergeJoinType both live in Etl.Core.Data/.Abstractions -- so a
@@ -134,11 +141,13 @@ public static class ProgramEmitter
         var lines = new List<string> { "using Etl.Core.Abstractions;" };
         if (usesCsv) lines.Add("using Etl.Core.Csv;");
         if (usesSql || usesFlatFileSink) lines.Add("using Etl.Core.Data;");
+        if (usesExcel) lines.Add("using Etl.Core.Excel;");
         lines.Add("using Etl.Core.Hosting;");
         lines.Add("using Etl.Core.Notifications;");
         lines.Add("using Etl.Core.Pipeline;");
         if (usesCsv) lines.Add($"using {request.RootNamespace}.Csv;");
         if (usesSql) lines.Add($"using {request.RootNamespace}.Sql;");
+        if (usesExcel) lines.Add($"using {request.RootNamespace}.Excel;");
         lines.Add($"using {request.RootNamespace}.Mapping;");
         lines.Add($"using {request.RootNamespace}.Model;");
         lines.Add("using Microsoft.Extensions.DependencyInjection;");
@@ -341,6 +350,9 @@ public static class ProgramEmitter
             case SqlFlowSource sql:
                 EmitSourceConstruction(lines, "    ", rowTypeName, sql);
                 break;
+            case ExcelFlowSource excel:
+                EmitSourceConstruction(lines, "    ", rowTypeName, excel);
+                break;
         }
         lines.Add("});");
         lines.Add("");
@@ -362,6 +374,11 @@ public static class ProgramEmitter
                 lines.Add($"{indent}var dbOptions = sp.GetRequiredService<IOptions<DatabaseOptions>>().Value;");
                 lines.Add($"{indent}var sqlOptions = new SqlSourceOptions {{ ConnectionString = SqlConnectionStringFactory.Build(dbOptions), CommandText = {CSharpStringLiteral(sql.CommandText)} }};");
                 lines.Add($"{indent}return new SqlRowSource<{rowTypeName}>(\"{sql.ComponentName}\", sqlOptions, {rowTypeName}Reader.Read);");
+                break;
+            case ExcelFlowSource excel:
+                lines.Add($"{indent}var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;");
+                lines.Add($"{indent}var excelOptions = new ExcelSourceOptions {{ FilePath = fileOptions[\"{excel.FileSourceKey}\"].ResolvedPath, WorksheetName = {CSharpStringLiteral(excel.WorksheetName)}, HasHeaderRow = {(excel.HasHeaderRow ? "true" : "false")} }};");
+                lines.Add($"{indent}return new ExcelRowSource<{rowTypeName}>(\"{excel.ComponentName}\", excelOptions, {rowTypeName}Reader.Read);");
                 break;
         }
     }

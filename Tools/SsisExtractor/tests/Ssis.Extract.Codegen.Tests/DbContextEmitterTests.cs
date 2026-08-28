@@ -1,9 +1,45 @@
+using System.Runtime.CompilerServices;
+using Ssis.Extract.Dtsx;
 using Ssis.Extract.Model.Analysis;
+using Ssis.Extract.Model.Package;
 
 namespace Ssis.Extract.Codegen.Tests;
 
 public class DbContextEmitterTests
 {
+    private static string ThisFilePath([CallerFilePath] string path = "") => path;
+
+    private static PackageSpec LoadSyntheticFixture(string dtsxFileName)
+    {
+        var fixturesDir = Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(ThisFilePath())!, "..", "Ssis.Extract.Tests", "Fixtures"));
+        return DtsxPackageReader.Read(Path.Combine(fixturesDir, dtsxFileName), noRedact: false);
+    }
+
+    [Fact]
+    public void Emit_EmitsHasNoKey_WhenNoColumnMatchesEitherKeyConvention()
+    {
+        // SyntheticExcelSourceTarget: CustomerID/DripEligible/ReviewedBy -- none named "Id" or
+        // "{Type}Id", unlike every other real table this emitter had been run against before
+        // this round (each had an "<Entity>ID"-shaped column, e.g. EmployeeID/DepartmentID,
+        // which happens to ALSO satisfy EF's own bare key-discovery convention even when
+        // PrimaryKeyInference's own stricter integer-typed check doesn't confidently confirm
+        // it). Confirmed real, not assumed, by actually RUNNING a generated package against
+        // this exact table and hitting EF's own "requires a primary key to be defined" at
+        // startup before this fix -- see CLAUDE.md's own "Excel Source" section.
+        var package = LoadSyntheticFixture("SyntheticExcelSource.dtsx");
+        var destination = TestFixtures.FindComponent(package, "Microsoft.OLEDBDestination", "OLE DB Destination");
+
+        var result = DbContextEmitter.Emit("SyntheticExcelSource.Model", "SyntheticExcelSourceDbContext",
+            [new DbContextEmitter.TableSpec("SyntheticExcelSourceTarget", destination, PrimaryKey: null)]);
+
+        Assert.Empty(result.Gaps);
+        var file = Assert.Single(result.Files);
+        Assert.Contains("entity.HasNoKey();", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+
     [Fact]
     public void Emit_EmitsToTableAndFacets_FromTheRealLoadEmployeesDestination()
     {

@@ -577,7 +577,8 @@ public static partial class DtsxPackageReader
         var redactedConnString = rawConnString is not null ? RedactConnectionString(rawConnString) : null;
 
         var isFlatFileLike = creationName is "FLATFILE" or "MULTIFLATFILE";
-        var parsed = rawConnString is not null ? ParseConnectionString(rawConnString, isFlatFileLike) : null;
+        var isExcel = creationName == "EXCEL";
+        var parsed = rawConnString is not null ? ParseConnectionString(rawConnString, isFlatFileLike, isExcel) : null;
 
         var propertyExpressions = cmEl.Elements(Dts + "PropertyExpression")
             .Select(el => new PropertyExpressionSpec { PropertyName = el.Attr(Dts + "Name") ?? "", Expression = el.Value })
@@ -747,7 +748,16 @@ public static partial class DtsxPackageReader
 
     private static string RedactConnectionString(string raw) => PasswordPattern().Replace(raw, "$1=***");
 
-    private static ParsedConnectionString ParseConnectionString(string raw, bool isFlatFileLike)
+    /// <summary><paramref name="isExcel"/>: an EXCEL connection manager's own "Data Source" key
+    /// is always the workbook file path (confirmed real from RBC_Demo_ETL's own CM_EXCEL_Drip:
+    /// "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=...\DripEligibility.xlsx;Extended
+    /// Properties=..."), unlike an ordinary OLEDB connection string where "Data Source" names a
+    /// SQL server host -- so this is parsed via the same key=value path as any OLEDB connection
+    /// string (Extended Properties/Provider are real, if currently unused, signals worth keeping),
+    /// with <see cref="ParsedConnectionString.FilePath"/> additionally populated from the same
+    /// "Data Source" value codegen's file-source machinery (<c>BuildFileSourceEntry</c>) already
+    /// expects, so no separate Excel-specific path-resolution code was needed there.</summary>
+    private static ParsedConnectionString ParseConnectionString(string raw, bool isFlatFileLike, bool isExcel = false)
     {
         if (isFlatFileLike || !raw.Contains('='))
         {
@@ -784,6 +794,7 @@ public static partial class DtsxPackageReader
             AuthMode = authMode,
             UserId = userId,
             Extras = extras,
+            FilePath = isExcel ? server : null,
         };
     }
 

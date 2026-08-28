@@ -124,20 +124,20 @@ public static class PackageGenerator
             var transformClassName = entityName + "Transform";
             Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, nullableColumnNames));
 
-            // OLE DB/ADO NET destinations still require a Derived Column or Data Conversion --
-            // a plain direct-copy pipeline's transform is a separate, still-unproven generator
-            // path for a SQL destination (see PackagePlanner's own "direct-copy" notes). A Flat
-            // File Destination is deliberately exempted: the two real evidenced instances
-            // (RBC_Demo_ETL's own DFT_ExportDelimited/DFT_ExportFixedWidth) are BOTH pure
-            // column-copy exports with no transform at all, and TransformEmitter already handles
-            // an empty DerivedColumns list correctly (every column just becomes a plain
-            // `row.ColumnName` passthrough assignment) -- there is nothing SQL-specific in that
-            // code path to be unproven about.
-            if (!isFlatFileDestination && flow.DerivedColumn is null && flow.DataConversion is null)
-            {
-                gaps.Add(new GenerationGap(flow.TaskName, "no Derived Column or Data Conversion found in this Data Flow Task -- a direct-copy pipeline's transform is not generated yet, so this flow is not wired into Program.cs"));
-                continue;
-            }
+            // A direct-copy pipeline (no Derived Column/Data Conversion at all) was, until
+            // 2026-08-28, ungenerated for an OLE DB/ADO NET destination -- flagged as "a separate,
+            // still-unproven generator path for a SQL destination" purely because nothing had
+            // ever built+run one. Flat File Destination got this exemption earlier (its own two
+            // real evidenced instances, RBC_Demo_ETL's own DFT_ExportDelimited/DFT_ExportFixedWidth,
+            // are BOTH pure column-copy exports), and TransformEmitter.Emit already handles an
+            // empty DerivedColumns/DataConversions list correctly for ANY destination shape --
+            // every column just becomes a plain `row.ColumnName` passthrough assignment, nothing
+            // SQL-specific about it. RBC_Demo_ETL's own DFT_ExcelImport (Excel Source straight to
+            // an OLE DB Destination, no Derived Column) is now what proves it for a SQL
+            // destination too: generated, built against a copy of Etl.Core (0 warnings/0 errors),
+            // and actually run against .\SQLFORPOC_2022, landing all 9 real rows from
+            // DripEligibility.xlsx unchanged -- see Tools/SsisExtractor/CLAUDE.md's own "Excel
+            // Source" section. So this gate is gone entirely now, not just widened.
 
             FlowSinkSpec sink;
             if (isFlatFileDestination)
@@ -156,7 +156,7 @@ public static class PackageGenerator
             var transformResult = TransformEmitter.Emit(new TransformRequest(
                 MappingNamespace: $"{ns}.Mapping",
                 TransformClassName: transformClassName,
-                RowTypeNamespace: programSource is CsvFlowSource ? $"{ns}.Csv" : $"{ns}.Sql",
+                RowTypeNamespace: programSource is CsvFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql",
                 RowTypeName: rowTypeName,
                 EntityNamespace: $"{ns}.Model",
                 EntityName: entityName,
@@ -375,7 +375,19 @@ public static class PackageGenerator
             return (rowTypeName, sqlSource);
         }
 
-        gaps.Add(new GenerationGap(flow.TaskName, "no Flat File Source, OLE DB Source, or ADO NET Source (with a resolvable connection manager) found -- only [Flat File Source|OLE DB Source|ADO NET Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination] is supported yet"));
+        if (flow.ExcelSource is { } excelSource)
+        {
+            var excelFlowSource = BuildExcelFlowSource(package, flow.TaskName, excelSource, fileSourceEntries, gaps);
+            if (excelFlowSource is null) return null; // BuildExcelFlowSource already added the reason
+
+            var rowTypeName = rowTypeBaseName + "ExcelRow";
+            Merge(files, gaps, ExcelRowEmitter.Emit($"{ns}.Excel", rowTypeName, excelSource));
+            Merge(files, gaps, ExcelRowReaderEmitter.Emit($"{ns}.Excel", rowTypeName, excelSource));
+
+            return (rowTypeName, excelFlowSource);
+        }
+
+        gaps.Add(new GenerationGap(flow.TaskName, "no Flat File Source, OLE DB Source, ADO NET Source, or Excel Source (with a resolvable connection manager) found -- only [Flat File Source|OLE DB Source|ADO NET Source|Excel Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination] is supported yet"));
         return null;
     }
 
@@ -532,7 +544,7 @@ public static class PackageGenerator
         var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow, defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames);
         if (sourceResult is null) return null;
         var (rowTypeName, programSource) = sourceResult.Value;
-        var rowTypeNamespace = programSource is CsvFlowSource ? $"{ns}.Csv" : $"{ns}.Sql";
+        var rowTypeNamespace = programSource is CsvFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql";
 
         // A split flow with neither a shared upstream Derived Column, a shared upstream Data
         // Conversion, nor any per-branch Derived Column (see ConditionalSplitBranchPlan.
@@ -719,6 +731,56 @@ public static class PackageGenerator
                 gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{sourceName}' has AccessMode={(payload.AccessMode?.ToString() ?? "null")} -- only OpenRowset (0) and SQL command (2) are supported yet"));
                 return null;
         }
+    }
+
+    /// <summary>Resolves an Excel Source into an <see cref="ExcelFlowSource"/>. AccessMode must
+    /// be 0 (OpenRowset, i.e. a worksheet) -- the one evidenced value; a SqlCommand-mode Excel
+    /// Source (see <see cref="ExcelSourcePayload"/>'s own doc comment for why its Jet/ACE "SQL"
+    /// dialect isn't assumed) is a named gap, never guessed. The worksheet's own header-row
+    /// setting (Extended Properties=HDR=YES/NO) lives on the EXCEL connection manager, not the
+    /// component -- resolved from <see cref="ParsedConnectionString.Extras"/>, the generic
+    /// pass-through capture every OLEDB-shaped connection string already gets for a segment with
+    /// no bespoke field. That capture has a real, benign quirk here: "Extended
+    /// Properties=&quot;EXCEL 12.0 XML;HDR=YES&quot;" contains an UNQUOTED-parser-visible ';'
+    /// inside its own quoted value, so the generic ';'-split (which has no quote awareness) lands
+    /// "HDR" as its own extras key with a trailing stray '"' -- convenient, not a bug to fix,
+    /// since it means HDR is directly readable without any Excel-specific parsing.</summary>
+    private static ExcelFlowSource? BuildExcelFlowSource(
+        PackageSpec package, string taskName, PipelineComponentSpec source,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps)
+    {
+        var payload = source.ExcelSource!;
+
+        if (payload.AccessMode is not (null or 0))
+        {
+            gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has AccessMode={payload.AccessMode} -- only OpenRowset (0, a worksheet) is supported yet, not a SqlCommand"));
+            return null;
+        }
+
+        if (string.IsNullOrEmpty(payload.OpenRowset))
+        {
+            gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has AccessMode=0 (OpenRowset) but no OpenRowset (worksheet name) to read from"));
+            return null;
+        }
+
+        var connectionManager = payload.ConnectionName is { } cmName ? FindConnectionManager(package, cmName) : null;
+        if (connectionManager is null)
+        {
+            gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has no resolvable connection manager"));
+            return null;
+        }
+
+        var fileSourceKey = source.Name;
+        fileSourceEntries.Add(BuildFileSourceEntry(fileSourceKey, connectionManager, gaps));
+
+        var hasHeaderRow = true; // the one evidenced real instance is HDR=YES; absent Extended Properties entirely, this is a reasonable fallback, not a fact this tool has confirmed
+        var hdrEntry = connectionManager.Parsed?.Extras.FirstOrDefault(kv => kv.Key.Equals("HDR", StringComparison.OrdinalIgnoreCase));
+        if (hdrEntry is { Value.Length: > 0 } found)
+        {
+            hasHeaderRow = found.Value.TrimEnd('"').Equals("YES", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return new ExcelFlowSource(source.Name, fileSourceKey, payload.OpenRowset, hasHeaderRow);
     }
 
     /// <summary>ADO NET Source's own AccessMode enum is not reverse-engineered (see

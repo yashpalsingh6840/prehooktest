@@ -1,7 +1,82 @@
+using Ssis.Extract.Model.Pipeline;
+
 namespace Ssis.Extract.Codegen.Tests;
 
 public class TransformEmitterTests
 {
+    [Fact]
+    public void Emit_ReportsAGap_ForAPlainPassthroughColumn_WhoseSourceAndDestinationClrTypesDiffer()
+    {
+        // The exact real shape RBC_Demo_ETL's own DFT_ExcelImport hits: Excel Source always
+        // buffers a numeric column as r8/double (Excel/ACE OLEDB has no narrower numeric type
+        // at all), but the real destination table's own CustomerID column is i4/int -- SSIS's
+        // own OLE DB provider coerces this implicitly at insert time; a plain `row.ColumnName`
+        // passthrough in generated C# cannot (double->int is not an implicit C# conversion).
+        // Confirmed as a real CS0266 compile error by actually building a fixture reproducing
+        // this pairing, not assumed -- see CLAUDE.md's own "Excel Source" section.
+        var destination = new PipelineComponentSpec
+        {
+            RefId = "DST_Test",
+            Name = "OLE DB Destination",
+            ComponentClassId = "Microsoft.OLEDBDestination",
+            Inputs =
+            [
+                new PipelineInputSpec
+                {
+                    RefId = "DST_Test.Inputs[OLE DB Destination Input]",
+                    Name = "OLE DB Destination Input",
+                    Columns =
+                    [
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[CustomerID]",
+                            CachedName = "CustomerID",
+                            CachedDataType = "r8",
+                            LineageId = "SRC.Outputs[Output].Columns[CustomerID]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]",
+                        },
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[ReviewedBy]",
+                            CachedName = "ReviewedBy",
+                            CachedDataType = "wstr",
+                            LineageId = "SRC.Outputs[Output].Columns[ReviewedBy]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[ReviewedBy]",
+                        },
+                    ],
+                    ExternalMetadataColumns =
+                    [
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]", Name = "CustomerID", DataType = "i4" },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[ReviewedBy]", Name = "ReviewedBy", DataType = "wstr", Length = 50 },
+                    ],
+                },
+            ],
+        };
+        var pipeline = new PipelineSpec { Components = [destination] };
+
+        var request = new TransformRequest(
+            "Generated.Mapping", "DripEligibilityTransform",
+            "Generated.Excel", "DripRow",
+            "Generated.Model", "DripEligibility",
+            "Generated.Ssis",
+            pipeline, [], destination);
+
+        var result = TransformEmitter.Emit(request);
+
+        var gap = Assert.Single(result.Result.Gaps);
+        Assert.Equal("DripEligibility.CustomerID", gap.Location);
+        Assert.Contains("buffered as double but the destination column is int", gap.Reason);
+
+        // The MISMATCHED column is dropped from the assignments, but the file still generates
+        // with every OTHER column -- same per-column-gap shape as an untranslatable Derived
+        // Column expression, not a whole-flow failure.
+        var file = Assert.Single(result.Result.Files);
+        Assert.DoesNotContain("CustomerID", file.Content);
+        Assert.Contains("ReviewedBy = row.ReviewedBy,", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+
     [Fact]
     public void Emit_ReproducesTheHandWrittenEmployeeTransform_FromTheRealLoadEmployeesPackage()
     {

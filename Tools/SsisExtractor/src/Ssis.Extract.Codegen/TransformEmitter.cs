@@ -1,5 +1,6 @@
 using Ssis.Extract.Dtsx;
 using Ssis.Extract.Model.Pipeline;
+using Ssis.Extract.Model.Shared;
 using Ssis.Runtime.Expressions;
 
 namespace Ssis.Extract.Codegen;
@@ -75,6 +76,34 @@ public static class TransformEmitter
         foreach (var unresolved in resolved.Unresolved)
             gaps.Add(new GenerationGap($"{request.EntityName}.{unresolved.ColumnName}", unresolved.Reason));
 
+        // The destination's own input column CACHES the SOURCE's buffer type (e.g. "r8"),
+        // independent of the destination's own EXTERNAL (real table) column type resolved.Type
+        // already carries (e.g. "i4") -- these normally agree, but an Excel Source's own output
+        // is ALWAYS typed r8/wstr regardless of the real intended column type (Excel/ACE OLEDB
+        // has no narrower numeric types at all), first hit real 2026-08-28 by RBC_Demo_ETL's own
+        // DFT_ExcelImport (CustomerID: r8 from the worksheet, i4 at the destination table). SSIS
+        // itself accepts this pairing (the OLE DB provider does its own implicit conversion at
+        // insert time); a plain `row.ColumnName` PASSTHROUGH in GENERATED C# does not, and
+        // double->int is not an implicit C# conversion -- confirmed as a real CS0266 compile
+        // error, not assumed, by actually building a fixture reproducing this exact real
+        // pairing. Reported as a gap rather than guessing a cast: this tool has no oracle
+        // evidence for which numeric coercion (truncate/round/checked) the real OLE DB provider
+        // performs, and a wrong guess would silently corrupt data instead of failing loudly.
+        var inputColumnsByRefId = request.DestinationComponent.Inputs.FirstOrDefault()?.Columns
+            .ToDictionary(c => c.RefId) ?? [];
+        var mismatchedTypeColumns = new HashSet<string>();
+        foreach (var column in resolved.Columns)
+        {
+            if (column.Type is null) continue;
+            if (!inputColumnsByRefId.TryGetValue(column.PipelineColumnRefId, out var inputColumn)) continue;
+            var sourceType = SsisPipelineTypeMap.Resolve(inputColumn.CachedDataType);
+            if (sourceType is null || sourceType.ClrTypeName == column.Type.ClrTypeName) continue;
+
+            mismatchedTypeColumns.Add(column.PipelineColumnName);
+            gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                $"source column '{column.PipelineColumnName}' is buffered as {sourceType.ClrTypeName} but the destination column is {column.Type.ClrTypeName} -- a numeric coercion on a plain passthrough column is not generated yet (SSIS's own OLE DB provider performs this implicitly at insert time; this tool has no evidence for which rounding/truncation rule to reproduce)"));
+        }
+
         var assignments = new List<string>();
         foreach (var column in resolved.Columns)
         {
@@ -104,7 +133,7 @@ public static class TransformEmitter
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
-            else
+            else if (!mismatchedTypeColumns.Contains(column.PipelineColumnName))
             {
                 assignments.Add($"        {column.ExternalColumnName} = row.{column.PipelineColumnName},");
             }

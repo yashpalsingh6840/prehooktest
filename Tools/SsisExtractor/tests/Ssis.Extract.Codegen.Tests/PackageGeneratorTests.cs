@@ -474,4 +474,41 @@ public class PackageGeneratorTests
         Assert.Equal(2, result.Gaps.Count);
         Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
     }
+
+    [Fact]
+    public void Generate_WiresAnExcelSourcedFlow_IntoProgramCsViaExcelRowSource()
+    {
+        // SyntheticExcelSource.dtsx: Microsoft.ExcelSource (reading the real, checked-in
+        // synthetic-excel-source.xlsx) -> OLE DB Destination, a genuine direct-copy pipeline
+        // with no Derived Column at all. Proves BOTH new pieces added the same round: Excel
+        // Source's own read-side wiring, AND removing the pre-existing "no Derived Column"
+        // gate for OLE DB/ADO NET destinations (Flat File Destination was the only prior
+        // exemption). Confirmed beyond this test by actually building the generated exe against
+        // a copy of Etl.Core and running it against .\SQLFORPOC_2022 -- see
+        // Tools/SsisExtractor/CLAUDE.md's own "Excel Source" section.
+        var package = LoadSyntheticFixture("SyntheticExcelSource.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        Assert.Contains(result.Files, f => f.RelativePath == "Excel/SyntheticExcelSourceTargetExcelRow.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Excel/SyntheticExcelSourceTargetExcelRowReader.cs");
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains("using Etl.Core.Excel;", programFile.Content);
+        Assert.Contains("using SyntheticExcelSource.Excel;", programFile.Content);
+        Assert.Contains(
+            "var excelOptions = new ExcelSourceOptions { FilePath = fileOptions[\"Excel Source\"].ResolvedPath, WorksheetName = \"DripEligibility$\", HasHeaderRow = true };",
+            programFile.Content);
+        Assert.Contains(
+            "return new ExcelRowSource<SyntheticExcelSourceTargetExcelRow>(\"Excel Source\", excelOptions, SyntheticExcelSourceTargetExcelRowReader.Read);",
+            programFile.Content);
+        Assert.Contains("var syntheticExcelSourceTargetFlow = new DataFlowStep<SyntheticExcelSourceTargetExcelRow, SyntheticExcelSourceTarget>(", programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Only the unavoidable, non-blocking Notification gap -- no Derived Column needed, and
+        // no numeric-type-mismatch gap either, since this fixture's own CustomerID is FLOAT
+        // (matching the worksheet's real r8 type exactly, unlike RBC_Demo_ETL's own INT column).
+        var gap = Assert.Single(result.Gaps);
+        Assert.Equal("SyntheticExcelSource.Notification", gap.Location);
+    }
 }

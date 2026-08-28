@@ -20,10 +20,15 @@ namespace Ssis.Extract.Codegen;
 ///
 /// HasKey/ValueGeneratedNever are gated on <see cref="PrimaryKeyCandidateSpec.Confidence"/>
 /// being exactly "NamingConvention" and a single-column candidate -- the plan's own gate for
-/// this emitter. A missing/low-confidence/composite candidate just skips HasKey for that
-/// table and is not reported as a gap: EF works fine with a keyless-by-convention entity here
-/// (SqlBulkSink never uses EF's own SaveChanges path), and PrimaryKeyInference already reports
-/// its own "Unknown" candidates through its own output.
+/// this emitter. A missing/low-confidence/composite candidate skips HasKey for that table and
+/// is not reported as a gap: PrimaryKeyInference already reports its own "Unknown" candidates
+/// through its own output, and letting EF's OWN implicit "Id"/"{Type}Id" key-discovery
+/// convention run is usually enough. When NEITHER exists at all, though, EF's model validation
+/// throws at first use ("requires a primary key to be defined") -- confirmed real 2026-08-28 by
+/// actually running a generated package whose destination table has no such column at all (an
+/// Excel Source's own worksheet-driven columns, none integer-typed); <see cref="EmitOneTable"/>
+/// emits an explicit <c>HasNoKey()</c> in exactly that case, safe because
+/// <c>Etl.Core.Data.SqlBulkSink&lt;TEntity&gt;</c> never uses EF's change tracking at all.
 /// </summary>
 public static class DbContextEmitter
 {
@@ -113,6 +118,24 @@ public static class DbContextEmitter
             lines.Add($"            entity.HasKey(e => e.{keyColumn});");
             lines.Add($"            entity.Property(e => e.{keyColumn}).ValueGeneratedNever();");
         }
+        else if (!resolved.Columns.Any(c => HasEfConventionKeyShape(c.PipelineColumnName, table.EntityName)))
+        {
+            // Confirmed real, not assumed, by actually RUNNING a generated package (2026-08-28):
+            // this doc comment's own earlier claim -- "EF works fine with a keyless-by-convention
+            // entity here" -- was only true by accident, because every real table examined before
+            // this one happened to already carry a column matching EF's OWN bare "Id"/"{Type}Id"
+            // key-discovery convention, even when PrimaryKeyInference's own stricter integer-typed
+            // "<table>ID"/"ID" naming rule didn't confidently confirm it. The first table with
+            // NEITHER (RBC_Demo_ETL/an Excel Source's own worksheet-driven columns, none
+            // integer-typed) throws InvalidOperationException ("requires a primary key to be
+            // defined") from EF's own model validation at FIRST USE -- invisible to `dotnet build`,
+            // breaking the WHOLE package, not just this table, only at runtime. HasNoKey() is
+            // exactly EF's own suggested fix in that exception's own message, and is safe
+            // unconditionally here: SqlBulkSink<TEntity> (Etl.Core.Data.SqlBulkSink.cs) never uses
+            // EF's change tracking at all -- only EntityTableMap's own schema metadata read, which
+            // a keyless entity type still provides.
+            lines.Add("            entity.HasNoKey();");
+        }
 
         foreach (var column in resolved.Columns)
         {
@@ -149,6 +172,15 @@ public static class DbContextEmitter
         }
         return $".HasColumnType(\"{rendered}\")";
     }
+
+    /// <summary>EF Core's OWN default key-discovery convention (independent of anything
+    /// PrimaryKeyInference reports): a property named exactly "Id" or "{EntityTypeName}Id"
+    /// (case-insensitive, per EF's own documented convention), regardless of CLR type. Used only
+    /// to decide whether letting EF's implicit convention run (by emitting neither HasKey nor
+    /// HasNoKey) is actually safe -- see this method's own call site.</summary>
+    private static bool HasEfConventionKeyShape(string pipelineColumnName, string entityName) =>
+        string.Equals(pipelineColumnName, "Id", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(pipelineColumnName, entityName + "Id", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>"[dbo].[Employee]" -> ("dbo", "Employee"). Both real PoC packages always emit
     /// the bracketed two-part form for a table/view OpenRowset; an unmatched shape defaults

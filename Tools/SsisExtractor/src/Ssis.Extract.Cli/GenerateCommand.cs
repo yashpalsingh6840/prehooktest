@@ -148,6 +148,7 @@ internal static class GenerateCommand
             "",
             "  <ItemGroup>",
             "    <PackageVersion Include=\"CsvHelper\" Version=\"33.1.0\" />",
+            "    <PackageVersion Include=\"ExcelDataReader\" Version=\"3.7.0\" />",
             "    <PackageVersion Include=\"MailKit\" Version=\"4.17.0\" />",
             "    <PackageVersion Include=\"Microsoft.EntityFrameworkCore.SqlServer\" Version=\"10.0.11\" />",
             "    <PackageVersion Include=\"Microsoft.Extensions.Hosting\" Version=\"10.0.11\" />",
