@@ -528,11 +528,18 @@ public static class PackageGenerator
         var (rowTypeName, programSource) = sourceResult.Value;
         var rowTypeNamespace = programSource is CsvFlowSource ? $"{ns}.Csv" : $"{ns}.Sql";
 
-        // A split flow with neither a shared upstream Derived Column nor any per-branch one
-        // (see ConditionalSplitBranchPlan.DerivedColumns) is a direct-copy-with-routing flow --
-        // out of scope for the same reason a plain direct-copy flow is (the single-destination
-        // path's own gate, right above this method).
-        if (flow.DerivedColumn is null && split.Branches.All(b => b.DerivedColumns.Count == 0))
+        // A split flow with neither a shared upstream Derived Column, a shared upstream Data
+        // Conversion, nor any per-branch Derived Column (see ConditionalSplitBranchPlan.
+        // DerivedColumns) is a direct-copy-with-routing flow -- out of scope for the same reason
+        // a plain direct-copy flow is (the single-destination path's own gate, right above this
+        // method, widened for the identical reason in the Data Conversion round). Real evidenced
+        // case this widening closes: RBC_Demo_ETL's own DFT_MergeSortedBranches has NO Derived
+        // Column anywhere (Split -> Sort -> Merge on each branch, no per-branch transform), yet
+        // its destination genuinely needs SsisFn.ToNullableI4(row.CustomerID) for one column --
+        // TransformEmitter already resolves that correctly via flow.DataConversion's own
+        // convertedByName lookup (passed in below regardless of DerivedColumns.Count), this gate
+        // just needs to stop rejecting the flow before that resolution ever runs.
+        if (flow.DerivedColumn is null && flow.DataConversion is null && split.Branches.All(b => b.DerivedColumns.Count == 0))
         {
             gaps.Add(new GenerationGap(flow.TaskName, "no Derived Column found in this Data Flow Task -- a direct-copy pipeline's transform is not generated yet, so this flow is not wired into Program.cs"));
             return null;

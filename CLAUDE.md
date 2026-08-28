@@ -803,7 +803,7 @@ A second, unrelated real bug (`GateRunner` not setting the job process's working
 which silently broke the job's own `appsettings.json` lookup and surfaced as an
 unrelated-looking Windows-auth failure) was also caught and fixed the same session.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile); nullable value-typed column support added 2026-08-27, same session -- an evidence-based minimal version (infer nullable from ISNULL(x) usage, unwrap with .Value everywhere else, a real named tradeoff vs. full null-flow analysis) scoped to SQL sources/Derived Columns only, verified end-to-end with a genuine NULL row against .\SQLFORPOC_2022; Data Conversion component support added 2026-08-28, first for SQL-source/single-destination flows only (a real dtexec probe run first to measure IgnoreFailure's actual behavior -- never drops a row, nulls the one failing column -- then LineageBuilder extended with a new "DataConversion" edge kind, TransformEmitter wired to emit SsisFn.ToNullableI4/ToNullableDate against the raw source column, and a real, previously-latent SqlRowEmitter/SqlRowReaderEmitter bug fixed along the way), then same day extended to the Conditional-Split-cross-reference case that round's own closing claim had missed -- RouterEmitter and a Derived-Column-referencing-a-Data-Conversion-column path both wired to the same TranslateDataConversion resolution, retiring both "Conditional Split condition nullability" and "CSV-source nullability" as gaps (the latter turned out not to exist at all for this feature), fixing two more real bugs found only by building/running the real package's whole regenerated solution for the first time (a missing nullableColumnNames thread into EntityEmitter, and a Roslyn nullable-flow-analysis CS8629 needing a targeted null-forgiving `!`), and closing a third, previously-SILENT PackagePlanner gap (a multi-source Merge Join flow used to generate broken code with zero reported gaps) -- `DFT_DerivedAndSplit` now closes fully end-to-end, verified against both the real package (0 warnings/0 errors across its whole generated solution) and a new dedicated fixture run against `.\SQLFORPOC_2022`; `EntityEmitter`'s own string-nullability exclusion fixed 2026-08-28, mirroring `SqlRowEmitter`'s earlier fix, verified with a unit test rather than a new fixture since it's mechanical parity with an already-proven fix; Flat File Destination support added 2026-08-28 -- a new Etl.Core FlatFileBulkSink write-side abstraction, a codegen bypass for the whole EF Core/DbContext path (a flat file has no table), and a narrow direct-copy exemption scoped to this destination type only -- closing RBC_Demo_ETL's own DFT_ExportDelimited/DFT_ExportFixedWidth fully (0 warnings/0 errors building the real package's whole regenerated solution) plus a dedicated fixture run end-to-end against `.\SQLFORPOC_2022` that empirically confirmed real fixed-width padding/truncation behavior, fixing two more real bugs along the way (BuildSqlFlowSource's server/database check wrongly assumed every destination has one, and a "zero SQL tables in the whole package" case that left Program.cs referencing a DbContext type that was never generated); Sort + Merge Join support added 2026-08-28 -- a new Etl.Core MergeJoinRowSource abstraction (Merge Join modeled as an IRowSource, not a new step type, so it needed zero changes to DataFlowStep), a corrected-after-one-wrong-reading SortPayload (key designation lives on Sort's own INPUT columns, not output), and a hand-walked (not LineageBuilder-based, which would be ambiguous here) backward resolution from Merge Join's own output through Sort to each side's real source -- closing RBC_Demo_ETL's own DFT_SortAndMergeJoin fully (0 warnings/0 errors building the real package's whole regenerated solution), with the join algorithm itself verified via 5 genuine unit tests since a dedicated dtexec-runnable fixture hit an unresolved SSIS object-model quirk (Microsoft.MergeJoin auto-generating extra output columns, documented rather than resolved))
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile); nullable value-typed column support added 2026-08-27, same session -- an evidence-based minimal version (infer nullable from ISNULL(x) usage, unwrap with .Value everywhere else, a real named tradeoff vs. full null-flow analysis) scoped to SQL sources/Derived Columns only, verified end-to-end with a genuine NULL row against .\SQLFORPOC_2022; Data Conversion component support added 2026-08-28, first for SQL-source/single-destination flows only (a real dtexec probe run first to measure IgnoreFailure's actual behavior -- never drops a row, nulls the one failing column -- then LineageBuilder extended with a new "DataConversion" edge kind, TransformEmitter wired to emit SsisFn.ToNullableI4/ToNullableDate against the raw source column, and a real, previously-latent SqlRowEmitter/SqlRowReaderEmitter bug fixed along the way), then same day extended to the Conditional-Split-cross-reference case that round's own closing claim had missed -- RouterEmitter and a Derived-Column-referencing-a-Data-Conversion-column path both wired to the same TranslateDataConversion resolution, retiring both "Conditional Split condition nullability" and "CSV-source nullability" as gaps (the latter turned out not to exist at all for this feature), fixing two more real bugs found only by building/running the real package's whole regenerated solution for the first time (a missing nullableColumnNames thread into EntityEmitter, and a Roslyn nullable-flow-analysis CS8629 needing a targeted null-forgiving `!`), and closing a third, previously-SILENT PackagePlanner gap (a multi-source Merge Join flow used to generate broken code with zero reported gaps) -- `DFT_DerivedAndSplit` now closes fully end-to-end, verified against both the real package (0 warnings/0 errors across its whole generated solution) and a new dedicated fixture run against `.\SQLFORPOC_2022`; `EntityEmitter`'s own string-nullability exclusion fixed 2026-08-28, mirroring `SqlRowEmitter`'s earlier fix, verified with a unit test rather than a new fixture since it's mechanical parity with an already-proven fix; Flat File Destination support added 2026-08-28 -- a new Etl.Core FlatFileBulkSink write-side abstraction, a codegen bypass for the whole EF Core/DbContext path (a flat file has no table), and a narrow direct-copy exemption scoped to this destination type only -- closing RBC_Demo_ETL's own DFT_ExportDelimited/DFT_ExportFixedWidth fully (0 warnings/0 errors building the real package's whole regenerated solution) plus a dedicated fixture run end-to-end against `.\SQLFORPOC_2022` that empirically confirmed real fixed-width padding/truncation behavior, fixing two more real bugs along the way (BuildSqlFlowSource's server/database check wrongly assumed every destination has one, and a "zero SQL tables in the whole package" case that left Program.cs referencing a DbContext type that was never generated); Sort + Merge Join support added 2026-08-28 -- a new Etl.Core MergeJoinRowSource abstraction (Merge Join modeled as an IRowSource, not a new step type, so it needed zero changes to DataFlowStep), a corrected-after-one-wrong-reading SortPayload (key designation lives on Sort's own INPUT columns, not output), and a hand-walked (not LineageBuilder-based, which would be ambiguous here) backward resolution from Merge Join's own output through Sort to each side's real source -- closing RBC_Demo_ETL's own DFT_SortAndMergeJoin fully (0 warnings/0 errors building the real package's whole regenerated solution), with the join algorithm itself verified via 5 genuine unit tests since a dedicated dtexec-runnable fixture hit an unresolved SSIS object-model quirk (Microsoft.MergeJoin auto-generating extra output columns, documented rather than resolved); Conditional Split -> Sort -> Merge support added 2026-08-28, same day -- a different, single-source shape than the Merge Join round, closed with two surgical fixes and zero new Etl.Core code (Sort/Merge are genuine name-preserving pass-throughs, so the pre-existing destination-column resolution needed no changes) -- closing RBC_Demo_ETL's own DFT_MergeSortedBranches fully (0 warnings/0 errors building the real package's whole regenerated solution), this time WITH a working dedicated fixture run end-to-end against .\SQLFORPOC_2022 (unlike the Merge Join round), after discovering Microsoft.Merge needs a third, different "add a second input" recipe from both Union All's and Merge Join's own (it already has two inputs from construction))
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -3023,6 +3023,106 @@ types other than DT_I4/DT_DBDATE. Multi-source Merge Join, named above, is now c
 one evidenced shape (two sources, each optionally through one Data Conversion, then Sort, then
 directly into a destination) -- Sort/Merge as part of a Conditional Split's own branch chain is
 explicitly NOT covered by this round.
+
+### Sort + Merge -- Conditional Split remerge (2026-08-28) -- closes RBC_Demo_ETL's own `DFT_MergeSortedBranches`
+
+The follow-up named immediately above, picked up the same session: a DIFFERENT shape from the
+multi-source Merge Join round -- single source, `Conditional Split -> Sort -> Sort -> Merge ->
+one shared destination`, no per-branch transform at all
+(`CSPLIT_ByCountry -> {SORT_Canada, SORT_RestOfWorld} -> MRG_SortedUnion -> OLEDST_CustomerMerged`,
+confirmed real from `Package_Transforms.dtsx`'s own XML, including a
+Data-Conversion-derived column, `CustomerID_i4`, referenced directly at the destination with NO
+Derived Column anywhere in the flow). Traced through by hand before writing any code (paths,
+input/output column names end to end) rather than assumed from the multi-source round's own
+shape, and the result was smaller than expected either way: **two surgical fixes, no new
+`Etl.Core` runtime code at all.**
+
+**Why no new runtime abstraction was needed, unlike Merge Join.** `Microsoft.Sort`'s own output
+columns keep the EXACT SAME NAMES as its input (confirmed from the real evidenced XML: input
+`CustomerID` in, output `CustomerID` out), and `Microsoft.Merge`'s own single output likewise
+keeps the same names as BOTH of its inputs. Neither transforms a VALUE -- they only reorder/
+combine rows. So the destination-column resolution that already exists (`TransformEmitter`'s
+plain `row.{PipelineColumnName}` fallback, `EntityEmitter`'s nullable-set lookup by the same
+name) needed zero changes: it already resolves any buffer column purely by NAME, with no
+awareness that a Sort or Merge sat somewhere upstream. The only thing missing was letting
+`PackagePlanner.ResolveBranch`'s own forward chain-walk (built for the Union-All-remerge round,
+2026-08-27) recognize `Microsoft.Sort`/`Microsoft.Merge` as pass-throughs at all -- before this,
+either one in the chain was a fatal "not supported" gap.
+
+**The two fixes:**
+- `PackagePlanner.ResolveBranch`: the pass-through match widened from
+  `"Microsoft.DerivedColumn" or "Microsoft.UnionAll"` to also include `"Microsoft.Sort" or
+  "Microsoft.Merge"` (only `DerivedColumn` still contributes to the branch's own
+  `DerivedColumns` list). Two branches converging on the SAME `Microsoft.Merge` instance (one
+  via each of its two named inputs) naturally resolve to the same downstream destination here,
+  with no special-casing -- identical to how two branches sharing a Union All already worked.
+- `PackageGenerator.GenerateConditionalSplitFlow`'s own "no Derived Column found -> direct-copy
+  pipeline" gate was widened from `flow.DerivedColumn is null` to
+  `flow.DerivedColumn is null && flow.DataConversion is null` -- the exact same widening the
+  single-destination path already got in the Data Conversion round (2026-08-28, earlier the same
+  day). Without it, this flow (genuinely zero Derived Columns anywhere, its only "transform" being
+  a Data-Conversion cross-reference) was wrongly rejected as a pure direct copy, even though
+  `TransformEmitter`'s own `convertedByName` resolution (already threaded into every branch's
+  call regardless of `DerivedColumns.Count`, confirmed by reading `PackageGenerator.cs` before
+  touching anything) was fully capable of handling it once the gate got out of the way.
+
+**Verified two ways, same discipline as every other round:**
+1. **The real motivating case** -- regenerating `Package_Transforms.dtsx`:
+   `DFT_MergeSortedBranches`'s own gap is GONE entirely (confirmed by reading the emitted
+   `CustomerMergedCanadaTransform.cs`/`...RestOfWorldTransform.cs` directly:
+   `CustomerID = SsisFn.ToNullableI4(row.CustomerID), Email = row.Email,` -- the Data Conversion
+   cross-reference resolving correctly with no Derived Column in sight). The whole regenerated
+   solution (all wired flows plus a copy of `Etl.Core`) builds with **0 warnings/0 errors**.
+2. **A new dedicated fixture**, `tests/Ssis.Extract.Tests/Fixtures/SyntheticSortMergeRemerge.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `sort-merge-remerge` mode) -- deliberately EXCLUDES Data
+   Conversion (already proven separately) to isolate exactly what's new here: OLE DB Source ->
+   Derived Column (`LoadedAtUtc`, shared, needed only to avoid re-tripping the pre-existing
+   direct-copy gate, since this fixture has no Data Conversion to satisfy it instead) ->
+   Conditional Split (`Category == "Canada"` -> Canada; default -> RestOfWorld) -> Sort_Canada/
+   Sort_RestOfWorld (each by `ID`) -> `Microsoft.Merge` -> one destination. **Generated, built
+   against a copy of `Etl.Core` (0 warnings/0 errors), and actually RUN against
+   `.\SQLFORPOC_2022`**: 4 seed rows, deliberately interleaved by ID and category (not
+   pre-grouped, and each branch's own two rows seeded in DESCENDING ID order so Sort's own
+   reordering is genuinely exercised, not coincidentally already correct) -- read back
+   afterward, not trusted from the exit code: all 4 rows (`Alice`/`Bob`/`Carol`/`Dave`) landed in
+   `dbo.SyntheticSortMergeTarget` with the correct `Name`, regardless of which branch or Sort
+   pass they came through. This is genuinely STRONGER evidence than the multi-source Merge Join
+   round could produce -- that one never got a working dedicated fixture at all.
+
+**Three real object-model facts nailed down building the fixture, none guessed** (same "ask the
+runtime, don't guess" discipline as trap 12) -- worth keeping since `Microsoft.Merge` turned out
+to need a THIRD, different recipe from both components already documented in this file for
+"how do you add a second input to a pipeline component":
+- `Microsoft.Merge` already has **TWO inputs** immediately after `ProvideComponentProperties()`
+  -- unlike `Microsoft.UnionAll`/`Microsoft.MergeJoin` (both start with exactly ONE, needing
+  `InputCollection.New()`/`InsertInput` respectively to add a second, per this file's own
+  Union-All-remerge and Merge Join sections). Confirmed only after BOTH those other recipes
+  failed against Merge specifically: `InputCollection.New()` (Union All's own approach) created
+  a malformed THIRD input and crashed the native `ReinitializeMetaData()` with an
+  `AccessViolationException` (not a catchable `COMException` -- a genuine native crash);
+  `InsertInput` (Merge Join's own approach) threw `COMException 0xC020800E` immediately, even
+  BEFORE any path was attached (ruling out the "first input already has a live connection" cause
+  UnionAll's own doc comment names for that same HRESULT). The fix needed neither call: both of
+  Merge's own inputs already exist from construction, so both paths attach directly to
+  `InputCollection[0]`/`[1]`.
+- Once past that, Merge behaves like Union All in every other respect: it auto-populates its own
+  output columns from the FIRST input via `ReinitializeMetaData()`, but the SECOND input's own
+  columns are NOT auto-mapped -- each needs `SetInputColumnProperty(..., "OutputColumnLineageID",
+  ...)` pointed at the matching (by name) output column the first input already created.
+- Unlike `Microsoft.MergeJoin`'s own still-unresolved quirk, `Microsoft.Merge` did NOT
+  auto-generate any extra output columns after `ReinitializeMetaData()` -- confirmed by reading
+  the saved XML back, exactly the 3 intended columns (ID/Name/Category).
+
+Two new unit tests, both reading the checked-in fixture directly rather than hand-building a
+`PipelineSpec` (`PackagePlannerTests.Plan_WalksThroughSortAndMerge_...`,
+`PackageGeneratorTests.Generate_WiresAConditionalSplitFlowWithNoPerBranchTransform_...`).
+Regression: 111/111 in `Ssis.Extract.Codegen.Tests` (was 109), same 3 pre-existing unrelated
+failures elsewhere. No `Etl.Core` changes at all this round -- nothing to commit in the
+`SSIS_Rewrite` repo.
+
+**Remaining known gaps, unchanged except for this round's own closure:** Excel Source, ForEach
+Loop containers, Data Conversion target types other than DT_I4/DT_DBDATE. Conditional Split ->
+Sort -> Merge, named above, is now closed for the one evidenced shape.
 
 ## Traps already hit once — don't re-derive these
 

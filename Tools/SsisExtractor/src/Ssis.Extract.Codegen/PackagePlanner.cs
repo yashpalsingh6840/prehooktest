@@ -585,11 +585,18 @@ public static class PackagePlanner
         }
 
         // Walk forward from the split's own output, through any chain of Derived Column
-        // (recorded, since it may compute a destination column) and/or Union All (a pure
-        // physical merge point -- walked through transparently, contributing nothing to
-        // DerivedColumns) components, until an OLE DB Destination is reached. Two branches
-        // that both pass through the SAME Union All naturally resolve to the SAME destination
-        // instance here, with no special-casing needed for that convergence.
+        // (recorded, since it may compute a destination column), Union All, Sort, and/or Merge
+        // (all three are pure physical/ordering pass-throughs -- confirmed real from
+        // RBC_Demo_ETL's own DFT_MergeSortedBranches: Sort's own output columns keep the exact
+        // same names as its input, and Merge's own single output likewise keeps the same names
+        // as both of its inputs, so neither needs any special value-resolution here -- the
+        // eventual destination-column resolution in TransformEmitter/EntityEmitter already
+        // matches purely by buffer column NAME, with zero awareness that a Sort/Merge sat in
+        // between) until an OLE DB Destination is reached. Two branches that both pass through
+        // the SAME Union All/Merge naturally resolve to the SAME destination instance here, with
+        // no special-casing needed for that convergence -- Merge's own two distinct inputs
+        // ("Merge Input 1"/"Merge Input 2") both belong to the identical component instance, so
+        // whichever branch's path ends at either one still resolves `next` to that same instance.
         var derivedColumns = new List<PipelineComponentSpec>();
         var currentOutputRefId = output.RefId;
 
@@ -614,7 +621,7 @@ public static class PackagePlanner
             if (next.ComponentClassId == "Microsoft.OLEDBDestination" || next.AdoNetDestination is not null)
                 return new ConditionalSplitBranchPlan(outputName, friendlyExpression, derivedColumns, next);
 
-            if (next.ComponentClassId is "Microsoft.DerivedColumn" or "Microsoft.UnionAll")
+            if (next.ComponentClassId is "Microsoft.DerivedColumn" or "Microsoft.UnionAll" or "Microsoft.Sort" or "Microsoft.Merge")
             {
                 if (next.ComponentClassId == "Microsoft.DerivedColumn")
                     derivedColumns.Add(next);

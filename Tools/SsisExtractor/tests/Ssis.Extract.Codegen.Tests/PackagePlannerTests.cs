@@ -296,4 +296,33 @@ public class PackagePlannerTests
         Assert.Equal("Microsoft.FlatFileDestination", fixedWidthFlow.DestinationComponent.ComponentClassId);
         Assert.Null(fixedWidthFlow.DerivedColumn);
     }
+
+    [Fact]
+    public void Plan_WalksThroughSortAndMerge_ToResolveBothConditionalSplitBranchesToTheSameDestination()
+    {
+        // SyntheticSortMergeRemerge.dtsx's own DFT_SortMergeRemerge is the real evidenced shape
+        // of RBC_Demo_ETL's own DFT_MergeSortedBranches: Conditional Split -> Sort -> Sort ->
+        // Merge -> one shared destination, no per-branch transform at all. Before this round,
+        // ResolveBranch's own forward walk only recognized Derived Column/Union All as
+        // pass-throughs -- a Sort or Merge in the chain was a fatal "not supported" gap.
+        var package = LoadSyntheticFixture("SyntheticSortMergeRemerge.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var flow = Assert.Single(plan.Flows);
+        Assert.NotNull(flow.ConditionalSplit);
+        Assert.Equal(2, flow.ConditionalSplit!.Branches.Count);
+
+        // Both branches pass through their own Sort (contributing nothing to DerivedColumns,
+        // the same "pure pass-through" treatment Union All already got) and converge on the
+        // SAME Merge component's single output -- so both resolve to the identical destination
+        // instance, exactly like two branches sharing a Union All.
+        var canada = Assert.Single(flow.ConditionalSplit.Branches, b => b.OutputName == "Canada");
+        var restOfWorld = Assert.Single(flow.ConditionalSplit.Branches, b => b.OutputName == "RestOfWorld");
+        Assert.Empty(canada.DerivedColumns);
+        Assert.Empty(restOfWorld.DerivedColumns);
+        Assert.Same(canada.Destination, restOfWorld.Destination);
+        Assert.Equal("Microsoft.OLEDBDestination", canada.Destination.ComponentClassId);
+    }
 }

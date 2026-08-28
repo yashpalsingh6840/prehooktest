@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge]");
             return 2;
         }
 
@@ -136,9 +136,13 @@ internal static class Program
         {
             return BuildMergeJoinFixture(args[0]);
         }
+        if (fixtureName == "sort-merge-remerge")
+        {
+            return BuildSortMergeRemergeFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', or 'merge-join'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', or 'sort-merge-remerge'.");
             return 2;
         }
 
@@ -1766,12 +1770,179 @@ internal static class Program
         return 0;
     }
 
+    /// <summary>
+    /// OLE DB Source (SqlCommand: ID, Name, Category) -&gt; Conditional Split
+    /// (<c>Category == "Canada"</c> -&gt; Canada; default -&gt; RestOfWorld) -&gt;
+    /// Sort_Canada/Sort_RestOfWorld (each by ID) -&gt; <c>Microsoft.Merge</c> -&gt; one OLE DB
+    /// Destination -- the real evidenced shape of RBC_Demo_ETL's own DFT_MergeSortedBranches
+    /// (closed 2026-08-28 by extending <c>PackagePlanner.ResolveBranch</c>'s own chain-walk to
+    /// treat Sort/Merge as pure pass-throughs, the same way it already treated Union All).
+    ///
+    /// <para>Deliberately excludes Data Conversion (the real package's own
+    /// <c>DCONV_MergeId</c>) -- already proven separately by
+    /// SyntheticDataConversionSplit.dtsx and the widened "no Derived Column found" gate's own
+    /// dedicated unit test. This fixture's whole job is to prove the NEW part in isolation: that
+    /// Sort/Merge are genuinely name-preserving pass-throughs at RUNTIME, not just structurally
+    /// walkable, so TransformEmitter's existing "row.PipelineColumnName" fallback resolves a
+    /// destination column correctly with ZERO new value-resolution code, on real seeded data.</para>
+    ///
+    /// <para><b>Object-model facts confirmed empirically while building this</b> (same "ask the
+    /// runtime, don't guess" discipline as trap 12), two of them found only after both other
+    /// known "add a second input" recipes in this file FAILED against Merge specifically:
+    /// <list type="bullet">
+    /// <item><c>Microsoft.Merge</c> already has TWO inputs immediately after
+    /// <c>ProvideComponentProperties()</c> -- unlike <c>Microsoft.UnionAll</c>/
+    /// <c>Microsoft.MergeJoin</c> (both start with exactly ONE, needing
+    /// <c>InputCollection.New()</c>/<c>InsertInput</c> respectively to add a second). Attempting
+    /// UnionAll's own <c>InputCollection.New()</c> recipe here crashed the native
+    /// <c>ReinitializeMetaData()</c> with an <c>AccessViolationException</c> (a malformed THIRD
+    /// input); attempting MergeJoin's own <c>InsertInput</c> recipe instead threw
+    /// <c>COMException 0xC020800E</c> immediately, even before any path was attached. Merge's own
+    /// fixed two-input shape needs neither call -- both inputs already exist, just attach paths
+    /// directly to <c>InputCollection[0]</c>/<c>[1]</c>.</item>
+    /// <item>Merge auto-populates its own output columns from the FIRST input once
+    /// <c>ReinitializeMetaData()</c> runs (same as UnionAll), but the SECOND input's own columns
+    /// are not auto-mapped -- each must be pointed at the matching (by name) output column via
+    /// <c>SetInputColumnProperty(..., "OutputColumnLineageID", ...)</c>, identical to UnionAll's
+    /// own second input.</item>
+    /// <item>Unlike <c>Microsoft.MergeJoin</c> (see <see cref="BuildMergeJoinFixture"/>'s own
+    /// unresolved quirk), <c>Microsoft.Merge</c> did NOT auto-generate any extra output columns
+    /// after <c>ReinitializeMetaData()</c> -- confirmed by reading the saved XML back, exactly 3
+    /// output columns (ID/Name/Category), matching what was intended.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-sort-merge-remerge-tables.sql</c> already
+    /// created and seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildSortMergeRemergeFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticSortMergeRemerge" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_SortMergeRemerge";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Name, Category FROM dbo.SyntheticSortMergeInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var splitMeta = pipe.ComponentMetaDataCollection.New();
+        splitMeta.ComponentClassID = "Microsoft.ConditionalSplit";
+        var splitInst = splitMeta.Instantiate();
+        splitInst.ProvideComponentProperties(); // resets Name -- see AddOleDbComponent's own comment
+        splitMeta.Name = "CSPLIT_ByCategory";
+
+        // A shared upstream Derived Column (the standard LoadedAtUtc audit stamp every other
+        // fixture in this file already uses) -- without it, this flow would be a pure
+        // direct-copy-with-routing pipeline (no transform work anywhere), which is a separate,
+        // already-known, deliberately unsupported gap (see SyntheticParallelShapes.dtsx's own
+        // DFT_DirectCopy). Adding it here keeps this fixture representative of the real
+        // evidenced package's own shape (DFT_MergeSortedBranches also has no per-branch
+        // transform, but the real package's own Data Conversion satisfies the same gate --
+        // deliberately excluded here, see this method's own doc comment, so a Derived Column
+        // fills that role instead).
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnLoadedAtUtc(pipe, srcOutput);
+        var derivedOutput = derivedMeta.OutputCollection[0];
+
+        AttachPath(pipe, derivedOutput, splitMeta.InputCollection[0]);
+        splitInst.AcquireConnections(null);
+        splitInst.ReinitializeMetaData();
+        splitInst.ReleaseConnections();
+
+        var splitInput = splitMeta.InputCollection[0];
+        var splitVirtualInput = splitInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in splitVirtualInput.VirtualInputColumnCollection)
+            splitInst.SetUsageType(splitInput.ID, splitVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+
+        // IsDefaultOut is READ-ONLY -- see BuildConditionalSplitFixture's own comment.
+        var defaultOutput = splitMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        defaultOutput.Name = "RestOfWorld";
+
+        var caseOutput = splitInst.InsertOutput(DTSInsertPlacement.IP_AFTER, 0);
+        caseOutput.Name = "Canada";
+        splitInst.SetOutputProperty(caseOutput.ID, "FriendlyExpression", "Category == \"Canada\"");
+        splitInst.SetOutputProperty(caseOutput.ID, "Expression", "Category == \"Canada\"");
+        splitInst.SetOutputProperty(caseOutput.ID, "EvaluationOrder", 0);
+
+        var sortCanadaMeta = AddSortByKey(pipe, "SORT_Canada", caseOutput, "ID");
+        var sortRestMeta = AddSortByKey(pipe, "SORT_RestOfWorld", defaultOutput, "ID");
+
+        var mergeMeta = pipe.ComponentMetaDataCollection.New();
+        mergeMeta.ComponentClassID = "Microsoft.Merge";
+        var mergeInst = mergeMeta.Instantiate();
+        mergeInst.ProvideComponentProperties(); // resets Name -- see AddOleDbComponent's own comment
+        mergeMeta.Name = "MRG_SortedUnion";
+
+        // Unlike Microsoft.UnionAll/Microsoft.MergeJoin (both start with exactly ONE input from
+        // ProvideComponentProperties(), needing InsertInput/InputCollection.New() to add a
+        // second), Microsoft.Merge already has TWO inputs from ProvideComponentProperties() --
+        // confirmed empirically after both of those other components' own recipes failed here:
+        // InputCollection.New() (Union All's approach) crashed Merge's native
+        // ReinitializeMetaData() with an AccessViolationException (a THIRD, malformed input),
+        // and InsertInput (Merge Join's approach) threw COMException 0xC020800E immediately, even
+        // before any path was attached -- Merge's own fixed two-input shape apparently rejects
+        // any attempt to add a third. No input-creation call is needed at all; both of Merge's
+        // own inputs already exist and just need their paths attached directly.
+        AttachPath(pipe, sortCanadaMeta.OutputCollection[0], mergeMeta.InputCollection[0]);
+        AttachPath(pipe, sortRestMeta.OutputCollection[0], mergeMeta.InputCollection[1]);
+        mergeInst.AcquireConnections(null);
+        mergeInst.ReinitializeMetaData();
+        mergeInst.ReleaseConnections();
+
+        var mergeFirstInput = mergeMeta.InputCollection[0];
+        var mergeFirstVirtualInput = mergeFirstInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in mergeFirstVirtualInput.VirtualInputColumnCollection)
+            mergeInst.SetUsageType(mergeFirstInput.ID, mergeFirstVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+
+        var mergeSecondInput = mergeMeta.InputCollection[1];
+        var mergeSecondVirtualInput = mergeSecondInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in mergeSecondVirtualInput.VirtualInputColumnCollection)
+            mergeInst.SetUsageType(mergeSecondInput.ID, mergeSecondVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+
+        // The second input's columns are NOT auto-mapped by ReinitializeMetaData() -- same rule
+        // as BuildConditionalSplitRemergeFixture's own Union All second input; each must be
+        // pointed at the matching (by name) output column the first input already created.
+        var mergeOutput = mergeMeta.OutputCollection[0];
+        foreach (IDTSInputColumn100 inCol in mergeSecondInput.InputColumnCollection)
+        {
+            var matchingOutputCol = mergeOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>()
+                .FirstOrDefault(oc => oc.Name == inCol.Name)
+                ?? throw new InvalidOperationException($"fixture build error: Merge has no output column named '{inCol.Name}' to map the second input's own column onto.");
+            mergeInst.SetInputColumnProperty(mergeSecondInput.ID, inCol.ID, "OutputColumnLineageID", matchingOutputCol.LineageID);
+        }
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticSortMergeTarget]");
+        AttachPath(pipe, mergeOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
     /// <summary>Attaches a Sort component downstream of <paramref name="upstream"/>'s own main
     /// output and marks <paramref name="keyColumnName"/> as its sole ascending sort key (position
     /// 1) via <c>SetInputColumnProperty</c> on the Sort's OWN input column -- see
     /// <see cref="BuildMergeJoinFixture"/>'s own doc comment for why this is the input side, not
     /// the output side.</summary>
-    private static IDTSComponentMetaData100 AddSortByKey(MainPipe pipe, string name, IDTSComponentMetaData100 upstream, string keyColumnName)
+    private static IDTSComponentMetaData100 AddSortByKey(MainPipe pipe, string name, IDTSComponentMetaData100 upstream, string keyColumnName) =>
+        AddSortByKey(pipe, name, upstream.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut), keyColumnName);
+
+    /// <summary>Same as the <see cref="IDTSComponentMetaData100"/> overload, but takes the
+    /// upstream OUTPUT directly -- needed when the upstream component has more than one
+    /// non-error output (e.g. a Conditional Split's own named case/default outputs), where
+    /// ".Single(o => !o.IsErrorOut)" would throw.</summary>
+    private static IDTSComponentMetaData100 AddSortByKey(MainPipe pipe, string name, IDTSOutput100 upstreamOutput, string keyColumnName)
     {
         var meta = pipe.ComponentMetaDataCollection.New();
         meta.ComponentClassID = "Microsoft.Sort";
@@ -1779,8 +1950,7 @@ internal static class Program
         inst.ProvideComponentProperties();
         meta.Name = name;
 
-        var mainUpstreamOutput = upstream.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
-        AttachPath(pipe, mainUpstreamOutput, meta.InputCollection[0]);
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
         inst.AcquireConnections(null);
         inst.ReinitializeMetaData();
         inst.ReleaseConnections();

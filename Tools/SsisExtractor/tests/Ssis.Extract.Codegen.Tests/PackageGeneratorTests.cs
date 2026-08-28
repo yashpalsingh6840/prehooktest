@@ -398,4 +398,49 @@ public class PackageGeneratorTests
         Assert.Equal(3, result.Gaps.Count(g => g.Reason.Contains("assumes each result-set column is named/aliased")));
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticFlatFileDestination.Notification");
     }
+
+    [Fact]
+    public void Generate_WiresAConditionalSplitFlowWithNoPerBranchTransform_ThroughSortAndMerge()
+    {
+        // SyntheticSortMergeRemerge.dtsx: Conditional Split -> Sort -> Sort -> Merge -> one
+        // shared destination, with only a flow-level shared Derived Column (LoadedAtUtc) and NO
+        // per-branch transform at all -- the real evidenced shape of RBC_Demo_ETL's own
+        // DFT_MergeSortedBranches. Before this round, PackagePlanner.ResolveBranch had no
+        // pass-through case for Sort/Merge at all (a fatal "not supported" gap). Confirmed
+        // beyond this test by actually building and running the generated exe against
+        // .\SQLFORPOC_2022 and reading dbo.SyntheticSortMergeTarget back afterward -- all 4
+        // seeded rows landed with the correct Name regardless of Sort's own reordering -- see
+        // Tools/SsisExtractor/CLAUDE.md's "Sort + Merge -- Conditional Split remerge" section.
+        var package = LoadSyntheticFixture("SyntheticSortMergeRemerge.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        // ONE entity/table -- both branches converge on the same destination.
+        Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticSortMergeTarget.cs");
+
+        var canadaFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticSortMergeTargetCanadaTransform.cs");
+        var restFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticSortMergeTargetRestOfWorldTransform.cs");
+
+        // Every destination column is a plain passthrough (no Derived Column of its own beyond
+        // the shared LoadedAtUtc) -- proving TransformEmitter's existing "row.PipelineColumnName"
+        // fallback resolves correctly straight through Sort/Merge, with zero new
+        // value-resolution code needed for this feature.
+        Assert.Contains("ID = row.ID,", canadaFile.Content);
+        Assert.Contains("Name = row.Name,", canadaFile.Content);
+        Assert.Contains("LoadedAtUtc = ctx.LoadedAtUtc,", canadaFile.Content);
+        Assert.Contains("ID = row.ID,", restFile.Content);
+        Assert.Contains("Name = row.Name,", restFile.Content);
+        Assert.Contains("LoadedAtUtc = ctx.LoadedAtUtc,", restFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(canadaFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(restFile.Content);
+
+        var routerFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/CSPLIT_ByCategoryRouter.cs");
+        Assert.Contains("row.Category", routerFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(routerFile.Content);
+
+        // Only the two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption
+        // and Notification.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+    }
 }
