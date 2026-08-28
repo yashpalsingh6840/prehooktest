@@ -813,7 +813,13 @@ whole regenerated solution) plus two dedicated fixtures run end-to-end against .
 fixing a real Flat-File-Destination numeric-passthrough gap (ToString() widening, not a type-
 mismatch gap) and discovering a genuine Microsoft.Multicast object-model quirk (it auto-provisions
 a fresh, permanently-dangling spare output the instant an existing one gets a path attached) along
-the way)
+the way); numeric-passthrough-coercion for the one evidenced OLE DB/ADO NET r8-to-i4 pairing added
+2026-08-28, same day -- a real dtexec PROBE run first (a new Ssis.Extract.FixtureBuilder
+numeric-coercion fixture) measured round-to-nearest-ties-to-even as SSIS's own real rounding rule,
+then a new SsisFn.NarrowR8ToI4 helper reproduces it exactly (checked, so overflow throws rather
+than silently corrupting data -- a deliberate, unmeasured-against-real-SSIS conservative choice),
+closing RBC_Demo_ETL's own DFT_ExcelImport fully and verified end-to-end with the same fixture
+used for the probe, an exact row-for-row match against the real dtexec run
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -3568,6 +3574,96 @@ types other than DT_I4/DT_DBDATE, and the numeric-passthrough-coercion gap (now 
 to OLE DB/ADO NET destinations only -- Flat File Destination's own version of this is closed,
 above). OLE DB Command and Multicast, named above, are now closed for their one evidenced shape
 each.
+
+### Numeric-passthrough-coercion for OLE DB/ADO NET destinations (2026-08-28) -- closes the r8-to-i4 case, e.g. RBC_Demo_ETL's own `DFT_ExcelImport`
+
+The next round after OLE DB Command + Multicast, picked from the "remaining gaps" list by explicit
+user choice (`AskUserQuestion`) over Data Conversion's other target types, Excel Source's
+SqlCommand mode, or a ForEach Loop re-running a whole Data Flow Task. This is the gap
+`TransformEmitter`'s own doc comment named from the Excel Source round: a plain passthrough
+column whose source buffer type doesn't match its destination's external metadata type (r8 from
+Excel/ACE OLEDB vs. i4 at a real table) was reported as a generation gap rather than guessed,
+since SSIS's own OLE DB provider performs the narrowing implicitly at insert time and this tool
+had no evidence for which rounding/truncation rule to reproduce.
+
+**Real evidence gathered first, via a new dtexec PROBE, before writing any generator code** --
+same "ask the runtime, don't guess" discipline as trap 12, extended here from object-model
+properties to a live INSERT's own numeric coercion. `Ssis.Extract.FixtureBuilder`'s new
+`numeric-coercion` mode (`BuildNumericCoercionFixture`) builds a minimal OLE DB Source (SqlCommand
+returning a `float` "Val" column) -> OLE DB Destination (an `int` "Val" column) passthrough, with
+NO Data Conversion and NO Derived Column in between -- reproducing the real mismatch shape in
+isolation. Backing tables: `tests/Ssis.Extract.Tests/Fixtures/synthetic-numeric-coercion-tables.sql`,
+seeded with values chosen specifically to distinguish rounding rules: exact integers, ordinary
+non-midpoint values in both directions, FOUR midpoint values (3.5/-3.5 with an odd target, 2.5/4.5
+with an even target either side), and a NULL. **Run for real via `DTExec.exe /File
+SyntheticNumericCoercion.dtsx` against `.\SQLFORPOC_2022`/`SsisPoC`** (`DTSER_SUCCESS`), then read
+back: `3.0->3, 3.2->3, 3.5->4, 3.7->4, -3.2->-3, -3.5->-4, -3.7->-4, 2.5->2, 4.5->4, NULL->NULL`.
+This is **round-to-nearest, ties-to-EVEN** -- exactly matching .NET's own default `Math.Round(double)`
+midpoint rule (2.5 and 4.5 both round toward the nearest EVEN integer, not away from zero), and
+notably the SAME convention CLAUDE.md's own trap 12 already documented for the SSIS *expression
+language's* own `(DT_I4)` cast on a float -- both apparently share the same underlying OLE
+Automation-style numeric coercion, though that's an inference from the matching behavior, not
+independently confirmed from source. An overflow-inducing value was deliberately EXCLUDED from
+this same probe run: OLE DB Destination fast-loads in one transaction by default
+(`FastLoadMaxInsertCommitSize=0`), so a single failing row would roll back every other row in the
+same batch and contaminate the rounding-rule measurement -- overflow behavior is therefore left
+UNMEASURED, stated honestly rather than guessed (see below).
+
+**What was built:** `SsisFn.NarrowR8ToI4` (two overloads, `double`/`double?`, in
+`SsisFnEmitter.cs`) -- `checked((int)Math.Round(value))`, reproducing the measured rounding rule
+exactly. `checked` is a deliberate, conservative choice for the untested overflow case: it throws
+`OverflowException` rather than silently wrapping to a garbage value, which is the same "never
+guess a coercion that could silently corrupt data" principle as everywhere else in this tool --
+worst case this generated code fails loudly somewhere real SSIS might have succeeded (or itself
+failed) differently, never the reverse. `TransformEmitter.Emit`'s existing mismatch-detection loop
+gained one new branch, checked BEFORE the general `mismatchedTypeColumns` gap (mirroring the
+Flat File Destination round's own `isFlatFileDestination` branch immediately above it in the same
+loop): a `sourceType.ClrTypeName == "double" && column.Type.ClrTypeName == "int"` pairing routes to
+a new `narrowedR8ToI4Columns` set instead of gapping. **Every other numeric pairing (i8->i4,
+numeric->i4, r4->i4, etc.) still gaps** -- none of them were measured, and this round deliberately
+does not extrapolate the same rule to them.
+
+**Verified two ways, same discipline as every other round:**
+1. **The real motivating case** -- regenerating `SSIS_From_Sandeep`'s actual `Package_Advanced.dtsx`:
+   `DFT_ExcelImport`'s own `CustomerID` gap (previously the one named, honest, non-crashing gap
+   left on that flow) is GONE entirely -- confirmed by reading the emitted
+   `DripEligibilityTransform.cs` directly: `CustomerID = SsisFn.NarrowR8ToI4(row.CustomerID)`. The
+   whole regenerated solution (this flow plus a copy of `Etl.Core`) builds with **0 warnings/0
+   errors**. Only the pre-existing, unrelated `Package_Advanced` gaps remain (a SqlCommand-mode
+   OLE DB Source advisory on a different flow, and the always-present Notification gap).
+2. **A new dedicated fixture**, the same `SyntheticNumericCoercion.dtsx` built for the probe above
+   (kept and checked in, doing double duty as both the ground-truth probe and the Gate-3-style
+   verification fixture -- no second fixture needed). **Generated, built against a copy of
+   `Etl.Core` (0 warnings/0 errors), and actually RUN against `.\SQLFORPOC_2022`**: all 9
+   non-midpoint-excluded rows loaded, read back afterward and diffed directly against the real
+   dtexec probe's own captured values above -- **exact row-for-row match**
+   (`3,3,4,4,-3,-4,-4,2,4`), the strongest evidence tier this tool's "gaps not guesses" philosophy
+   can produce: the generated C# reproduces genuine SSIS runtime behavior bit-for-bit, not an
+   assumption about it. The probe's own NULL row (ID 10) was excluded from this generated-code run
+   -- a plain SQL source column with no `ISNULL`/Data Conversion evidence is never nullable-inferred
+   regardless of this round's own fix (a separate, pre-existing, out-of-scope limitation, unrelated
+   to numeric coercion), so including it would have crashed on an unrelated gap and masked this
+   round's own result; SSIS's real NULL-passthrough behavior for this pairing (NULL -> NULL) was
+   still captured by the earlier raw dtexec probe run, which is sufficient ground truth for it.
+
+One test was rewritten, not just extended: the pre-existing
+`Emit_ReportsAGap_ForAPlainPassthroughColumn_WhoseSourceAndDestinationClrTypesDiffer` asserted the
+OLD gap-reporting behavior for exactly this r8-to-i4 pairing -- renamed to
+`Emit_ResolvesAPlainPassthroughColumn_WhenSourceIsDoubleAndDestinationIsInt` and rewritten to
+assert the new `SsisFn.NarrowR8ToI4` call instead. A new test,
+`Emit_ReportsAGap_ForAPlainPassthroughColumn_WithAnUnevidencedNumericMismatch` (i8->i4), preserves
+coverage that an unevidenced pairing still gaps rather than guessing the same rule applies.
+Regression: 129/129 in `Ssis.Extract.Codegen.Tests` (was 128 before this round's net +1 from
+splitting that one test into two), same 3 pre-existing unrelated failures elsewhere.
+
+**Remaining known gaps, updated once more:** Aggregate/Row Count (only evidenced inside a flow
+already blocked by Lookup), Excel Source in SqlCommand mode, a ForEach Loop re-running a whole
+Data Flow Task per file, Data Conversion target types other than DT_I4/DT_DBDATE, and the
+numeric-passthrough-coercion gap for every OTHER numeric pairing (i8->i4, numeric->i4, r4->i4,
+etc. -- none measured, all still gap). The one evidenced r8-to-i4 OLE DB/ADO NET pairing, named
+above, is now closed. Overflow behavior for r8-to-i4 itself remains unmeasured against real SSIS
+(the generated code throws `OverflowException`, a deliberate conservative choice, not a confirmed
+match to real SSIS behavior).
 
 ## Traps already hit once — don't re-derive these
 

@@ -86,9 +86,7 @@ public static class TransformEmitter
         // insert time); a plain `row.ColumnName` PASSTHROUGH in GENERATED C# does not, and
         // double->int is not an implicit C# conversion -- confirmed as a real CS0266 compile
         // error, not assumed, by actually building a fixture reproducing this exact real
-        // pairing. Reported as a gap rather than guessing a cast: this tool has no oracle
-        // evidence for which numeric coercion (truncate/round/checked) the real OLE DB provider
-        // performs, and a wrong guess would silently corrupt data instead of failing loudly.
+        // pairing.
         // A Flat File Destination has no real narrowing risk at all -- every column it writes is
         // fundamentally text (its own connection manager types EVERY column DT_WSTR regardless of
         // what feeds it, confirmed real from this destination type's own connection-manager
@@ -100,11 +98,19 @@ public static class TransformEmitter
         // CS0029 int->string once the gap was merely suppressed) by actually generating and
         // building this exact pairing: a Multicast branch's own int ID column feeding a Flat File
         // Destination.
+        // The one evidenced OLE DB/ADO NET numeric pairing (r8 source -> i4 destination) is
+        // resolved via SsisFn.NarrowR8ToI4 instead of gapping (2026-08-28) -- measured empirically
+        // against a real dtexec run (synthetic-numeric-coercion-tables.sql) rather than guessed:
+        // SSIS's own OLE DB Destination rounds to the nearest integer, ties-to-EVEN, exactly
+        // matching .NET's own default Math.Round rule. Any OTHER numeric pairing (e.g. i8->i4,
+        // numeric->i4) has no such evidence and still gaps rather than guessing the same rule
+        // applies -- a wrong guess would silently corrupt data instead of failing loudly.
         var isFlatFileDestination = request.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination";
         var inputColumnsByRefId = request.DestinationComponent.Inputs.FirstOrDefault()?.Columns
             .ToDictionary(c => c.RefId) ?? [];
         var mismatchedTypeColumns = new HashSet<string>();
         var flatFileStringConversionColumns = new HashSet<string>();
+        var narrowedR8ToI4Columns = new HashSet<string>();
         foreach (var column in resolved.Columns)
         {
             if (column.Type is null) continue;
@@ -115,6 +121,12 @@ public static class TransformEmitter
             if (isFlatFileDestination)
             {
                 flatFileStringConversionColumns.Add(column.PipelineColumnName);
+                continue;
+            }
+
+            if (sourceType.ClrTypeName == "double" && column.Type.ClrTypeName == "int")
+            {
+                narrowedR8ToI4Columns.Add(column.PipelineColumnName);
                 continue;
             }
 
@@ -160,6 +172,16 @@ public static class TransformEmitter
                 var expr = isNullable
                     ? $"row.{column.PipelineColumnName}?.ToString() ?? \"\""
                     : $"row.{column.PipelineColumnName}.ToString()";
+                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+            }
+            else if (narrowedR8ToI4Columns.Contains(column.PipelineColumnName))
+            {
+                // SsisFn.NarrowR8ToI4 has both a double and a double? overload -- the same call
+                // shape works whether or not this column is nullable-inferred, unlike the Flat
+                // File string-conversion case above (which needs the null-conditional `?`
+                // operator itself, not just an overload).
+                var expr = $"SsisFn.NarrowR8ToI4(row.{column.PipelineColumnName})";
+                CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
             else if (!mismatchedTypeColumns.Contains(column.PipelineColumnName))
@@ -314,6 +336,7 @@ public static class TransformEmitter
         if (csharpExpression.Contains("SsisFn.Str(")) functionsUsed.Add("Str");
         if (csharpExpression.Contains("SsisFn.ToNullableI4(")) functionsUsed.Add("ToNullableI4");
         if (csharpExpression.Contains("SsisFn.ToNullableDate(")) functionsUsed.Add("ToNullableDate");
+        if (csharpExpression.Contains("SsisFn.NarrowR8ToI4(")) functionsUsed.Add("NarrowR8ToI4");
     }
 
     /// <summary>Same evidenced surface as SsisPipelineTypeMap, mapped into the expression

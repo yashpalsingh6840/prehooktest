@@ -5,15 +5,15 @@ namespace Ssis.Extract.Codegen.Tests;
 public class TransformEmitterTests
 {
     [Fact]
-    public void Emit_ReportsAGap_ForAPlainPassthroughColumn_WhoseSourceAndDestinationClrTypesDiffer()
+    public void Emit_ResolvesAPlainPassthroughColumn_WhenSourceIsDoubleAndDestinationIsInt()
     {
         // The exact real shape RBC_Demo_ETL's own DFT_ExcelImport hits: Excel Source always
         // buffers a numeric column as r8/double (Excel/ACE OLEDB has no narrower numeric type
         // at all), but the real destination table's own CustomerID column is i4/int -- SSIS's
-        // own OLE DB provider coerces this implicitly at insert time; a plain `row.ColumnName`
-        // passthrough in generated C# cannot (double->int is not an implicit C# conversion).
-        // Confirmed as a real CS0266 compile error by actually building a fixture reproducing
-        // this pairing, not assumed -- see CLAUDE.md's own "Excel Source" section.
+        // own OLE DB provider coerces this implicitly at insert time. Resolved (2026-08-28) via
+        // SsisFn.NarrowR8ToI4, whose round-to-nearest-ties-to-even rule was measured against a
+        // real dtexec run of exactly this pairing (synthetic-numeric-coercion-tables.sql), not
+        // guessed -- see CLAUDE.md's own "Numeric-passthrough-coercion" section.
         var destination = new PipelineComponentSpec
         {
             RefId = "DST_Test",
@@ -63,17 +63,81 @@ public class TransformEmitterTests
 
         var result = TransformEmitter.Emit(request);
 
+        Assert.Empty(result.Result.Gaps);
+        Assert.Equal(["NarrowR8ToI4"], result.SsisFunctionsUsed);
+
+        var file = Assert.Single(result.Result.Files);
+        Assert.Contains("CustomerID = SsisFn.NarrowR8ToI4(row.CustomerID),", file.Content);
+        Assert.Contains("ReviewedBy = row.ReviewedBy,", file.Content);
+        Assert.Contains("using Generated.Ssis;", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+    [Fact]
+    public void Emit_ReportsAGap_ForAPlainPassthroughColumn_WithAnUnevidencedNumericMismatch()
+    {
+        // i8 (bigint) -> i4 (int) has never been measured against a real dtexec run -- unlike
+        // the r8->i4 pairing above, this must still gap rather than assume the same round-to-
+        // nearest-ties-to-even rule applies. A wrong guess here would silently corrupt data.
+        var destination = new PipelineComponentSpec
+        {
+            RefId = "DST_Test",
+            Name = "OLE DB Destination",
+            ComponentClassId = "Microsoft.OLEDBDestination",
+            Inputs =
+            [
+                new PipelineInputSpec
+                {
+                    RefId = "DST_Test.Inputs[OLE DB Destination Input]",
+                    Name = "OLE DB Destination Input",
+                    Columns =
+                    [
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[BigId]",
+                            CachedName = "BigId",
+                            CachedDataType = "i8",
+                            LineageId = "SRC.Outputs[Output].Columns[BigId]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[BigId]",
+                        },
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[Name]",
+                            CachedName = "Name",
+                            CachedDataType = "wstr",
+                            LineageId = "SRC.Outputs[Output].Columns[Name]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Name]",
+                        },
+                    ],
+                    ExternalMetadataColumns =
+                    [
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[BigId]", Name = "BigId", DataType = "i4" },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Name]", Name = "Name", DataType = "wstr", Length = 50 },
+                    ],
+                },
+            ],
+        };
+        var pipeline = new PipelineSpec { Components = [destination] };
+
+        var request = new TransformRequest(
+            "Generated.Mapping", "WidgetTransform",
+            "Generated.Sql", "WidgetRow",
+            "Generated.Model", "Widget",
+            "Generated.Ssis",
+            pipeline, [], destination);
+
+        var result = TransformEmitter.Emit(request);
+
         var gap = Assert.Single(result.Result.Gaps);
-        Assert.Equal("DripEligibility.CustomerID", gap.Location);
-        Assert.Contains("buffered as double but the destination column is int", gap.Reason);
+        Assert.Equal("Widget.BigId", gap.Location);
+        Assert.Contains("buffered as long but the destination column is int", gap.Reason);
 
         // The MISMATCHED column is dropped from the assignments, but the file still generates
         // with every OTHER column -- same per-column-gap shape as an untranslatable Derived
         // Column expression, not a whole-flow failure.
         var file = Assert.Single(result.Result.Files);
-        Assert.DoesNotContain("CustomerID", file.Content);
-        Assert.Contains("ReviewedBy = row.ReviewedBy,", file.Content);
-        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+        Assert.DoesNotContain("BigId", file.Content);
+        Assert.Contains("Name = row.Name,", file.Content);
     }
 
 

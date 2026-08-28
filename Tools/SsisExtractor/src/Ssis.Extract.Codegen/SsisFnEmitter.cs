@@ -31,6 +31,7 @@ public static class SsisFnEmitter
         if (functionsUsed.Contains("Str")) bodies.Add(StrBody());
         if (functionsUsed.Contains("ToNullableI4")) bodies.Add(ToNullableI4Body());
         if (functionsUsed.Contains("ToNullableDate")) bodies.Add(ToNullableDateBody());
+        if (functionsUsed.Contains("NarrowR8ToI4")) bodies.Add(NarrowR8ToI4Body());
 
         var lines = new List<string>();
         if (functionsUsed.Contains("Str") || functionsUsed.Contains("ToNullableI4") || functionsUsed.Contains("ToNullableDate"))
@@ -167,5 +168,29 @@ public static class SsisFnEmitter
         "        !string.IsNullOrEmpty(value) && DateOnly.TryParse(value, CultureInfo.InvariantCulture, out var result)",
         "            ? result",
         "            : null;",
+    ];
+
+    private static List<string> NarrowR8ToI4Body() =>
+    [
+        "    /// <summary>",
+        "    /// A plain passthrough column whose source buffer is float (DT_R8) but whose",
+        "    /// destination column is int (DT_I4), with no explicit Data Conversion component --",
+        "    /// the real shape RBC_Demo_ETL's own DFT_ExcelImport has (CustomerID: r8 from the",
+        "    /// Excel worksheet, i4 at the destination table). SSIS's own OLE DB Destination",
+        "    /// accepts this pairing and performs the narrowing itself at insert time; measured",
+        "    /// empirically against a real dtexec run (synthetic-numeric-coercion-tables.sql):",
+        "    /// rounds to the NEAREST integer, ties-to-EVEN -- matches .NET's own default",
+        "    /// Math.Round midpoint rule exactly (2.5 -> 2, 3.5 -> 4, 4.5 -> 4, -3.5 -> -4). An",
+        "    /// out-of-range result throws OverflowException (checked) rather than silently",
+        "    /// wrapping -- a deliberate, conservative choice, NOT independently measured against",
+        "    /// real SSIS overflow behavior (a single overflowing row would roll back the whole",
+        "    /// fast-load batch in the same probe run that measured the rounding rule above, so it",
+        "    /// was left untested rather than guessed -- see that same SQL file's header).",
+        "    /// </summary>",
+        "    public static int NarrowR8ToI4(double value) => checked((int)Math.Round(value));",
+        "",
+        "    /// <summary>Nullable-source overload -- a NULL source value passes through as NULL,",
+        "    /// matching SSIS's own measured behavior for this same pairing.</summary>",
+        "    public static int? NarrowR8ToI4(double? value) => value is null ? null : NarrowR8ToI4(value.Value);",
     ];
 }

@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|excel-source|oledb-command|multicast|numeric-coercion]");
             return 2;
         }
 
@@ -156,9 +156,13 @@ internal static class Program
         {
             return BuildMulticastFixture(args[0]);
         }
+        if (fixtureName == "numeric-coercion")
+        {
+            return BuildNumericCoercionFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'excel-source', 'oledb-command', or 'multicast'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'excel-source', 'oledb-command', 'multicast', or 'numeric-coercion'.");
             return 2;
         }
 
@@ -2501,6 +2505,51 @@ internal static class Program
         ResolveOleDbMetadata(flatFileDestMeta, isDestination: true);
         // A third output now exists, unconnected/"dangling" -- left as-is, matching the real
         // evidenced shape exactly. Ssis.Extract.Codegen.PackagePlanner.PlanMulticast must skip it.
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand, a float "Val" column) -> OLE DB Destination (an int "Val"
+    /// column), a plain passthrough with NO Data Conversion and NO Derived Column in between --
+    /// reproduces, in isolation, the exact real shape RBC_Demo_ETL's own DFT_ExcelImport has
+    /// (a source buffer type that doesn't match the destination's external metadata type on a
+    /// column SSIS still lets you map directly). Built as a real dtexec PROBE first, added
+    /// 2026-08-28: measures what SSIS's own OLE DB Destination actually does with the mismatch
+    /// (round vs. truncate, which midpoint rule) before TransformEmitter's own "numeric
+    /// coercion on a plain passthrough column is not generated yet" gap is closed with real
+    /// code -- see <c>synthetic-numeric-coercion-tables.sql</c>'s own header for the full
+    /// rationale and why an overflow-inducing value is deliberately excluded here.
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-numeric-coercion-tables.sql</c> already
+    /// created on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildNumericCoercionFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticNumericCoercion" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Coerce";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Val FROM dbo.SyntheticNumericCoercionInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticNumericCoercionTarget]");
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
