@@ -140,9 +140,13 @@ internal static class Program
         {
             return BuildSortMergeRemergeFixture(args[0]);
         }
+        if (fixtureName == "foreach-file-loop")
+        {
+            return BuildForEachFileLoopFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', or 'sort-merge-remerge'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', or 'foreach-file-loop'.");
             return 2;
         }
 
@@ -1923,6 +1927,132 @@ internal static class Program
             accessMode: 3, openRowset: "[dbo].[SyntheticSortMergeTarget]");
         AttachPath(pipe, mergeOutput, destMeta.InputCollection[0]);
         ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source -&gt; Derived Column (<c>LoadedAtUtc</c>) -&gt; OLE DB Destination (an
+    /// ordinary flow, existing only so the whole package has at least one real Data Flow Task --
+    /// <c>ProgramEmitter.Emit</c>'s own "no Data Flow Task could be planned" gate would otherwise
+    /// reject the whole package before the ForEach Loop's own step ever got a chance to be
+    /// wired, exactly the shape RBC_Demo_ETL's own real Package_Advanced.dtsx has: FEL_SampleFiles
+    /// sits ALONGSIDE DFT_ExcelImport, not instead of it) -- plus, as a SIBLING top-level
+    /// executable with no precedence constraint to it (mirroring
+    /// SyntheticParallelShapes.dtsx's own independent-branches shape), a <c>STOCK:FOREACHLOOP</c>
+    /// container using <c>Microsoft.ForEachFileEnumerator</c> (Folder/FileSpec/Recurse/
+    /// FileNameRetrievalType=1, matching RBC_Demo_ETL's own real evidenced value) whose single
+    /// body task, an Execute SQL Task, has its own <c>SqlStatementSource</c> driven entirely by
+    /// a <c>PropertyExpression</c> referencing the loop's own mapped variable -- the exact real
+    /// shape of RBC_Demo_ETL's own <c>FEL_SampleFiles</c>/<c>SQL_LogFileName</c>.
+    ///
+    /// <para><b>Object-model facts confirmed empirically while building this</b> (same "ask the
+    /// runtime, don't guess" discipline as trap 12), none guessed from general SSIS
+    /// documentation:
+    /// <list type="bullet">
+    /// <item><c>Application.EnumeratorInfos["Foreach File Enumerator"]</c> (the enumerator's own
+    /// DISPLAY name, not its <c>CreationName</c> "Microsoft.ForEachFileEnumerator") is the
+    /// correct indexer key -- confirmed by enumerating <c>app.EnumeratorInfos</c>'s own
+    /// <c>Name</c>/<c>CreationName</c> pairs before writing the lookup.</item>
+    /// <item><c>ForEachFileEnumerator</c>'s own settable properties are plain CLR properties
+    /// (<c>Folder</c>, <c>FileSpec</c>, <c>Recurse</c>, <c>FileNameRetrievalType</c>) on the
+    /// concrete runtime type, not <c>IDTSCustomProperty</c>-style dynamic properties the way a
+    /// pipeline component's designtime properties are -- confirmed by reflecting the type before
+    /// use, avoiding a wasted `.Properties[...]` attempt that would have thrown.</item>
+    /// <item><c>ForEachLoop.VariableMappings.Add(variableName, valueIndex)</c> is the correct
+    /// call for the runtime object model (distinct from the pipeline object model's own
+    /// <c>ForEachVariableMapping</c> XML shape this tool's OWN reader already parses) --
+    /// confirmed by reading the saved XML back and finding the identical
+    /// <c>&lt;DTS:ForEachVariableMapping&gt;</c> shape RBC_Demo_ETL's own real package has.</item>
+    /// <item>An Execute SQL Task's <c>SqlStatementSource</c> PropertyExpression is set exactly
+    /// like any other task property expression already used elsewhere in this codebase (CLAUDE.md's
+    /// own "Sensitive credential" section: <c>host.Properties["SqlStatementSource"].
+    /// SetExpression(host, exprText)</c>) -- no task-specific API needed.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-foreach-file-loop-tables.sql</c> already
+    /// created on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>, and the sample files under
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-foreach-file-loop-files/</c> present on
+    /// disk (three small .txt files, so the loop has something real to enumerate).
+    /// </summary>
+    private static int BuildForEachFileLoopFixture(string outputPath)
+    {
+        var filesDir = Path.Combine(TestFixturesDir(), "synthetic-foreach-file-loop-files");
+        if (!Directory.Exists(filesDir) || Directory.GetFiles(filesDir, "*.txt").Length == 0)
+        {
+            Console.Error.WriteLine($"error: expected .txt sample files at {filesDir} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticForEachFileLoop" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        pkg.Variables.Add("CurrentFile", false, "User", "");
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Amount FROM dbo.SyntheticForEachFileLoopInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnLoadedAtUtc(pipe, mainOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticForEachFileLoopTarget]");
+        AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        var feLoopExec = pkg.Executables.Add("STOCK:FOREACHLOOP");
+        var feLoop = (Microsoft.SqlServer.Dts.Runtime.ForEachLoop)feLoopExec;
+        feLoop.Name = "FEL_SampleFiles";
+
+        // ForEachEnumeratorInfos (NOT "EnumeratorInfos"), keyed by the enumerator's own DISPLAY
+        // name ("Foreach File Enumerator"), not its CreationName ("DTS.ForEachFileEnumerator.8")
+        // -- confirmed by reflecting Application/ForEachEnumeratorInfos directly, not guessed.
+        // CreateNew() returns a ForEachEnumeratorHost whose InnerObject is a raw COM object with
+        // no strongly-typed wrapper (unlike a pipeline component's IDTSDesigntimeComponent100) --
+        // its own settable properties are plain dynamic DtsProperty entries on the HOST itself
+        // (feHost.Properties[...]), reflected directly rather than guessed: "Directory" (NOT
+        // "Folder", despite the saved XML's own <ForEachFileEnumeratorProperties Folder="..."/>
+        // attribute using that name) and "FileNameRetrieval" (NOT "FileNameRetrievalType",
+        // likewise different from the saved XML's own attribute name) -- another instance of the
+        // runtime property name differing from the persisted XML attribute name, the same lesson
+        // trap 12 already established for other components.
+        var app = new Microsoft.SqlServer.Dts.Runtime.Application();
+        var feInfo = app.ForEachEnumeratorInfos["Foreach File Enumerator"];
+        var feHost = feInfo.CreateNew();
+        feHost.Properties["Directory"].SetValue(feHost, filesDir);
+        feHost.Properties["FileSpec"].SetValue(feHost, "*.txt");
+        feHost.Properties["Recurse"].SetValue(feHost, false);
+        feHost.Properties["FileNameRetrieval"].SetValue(feHost, 1); // 1 = Name and extension, matching RBC_Demo_ETL's own real evidenced value
+        feLoop.ForEachEnumerator = feHost;
+
+        // VariableMappings.Add() takes NO arguments (confirmed by reflection, unlike the
+        // guessed-and-wrong Add(name, index) signature) -- it returns a ForEachVariableMapping
+        // whose own VariableName/ValueIndex are ordinary settable properties, the same
+        // "Add() then set properties on the result" shape InsertOutput already uses elsewhere in
+        // this file for a Conditional Split's own case output.
+        var mapping = feLoop.VariableMappings.Add();
+        mapping.VariableName = "User::CurrentFile";
+        mapping.ValueIndex = 0;
+
+        var sqlTaskHost = (RtTaskHost)feLoop.Executables.Add("Microsoft.ExecuteSQLTask");
+        sqlTaskHost.Name = "SQL_LogFileName";
+        sqlTaskHost.Properties["Connection"].SetValue(sqlTaskHost, sqlCm.Name);
+        sqlTaskHost.Properties["SqlStatementSource"].SetExpression(sqlTaskHost,
+            "\"INSERT INTO dbo.SyntheticForEachFileLoopLog (FileName) VALUES (N'\" + @[User::CurrentFile] + \"');\"");
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));

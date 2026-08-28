@@ -443,4 +443,35 @@ public class PackageGeneratorTests
         Assert.Equal(2, result.Gaps.Count);
         Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
     }
+
+    [Fact]
+    public void Generate_WiresAForEachFileLoop_AlongsideAnOrdinaryDataFlowTask()
+    {
+        // SyntheticForEachFileLoop.dtsx: DFT_Load (an ordinary flow, included only so the whole
+        // package has at least one Data Flow Task -- ProgramEmitter's own "no Data Flow Task
+        // could be planned" gate would otherwise reject the whole package) alongside
+        // FEL_SampleFiles, the real evidenced RBC_Demo_ETL shape. Confirmed beyond this test by
+        // actually building and running the generated exe against .\SQLFORPOC_2022 and the real
+        // sample .txt files -- see Tools/SsisExtractor/CLAUDE.md's own "ForEach Loop" section.
+        var package = LoadSyntheticFixture("SyntheticForEachFileLoop.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains("var fEL_SampleFilesStep = new ForEachLoopStep(", programFile.Content);
+        Assert.Contains("\"FEL_SampleFiles\",", programFile.Content);
+        Assert.Contains("new ForEachFileLoopAction(", programFile.Content);
+        Assert.Contains("ForEachFileNameMode.NameAndExtension),", programFile.Content);
+        Assert.Contains(
+            "currentFile => \"INSERT INTO dbo.SyntheticForEachFileLoopLog (FileName) VALUES (N'\" + currentFile + \"');\",",
+            programFile.Content);
+        Assert.Contains("sp.GetRequiredService<ILogger<ForEachLoopStep>>());", programFile.Content);
+        Assert.Contains("fEL_SampleFilesStep", programFile.Content); // present in the final Steps: [...] wiring too
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Only the two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption
+        // on DFT_Load's own source, and Notification. No ForEach-Loop-specific gap at all.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+    }
 }

@@ -325,4 +325,30 @@ public class PackagePlannerTests
         Assert.Same(canada.Destination, restOfWorld.Destination);
         Assert.Equal("Microsoft.OLEDBDestination", canada.Destination.ComponentClassId);
     }
+
+    [Fact]
+    public void Plan_ResolvesAForEachFileLoop_WhoseBodyIsASingleExpressionDrivenExecuteSqlTask()
+    {
+        // SyntheticForEachFileLoop.dtsx's own FEL_SampleFiles is the real evidenced shape of
+        // RBC_Demo_ETL's own FEL_SampleFiles: a Microsoft.ForEachFileEnumerator loop whose single
+        // body task's SqlStatementSource is entirely driven by a PropertyExpression referencing
+        // the loop's own mapped variable. Before this round, ANY STOCK:FOREACHLOOP reported its
+        // own unconditional "not supported" gap.
+        var package = LoadSyntheticFixture("SyntheticForEachFileLoop.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var loopStep = Assert.Single(plan.Steps, s => s is ForEachFileLoopStep);
+        var loop = ((ForEachFileLoopStep)loopStep).Loop;
+
+        Assert.Equal("FEL_SampleFiles", loop.TaskName);
+        Assert.EndsWith("synthetic-foreach-file-loop-files", loop.Folder);
+        Assert.Equal("*.txt", loop.FileSpec);
+        Assert.False(loop.Recurse);
+        Assert.Equal(1, loop.NameRetrievalTypeRaw); // Name and extension -- the real evidenced value
+        Assert.Equal("User::CurrentFile", loop.VariableName);
+        Assert.Equal("SQL_LogFileName", loop.InnerTaskName);
+        Assert.Contains("@[User::CurrentFile]", loop.SqlTemplate);
+    }
 }

@@ -68,6 +68,20 @@ public sealed record ProgramSqlStep(string StepName, string Sql) : ProgramStep;
 /// operation/paths already fully resolved by the planner.</summary>
 public sealed record ProgramFileSystemStep(string StepName, FileSystemActionPlan Action) : ProgramStep;
 
+/// <summary>A ForEach File Enumerator loop, resolved down to everything <c>Etl.Core.Pipeline.
+/// ForEachLoopStep</c> needs to construct: the enumerator config plus an ALREADY-TRANSLATED C#
+/// expression (<see cref="SqlExpression"/>, produced by <see cref="ForEachLoopEmitter"/> in
+/// <c>PackageGenerator</c>, not here) referencing <see cref="CurrentFileParamName"/> as a bare
+/// identifier -- this emitter only ever wraps it in a lambda,
+/// <c>{CurrentFileParamName} => {SqlExpression}</c>, never re-parses or re-translates it.
+/// <see cref="NameMode"/> is already the resolved <c>ForEachFileNameMode</c> enum member name
+/// (e.g. "NameAndExtension"), not the raw SSIS integer -- that mapping/gap-reporting also
+/// happens in <c>PackageGenerator</c>, matching every other raw-enum-to-name resolution in this
+/// tool (e.g. FileSystemTaskPayload.OperationRaw -&gt; FileSystemOperation).</summary>
+public sealed record ProgramForEachFileLoopStep(
+    string StepName, string Folder, string FileSpec, bool Recurse, string NameMode,
+    string CurrentFileParamName, string SqlExpression) : ProgramStep;
+
 public sealed record ProgramConditionalSplitStep(
     string StepName,
     FlowSourceSpec Source,
@@ -191,6 +205,16 @@ public static class ProgramEmitter
                     var fsLocal = SqlStepLocalName(fsStep.StepName); // same lowercase-first convention, generic enough to reuse
                     orderedLocalNames.Add(fsLocal);
                     lines.Add($"    var {fsLocal} = new FileSystemStep(\"{fsStep.StepName}\", {FileSystemActionExpr(fsStep.Action)}, sp.GetRequiredService<ILogger<FileSystemStep>>());");
+                    lines.Add("");
+                    break;
+                case ProgramForEachFileLoopStep loopStep:
+                    var loopLocal = SqlStepLocalName(loopStep.StepName); // same lowercase-first convention, generic enough to reuse
+                    orderedLocalNames.Add(loopLocal);
+                    lines.Add($"    var {loopLocal} = new ForEachLoopStep(");
+                    lines.Add($"        \"{loopStep.StepName}\",");
+                    lines.Add($"        new ForEachFileLoopAction({CSharpStringLiteral(loopStep.Folder)}, {CSharpStringLiteral(loopStep.FileSpec)}, {(loopStep.Recurse ? "true" : "false")}, ForEachFileNameMode.{loopStep.NameMode}),");
+                    lines.Add($"        {loopStep.CurrentFileParamName} => {loopStep.SqlExpression},");
+                    lines.Add("        sp.GetRequiredService<ILogger<ForEachLoopStep>>());");
                     lines.Add("");
                     break;
                 case ProgramConditionalSplitStep splitStep:
@@ -373,8 +397,11 @@ public static class ProgramEmitter
     /// <summary>Escapes backslash/quote AND control characters -- a flat file's own
     /// ColumnDelimiterDecoded/HeaderLine can contain a literal CR/LF (SSIS's decoded row
     /// delimiter, not its escape-sequence text), and a raw newline inside a non-verbatim C#
-    /// string literal is a compile error (CS1010), not just cosmetically wrong.</summary>
-    private static string CSharpStringLiteral(string value)
+    /// string literal is a compile error (CS1010), not just cosmetically wrong.
+    /// Internal, not private -- ForEachLoopEmitter reuses this exact escaping for the string
+    /// literal pieces of a ForEach Loop's own per-iteration SQL template, same sharing
+    /// precedent as TransformEmitter.CollectSsisFunctions/MapPipelineTypeToSsisType.</summary>
+    internal static string CSharpStringLiteral(string value)
     {
         var sb = new System.Text.StringBuilder(value.Length + 2);
         sb.Append('"');

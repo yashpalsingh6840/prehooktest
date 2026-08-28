@@ -803,7 +803,7 @@ A second, unrelated real bug (`GateRunner` not setting the job process's working
 which silently broke the job's own `appsettings.json` lookup and surfaced as an
 unrelated-looking Windows-auth failure) was also caught and fixed the same session.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile); nullable value-typed column support added 2026-08-27, same session -- an evidence-based minimal version (infer nullable from ISNULL(x) usage, unwrap with .Value everywhere else, a real named tradeoff vs. full null-flow analysis) scoped to SQL sources/Derived Columns only, verified end-to-end with a genuine NULL row against .\SQLFORPOC_2022; Data Conversion component support added 2026-08-28, first for SQL-source/single-destination flows only (a real dtexec probe run first to measure IgnoreFailure's actual behavior -- never drops a row, nulls the one failing column -- then LineageBuilder extended with a new "DataConversion" edge kind, TransformEmitter wired to emit SsisFn.ToNullableI4/ToNullableDate against the raw source column, and a real, previously-latent SqlRowEmitter/SqlRowReaderEmitter bug fixed along the way), then same day extended to the Conditional-Split-cross-reference case that round's own closing claim had missed -- RouterEmitter and a Derived-Column-referencing-a-Data-Conversion-column path both wired to the same TranslateDataConversion resolution, retiring both "Conditional Split condition nullability" and "CSV-source nullability" as gaps (the latter turned out not to exist at all for this feature), fixing two more real bugs found only by building/running the real package's whole regenerated solution for the first time (a missing nullableColumnNames thread into EntityEmitter, and a Roslyn nullable-flow-analysis CS8629 needing a targeted null-forgiving `!`), and closing a third, previously-SILENT PackagePlanner gap (a multi-source Merge Join flow used to generate broken code with zero reported gaps) -- `DFT_DerivedAndSplit` now closes fully end-to-end, verified against both the real package (0 warnings/0 errors across its whole generated solution) and a new dedicated fixture run against `.\SQLFORPOC_2022`; `EntityEmitter`'s own string-nullability exclusion fixed 2026-08-28, mirroring `SqlRowEmitter`'s earlier fix, verified with a unit test rather than a new fixture since it's mechanical parity with an already-proven fix; Flat File Destination support added 2026-08-28 -- a new Etl.Core FlatFileBulkSink write-side abstraction, a codegen bypass for the whole EF Core/DbContext path (a flat file has no table), and a narrow direct-copy exemption scoped to this destination type only -- closing RBC_Demo_ETL's own DFT_ExportDelimited/DFT_ExportFixedWidth fully (0 warnings/0 errors building the real package's whole regenerated solution) plus a dedicated fixture run end-to-end against `.\SQLFORPOC_2022` that empirically confirmed real fixed-width padding/truncation behavior, fixing two more real bugs along the way (BuildSqlFlowSource's server/database check wrongly assumed every destination has one, and a "zero SQL tables in the whole package" case that left Program.cs referencing a DbContext type that was never generated); Sort + Merge Join support added 2026-08-28 -- a new Etl.Core MergeJoinRowSource abstraction (Merge Join modeled as an IRowSource, not a new step type, so it needed zero changes to DataFlowStep), a corrected-after-one-wrong-reading SortPayload (key designation lives on Sort's own INPUT columns, not output), and a hand-walked (not LineageBuilder-based, which would be ambiguous here) backward resolution from Merge Join's own output through Sort to each side's real source -- closing RBC_Demo_ETL's own DFT_SortAndMergeJoin fully (0 warnings/0 errors building the real package's whole regenerated solution), with the join algorithm itself verified via 5 genuine unit tests since a dedicated dtexec-runnable fixture hit an unresolved SSIS object-model quirk (Microsoft.MergeJoin auto-generating extra output columns, documented rather than resolved); Conditional Split -> Sort -> Merge support added 2026-08-28, same day -- a different, single-source shape than the Merge Join round, closed with two surgical fixes and zero new Etl.Core code (Sort/Merge are genuine name-preserving pass-throughs, so the pre-existing destination-column resolution needed no changes) -- closing RBC_Demo_ETL's own DFT_MergeSortedBranches fully (0 warnings/0 errors building the real package's whole regenerated solution), this time WITH a working dedicated fixture run end-to-end against .\SQLFORPOC_2022 (unlike the Merge Join round), after discovering Microsoft.Merge needs a third, different "add a second input" recipe from both Union All's and Merge Join's own (it already has two inputs from construction))
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile); nullable value-typed column support added 2026-08-27, same session -- an evidence-based minimal version (infer nullable from ISNULL(x) usage, unwrap with .Value everywhere else, a real named tradeoff vs. full null-flow analysis) scoped to SQL sources/Derived Columns only, verified end-to-end with a genuine NULL row against .\SQLFORPOC_2022; Data Conversion component support added 2026-08-28, first for SQL-source/single-destination flows only (a real dtexec probe run first to measure IgnoreFailure's actual behavior -- never drops a row, nulls the one failing column -- then LineageBuilder extended with a new "DataConversion" edge kind, TransformEmitter wired to emit SsisFn.ToNullableI4/ToNullableDate against the raw source column, and a real, previously-latent SqlRowEmitter/SqlRowReaderEmitter bug fixed along the way), then same day extended to the Conditional-Split-cross-reference case that round's own closing claim had missed -- RouterEmitter and a Derived-Column-referencing-a-Data-Conversion-column path both wired to the same TranslateDataConversion resolution, retiring both "Conditional Split condition nullability" and "CSV-source nullability" as gaps (the latter turned out not to exist at all for this feature), fixing two more real bugs found only by building/running the real package's whole regenerated solution for the first time (a missing nullableColumnNames thread into EntityEmitter, and a Roslyn nullable-flow-analysis CS8629 needing a targeted null-forgiving `!`), and closing a third, previously-SILENT PackagePlanner gap (a multi-source Merge Join flow used to generate broken code with zero reported gaps) -- `DFT_DerivedAndSplit` now closes fully end-to-end, verified against both the real package (0 warnings/0 errors across its whole generated solution) and a new dedicated fixture run against `.\SQLFORPOC_2022`; `EntityEmitter`'s own string-nullability exclusion fixed 2026-08-28, mirroring `SqlRowEmitter`'s earlier fix, verified with a unit test rather than a new fixture since it's mechanical parity with an already-proven fix; Flat File Destination support added 2026-08-28 -- a new Etl.Core FlatFileBulkSink write-side abstraction, a codegen bypass for the whole EF Core/DbContext path (a flat file has no table), and a narrow direct-copy exemption scoped to this destination type only -- closing RBC_Demo_ETL's own DFT_ExportDelimited/DFT_ExportFixedWidth fully (0 warnings/0 errors building the real package's whole regenerated solution) plus a dedicated fixture run end-to-end against `.\SQLFORPOC_2022` that empirically confirmed real fixed-width padding/truncation behavior, fixing two more real bugs along the way (BuildSqlFlowSource's server/database check wrongly assumed every destination has one, and a "zero SQL tables in the whole package" case that left Program.cs referencing a DbContext type that was never generated); Sort + Merge Join support added 2026-08-28 -- a new Etl.Core MergeJoinRowSource abstraction (Merge Join modeled as an IRowSource, not a new step type, so it needed zero changes to DataFlowStep), a corrected-after-one-wrong-reading SortPayload (key designation lives on Sort's own INPUT columns, not output), and a hand-walked (not LineageBuilder-based, which would be ambiguous here) backward resolution from Merge Join's own output through Sort to each side's real source -- closing RBC_Demo_ETL's own DFT_SortAndMergeJoin fully (0 warnings/0 errors building the real package's whole regenerated solution), with the join algorithm itself verified via 5 genuine unit tests since a dedicated dtexec-runnable fixture hit an unresolved SSIS object-model quirk (Microsoft.MergeJoin auto-generating extra output columns, documented rather than resolved); Conditional Split -> Sort -> Merge support added 2026-08-28, same day -- a different, single-source shape than the Merge Join round, closed with two surgical fixes and zero new Etl.Core code (Sort/Merge are genuine name-preserving pass-throughs, so the pre-existing destination-column resolution needed no changes) -- closing RBC_Demo_ETL's own DFT_MergeSortedBranches fully (0 warnings/0 errors building the real package's whole regenerated solution), this time WITH a working dedicated fixture run end-to-end against .\SQLFORPOC_2022 (unlike the Merge Join round), after discovering Microsoft.Merge needs a third, different "add a second input" recipe from both Union All's and Merge Join's own (it already has two inputs from construction)); ForEach Loop container support added 2026-08-28, same day, sized against Excel Source first (picked as the smaller lift) -- closing RBC_Demo_ETL's own FEL_SampleFiles by recognizing its one evidenced body shape (a single Execute SQL Task whose SqlStatementSource is entirely PropertyExpression-driven) via a new, deliberately narrow Etl.Core.Pipeline.ForEachLoopStep and a small standalone expression translator (not a reuse of the pipeline-column-based ExpressionTranslator, since there is no buffer here), verified against the real package's own zero-gap planner resolution AND a genuinely working dedicated fixture run end-to-end against real files and .\SQLFORPOC_2022 (unlike the Merge Join round's own unresolved fixture attempt))
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -3123,6 +3123,139 @@ failures elsewhere. No `Etl.Core` changes at all this round -- nothing to commit
 **Remaining known gaps, unchanged except for this round's own closure:** Excel Source, ForEach
 Loop containers, Data Conversion target types other than DT_I4/DT_DBDATE. Conditional Split ->
 Sort -> Merge, named above, is now closed for the one evidenced shape.
+
+### ForEach Loop containers (2026-08-28) -- closes RBC_Demo_ETL's own `FEL_SampleFiles`
+
+Picked up the same session, sized live with the user first (`AskUserQuestion`, three options:
+ForEach Loop / Excel Source / both) against the two remaining named gaps -- both appear exactly
+once, both only in `Package_Advanced.dtsx`. ForEach Loop was the smaller lift: its extraction was
+already done (`ForEachLoopPayload`, since 2026-08-14's synthetic component-coverage pass) and
+explicitly, deliberately NOT code-generated (`PackagePlanner`'s own doc comment: "Etl.Core has no
+loop abstraction to generate against"); Excel Source needs a brand-new third-party NuGet
+dependency and extraction from scratch, deferred.
+
+**The real evidenced body shape, traced by hand before writing any code:** `FEL_SampleFiles`
+uses `Microsoft.ForEachFileEnumerator` (`Folder`, `FileSpec="*.csv"`, `Recurse="0"`,
+`FileNameRetrievalType="1"`), maps its current value to `User::CurrentFile`, and its ENTIRE body
+is one Execute SQL Task (`SQL_LogFileName`) whose `SqlStatementSource` is not a static attribute
+at all but a `<DTS:PropertyExpression Name="SqlStatementSource">` string-concatenating literal
+text with `@[User::CurrentFile]` -- confirmed real, not assumed, by reading the raw XML directly.
+This shape -- "a loop that re-runs one parameterized SQL statement per file" -- is dramatically
+smaller than the more commonly imagined "re-run a whole Data Flow Task per file" ForEach pattern,
+and is exactly what `Etl.Core` needed to support: nothing else.
+
+**Extraction needed ZERO new work.** `ExecutableSpec.PropertyExpressions` (a generic
+`List<PropertyExpressionSpec>` on every executable, not ForEach-Loop-specific) already captures
+`<DTS:PropertyExpression>` elements verbatim; `ForEachLoopPayload`/`ForEachFileEnumeratorSpec`
+already capture Folder/FileSpec/Recurse/FileNameRetrievalType/VariableMappings. Confirmed by
+grepping before writing anything -- this round is entirely a `Ssis.Extract.Codegen`/`Etl.Core`
+change.
+
+**New Etl.Core abstractions, deliberately the smallest shape that covers the real evidence, not
+a general loop-over-anything construct:** `ForEachFileLoopAction` (`Folder, FileSpec, Recurse,
+NameMode`) plus `ForEachFileNameMode` (`FullyQualified=0, NameAndExtension=1, NameOnly=2` --
+values from Microsoft's own public `IDTSForEachFileEnumerator` documentation, the one raw-enum
+mapping in this whole file NOT independently probed against a live object model, since it's
+long-stable public API rather than an inferred custom property) in `Abstractions/`; a new
+`Pipeline/ForEachLoopStep.cs` (`ILoadTask`, primary-ctor `(name, action, Func<string,string>
+buildSql, ILogger<ForEachLoopStep> logger)`, mirroring `ExecuteSqlStep`'s exact shape) that
+enumerates files in ordinal-sorted order (SSIS's own enumeration order is filesystem-dependent
+and unreproducible, so a stable order was chosen deliberately), rebuilds the SQL text via
+`buildSql` per file, and runs each through the SAME `IUnitOfWork.ExecuteSqlAsync` every other
+step already uses -- one failing iteration rolls back everything, same all-or-nothing semantics
+as the rest of a package. **Deliberately scoped to exactly this one body shape** -- a loop
+re-running a Data Flow Task, a File System Task, or anything with more than one child task is
+still a generation gap, not modeled here; inventing a general per-iteration-flow abstraction with
+no real evidence would be exactly the guessed scaffolding this tool refuses to produce.
+
+**Codegen additions in `Ssis.Extract.Codegen`:** `PackagePlanner` gained `ForEachFileLoopPlan`
+(the resolved SSIS-side facts: folder/mask/variable/raw expression text) and a new
+`ForEachFileLoopStep : PackageStep`, always a `Steps` entry regardless of its own position
+relative to a Data Flow Task -- unlike a one-shot SQL/File System task, a repeating loop has no
+pre-load-list equivalent to be hoisted into, the same reasoning `FlowStep` itself is never
+hoisted either. `PlanForEachFileLoop` validates the ONE supported shape (enumerator type, exactly
+one child, that child an Execute SQL Task, its own `SqlStatementSource` driven by a
+PropertyExpression) and reports a precise gap for anything else -- including, deliberately, a
+STATIC `SqlStatementSource` with no per-iteration expression at all: technically runnable via the
+ordinary Execute SQL Task path, but running the identical statement N times is almost certainly
+not the intended semantics of putting it in a loop, so it's called out rather than silently
+"working." A new `ForEachLoopEmitter.cs` translates the raw expression text into C#: parses via
+the ALREADY-BUILT `Ssis.Runtime.Expressions.Parser` (gate 2, 2026-08-18) and walks the AST with a
+translator deliberately much narrower than `ExpressionTranslator` -- only `StringLiteral`, the
+loop's own `Reference` (matched by name against the loop's own mapped variable, resolved to a bare
+C# identifier), and `+` (string concatenation) are supported, since there is no pipeline/buffer
+here at all for the existing column-resolution machinery to key off of. `ProgramEmitter` gained
+`ProgramForEachFileLoopStep` and a step-emission case emitting
+`new ForEachLoopStep("Name", new ForEachFileLoopAction(...), currentFile => {expr}, sp.GetRequiredService<ILogger<ForEachLoopStep>>())`;
+its own `CSharpStringLiteral` helper was promoted from `private` to `internal` so
+`ForEachLoopEmitter` could reuse the exact same escaping (same sharing precedent as
+`TransformEmitter.CollectSsisFunctions`).
+
+**Verified two ways, same discipline as every other round:**
+1. **The real motivating case** -- regenerating `Package_Advanced.dtsx`: `FEL_SampleFiles`'s own
+   gap is GONE entirely (confirmed both from the gap report and directly via
+   `PackagePlanner.Plan`, which resolves `Folder`, `FileSpec="*.csv"`,
+   `NameRetrievalTypeRaw=1`, `VariableName="User::CurrentFile"`, and the exact real SQL template
+   with zero gaps of its own). The package as a WHOLE still produces no files, correctly and for
+   unrelated, pre-existing reasons -- `DFT_ExcelImport` (Excel Source, still deferred) and
+   `DFT_FlagCustomers` (no destination) are its only other flows, so
+   `ProgramEmitter.Emit`'s own "no Data Flow Task could be planned" gate still fires; this
+   round's own fix is independently confirmed correct via `PackagePlanner.Plan` directly, not
+   masked by that unrelated gate.
+2. **A new dedicated fixture**, `tests/Ssis.Extract.Tests/Fixtures/SyntheticForEachFileLoop.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `foreach-file-loop` mode): an ordinary OLE DB Source ->
+   Derived Column -> OLE DB Destination flow (`DFT_Load`, included ONLY so the whole package has
+   a real Data Flow Task and clears the gate named above -- mirroring the real package's own
+   shape, where `FEL_SampleFiles` sits ALONGSIDE `DFT_ExcelImport`, not instead of it) plus a
+   sibling, precedence-independent `FEL_SampleFiles` loop reproducing the real shape exactly
+   (`Microsoft.ForEachFileEnumerator`, `FileNameRetrievalType=1`, one Execute SQL Task with a
+   PropertyExpression). **Generated, built against a copy of `Etl.Core` (0 warnings/0 errors),
+   and actually RUN against `.\SQLFORPOC_2022` and three real sample `.txt` files** (checked in
+   under `tests/Ssis.Extract.Tests/Fixtures/synthetic-foreach-file-loop-files/`) -- read back
+   afterward, not trusted from the exit code: `dbo.SyntheticForEachFileLoopLog` got exactly 3
+   rows (`alpha.txt`, `beta.txt`, `gamma.txt`, in that sorted order, confirming the step's own
+   ordinal sort), and `dbo.SyntheticForEachFileLoopTarget` got its 2 rows via the ordinary
+   `DFT_Load` path, unaffected by anything in this round. This is a genuinely WORKING dedicated
+   fixture, unlike the Merge Join round's own unresolved one.
+
+**Four real object-model facts nailed down building the fixture, none guessed** (same "ask the
+runtime, don't guess" discipline as trap 12) -- worth keeping since a `ForEachLoop`'s own runtime
+shape turned out to differ from every other component type built via the object model so far in
+this file:
+- `Application.ForEachEnumeratorInfos` (NOT `EnumeratorInfos`), keyed by the enumerator's own
+  DISPLAY name ("Foreach File Enumerator"), not its `CreationName`
+  ("DTS.ForEachFileEnumerator.8") -- confirmed by reflecting `Application` directly rather than
+  guessing from the pipeline object model's own, differently-shaped
+  `PipelineComponentInfos`/`CreationName` convention.
+- `ForEachEnumeratorInfo.CreateNew()` returns a `ForEachEnumeratorHost` whose `InnerObject` is a
+  raw, untyped COM object (no strongly-typed `ForEachFileEnumerator` wrapper class exists in this
+  GAC) -- its own settable config lives as plain dynamic `DtsProperty` entries on the HOST itself
+  (`feHost.Properties["Directory"].SetValue(feHost, ...)`), reflected directly rather than
+  guessed at.
+- Two of those property NAMES differ from their own SAVED XML attribute names -- `"Directory"`
+  (not `"Folder"`, despite `<ForEachFileEnumeratorProperties Folder="...">` in the saved XML) and
+  `"FileNameRetrieval"` (not `"FileNameRetrievalType"`) -- yet another instance of the "runtime
+  property name diverges from the persisted XML attribute name" lesson trap 12 already
+  established for other components, confirmed by reading the saved XML back after setting them.
+- `ForEachLoop.VariableMappings.Add()` takes ZERO arguments (an initial guessed
+  `Add(variableName, valueIndex)` signature failed to compile) -- it returns a
+  `ForEachVariableMapping` whose own `VariableName`/`ValueIndex` are ordinary settable properties
+  set afterward, the same "`Add()` then set properties on the result" shape `InsertOutput`
+  already uses elsewhere in this file for a Conditional Split's own case output.
+
+Two new `PackagePlannerTests`/`PackageGeneratorTests` reading the checked-in fixture directly,
+four `ForEachLoopEmitterTests` (the real `FEL_SampleFiles` expression translating exactly;
+a different-variable reference degrading to a gap; an unsupported function-call shape degrading
+to a gap; the whole-expression-is-the-variable case), and four `Etl.Core.Tests` (`ForEachLoopStepTests`,
+using a REAL temp directory with real files -- sorted-order execution, each of the three
+`ForEachFileNameMode` values, and the zero-matching-files case). Regression: 117/117 in
+`Ssis.Extract.Codegen.Tests` (was 111), same 3 pre-existing unrelated failures elsewhere; 33/33
+in `Etl.Core.Tests` (was 29).
+
+**Remaining known gaps, updated once more:** Excel Source, Data Conversion target types other
+than DT_I4/DT_DBDATE. ForEach Loop containers, named above, is now closed for the one evidenced
+body shape (a single expression-driven Execute SQL Task) -- a loop re-running a Data Flow Task
+per file remains unsupported and unevidenced.
 
 ## Traps already hit once — don't re-derive these
 

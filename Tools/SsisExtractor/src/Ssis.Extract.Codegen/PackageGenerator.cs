@@ -215,6 +215,12 @@ public static class PackageGenerator
                 case FileSystemStep fileSystemStep:
                     programSteps.Add(new ProgramFileSystemStep(fileSystemStep.TaskName, fileSystemStep.Action));
                     break;
+                case ForEachFileLoopStep loopStep:
+                {
+                    var programLoop = ResolveForEachFileLoop(loopStep.Loop, gaps);
+                    if (programLoop is not null) programSteps.Add(programLoop);
+                    break;
+                }
             }
         }
 
@@ -856,5 +862,43 @@ public static class PackageGenerator
         return parsed.AuthMode == "SqlLogin"
             ? ("SqlServer", parsed.UserId, parsed.Server, parsed.Database)
             : ("Windows", null, parsed.Server, parsed.Database);
+    }
+
+    /// <summary>Translates a <see cref="ForEachFileLoopPlan"/>'s own raw SSIS facts into
+    /// everything <see cref="ProgramForEachFileLoopStep"/> needs: the per-iteration SQL
+    /// expression (via <see cref="ForEachLoopEmitter"/>) and the resolved
+    /// <c>Etl.Core.Abstractions.ForEachFileNameMode</c> member name. Either can fail
+    /// independently, each with its own gap -- this step is simply omitted from the package
+    /// (not fatal to the rest of it), matching every other single-step gap in this file.</summary>
+    private static ProgramForEachFileLoopStep? ResolveForEachFileLoop(ForEachFileLoopPlan loop, List<GenerationGap> gaps)
+    {
+        const string currentFileParamName = "currentFile";
+        var translated = ForEachLoopEmitter.TranslateSqlTemplate(loop.SqlTemplate, loop.VariableName, currentFileParamName);
+        if (translated is NotTranslatable notTranslatable)
+        {
+            gaps.Add(new GenerationGap(loop.TaskName, $"{loop.InnerTaskName}: {notTranslatable.Reason}"));
+            return null;
+        }
+
+        // Raw values from Microsoft's public IDTSForEachFileEnumerator documentation -- see
+        // Etl.Core.Abstractions.ForEachFileNameMode's own doc comment for why this one enum
+        // mapping was not independently probed against a live object model the way most raw
+        // enums elsewhere in this tool are.
+        var nameMode = loop.NameRetrievalTypeRaw switch
+        {
+            null or 0 => "FullyQualified",
+            1 => "NameAndExtension",
+            2 => "NameOnly",
+            _ => null,
+        };
+        if (nameMode is null)
+        {
+            gaps.Add(new GenerationGap(loop.TaskName,
+                $"ForEach File Enumerator's own FileNameRetrievalType ({loop.NameRetrievalTypeRaw}) is not a recognized value -- not supported"));
+            return null;
+        }
+
+        return new ProgramForEachFileLoopStep(loop.TaskName, loop.Folder, loop.FileSpec, loop.Recurse, nameMode,
+            currentFileParamName, ((TranslatedOk)translated).CSharpExpression);
     }
 }
