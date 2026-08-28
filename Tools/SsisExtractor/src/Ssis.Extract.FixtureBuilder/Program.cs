@@ -132,9 +132,13 @@ internal static class Program
         {
             return BuildFlatFileDestinationFixture(args[0]);
         }
+        if (fixtureName == "merge-join")
+        {
+            return BuildMergeJoinFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', or 'flat-file-destination'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', or 'merge-join'.");
             return 2;
         }
 
@@ -1641,6 +1645,194 @@ internal static class Program
         }
 
         return cm;
+    }
+
+    /// <summary>
+    /// <b>NOT YET PRODUCING A CLEAN, CHECKED-IN FIXTURE -- left here as a documented starting
+    /// point for whoever continues this, not deleted, since every fact below IS confirmed real.</b>
+    /// Intended shape: two OLE DB Sources (Left: ID/Name; Right: ID/Phone) -> Sort each (key: ID,
+    /// ascending) -> Microsoft.MergeJoin (JoinType=2, the real evidenced raw value from
+    /// RBC_Demo_ETL's own MRG_CustomerContacts) -> OLE DB Destination, SQL-sourced (not Flat
+    /// File + Data Conversion, unlike the real package) specifically to isolate Sort/MergeJoin's
+    /// own mechanics in the smallest possible shape.
+    ///
+    /// <para><b>Object-model facts confirmed empirically while building this</b> (same "ask the
+    /// runtime, don't guess" discipline as trap 12), all independently verified, none guessed:
+    /// <list type="bullet">
+    /// <item>Sort's own key designation is set via <c>SetInputColumnProperty(input.ID, column.ID,
+    /// "NewSortKeyPosition", 1)</c> on its OWN INPUT column -- NOT the output side, confirmed
+    /// only after reading a real SSDT-authored Sort's own saved XML during the extractor's own
+    /// reader work (see <c>SortPayload</c>'s doc comment for the full story, including an
+    /// initial wrong reading). <see cref="AddSortByKey"/> works correctly end to end.</item>
+    /// <item><c>Microsoft.MergeJoin</c> starts with exactly ONE input from <c>ProvideComponentProperties()</c>
+    /// -- <c>InsertInput(DTSInsertPlacement.IP_AFTER, 0)</c> adds the second.</item>
+    /// <item>The designtime <c>InsertOutputColumnAt</c> throws <c>COMException 0xC0208019</c>
+    /// unconditionally for Merge Join's own output (unlike Conditional Split, where the
+    /// equivalent call works) -- the raw <c>output.OutputColumnCollection.New()</c> plus setting
+    /// <c>Name</c>/<c>SetDataTypeProperties</c>/<c>MappedColumnID</c> directly on the resulting
+    /// <c>IDTSOutputColumn100</c> works instead, and <c>MappedColumnID</c> is confirmed to be
+    /// what persists as the saved XML's own <c>InputColumnID</c> custom property.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para><b>The actual unresolved problem, found by reading the saved XML back, not
+    /// guessed:</b> after <c>SetComponentProperty("JoinType"/"NumKeyColumns"/"TreatNullsAsEqual", ...)</c>
+    /// runs, the component appears to auto-generate its OWN additional output columns (via the
+    /// SAME <c>InputColumnID</c>-custom-property persistence form real SSDT output uses, not the
+    /// raw <c>MappedColumnID</c> attribute this method's own manual calls produce) for every
+    /// input column already marked used on BOTH inputs -- confirmed by reading the saved XML,
+    /// which shows SIX output columns (ID/Name/ID1 via the auto form, ID2/Name1/Phone1 via this
+    /// method's own manual calls) instead of the 3 intended, with the auto-generated set's own
+    /// refId path (<c>Inputs[83]</c>, an unnamed numeric input id) suggesting the TWO inputs'
+    /// own identities also don't line up with this method's own index-0/index-1 assumption the
+    /// way expected. Not root-caused -- a future attempt should dump the component's own
+    /// <c>InputCollection</c>/<c>OutputCollection</c> state at each step (after
+    /// <c>InsertInput</c>, after each <c>SetComponentProperty</c> call) to see exactly when the
+    /// extra columns appear, rather than assuming this method's own call ordering is at fault.</para>
+    ///
+    /// Given this, Sort/MergeJoin's own RUNTIME join algorithm was instead verified via a plain
+    /// C# unit test with no SSIS involved at all
+    /// (<c>D:\PoC\SSIS_Rewrite\tests\Etl.Core.Tests\Data\MergeJoinRowSourceTests.cs</c>), and the
+    /// real evidenced package (RBC_Demo_ETL's own Package_Transforms.dtsx) already proves
+    /// extraction/codegen/build correctness end to end (0 warnings/0 errors regenerating its
+    /// whole solution) -- see CLAUDE.md's own Merge Join section for the full account.
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-merge-join-tables.sql</c> already created
+    /// and seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildMergeJoinFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticMergeJoin" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_MergeJoin";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var leftSrcMeta = AddOleDbComponent(pipe, "OLE DB Source Left", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Name FROM dbo.SyntheticMergeJoinLeft");
+        ResolveOleDbMetadata(leftSrcMeta, isDestination: false);
+
+        var rightSrcMeta = AddOleDbComponent(pipe, "OLE DB Source Right", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Phone FROM dbo.SyntheticMergeJoinRight");
+        ResolveOleDbMetadata(rightSrcMeta, isDestination: false);
+
+        var leftSortMeta = AddSortByKey(pipe, "SORT_Left", leftSrcMeta, "ID");
+        var rightSortMeta = AddSortByKey(pipe, "SORT_Right", rightSrcMeta, "ID");
+
+        var mjMeta = pipe.ComponentMetaDataCollection.New();
+        mjMeta.ComponentClassID = "Microsoft.MergeJoin";
+        var mjInst = mjMeta.Instantiate();
+        mjInst.ProvideComponentProperties(); // resets Name -- see AddOleDbComponent's own comment
+        mjMeta.Name = "MRG_LeftRight";
+        mjInst.InsertInput(DTSInsertPlacement.IP_AFTER, 0); // starts with 1 input; this adds the 2nd
+
+        AttachPath(pipe, leftSortMeta.OutputCollection[0], mjMeta.InputCollection[0]);
+        AttachPath(pipe, rightSortMeta.OutputCollection[0], mjMeta.InputCollection[1]);
+        mjInst.AcquireConnections(null);
+        mjInst.ReinitializeMetaData();
+        mjInst.ReleaseConnections();
+
+        // Same "InputColumnCollection stays empty until marked used" rule as Sort's own input
+        // (see AddSortByKey) -- confirmed real from RBC_Demo_ETL's own MRG_CustomerContacts,
+        // whose own Left/Right Input each carry only a SUBSET of their upstream Sort's own
+        // output columns (the join key plus whatever's actually needed downstream), not every
+        // column Sort passed through.
+        MarkInputColumnsUsed(mjInst, mjMeta.InputCollection[0], "ID", "Name");
+        MarkInputColumnsUsed(mjInst, mjMeta.InputCollection[1], "ID", "Phone");
+
+        mjInst.SetComponentProperty("JoinType", 2); // the real evidenced raw value -- this fixture exists to learn what it means
+        mjInst.SetComponentProperty("NumKeyColumns", 1);
+        mjInst.SetComponentProperty("TreatNullsAsEqual", true);
+
+        var mjOutput = mjMeta.OutputCollection[0];
+        AddMergeJoinOutputColumn(mjOutput, mjMeta.InputCollection[0], "ID");
+        AddMergeJoinOutputColumn(mjOutput, mjMeta.InputCollection[0], "Name");
+        AddMergeJoinOutputColumn(mjOutput, mjMeta.InputCollection[1], "Phone");
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticMergeJoinTarget]");
+        AttachPath(pipe, mjOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>Attaches a Sort component downstream of <paramref name="upstream"/>'s own main
+    /// output and marks <paramref name="keyColumnName"/> as its sole ascending sort key (position
+    /// 1) via <c>SetInputColumnProperty</c> on the Sort's OWN input column -- see
+    /// <see cref="BuildMergeJoinFixture"/>'s own doc comment for why this is the input side, not
+    /// the output side.</summary>
+    private static IDTSComponentMetaData100 AddSortByKey(MainPipe pipe, string name, IDTSComponentMetaData100 upstream, string keyColumnName)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.Sort";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties();
+        meta.Name = name;
+
+        var mainUpstreamOutput = upstream.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+        AttachPath(pipe, mainUpstreamOutput, meta.InputCollection[0]);
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        // ReinitializeMetaData() only populates VirtualInputColumnCollection (available-but-unused
+        // columns) -- InputColumnCollection (actually-used ones) stays empty until every wanted
+        // column is explicitly marked via SetUsageType, same mechanism BuildDerivedColumnLoadedAtUtc
+        // already uses for a passthrough transform.
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+
+        var keyCol = input.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == keyColumnName);
+        inst.SetInputColumnProperty(input.ID, keyCol.ID, "NewSortKeyPosition", 1);
+        inst.SetInputColumnProperty(input.ID, keyCol.ID, "NewComparisonFlags", 0);
+
+        return meta;
+    }
+
+    /// <summary>Marks exactly the named columns as used (UT_READONLY) on one input --
+    /// InputColumnCollection stays empty until this is called, same rule as
+    /// <see cref="AddSortByKey"/>'s own input.</summary>
+    private static void MarkInputColumnsUsed(IDTSDesigntimeComponent100 inst, IDTSInput100 input, params string[] names)
+    {
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            if (names.Contains(vcol.Name))
+                inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+    }
+
+    /// <summary>Adds one Merge Join output column mapped back to <paramref name="sourceColumnName"/>
+    /// on <paramref name="fromInput"/>. Merge Join's own output is NOT auto-populated the way a
+    /// synchronous passthrough transform's is, so every wanted column must be added explicitly --
+    /// and, confirmed empirically, NOT via the designtime <c>InsertOutputColumnAt</c> (which
+    /// threw <c>COMException 0xC0208019</c> unconditionally for this component, the same "raw
+    /// .New() instead of the designtime call" shape <c>Microsoft.UnionAll</c>'s own second INPUT
+    /// already needed for a different reason). The raw <c>IDTSOutputColumn100</c> exposes
+    /// <c>Name</c>/<c>DataType</c>/etc. as ordinary settable properties (no <c>IDTSName100</c>
+    /// cast needed, unlike a flat-file column) plus a <c>MappedColumnID</c> property that turns
+    /// out to BE what persists as the saved XML's own <c>InputColumnID</c> custom property --
+    /// confirmed by reading the saved XML back after setting it this way, not guessed from the
+    /// property's name alone.</summary>
+    private static void AddMergeJoinOutputColumn(IDTSOutput100 output, IDTSInput100 fromInput, string sourceColumnName)
+    {
+        var sourceCol = fromInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == sourceColumnName);
+        var newCol = (IDTSOutputColumn100)output.OutputColumnCollection.New();
+        newCol.Name = sourceColumnName;
+        newCol.SetDataTypeProperties(sourceCol.DataType, sourceCol.Length, sourceCol.Precision, sourceCol.Scale, sourceCol.CodePage);
+        newCol.MappedColumnID = sourceCol.LineageID;
     }
 
     /// <summary>

@@ -661,6 +661,7 @@
               ],
               "LocaleId": null,
               "Lookup": null,
+              "MergeJoin": null,
               "Name": "DER_MergeColumns",
               "OleDbDestination": null,
               "OleDbSource": null,
@@ -871,6 +872,7 @@
               "Properties": [],
               "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns",
               "ScriptComponent": null,
+              "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
               "Version": null
@@ -943,6 +945,7 @@
               "Inputs": [],
               "LocaleId": "1033",
               "Lookup": null,
+              "MergeJoin": null,
               "Name": "FF_SRC_Employees",
               "OleDbDestination": null,
               "OleDbSource": null,
@@ -1401,6 +1404,7 @@
               ],
               "RefId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees",
               "ScriptComponent": null,
+              "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
               "Version": "1"
@@ -1609,6 +1613,7 @@
               ],
               "LocaleId": null,
               "Lookup": null,
+              "MergeJoin": null,
               "Name": "OLEDST_Employee",
               "OleDbDestination": {
                 "AccessMode": 3,
@@ -1807,6 +1812,7 @@
               ],
               "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee",
               "ScriptComponent": null,
+              "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
               "Version": "4"

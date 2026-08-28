@@ -8,6 +8,21 @@ public abstract record FlowSourceSpec(string ComponentName);
 public sealed record CsvFlowSource(string ComponentName, string FileSourceKey) : FlowSourceSpec(ComponentName);
 public sealed record SqlFlowSource(string ComponentName, string CommandText) : FlowSourceSpec(ComponentName);
 
+/// <summary>A Merge Join: two independent underlying sources (each itself a
+/// <see cref="CsvFlowSource"/>/<see cref="SqlFlowSource"/>, resolved exactly like a
+/// single-source flow's own), combined by a generated <c>Etl.Core.Data.MergeJoinRowSource</c>
+/// wrapping the mapper class <see cref="MergeJoinEmitter"/> emitted (<see cref="MapperClassName"/>,
+/// providing <c>LeftKey</c>/<c>RightKey</c>/<c>Map</c>). <see cref="ComponentName"/> is the
+/// Merge Join's own Name, used only for the wrapped IRowSource's own logging identity.</summary>
+public sealed record MergeJoinFlowSource(
+    string ComponentName,
+    FlowSourceSpec LeftSource,
+    FlowSourceSpec RightSource,
+    string LeftRowTypeName,
+    string RightRowTypeName,
+    string MapperClassName,
+    string KeyClrType) : FlowSourceSpec(ComponentName);
+
 /// <summary>One column's write-time layout, mirroring Etl.Core.Data.FlatFileColumnFormat's own
 /// constructor shape verbatim -- this project never references the Etl.Core assembly (it emits
 /// TEXT, not types), so this is codegen's own plain DTO for the same three values.</summary>
@@ -87,8 +102,19 @@ public static class ProgramEmitter
         if (flows.Count == 0 && splits.Count == 0)
             return new EmitResult([], [new GenerationGap(request.PackageName, "no Data Flow Task could be planned for this package")]);
 
-        var usesCsv = flows.Any(f => f.Source is CsvFlowSource) || splits.Any(s => s.Source is CsvFlowSource);
-        var usesSql = flows.Any(f => f.Source is SqlFlowSource) || splits.Any(s => s.Source is SqlFlowSource);
+        var allSources = new List<FlowSourceSpec>();
+        foreach (var source in flows.Select(f => f.Source).Concat(splits.Select(s => s.Source)))
+        {
+            allSources.Add(source);
+            if (source is MergeJoinFlowSource mj) { allSources.Add(mj.LeftSource); allSources.Add(mj.RightSource); }
+        }
+        var usesCsv = allSources.Any(s => s is CsvFlowSource);
+        // A Merge Join's own combined row type always lands in the .Sql namespace/folder
+        // (MergeJoinEmitter's own choice, independent of what its two SIDES are sourced from),
+        // and MergeJoinRowSource<>/MergeJoinType both live in Etl.Core.Data/.Abstractions -- so a
+        // Merge Join flow needs these usings even when BOTH its sides happen to be CSV-sourced
+        // (the real evidenced case).
+        var usesSql = allSources.Any(s => s is SqlFlowSource or MergeJoinFlowSource);
         var usesFlatFileSink = flows.Any(f => f.Sink is FlatFileFlowSink);
 
         var lines = new List<string> { "using Etl.Core.Abstractions;" };
@@ -262,19 +288,58 @@ public static class ProgramEmitter
         lines.Add("{");
         switch (source)
         {
+            case MergeJoinFlowSource mj:
+                // Left/Right are each built via a local function (still closing over the outer
+                // `sp`) rather than a second AddScoped<IRowSource<...>> registration -- neither
+                // side's own IRowSource is a real, independently-useful DI service; it exists
+                // only to feed this one MergeJoinRowSource.
+                lines.Add($"    IRowSource<{mj.LeftRowTypeName}> BuildLeft()");
+                lines.Add("    {");
+                EmitSourceConstruction(lines, "        ", mj.LeftRowTypeName, mj.LeftSource);
+                lines.Add("    }");
+                lines.Add("");
+                lines.Add($"    IRowSource<{mj.RightRowTypeName}> BuildRight()");
+                lines.Add("    {");
+                EmitSourceConstruction(lines, "        ", mj.RightRowTypeName, mj.RightSource);
+                lines.Add("    }");
+                lines.Add("");
+                lines.Add($"    return new MergeJoinRowSource<{mj.LeftRowTypeName}, {mj.RightRowTypeName}, {mj.KeyClrType}, {rowTypeName}>(");
+                lines.Add($"        {CSharpStringLiteral(mj.ComponentName)},");
+                lines.Add("        BuildLeft(), BuildRight(),");
+                lines.Add($"        {mj.MapperClassName}.LeftKey, {mj.MapperClassName}.RightKey,");
+                lines.Add($"        Comparer<{mj.KeyClrType}>.Default,");
+                lines.Add("        MergeJoinType.LeftOuter,");
+                lines.Add($"        {mj.MapperClassName}.Map);");
+                break;
             case CsvFlowSource csv:
-                lines.Add("    var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;");
-                lines.Add($"    var csvOptions = new CsvSourceOptions {{ FilePath = fileOptions[\"{csv.FileSourceKey}\"].ResolvedPath }};");
-                lines.Add($"    return new CsvRowSource<{rowTypeName}>(\"{csv.ComponentName}\", csvOptions, new {rowTypeName}Map());");
+                EmitSourceConstruction(lines, "    ", rowTypeName, csv);
                 break;
             case SqlFlowSource sql:
-                lines.Add("    var dbOptions = sp.GetRequiredService<IOptions<DatabaseOptions>>().Value;");
-                lines.Add($"    var sqlOptions = new SqlSourceOptions {{ ConnectionString = SqlConnectionStringFactory.Build(dbOptions), CommandText = {CSharpStringLiteral(sql.CommandText)} }};");
-                lines.Add($"    return new SqlRowSource<{rowTypeName}>(\"{sql.ComponentName}\", sqlOptions, {rowTypeName}Reader.Read);");
+                EmitSourceConstruction(lines, "    ", rowTypeName, sql);
                 break;
         }
         lines.Add("});");
         lines.Add("");
+    }
+
+    /// <summary>Emits the "construct and return one IRowSource&lt;TRow&gt;" body shared by a
+    /// plain single-source flow's own top-level registration and (nested, as a local function)
+    /// each side of a <see cref="MergeJoinFlowSource"/>.</summary>
+    private static void EmitSourceConstruction(List<string> lines, string indent, string rowTypeName, FlowSourceSpec source)
+    {
+        switch (source)
+        {
+            case CsvFlowSource csv:
+                lines.Add($"{indent}var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;");
+                lines.Add($"{indent}var csvOptions = new CsvSourceOptions {{ FilePath = fileOptions[\"{csv.FileSourceKey}\"].ResolvedPath }};");
+                lines.Add($"{indent}return new CsvRowSource<{rowTypeName}>(\"{csv.ComponentName}\", csvOptions, new {rowTypeName}Map());");
+                break;
+            case SqlFlowSource sql:
+                lines.Add($"{indent}var dbOptions = sp.GetRequiredService<IOptions<DatabaseOptions>>().Value;");
+                lines.Add($"{indent}var sqlOptions = new SqlSourceOptions {{ ConnectionString = SqlConnectionStringFactory.Build(dbOptions), CommandText = {CSharpStringLiteral(sql.CommandText)} }};");
+                lines.Add($"{indent}return new SqlRowSource<{rowTypeName}>(\"{sql.ComponentName}\", sqlOptions, {rowTypeName}Reader.Read);");
+                break;
+        }
     }
 
     /// <summary>A Flat File Destination's own IBulkSink&lt;TEntity&gt; is constructed directly

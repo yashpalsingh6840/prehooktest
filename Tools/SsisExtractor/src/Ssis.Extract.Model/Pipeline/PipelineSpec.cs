@@ -82,6 +82,12 @@ public sealed class PipelineComponentSpec
     /// (SSIS_From_Sandeep) -- <c>Microsoft.DataConvert</c>, see <see cref="DataConvertPayload"/>'s
     /// own doc comment.</summary>
     public DataConvertPayload? DataConvert { get; init; }
+
+    /// <summary>Added 2026-08-28 testing this tool against a real third-party portfolio
+    /// (SSIS_From_Sandeep) -- <c>Microsoft.Sort</c>/<c>Microsoft.MergeJoin</c>, see their own
+    /// doc comments.</summary>
+    public SortPayload? Sort { get; init; }
+    public MergeJoinPayload? MergeJoin { get; init; }
 }
 
 /// <summary>A component's reference to a connection manager. <see cref="ConnectionManagerRefRaw"/> is the pipeline's own reference shape (a refId path, e.g. "Package.ConnectionManagers[CM_EmployeesCsv]") -- notably NOT the DTSID-GUID form Execute SQL Task uses (see <c>ExecuteSqlTaskPayload.ConnectionRefRaw</c>'s doc comment); resolved the same way, by matching against <c>ConnectionManagerSpec.RefId</c> this time instead of <c>DtsId</c>.</summary>

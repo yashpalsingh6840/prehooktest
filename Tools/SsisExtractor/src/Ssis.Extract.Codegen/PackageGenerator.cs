@@ -84,6 +84,15 @@ public static class PackageGenerator
                 continue;
             }
 
+            if (flow.MergeJoin is { } mergeJoin)
+            {
+                var mergeJoinFlow = GenerateMergeJoinFlow(
+                    package, ns, flow, mergeJoin, fileSourceEntries, files, tables, functionsUsed,
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                if (mergeJoinFlow is not null) wiredFlows[flow] = mergeJoinFlow;
+                continue;
+            }
+
             // A Flat File Destination has no OpenRowset/table at all, so it gets a DIFFERENT
             // entity-name source (the task's own name, always present) and skips every
             // SQL-shaped gate/step below (fast-load, EF Core table, the "no Derived Column"
@@ -362,6 +371,119 @@ public static class PackageGenerator
 
         gaps.Add(new GenerationGap(flow.TaskName, "no Flat File Source, OLE DB Source, or ADO NET Source (with a resolvable connection manager) found -- only [Flat File Source|OLE DB Source|ADO NET Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination] is supported yet"));
         return null;
+    }
+
+    /// <summary>Same per-side resolution as <see cref="ResolveFlowSource"/>'s own two branches,
+    /// just keyed off a raw source <see cref="PipelineComponentSpec"/> directly (a Merge Join's
+    /// own two sides are never stored on a <see cref="DataFlowPlan"/> itself, since a
+    /// single-destination flow only ever has one).</summary>
+    private static (string RowTypeName, FlowSourceSpec Source)? ResolveMergeJoinSideSource(
+        PackageSpec package, string ns, string rowTypeBaseName, PipelineComponentSpec sourceComponent,
+        PipelineComponentSpec destinationForSqlCheck, List<FileSourceEntryRequest> fileSourceEntries,
+        List<GeneratedFile> files, List<GenerationGap> gaps)
+    {
+        if (sourceComponent.ComponentClassId == "Microsoft.FlatFileSource" && sourceComponent.FlatFileSource?.ConnectionName is { } csvCmName
+            && FindConnectionManager(package, csvCmName) is { } csvConnectionManager)
+        {
+            var rowTypeName = rowTypeBaseName + "CsvRow";
+            var fileSourceKey = rowTypeBaseName;
+
+            Merge(files, gaps, CsvRowEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+            Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+            fileSourceEntries.Add(BuildFileSourceEntry(fileSourceKey, csvConnectionManager, gaps));
+
+            return (rowTypeName, new CsvFlowSource(sourceComponent.Name, fileSourceKey));
+        }
+
+        if (SourceInfo.IsSqlSource(sourceComponent))
+        {
+            var sqlSource = BuildSqlFlowSource(package, sourceComponent.Name, sourceComponent, destinationForSqlCheck, gaps);
+            if (sqlSource is null) return null; // BuildSqlFlowSource already added the reason
+
+            var rowTypeName = rowTypeBaseName + "SqlRow";
+            Merge(files, gaps, SqlRowEmitter.Emit($"{ns}.Sql", rowTypeName, sourceComponent));
+            Merge(files, gaps, SqlRowReaderEmitter.Emit($"{ns}.Sql", rowTypeName, sourceComponent));
+
+            return (rowTypeName, sqlSource);
+        }
+
+        gaps.Add(new GenerationGap(sourceComponent.Name, "no Flat File Source or SQL source (with a resolvable connection manager) found for this Merge Join side"));
+        return null;
+    }
+
+    /// <summary>
+    /// Generates a whole Merge Join flow: each side's own row type (via
+    /// <see cref="ResolveMergeJoinSideSource"/>, the same emitters any single-source flow uses),
+    /// the combined row type + mapper (<see cref="MergeJoinEmitter"/>), and the destination's own
+    /// Model/Mapping/DbSet trio exactly like a plain single-destination flow -- a Merge Join's
+    /// own combined row type is deliberately shaped so the destination's existing
+    /// EntityEmitter/TransformEmitter code paths need no changes at all to consume it.
+    /// </summary>
+    private static ProgramFlowSpec? GenerateMergeJoinFlow(
+        PackageSpec package, string ns, DataFlowPlan flow, MergeJoinPlan mergeJoin,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files,
+        List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination,
+        List<GenerationGap> gaps, ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+    {
+        var entityName = TryResolveEntityName(flow.TaskName, flow.DestinationComponent, gaps);
+        if (entityName is null) return null;
+
+        if (!DestinationInfo.IsFastLoadConfigured(flow.DestinationComponent))
+        {
+            gaps.Add(new GenerationGap(flow.TaskName, $"destination '{flow.DestinationComponent.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
+            return null;
+        }
+
+        var baseName = SanitizeIdentifier(mergeJoin.Component.Name);
+        var leftResult = ResolveMergeJoinSideSource(package, ns, baseName + "Left", mergeJoin.Left.SourceComponent, flow.DestinationComponent, fileSourceEntries, files, gaps);
+        if (leftResult is null) return null;
+        var rightResult = ResolveMergeJoinSideSource(package, ns, baseName + "Right", mergeJoin.Right.SourceComponent, flow.DestinationComponent, fileSourceEntries, files, gaps);
+        if (rightResult is null) return null;
+        var (leftRowTypeName, leftSource) = leftResult.Value;
+        var (rightRowTypeName, rightSource) = rightResult.Value;
+        var leftRowTypeNamespace = leftSource is CsvFlowSource ? $"{ns}.Csv" : $"{ns}.Sql";
+        var rightRowTypeNamespace = rightSource is CsvFlowSource ? $"{ns}.Csv" : $"{ns}.Sql";
+
+        var rowTypeName = baseName + "Row";
+        var mapperClassName = baseName + "Mapper";
+        var mergeJoinResult = MergeJoinEmitter.Emit(
+            $"{ns}.Mapping", $"{ns}.Sql", $"{ns}.Ssis", rowTypeName, mapperClassName,
+            leftRowTypeNamespace, leftRowTypeName, rightRowTypeNamespace, rightRowTypeName, mergeJoin);
+        files.AddRange(mergeJoinResult.Files);
+        gaps.AddRange(mergeJoinResult.Gaps);
+        if (mergeJoinResult.Files.Count == 0) return null; // MergeJoinEmitter already recorded why
+
+        Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, mergeJoinResult.NullableColumnNames));
+
+        var transformClassName = entityName + "Transform";
+        var transformResult = TransformEmitter.Emit(new TransformRequest(
+            MappingNamespace: $"{ns}.Mapping",
+            TransformClassName: transformClassName,
+            RowTypeNamespace: $"{ns}.Sql",
+            RowTypeName: rowTypeName,
+            EntityNamespace: $"{ns}.Model",
+            EntityName: entityName,
+            SsisFnNamespace: $"{ns}.Ssis",
+            Pipeline: flow.Pipeline,
+            DerivedColumns: [],
+            DestinationComponent: flow.DestinationComponent,
+            NullableColumnNames: mergeJoinResult.NullableColumnNames));
+        Merge(files, gaps, transformResult.Result);
+        foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
+        foreach (var fn in mergeJoinResult.SsisFunctionsUsed) functionsUsed.Add(fn);
+
+        if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
+
+        primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
+        tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
+
+        var mergeJoinSource = new MergeJoinFlowSource(
+            mergeJoin.Component.Name, leftSource, rightSource, leftRowTypeName, rightRowTypeName, mapperClassName, mergeJoinResult.KeyClrType);
+
+        if (authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
+            (authMode, userId, targetServer, targetDatabase) = auth;
+
+        return new ProgramFlowSpec(flow.TaskName, mergeJoinSource, rowTypeName, entityName, transformClassName, new SqlFlowSink());
     }
 
     /// <summary>

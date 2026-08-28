@@ -609,6 +609,7 @@
               "Inputs": [],
               "LocaleId": "1033",
               "Lookup": null,
+              "MergeJoin": null,
               "Name": "FF_SRC_Department",
               "OleDbDestination": null,
               "OleDbSource": null,
@@ -935,6 +936,7 @@
               ],
               "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
               "ScriptComponent": null,
+              "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
               "Version": "1"
@@ -990,6 +992,7 @@
               ],
               "LocaleId": null,
               "Lookup": null,
+              "MergeJoin": null,
               "Name": "DER_DepartmentKey",
               "OleDbDestination": null,
               "OleDbSource": null,
@@ -1130,6 +1133,7 @@
               "Properties": [],
               "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey",
               "ScriptComponent": null,
+              "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
               "Version": null
@@ -1317,6 +1321,7 @@
               ],
               "LocaleId": null,
               "Lookup": null,
+              "MergeJoin": null,
               "Name": "OLEDST_Department",
               "OleDbDestination": {
                 "AccessMode": 3,
@@ -1510,6 +1515,7 @@
               ],
               "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department",
               "ScriptComponent": null,
+              "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
               "Version": "4"
@@ -1834,6 +1840,7 @@
               "Inputs": [],
               "LocaleId": "1033",
               "Lookup": null,
+              "MergeJoin": null,
               "Name": "FF_SRC_Designation",
               "OleDbDestination": null,
               "OleDbSource": null,
@@ -2160,6 +2167,7 @@
               ],
               "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
               "ScriptComponent": null,
+              "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
               "Version": "1"
@@ -2215,6 +2223,7 @@
               ],
               "LocaleId": null,
               "Lookup": null,
+              "MergeJoin": null,
               "Name": "DER_DesignationKey",
               "OleDbDestination": null,
               "OleDbSource": null,
@@ -2355,6 +2364,7 @@
               "Properties": [],
               "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey",
               "ScriptComponent": null,
+              "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
               "Version": null
@@ -2542,6 +2552,7 @@
               ],
               "LocaleId": null,
               "Lookup": null,
+              "MergeJoin": null,
               "Name": "OLEDST_Designation",
               "OleDbDestination": {
                 "AccessMode": 3,
@@ -2735,6 +2746,7 @@
               ],
               "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation",
               "ScriptComponent": null,
+              "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
               "Version": "4"

@@ -219,14 +219,29 @@ public static class TransformEmitter
         if (edge is null)
             return new NotTranslatable($"Data Conversion column '{outputColumnName}' has no resolvable source column");
 
-        var sourceRef = $"row.{edge.FromColumnName}";
-        return conversion.TargetDataType?.ToLowerInvariant() switch
+        return WrapDataConversion(conversion, $"row.{edge.FromColumnName}");
+    }
+
+    /// <summary>Same wrapping as <see cref="TranslateDataConversion(DataConversionColumnSpec,string,LineageSpec)"/>,
+    /// but for a caller that has ALREADY resolved the raw source column expression itself rather
+    /// than through a global <see cref="LineageSpec"/> edge search -- needed by Merge Join's own
+    /// emitter (<c>MergeJoinProjectionEmitter</c>), where two Data Conversion components in the
+    /// SAME pipeline can produce a column with the identical NAME on each side (e.g. both
+    /// DCONV_CustId_L/DCONV_CustId_R produce "CustomerID_i4"), which would make the edge-based
+    /// lookup above genuinely ambiguous (it matches by bare column name only, with no
+    /// per-component scoping) -- Merge Join's planner already resolves each side's own
+    /// <see cref="DataConversionColumnSpec"/> unambiguously via <c>MergeJoinSideSource</c>, so
+    /// there is no need to re-derive it through the shared, name-only lineage edge search.</summary>
+    internal static TranslatedExpression TranslateDataConversionFromRawExpression(DataConversionColumnSpec conversion, string rawColumnExpression) =>
+        WrapDataConversion(conversion, rawColumnExpression);
+
+    private static TranslatedExpression WrapDataConversion(DataConversionColumnSpec conversion, string sourceRef) =>
+        conversion.TargetDataType?.ToLowerInvariant() switch
         {
             "i4" => new TranslatedOk($"SsisFn.ToNullableI4({sourceRef})"),
             "dbdate" => new TranslatedOk($"SsisFn.ToNullableDate({sourceRef})"),
             _ => new NotTranslatable($"Data Conversion to target type '{conversion.TargetDataType}' is not supported yet"),
         };
-    }
 
     /// <summary>Internal (not private) so RouterEmitter can reuse the exact same SsisFn.*
     /// detection for Conditional Split condition translation instead of duplicating it -- same

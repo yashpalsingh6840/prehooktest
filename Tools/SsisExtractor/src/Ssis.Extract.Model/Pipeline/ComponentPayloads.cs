@@ -341,3 +341,72 @@ public sealed class ScriptComponentPayload
     /// <summary>True when <c>BinaryCode</c> is non-empty but <see cref="SourceCodeItems"/> is empty -- same "source genuinely gone" signal as <c>ScriptTaskPayload.SourceStripped</c>, not yet observed on any real package.</summary>
     public bool SourceStripped { get; init; }
 }
+
+/// <summary>
+/// <c>Microsoft.Sort</c>. Confirmed real via RBC_Demo_ETL's own Package_Transforms.dtsx
+/// (<c>SORT_Customers</c>/<c>SORT_Contacts</c>/<c>SORT_Canada</c>/<c>SORT_RestOfWorld</c>),
+/// discovered testing this tool against a real third-party portfolio (SSIS_From_Sandeep,
+/// 2026-08-27). The key designation lives on Sort's own INPUT columns (every one -- key or
+/// plain passthrough -- carries its own <c>NewSortKeyPosition</c> custom property; <c>0</c>
+/// means "not a key, just passed through", a non-zero value means "sort key at this position"),
+/// NOT the output side, contrary to an initial misreading of the raw XML that attributed it to
+/// the output column instead. Each OUTPUT column separately carries its own <c>SortColumnId</c>,
+/// a <c>#{...}</c> reference to the INPUT column it mirrors -- <c>Ssis.Extract.Dtsx.PipelineReader</c>
+/// resolves the two together (matching stripped <c>SortColumnId</c> against each input column's
+/// own LineageId) to know which OUTPUT column name is the real sort key. Both real evidenced
+/// instances use exactly one positive-valued key -- see <see cref="Keys"/>'s own doc comment for
+/// what a negative value would mean, unconfirmed.
+/// </summary>
+public sealed class SortPayload
+{
+    public List<SortKeySpec> Keys { get; init; } = [];
+}
+
+/// <summary>One of a Sort component's own key columns, in the ORDER SSIS itself applies them
+/// (<see cref="Position"/>, ascending by absolute value -- SSIS's own multi-column sort key
+/// ordering). <see cref="Position"/> is kept as the RAW signed value read from
+/// <c>NewSortKeyPosition</c> rather than pre-decoded into an <c>IsDescending</c> flag: only a
+/// positive value is evidenced in this portfolio (an ascending sort), so a negative value --
+/// which a naive reading of SSIS's documented "negative position means descending" convention
+/// would suggest -- is deliberately NOT decoded here, following the same "don't hand-guess an
+/// enum/sign without independent confirmation" rule as <c>OleDbDestinationPayload.AccessMode</c>.</summary>
+public sealed class SortKeySpec
+{
+    public required string ColumnName { get; init; }
+    public required int Position { get; init; }
+}
+
+/// <summary>
+/// <c>Microsoft.MergeJoin</c>. Confirmed real via RBC_Demo_ETL's own Package_Transforms.dtsx
+/// (<c>MRG_CustomerContacts</c>), discovered testing this tool against a real third-party
+/// portfolio (SSIS_From_Sandeep, 2026-08-27). <see cref="JoinTypeRaw"/> is kept as the raw
+/// integer only, same "don't hand-guess an enum without independent confirmation" rule as
+/// <c>OleDbDestinationPayload.AccessMode</c> -- see <c>Etl.Core.Abstractions.MergeJoinType</c>'s
+/// own doc comment for which raw value is actually confirmed (2 = LeftOuter, via a real
+/// generated run) versus merely documented.
+/// </summary>
+public sealed class MergeJoinPayload
+{
+    public int? JoinTypeRaw { get; init; }
+    public int? NumKeyColumns { get; init; }
+    public bool? TreatNullsAsEqual { get; init; }
+    public List<MergeJoinOutputColumnSpec> OutputColumns { get; init; } = [];
+}
+
+/// <summary>One of a Merge Join's own output columns, resolved back to whichever of its OWN
+/// Left/Right Input columns produced it (<c>InputColumnID</c>, a <c>#{...}</c> reference to
+/// that INPUT column's own refId -- not a lineageId reference the way Data Conversion's
+/// <c>SourceInputColumnLineageID</c> is; resolved once at read time by matching against this
+/// same component's own <see cref="Ssis.Extract.Model.Pipeline.PipelineComponentSpec.Inputs"/>).
+/// <see cref="SourceColumnLineageId"/> is that matched input column's own LineageId, so codegen
+/// can continue tracing back to the true origin (Sort's own passthrough output, ultimately the
+/// raw source column) exactly like any other column reference.</summary>
+public sealed class MergeJoinOutputColumnSpec
+{
+    public required string OutputColumnName { get; init; }
+
+    /// <summary>"Left" or "Right" -- which of the Merge Join's own two inputs produced this column.</summary>
+    public required string Side { get; init; }
+
+    public required string SourceColumnLineageId { get; init; }
+}

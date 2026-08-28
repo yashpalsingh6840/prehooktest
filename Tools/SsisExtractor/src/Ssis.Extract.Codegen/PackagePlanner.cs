@@ -23,7 +23,28 @@ public sealed record DataFlowPlan(
     PipelineComponentSpec? Lookup,
     ConditionalSplitPlan? ConditionalSplit,
     PipelineComponentSpec DestinationComponent,
-    PipelineComponentSpec? DataConversion = null);
+    PipelineComponentSpec? DataConversion = null,
+    MergeJoinPlan? MergeJoin = null);
+
+/// <summary>One side (Left or Right) of a Merge Join, resolved back through its own Sort and
+/// (if present) Data Conversion to the true source component -- mirrors
+/// <see cref="ConditionalSplitBranchPlan"/>'s own "resolve by walking forward through known
+/// pass-through component types" philosophy, just walking BACKWARD from a two-source flow's own
+/// join instead of forward from a split.</summary>
+public sealed record MergeJoinSideSource(
+    PipelineComponentSpec SourceComponent,
+    PipelineComponentSpec Sort,
+    PipelineComponentSpec? DataConversion);
+
+/// <summary>A <c>Microsoft.MergeJoin</c> flow: two independent source chains (each
+/// [Flat File Source|OLE DB Source] -&gt; [Data Conversion] -&gt; Sort, confirmed real from
+/// RBC_Demo_ETL's own DFT_SortAndMergeJoin), merged by <see cref="Component"/> straight into
+/// one destination (<see cref="DataFlowPlan.DestinationComponent"/>) -- no Derived
+/// Column/Conditional Split after the join is evidenced or supported yet.</summary>
+public sealed record MergeJoinPlan(
+    PipelineComponentSpec Component,
+    MergeJoinSideSource Left,
+    MergeJoinSideSource Right);
 
 /// <summary>One non-default, non-error branch of a Conditional Split resolves to a
 /// <see cref="FriendlyExpression"/> (case) or null (the default, no condition of its own) plus
@@ -331,6 +352,13 @@ public static class PackagePlanner
 
     private static DataFlowPlan? PlanDataFlow(string taskName, PipelineSpec pipeline, List<GenerationGap> gaps)
     {
+        // Checked before the multi-source gate below -- a Merge Join is EXACTLY the "something
+        // merges them" case that gate's own comment names, so it must resolve its own two
+        // sources structurally before that gate ever sees (and rejects) them.
+        var mergeJoinComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.MergeJoin");
+        if (mergeJoinComponent is not null)
+            return PlanMergeJoin(taskName, pipeline, mergeJoinComponent, gaps);
+
         // More than one source component in a single Data Flow Task means something merges them
         // (Merge/Merge Join/Union All feeding a single destination directly, not via a
         // Conditional Split -- that shape has its own chain-walking gate in ResolveBranch) --
@@ -387,6 +415,127 @@ public static class PackagePlanner
 
         return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion);
     }
+
+    /// <summary>Resolves a Merge Join's own two independent source chains (each walked BACKWARD
+    /// from the join through its own Sort and, if present, one Data Conversion, to a real
+    /// source) plus its single forward destination -- confirmed real shape from RBC_Demo_ETL's
+    /// own DFT_SortAndMergeJoin. Fatal for the whole flow if either side or the destination
+    /// fails to resolve, same "no half-finished implementations" rule every other multi-part
+    /// plan in this file follows.</summary>
+    private static DataFlowPlan? PlanMergeJoin(string taskName, PipelineSpec pipeline, PipelineComponentSpec mergeJoin, List<GenerationGap> gaps)
+    {
+        var leftInput = mergeJoin.Inputs.FirstOrDefault(i => i.Name.Contains("Left", StringComparison.Ordinal));
+        var rightInput = mergeJoin.Inputs.FirstOrDefault(i => i.Name.Contains("Right", StringComparison.Ordinal));
+        if (leftInput is null || rightInput is null)
+        {
+            gaps.Add(new GenerationGap(taskName, $"Merge Join '{mergeJoin.Name}' does not have a recognizable Left/Right Input pair -- not supported"));
+            return null;
+        }
+
+        var left = ResolveMergeJoinSide(taskName, pipeline, mergeJoin, leftInput, "Left", gaps);
+        if (left is null) return null; // ResolveMergeJoinSide already added the gap
+        var right = ResolveMergeJoinSide(taskName, pipeline, mergeJoin, rightInput, "Right", gaps);
+        if (right is null) return null;
+
+        var mainOutput = mergeJoin.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+        if (mainOutput is null)
+        {
+            gaps.Add(new GenerationGap(taskName, $"Merge Join '{mergeJoin.Name}' has no non-error output -- not supported"));
+            return null;
+        }
+
+        var outPath = pipeline.Paths.FirstOrDefault(p => p.StartId == mainOutput.RefId);
+        var destination = outPath is null ? null : pipeline.Components.FirstOrDefault(c => c.Inputs.Any(i => i.RefId == outPath.EndId));
+        if (destination is null ||
+            (destination.ComponentClassId != "Microsoft.OLEDBDestination" && destination.AdoNetDestination is null && destination.ComponentClassId != "Microsoft.FlatFileDestination"))
+        {
+            gaps.Add(new GenerationGap(taskName, $"Merge Join '{mergeJoin.Name}' does not connect directly to an OLE DB/ADO NET/Flat File Destination -- a transform (e.g. Derived Column) after a Merge Join is not supported yet"));
+            return null;
+        }
+
+        return new DataFlowPlan(taskName, pipeline, FlatFileSource: null, OleDbSource: null, DerivedColumn: null, Lookup: null,
+            ConditionalSplit: null, DestinationComponent: destination, DataConversion: null, MergeJoin: new MergeJoinPlan(mergeJoin, left, right));
+    }
+
+    /// <summary>Walks backward from one of a Merge Join's own inputs to the Sort feeding it
+    /// (by matching the input's own representative column's LineageId against every component's
+    /// output columns -- the same generic "find the producer by lineageId" resolution
+    /// LineageBuilder itself uses, just walked by hand here since this is a component-structural
+    /// question, not a column-value one), then one more hop back through the Sort's own input to
+    /// either a real source or exactly one Data Conversion.</summary>
+    private static MergeJoinSideSource? ResolveMergeJoinSide(
+        string taskName, PipelineSpec pipeline, PipelineComponentSpec mergeJoin, PipelineInputSpec input, string sideName, List<GenerationGap> gaps)
+    {
+        var representative = input.Columns.FirstOrDefault();
+        if (representative is null)
+        {
+            gaps.Add(new GenerationGap(taskName, $"Merge Join '{mergeJoin.Name}''s {sideName} Input has no columns -- not supported"));
+            return null;
+        }
+
+        var sort = FindProducerComponent(pipeline, representative.LineageId);
+        if (sort is null || sort.ComponentClassId != "Microsoft.Sort")
+        {
+            gaps.Add(new GenerationGap(taskName, $"Merge Join '{mergeJoin.Name}''s {sideName} Input is fed by '{sort?.Name ?? "(unresolved)"}' ({sort?.ComponentClassId ?? "?"}), not a Sort -- only [Source] -> [Data Conversion] -> Sort -> Merge Join is supported yet"));
+            return null;
+        }
+
+        var sortInput = sort.Inputs.FirstOrDefault();
+        if (sortInput is null || sortInput.Columns.Count == 0)
+        {
+            gaps.Add(new GenerationGap(taskName, $"Sort '{sort.Name}' (feeding Merge Join '{mergeJoin.Name}''s {sideName} Input) has no input columns -- not supported"));
+            return null;
+        }
+
+        // Sort has exactly ONE upstream connection, but that connection's buffer can carry a MIX
+        // of producers: plain passthrough columns whose LineageId traces straight to the real
+        // source, and (if a Data Conversion sits between them) one converted column whose
+        // LineageId traces to the Data Conversion instead -- both flow through the SAME physical
+        // buffer since Data Conversion is synchronous. Checking only the FIRST input column
+        // (as an earlier version of this method did) missed the Data Conversion entirely: the
+        // real evidenced fixture's own first column happens to be a plain passthrough one. Every
+        // column is checked here instead, so either producer is found regardless of column order.
+        PipelineComponentSpec? trueSource = null;
+        PipelineComponentSpec? dataConversion = null;
+        foreach (var col in sortInput.Columns)
+        {
+            var producer = FindProducerComponent(pipeline, col.LineageId);
+            if (producer is null) continue;
+            if (producer.ComponentClassId == "Microsoft.FlatFileSource" || SourceInfo.IsSqlSource(producer))
+                trueSource ??= producer;
+            else if (producer.ComponentClassId == "Microsoft.DataConvert")
+                dataConversion ??= producer;
+        }
+
+        if (dataConversion is not null)
+        {
+            var conversionInput = dataConversion.Inputs.FirstOrDefault();
+            var conversionRepresentative = conversionInput?.Columns.FirstOrDefault();
+            var sourceViaConversion = conversionRepresentative is null ? null : FindProducerComponent(pipeline, conversionRepresentative.LineageId);
+            if (sourceViaConversion is not null && trueSource is not null && sourceViaConversion.RefId != trueSource.RefId)
+            {
+                gaps.Add(new GenerationGap(taskName, $"Sort '{sort.Name}' appears to be fed by two different sources ('{trueSource.Name}' directly and '{sourceViaConversion.Name}' via '{dataConversion.Name}') -- not supported"));
+                return null;
+            }
+            trueSource ??= sourceViaConversion;
+        }
+
+        if (trueSource is null)
+        {
+            gaps.Add(new GenerationGap(taskName, $"Sort '{sort.Name}' is not fed by a recognizable source (directly, or via a single Data Conversion) -- not supported"));
+            return null;
+        }
+
+        return new MergeJoinSideSource(trueSource, sort, dataConversion);
+    }
+
+    /// <summary>Finds whichever component in this pipeline owns an output column with this exact
+    /// LineageId -- the generic "who produced this value" lookup every backward walk in
+    /// <see cref="ResolveMergeJoinSide"/> needs, independent of whether a &lt;path&gt; directly
+    /// connects the two components (same rule <see cref="Ssis.Extract.Dtsx.LineageBuilder"/>'s
+    /// own doc comment establishes for column-level lineage).</summary>
+    private static PipelineComponentSpec? FindProducerComponent(PipelineSpec pipeline, string lineageId) =>
+        pipeline.Components.FirstOrDefault(c => c.Outputs.Any(o => o.Columns.Any(col => col.LineageId == lineageId)));
 
     /// <summary>Resolves every case (in EvaluationOrder) plus the default output to the OLE DB
     /// Destination directly downstream of it. Fatal for the whole flow if ANY branch fails to

@@ -76,6 +76,8 @@ internal static class PipelineReader
         AdoNetDestinationPayload? adoNetDestination = null;
         AdoNetSourcePayload? adoNetSource = null;
         DataConvertPayload? dataConvert = null;
+        SortPayload? sort = null;
+        MergeJoinPayload? mergeJoin = null;
 
         // Script Component's own componentClassID is the generic "Microsoft.ManagedComponentHost"
         // -- not a Script-Component-specific ID the way every other bespoke type here is --
@@ -254,6 +256,68 @@ internal static class PipelineReader
                 }).ToList(),
             };
         }
+        else if (componentClassId == "Microsoft.Sort")
+        {
+            // The key designation (NewSortKeyPosition, 0 = passthrough) lives on Sort's own
+            // INPUT columns, not its output columns -- confirmed real from RBC_Demo_ETL's own
+            // SORT_Customers/SORT_Contacts, contrary to an initial (wrong) reading of the raw
+            // XML that attributed it to the output side. Each OUTPUT column instead carries its
+            // own SortColumnId, a #{...} reference to the INPUT column it mirrors (matched here
+            // by comparing SortColumnId's stripped value against each input column's own
+            // LineageId) -- the same "resolve by lineage, not position" rule LineageBuilder's own
+            // doc comment establishes for passthrough columns generally.
+            var mainInput = inputs.FirstOrDefault();
+            var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            var keyPositionByInputLineageId = (mainInput?.Columns ?? [])
+                .Select(c => (c.LineageId, Position: ParseInt(GetProperty(c.Properties, "NewSortKeyPosition"))))
+                .Where(x => x.Position is int p && p != 0)
+                .ToDictionary(x => x.LineageId, x => x.Position!.Value);
+
+            var keys = (mainOutput?.Columns ?? [])
+                .Select(c => (c.Name, SortColumnId: StripLineageRef(GetProperty(c.Properties, "SortColumnId"))))
+                .Where(x => x.SortColumnId is not null && keyPositionByInputLineageId.ContainsKey(x.SortColumnId))
+                .Select(x => new SortKeySpec { ColumnName = x.Name, Position = keyPositionByInputLineageId[x.SortColumnId!] })
+                .OrderBy(k => Math.Abs(k.Position))
+                .ToList();
+            sort = new SortPayload { Keys = keys };
+        }
+        else if (componentClassId == "Microsoft.MergeJoin")
+        {
+            var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            var outputColumns = new List<MergeJoinOutputColumnSpec>();
+            foreach (var col in mainOutput?.Columns ?? [])
+            {
+                var inputColumnRefId = StripLineageRef(GetProperty(col.Properties, "InputColumnID"));
+                if (inputColumnRefId is null) continue;
+
+                PipelineInputColumnSpec? matched = null;
+                string? side = null;
+                foreach (var input in inputs)
+                {
+                    matched = input.Columns.FirstOrDefault(ic => ic.RefId == inputColumnRefId);
+                    if (matched is not null)
+                    {
+                        side = input.Name.Contains("Left", StringComparison.Ordinal) ? "Left" : "Right";
+                        break;
+                    }
+                }
+                if (matched is null || side is null) continue; // best-effort -- an unresolved reference simply doesn't appear here; PipelineResolver reports the missing mapping downstream
+
+                outputColumns.Add(new MergeJoinOutputColumnSpec
+                {
+                    OutputColumnName = col.Name,
+                    Side = side,
+                    SourceColumnLineageId = matched.LineageId,
+                });
+            }
+            mergeJoin = new MergeJoinPayload
+            {
+                JoinTypeRaw = ParseInt(GetProperty(properties, "JoinType")),
+                NumKeyColumns = ParseInt(GetProperty(properties, "NumKeyColumns")),
+                TreatNullsAsEqual = ParseBool(GetProperty(properties, "TreatNullsAsEqual")),
+                OutputColumns = outputColumns,
+            };
+        }
 
         return new PipelineComponentSpec
         {
@@ -280,6 +344,8 @@ internal static class PipelineReader
             AdoNetDestination = adoNetDestination,
             AdoNetSource = adoNetSource,
             DataConvert = dataConvert,
+            Sort = sort,
+            MergeJoin = mergeJoin,
         };
     }
 
