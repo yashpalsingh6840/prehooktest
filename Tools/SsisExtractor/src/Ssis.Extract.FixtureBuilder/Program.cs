@@ -651,20 +651,17 @@ internal static class Program
     }
 
     /// <summary>
-    /// OLE DB Source (SqlCommand) -> Derived Column (TenureDays &lt;-
+    /// OLE DB Source (SqlCommand) -> Derived Column (TenureDays &lt;- ISNULL(SignupDate) ? -1 :
     /// DATEDIFF("dd",SignupDate,GETDATE())) -> OLE DB Destination.
     ///
-    /// <para>Deliberately NOT the full RBC_Demo_ETL DER_Enrich.TenureDays expression (which
-    /// wraps this in ISNULL(SignupDate) ? -1 : ...) -- see
-    /// <c>synthetic-datediff-tables.sql</c>'s own header for why: building this fixture with
-    /// the full ternary surfaced a real, separate, pre-existing gap (no SQL row/entity emitter
-    /// tracks column nullability, so ISNULL's own "x is null" fails to compile against the
-    /// resulting non-nullable DateOnly), unrelated to DATEDIFF itself and deliberately NOT
-    /// fixed here. This fixture instead proves DATEDIFF's own arithmetic end to end
-    /// (oracle-verified 2026-08-27: sign convention is end-start, counts calendar-day-BOUNDARY
-    /// crossings not elapsed 24-hour periods) against a NOT NULL column, sidestepping that
-    /// unrelated gap -- the full ISNULL+DATEDIFF expression is still proven correct at the
-    /// TEXT level by a dedicated ExpressionTranslatorTests case.</para>
+    /// <para>Now the FULL RBC_Demo_ETL DER_Enrich.TenureDays expression, verbatim -- originally
+    /// built without the ISNULL(...) wrapper (see git history / CLAUDE.md's own "DATEDIFF..."
+    /// section) because it surfaced a real, separate gap: no SQL row/entity emitter tracked
+    /// column nullability, so ISNULL's own "x is null" failed to COMPILE against the resulting
+    /// non-nullable DateOnly. That gap is now closed (NullabilityInference +
+    /// SqlRowEmitter/SqlRowReaderEmitter/EntityEmitter/ExpressionTranslator changes, same
+    /// session) -- SignupDate is nullable again in this fixture's own backing table
+    /// specifically to exercise the fix for real.</para>
     ///
     /// Requires the backing tables from
     /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-datediff-tables.sql</c> already created
@@ -706,10 +703,9 @@ internal static class Program
 
     /// <summary>
     /// A Derived Column that passes every upstream column through untouched and adds ONE new
-    /// column, <c>TenureDays &lt;- DATEDIFF("dd",SignupDate,GETDATE())</c> -- see
-    /// <see cref="BuildDateDiffFixture"/>'s own doc comment for why the ISNULL(...) wrapper the
-    /// real package's own expression has is deliberately omitted here. Same
-    /// passthrough/InsertOutputColumnAt mechanics as <see cref="BuildDerivedColumnLiteralTag"/>.
+    /// column, the verbatim RBC_Demo_ETL DER_Enrich.TenureDays expression -- see
+    /// <see cref="BuildDateDiffFixture"/>'s own doc comment. Same passthrough/
+    /// InsertOutputColumnAt mechanics as <see cref="BuildDerivedColumnLiteralTag"/>.
     /// </summary>
     private static IDTSComponentMetaData100 BuildDerivedColumnTenureDays(MainPipe pipe, IDTSOutput100 upstreamOutput)
     {
@@ -734,7 +730,7 @@ internal static class Program
         var output = meta.OutputCollection[0];
         var newCol = inst.InsertOutputColumnAt(output.ID, 0, "TenureDays", "");
         inst.SetOutputColumnDataTypeProperties(output.ID, newCol.ID, DataType.DT_I4, 0, 0, 0, 0);
-        var expr = "DATEDIFF(\"dd\",SignupDate,GETDATE())";
+        var expr = "ISNULL(SignupDate) ? -1 : DATEDIFF(\"dd\",SignupDate,GETDATE())";
         inst.SetOutputColumnProperty(output.ID, newCol.ID, "FriendlyExpression", expr);
         inst.SetOutputColumnProperty(output.ID, newCol.ID, "Expression", expr);
 

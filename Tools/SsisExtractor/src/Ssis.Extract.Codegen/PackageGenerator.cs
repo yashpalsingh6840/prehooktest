@@ -97,12 +97,20 @@ public static class PackageGenerator
                 continue;
             }
 
-            var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps);
+            // Evidence-based, not a fact lookup -- see NullabilityInference's own doc comment.
+            // Computed up front (not after the DerivedColumn-null check below) since
+            // EntityEmitter/ResolveFlowSource's SQL row type both need it too, and both run
+            // before that check.
+            var nullableColumnNames = flow.DerivedColumn is null
+                ? new HashSet<string>()
+                : NullabilityInference.InferNullableColumnNames([flow.DerivedColumn]);
+
+            var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames);
             if (sourceResult is null) continue; // ResolveFlowSource already added the reason
             var (rowTypeName, programSource) = sourceResult.Value;
 
             var transformClassName = entityName + "Transform";
-            Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent));
+            Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, nullableColumnNames));
 
             if (flow.DerivedColumn is null)
             {
@@ -123,7 +131,8 @@ public static class PackageGenerator
                 SsisFnNamespace: $"{ns}.Ssis",
                 Pipeline: flow.Pipeline,
                 DerivedColumns: [flow.DerivedColumn],
-                DestinationComponent: flow.DestinationComponent));
+                DestinationComponent: flow.DestinationComponent,
+                NullableColumnNames: nullableColumnNames));
             Merge(files, gaps, transformResult.Result);
             foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
 
@@ -252,7 +261,8 @@ public static class PackageGenerator
     /// against -- the flow's own destination, or a split's default branch's destination.</summary>
     private static (string RowTypeName, FlowSourceSpec Source)? ResolveFlowSource(
         PackageSpec package, string ns, string rowTypeBaseName, DataFlowPlan flow, PipelineComponentSpec destinationForSqlCheck,
-        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GenerationGap> gaps)
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GenerationGap> gaps,
+        IReadOnlySet<string>? nullableColumnNames = null)
     {
         if (flow.FlatFileSource is { } flatFileSource && flatFileSource.FlatFileSource?.ConnectionName is { } csvCmName
             && FindConnectionManager(package, csvCmName) is { } csvConnectionManager)
@@ -273,8 +283,8 @@ public static class PackageGenerator
             if (sqlSource is null) return null; // BuildSqlFlowSource already added the reason
 
             var rowTypeName = rowTypeBaseName + "SqlRow";
-            Merge(files, gaps, SqlRowEmitter.Emit($"{ns}.Sql", rowTypeName, oleDbSource));
-            Merge(files, gaps, SqlRowReaderEmitter.Emit($"{ns}.Sql", rowTypeName, oleDbSource));
+            Merge(files, gaps, SqlRowEmitter.Emit($"{ns}.Sql", rowTypeName, oleDbSource, nullableColumnNames));
+            Merge(files, gaps, SqlRowReaderEmitter.Emit($"{ns}.Sql", rowTypeName, oleDbSource, nullableColumnNames));
 
             return (rowTypeName, sqlSource);
         }

@@ -1,24 +1,24 @@
 <?xml version="1.0"?>
 <DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
   DTS:refId="Package"
-  DTS:CreationDate="8/27/2026 11:05:29 PM"
+  DTS:CreationDate="8/28/2026 11:38:17 AM"
   DTS:CreationName="Microsoft.Package"
   DTS:CreatorComputerName="IRIS-CSG-8214"
   DTS:CreatorName="IRISSOFTWARE\yashpal.singh01"
-  DTS:DTSID="{E0A27BCD-2D73-49B8-A2EA-DF4490A91B90}"
+  DTS:DTSID="{95DA46C9-3535-4AEE-9683-5A8BD87D0174}"
   DTS:ExecutableType="Microsoft.Package"
   DTS:LastModifiedProductVersion="16.0.1000.6"
   DTS:LocaleID="1033"
   DTS:ObjectName="SyntheticDateDiff"
   DTS:ProtectionLevel="0"
-  DTS:VersionGUID="{84D6E36B-4F35-4637-BA7A-752CC11813A7}">
+  DTS:VersionGUID="{73CB36CE-AB25-4465-A65A-C482D56875F7}">
   <DTS:Property
     DTS:Name="PackageFormatVersion">8</DTS:Property>
   <DTS:ConnectionManagers>
     <DTS:ConnectionManager
       DTS:refId="Package.ConnectionManagers[CM_Sql]"
       DTS:CreationName="OLEDB"
-      DTS:DTSID="{B43424ED-BB4D-4184-8161-7D8439B2932A}"
+      DTS:DTSID="{BA729EAE-0D48-44DF-85FC-307B270426C1}"
       DTS:ObjectName="CM_Sql">
       <DTS:ObjectData>
         <DTS:ConnectionManager
@@ -33,7 +33,7 @@
     <DTS:Executable
       DTS:refId="Package\DFT_Load"
       DTS:CreationName="Microsoft.Pipeline"
-      DTS:DTSID="{76042851-410C-4D50-AC97-24FF657007A8}"
+      DTS:DTSID="{934E2B5D-322A-480D-9BC7-984A76CE6734}"
       DTS:ExecutableType="Microsoft.Pipeline"
       DTS:LocaleID="-1"
       DTS:ObjectName="DFT_Load"
@@ -91,13 +91,13 @@
                           containsID="true"
                           dataType="System.String"
                           description="Derived Column Expression"
-                          name="Expression">[DATEDIFF]("dd",#{Package\DFT_Load\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDate]},[GETDATE]())</property>
+                          name="Expression">[ISNULL](#{Package\DFT_Load\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDate]}) ? -1 : [DATEDIFF]("dd",#{Package\DFT_Load\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDate]},[GETDATE]())</property>
                         <property
                           containsID="true"
                           dataType="System.String"
                           description="Derived Column Friendly Expression"
                           expressionType="Notify"
-                          name="FriendlyExpression">DATEDIFF("dd",SignupDate,GETDATE())</property>
+                          name="FriendlyExpression">ISNULL(SignupDate) ? -1 : DATEDIFF("dd",SignupDate,GETDATE())</property>
                       </properties>
                     </outputColumn>
                   </outputColumns>

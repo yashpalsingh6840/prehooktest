@@ -20,7 +20,7 @@ namespace Ssis.Extract.Codegen;
 /// </summary>
 public static class SqlRowReaderEmitter
 {
-    public static EmitResult Emit(string ns, string rowClassName, PipelineComponentSpec oleDbSource)
+    public static EmitResult Emit(string ns, string rowClassName, PipelineComponentSpec oleDbSource, IReadOnlySet<string>? nullableColumnNames = null)
     {
         var output = oleDbSource.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
         if (output is null)
@@ -36,7 +36,18 @@ public static class SqlRowReaderEmitter
             // Unmapped-type/unresolved columns are already reported by SqlRowEmitter against
             // the same row type -- don't double-report the same fact from a second emitter.
             if (column.Type is null) continue;
-            assignments.Add($"        {column.PipelineColumnName} = reader.GetFieldValue<{column.Type.ClrTypeName}>(reader.GetOrdinal(\"{column.PipelineColumnName}\")),");
+
+            var ordinalExpr = $"reader.GetOrdinal(\"{column.PipelineColumnName}\")";
+            var readExpr = $"reader.GetFieldValue<{column.Type.ClrTypeName}>({ordinalExpr})";
+            // NullabilityInference's own evidence -- a genuinely-null value would otherwise
+            // throw INSIDE GetFieldValue<T> regardless of the C# property's own nullable
+            // annotation (ADO.NET only ever checks IsDBNull, never the CLR type), so this
+            // guard matters even for a nullable STRING column, unlike EntityEmitter/SqlRowEmitter's
+            // own "string never needs a type change" exclusion.
+            if (nullableColumnNames?.Contains(column.PipelineColumnName) ?? false)
+                readExpr = $"reader.IsDBNull({ordinalExpr}) ? null : {readExpr}";
+
+            assignments.Add($"        {column.PipelineColumnName} = {readExpr},");
         }
 
         if (assignments.Count == 0)

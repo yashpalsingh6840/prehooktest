@@ -17,7 +17,8 @@ public sealed record TransformRequest(
     string SsisFnNamespace,
     PipelineSpec Pipeline,
     IReadOnlyList<PipelineComponentSpec> DerivedColumns,
-    PipelineComponentSpec DestinationComponent);
+    PipelineComponentSpec DestinationComponent,
+    IReadOnlySet<string>? NullableColumnNames = null);
 
 /// <summary>
 /// Emits one Data Flow Task's Derived Column transform, e.g.
@@ -66,7 +67,7 @@ public static class TransformEmitter
         {
             if (computedByName.TryGetValue(column.PipelineColumnName, out var derivedColumn))
             {
-                var translated = TranslateDerivedColumn(derivedColumn, request.EntityName, column.ExternalColumnName, lineage, columnTypes);
+                var translated = TranslateDerivedColumn(derivedColumn, request.EntityName, column.ExternalColumnName, lineage, columnTypes, request.NullableColumnNames);
                 if (translated is NotTranslatable notTranslatable)
                 {
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}", notTranslatable.Reason));
@@ -121,7 +122,8 @@ public static class TransformEmitter
 
     private static TranslatedExpression TranslateDerivedColumn(
         PipelineOutputColumnSpec derivedColumn, string entityName, string destinationColumnName,
-        LineageSpec lineage, Dictionary<string, PipelineOutputColumnSpec> columnTypes)
+        LineageSpec lineage, Dictionary<string, PipelineOutputColumnSpec> columnTypes,
+        IReadOnlySet<string>? nullableColumnNames)
     {
         var expressionText = derivedColumn.FriendlyExpression ?? derivedColumn.Expression;
         if (expressionText is null)
@@ -137,7 +139,7 @@ public static class TransformEmitter
             return new NotTranslatable($"could not parse expression '{expressionText}': {ex.Message}");
         }
 
-        var references = new Dictionary<string, (string CSharpExpression, SsisType Type)>();
+        var references = new Dictionary<string, ColumnReference>();
         foreach (var edge in lineage.Edges.Where(e => e.Kind == "ExpressionDerived" && e.ToColumnRefId == derivedColumn.RefId))
         {
             if (references.ContainsKey(edge.FromColumnName)) continue;
@@ -149,7 +151,8 @@ public static class TransformEmitter
             if (mapped is null)
                 return new NotTranslatable($"referenced column '{edge.FromColumnName}' has unmapped pipeline data type '{producerColumn.DataType}'");
 
-            references[edge.FromColumnName] = ($"row.{edge.FromColumnName}", mapped.Value);
+            var isNullable = nullableColumnNames?.Contains(edge.FromColumnName) ?? false;
+            references[edge.FromColumnName] = new ColumnReference($"row.{edge.FromColumnName}", mapped.Value, isNullable);
         }
 
         return ExpressionTranslator.TranslateColumn(ast, entityName, destinationColumnName, references);

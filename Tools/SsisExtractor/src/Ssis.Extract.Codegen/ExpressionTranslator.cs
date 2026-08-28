@@ -13,6 +13,15 @@ public sealed record TranslatedOk(string CSharpExpression) : TranslatedExpressio
 /// translation). <see cref="Reason"/> is what a human reads to decide how to fill the gap.</summary>
 public sealed record NotTranslatable(string Reason) : TranslatedExpression;
 
+/// <summary>One entry in the <c>references</c> dictionary every translation method threads
+/// through -- what C# expression reads this SSIS identifier, its SsisType, and (added
+/// 2026-08-27, NullabilityInference) whether it's known-nullable from an ISNULL(x) usage
+/// elsewhere in the same flow. <see cref="IsNullable"/> only ever affects
+/// <c>TranslateScalar</c>'s own Reference case (append ".Value", trusting the caller already
+/// guarded with ISNULL -- see that case's own comment) and <c>TranslateIsNull</c> (which must
+/// use the RAW, un-unwrapped expression to check for null in the first place).</summary>
+public sealed record ColumnReference(string CSharpExpression, SsisType Type, bool IsNullable = false);
+
 /// <summary>
 /// Translates one <c>ExprNode</c> (already parsed by <c>SsisExpression.Parse</c>) into a C#
 /// expression string. Covers exactly the shapes evidenced across both real PoC packages'
@@ -42,7 +51,7 @@ public static class ExpressionTranslator
         ExprNode root,
         string entityName,
         string columnName,
-        IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        IReadOnlyDictionary<string, ColumnReference> references)
     {
         if (root is FunctionCall { Name: "GETUTCDATE" or "GETDATE", Args.Count: 0 })
             return new TranslatedOk("ctx.LoadedAtUtc");
@@ -68,7 +77,7 @@ public static class ExpressionTranslator
     /// function calls with no known return type) -- preserves every previously-evidenced concat
     /// case exactly, since none of them had a numeric operand.</summary>
     private static TranslatedExpression TranslateValue(
-        ExprNode node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        ExprNode node, IReadOnlyDictionary<string, ColumnReference> references)
     {
         if (node is not BinaryExpr { Op: BinaryOp.Add } add) return TranslateScalar(node, references);
 
@@ -83,7 +92,7 @@ public static class ExpressionTranslator
     /// recurse via TranslateValue (not TranslateScalar) so a chained a+b+c of numeric terms
     /// would also work, though that's not evidenced anywhere.</summary>
     private static TranslatedExpression TranslateArithmeticAdd(
-        BinaryExpr node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        BinaryExpr node, IReadOnlyDictionary<string, ColumnReference> references)
     {
         var left = TranslateValue(node.Left, references);
         if (left is NotTranslatable) return left;
@@ -96,7 +105,7 @@ public static class ExpressionTranslator
     /// literal, e.g. FirstName + " " + LastName -> $"{row.FirstName} {row.LastName}" -- matches
     /// the plan's own table row for BinaryExpr(Add) over strings.</summary>
     private static TranslatedExpression TranslateConcat(
-        ExprNode addChain, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        ExprNode addChain, IReadOnlyDictionary<string, ColumnReference> references)
     {
         var parts = new List<ExprNode>();
         Flatten(addChain, parts);
@@ -132,10 +141,18 @@ public static class ExpressionTranslator
     }
 
     private static TranslatedExpression TranslateScalar(
-        ExprNode node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references) => node switch
+        ExprNode node, IReadOnlyDictionary<string, ColumnReference> references) => node switch
     {
+        // A nullable-inferred column (NullabilityInference, from an ISNULL(x) usage elsewhere
+        // in this same flow) is unwrapped with .Value here -- trusting that any expression
+        // reaching this VALUE context is only ever evaluated after the ISNULL check that made
+        // it nullable in the first place has already ruled out null (the one evidenced pattern:
+        // ISNULL(x) ? fallback : f(x)). This is a deliberate, real tradeoff, not a proof: a
+        // reference used with no such guard would throw at runtime instead of degrading to a
+        // gap. TranslateIsNull below is the one place that must NOT go through this case, since
+        // it needs the raw (still-nullable) expression to check for null at all.
         Reference r => references.TryGetValue(r.Name, out var resolved)
-            ? new TranslatedOk(resolved.CSharpExpression)
+            ? new TranslatedOk(resolved.IsNullable ? $"{resolved.CSharpExpression}.Value" : resolved.CSharpExpression)
             : new NotTranslatable($"reference '{r.Name}' has no resolvable producing column"),
 
         StringLiteral s => new TranslatedOk(CSharpStringLiteral(s.Value)),
@@ -209,7 +226,7 @@ public static class ExpressionTranslator
     /// are culture-aware.
     /// </summary>
     public static TranslatedExpression TranslateCondition(
-        ExprNode root, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references) => root switch
+        ExprNode root, IReadOnlyDictionary<string, ColumnReference> references) => root switch
     {
         BinaryExpr { Op: BinaryOp.And } and => TranslateLogical(and, "&&", references),
         BinaryExpr { Op: BinaryOp.Or } or => TranslateLogical(or, "||", references),
@@ -227,25 +244,35 @@ public static class ExpressionTranslator
     /// CSPLIT_Validity's "Valid" case). An operand that isn't itself a valid condition shape
     /// degrades to NotTranslatable via the recursive call, never guessed.</summary>
     private static TranslatedExpression TranslateNot(
-        UnaryExpr node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        UnaryExpr node, IReadOnlyDictionary<string, ColumnReference> references)
     {
         var inner = TranslateCondition(node.Operand, references);
         return inner is NotTranslatable ? inner : new TranslatedOk($"!({((TranslatedOk)inner).CSharpExpression})");
     }
 
-    /// <summary>`ISNULL(x)` used directly as a condition (as opposed to `ISNULL(x) ? a : b`,
-    /// not evidenced/supported here) -- translates its argument as a plain value and tests it
-    /// for C# `null`, which is correct regardless of whether the generated row property ends
-    /// up a reference type or a nullable value type.</summary>
+    /// <summary>`ISNULL(x)` used directly as a condition -- e.g. `ISNULL(SignupDate) ? -1 :
+    /// DATEDIFF(...)`. A bare Reference argument (every evidenced case) is resolved directly
+    /// against the RAW, still-possibly-nullable expression -- NOT through TranslateScalar's own
+    /// Reference case, which would unwrap a nullable-inferred column with `.Value` and defeat
+    /// the null check this function exists to perform. Any other argument shape falls back to
+    /// TranslateScalar (unaffected by this distinction, since no evidenced function call
+    /// currently returns a nullable type).</summary>
     private static TranslatedExpression TranslateIsNull(
-        FunctionCall node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        FunctionCall node, IReadOnlyDictionary<string, ColumnReference> references)
     {
+        if (node.Args[0] is Reference r)
+        {
+            return references.TryGetValue(r.Name, out var resolved)
+                ? new TranslatedOk($"({resolved.CSharpExpression} is null)")
+                : new NotTranslatable($"reference '{r.Name}' has no resolvable producing column");
+        }
+
         var inner = TranslateScalar(node.Args[0], references);
         return inner is NotTranslatable ? inner : new TranslatedOk($"({((TranslatedOk)inner).CSharpExpression} is null)");
     }
 
     private static TranslatedExpression TranslateLogical(
-        BinaryExpr node, string csharpOp, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        BinaryExpr node, string csharpOp, IReadOnlyDictionary<string, ColumnReference> references)
     {
         var left = TranslateCondition(node.Left, references);
         if (left is NotTranslatable) return left;
@@ -255,7 +282,7 @@ public static class ExpressionTranslator
     }
 
     private static TranslatedExpression TranslateComparison(
-        BinaryExpr cmp, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        BinaryExpr cmp, IReadOnlyDictionary<string, ColumnReference> references)
     {
         var left = TranslateScalar(cmp.Left, references);
         if (left is NotTranslatable) return left;
@@ -313,7 +340,7 @@ public static class ExpressionTranslator
     };
 
     private static SsisType? TryResolveOperandType(
-        ExprNode node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references) => node switch
+        ExprNode node, IReadOnlyDictionary<string, ColumnReference> references) => node switch
     {
         Reference r => references.TryGetValue(r.Name, out var resolved) ? resolved.Type : null,
         StringLiteral => SsisType.WStr,
@@ -323,7 +350,7 @@ public static class ExpressionTranslator
     };
 
     private static TranslatedExpression WrapOneArgFunction(
-        string csharpFunction, ExprNode arg, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        string csharpFunction, ExprNode arg, IReadOnlyDictionary<string, ColumnReference> references)
     {
         var inner = TranslateScalar(arg, references);
         return inner is NotTranslatable ? inner : new TranslatedOk($"{csharpFunction}({((TranslatedOk)inner).CSharpExpression})");
@@ -334,7 +361,7 @@ public static class ExpressionTranslator
     /// expression, not just a literal). Passed straight to SsisFn.Substring, which carries the
     /// existing 1-based/start-&lt;1-errors/clamp-at-end-of-string semantics.</summary>
     private static TranslatedExpression TranslateSubstring(
-        FunctionCall node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references) =>
+        FunctionCall node, IReadOnlyDictionary<string, ColumnReference> references) =>
         TranslateFunctionArgs("SsisFn.Substring", node.Args, references);
 
     /// <summary>FINDSTRING(value, search, occurrence) -- all three args translated recursively
@@ -342,7 +369,7 @@ public static class ExpressionTranslator
     /// carries the oracle-verified semantics (Ssis.Runtime.Expressions.Functions.FindString):
     /// occurrence &lt; 1 errors, an empty search string never matches, matches may overlap.</summary>
     private static TranslatedExpression TranslateFindString(
-        FunctionCall node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references) =>
+        FunctionCall node, IReadOnlyDictionary<string, ColumnReference> references) =>
         TranslateFunctionArgs("SsisFn.FindString", node.Args, references);
 
     /// <summary>DATEDIFF(datepart, start, end) -- the datepart argument must be a literal
@@ -351,7 +378,7 @@ public static class ExpressionTranslator
     /// nested GETDATE()/GETUTCDATE() (the real evidenced end-date argument) resolves through
     /// the switch case above.</summary>
     private static TranslatedExpression TranslateDateDiff(
-        FunctionCall node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        FunctionCall node, IReadOnlyDictionary<string, ColumnReference> references)
     {
         if (node.Args[0] is not StringLiteral { Value: var part } || !string.Equals(part, "dd", StringComparison.OrdinalIgnoreCase))
             return new NotTranslatable("DATEDIFF is only supported with the \"dd\" date part -- the only one oracle-verified against the real evaluator");
@@ -365,7 +392,7 @@ public static class ExpressionTranslator
     }
 
     private static TranslatedExpression TranslateFunctionArgs(
-        string csharpFunction, IReadOnlyList<ExprNode> args, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        string csharpFunction, IReadOnlyList<ExprNode> args, IReadOnlyDictionary<string, ColumnReference> references)
     {
         var translatedArgs = new List<string>();
         foreach (var arg in args)
@@ -382,7 +409,7 @@ public static class ExpressionTranslator
     /// package, but costs nothing and matches how TranslateColumn's own top-level dispatch
     /// already recurses.</summary>
     private static TranslatedExpression TranslateTernary(
-        Conditional node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        Conditional node, IReadOnlyDictionary<string, ColumnReference> references)
     {
         var condition = TranslateCondition(node.Condition, references);
         if (condition is NotTranslatable) return condition;
@@ -398,7 +425,7 @@ public static class ExpressionTranslator
     }
 
     private static TranslatedExpression TranslateNegate(
-        UnaryExpr node, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        UnaryExpr node, IReadOnlyDictionary<string, ColumnReference> references)
     {
         var inner = TranslateScalar(node.Operand, references);
         return inner is NotTranslatable ? inner : new TranslatedOk($"-({((TranslatedOk)inner).CSharpExpression})");
@@ -412,7 +439,7 @@ public static class ExpressionTranslator
     /// package (only the outer, whole-column cast does), so it maps to a plain conversion.
     /// </summary>
     private static TranslatedExpression TranslateIntToStringCast(
-        Cast cast, IReadOnlyDictionary<string, (string CSharpExpression, SsisType Type)> references)
+        Cast cast, IReadOnlyDictionary<string, ColumnReference> references)
     {
         if (cast.Operand is Reference r && references.TryGetValue(r.Name, out var resolved) && SsisTypes.IsIntegral(resolved.Type))
             return new TranslatedOk($"SsisFn.Str({resolved.CSharpExpression})");

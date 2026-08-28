@@ -16,7 +16,7 @@ namespace Ssis.Extract.Codegen;
 /// </summary>
 public static class EntityEmitter
 {
-    public static EmitResult Emit(string ns, string entityName, PipelineComponentSpec destinationComponent)
+    public static EmitResult Emit(string ns, string entityName, PipelineComponentSpec destinationComponent, IReadOnlySet<string>? nullableColumnNames = null)
     {
         var resolved = PipelineResolver.ResolveDestinationInput(destinationComponent);
         var gaps = resolved.Unresolved
@@ -34,8 +34,14 @@ public static class EntityEmitter
             }
 
             if (propertyLines.Count > 0) propertyLines.Add("");
-            var initializer = column.Type.ClrTypeName == "string" ? " = \"\";" : "";
-            propertyLines.Add($"    public {column.Type.ClrTypeName} {column.ExternalColumnName} {{ get; set; }}{initializer}");
+            // A passthrough column's own source buffer name equals column.PipelineColumnName --
+            // if THAT column is nullable-inferred (NullabilityInference), the source row's own
+            // property is a nullable CLR type, so this entity's own property must be too or a
+            // plain assignment (SqlRowEmitter's row -> this) won't compile.
+            var isNullable = column.Type.ClrTypeName != "string" && (nullableColumnNames?.Contains(column.PipelineColumnName) ?? false);
+            var typeName = isNullable ? column.Type.ClrTypeName + "?" : column.Type.ClrTypeName;
+            var initializer = !isNullable && column.Type.ClrTypeName == "string" ? " = \"\";" : "";
+            propertyLines.Add($"    public {typeName} {column.ExternalColumnName} {{ get; set; }}{initializer}");
         }
 
         if (propertyLines.Count == 0)

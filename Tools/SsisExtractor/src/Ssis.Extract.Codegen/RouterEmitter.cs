@@ -35,12 +35,16 @@ public static class RouterEmitter
                 $"Conditional Split '{splitComponent.Name}' has {splitComponent.Inputs.Count} input(s), expected exactly 1")]), new HashSet<string>());
         }
 
-        var references = new Dictionary<string, (string CSharpExpression, SsisType Type)>();
+        // Nullability is NOT inferred here -- NullabilityInference is deliberately scoped to
+        // Derived Column expressions only (see its own doc comment); a Conditional Split
+        // condition's own ISNULL(x) usage (e.g. RBC_Demo_ETL's CSPLIT_Validity) is a separate,
+        // still-open extension.
+        var references = new Dictionary<string, ColumnReference>();
         foreach (var inputColumn in splitComponent.Inputs[0].Columns)
         {
             var mapped = TransformEmitter.MapPipelineTypeToSsisType(inputColumn.CachedDataType);
             if (mapped is null) continue; // unmapped buffer type -- simply unavailable as a reference, not a gap on its own
-            references[inputColumn.CachedName] = ($"row.{inputColumn.CachedName}", mapped.Value);
+            references[inputColumn.CachedName] = new ColumnReference($"row.{inputColumn.CachedName}", mapped.Value);
         }
 
         // split.Branches[^1] is always the default (no condition of its own, see

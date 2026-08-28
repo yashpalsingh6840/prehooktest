@@ -15,7 +15,7 @@ namespace Ssis.Extract.Codegen;
 /// </summary>
 public static class SqlRowEmitter
 {
-    public static EmitResult Emit(string ns, string rowClassName, PipelineComponentSpec oleDbSource)
+    public static EmitResult Emit(string ns, string rowClassName, PipelineComponentSpec oleDbSource, IReadOnlySet<string>? nullableColumnNames = null)
     {
         var output = oleDbSource.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
         if (output is null)
@@ -39,8 +39,13 @@ public static class SqlRowEmitter
             }
 
             if (propertyLines.Count > 0) propertyLines.Add("");
-            var initializer = column.Type.ClrTypeName == "string" ? " = \"\";" : "";
-            propertyLines.Add($"    public {column.Type.ClrTypeName} {column.PipelineColumnName} {{ get; set; }}{initializer}");
+            // NullabilityInference's own evidence (an ISNULL(x) check on this column somewhere
+            // downstream) -- see EntityEmitter's identical note for why string is excluded
+            // (a reference type needs no type-level change to hold null).
+            var isNullable = column.Type.ClrTypeName != "string" && (nullableColumnNames?.Contains(column.PipelineColumnName) ?? false);
+            var typeName = isNullable ? column.Type.ClrTypeName + "?" : column.Type.ClrTypeName;
+            var initializer = !isNullable && column.Type.ClrTypeName == "string" ? " = \"\";" : "";
+            propertyLines.Add($"    public {typeName} {column.PipelineColumnName} {{ get; set; }}{initializer}");
         }
 
         if (propertyLines.Count == 0)

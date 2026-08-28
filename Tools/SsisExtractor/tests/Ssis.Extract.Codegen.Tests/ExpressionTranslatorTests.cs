@@ -4,9 +4,16 @@ namespace Ssis.Extract.Codegen.Tests;
 
 public class ExpressionTranslatorTests
 {
-    private static Dictionary<string, (string CSharpExpression, SsisType Type)> Refs(
+    private static Dictionary<string, ColumnReference> Refs(
         params (string Name, string CSharpExpression, SsisType Type)[] refs) =>
-        refs.ToDictionary(r => r.Name, r => (r.CSharpExpression, r.Type));
+        refs.ToDictionary(r => r.Name, r => new ColumnReference(r.CSharpExpression, r.Type));
+
+    /// <summary>Same as <see cref="Refs"/> but for the nullable-reference tests -- keeping the
+    /// two helpers separate rather than adding an optional 4th tuple element to every existing
+    /// call site.</summary>
+    private static Dictionary<string, ColumnReference> RefsNullable(
+        params (string Name, string CSharpExpression, SsisType Type, bool IsNullable)[] refs) =>
+        refs.ToDictionary(r => r.Name, r => new ColumnReference(r.CSharpExpression, r.Type, r.IsNullable));
 
     [Fact]
     public void TranslateColumn_ProducesTheExactHandWrittenFullNameExpression()
@@ -263,6 +270,25 @@ public class ExpressionTranslatorTests
 
         var gap = Assert.IsType<NotTranslatable>(result);
         Assert.Contains("\"dd\"", gap.Reason);
+    }
+
+    [Fact]
+    public void TranslateColumn_TranslatesTheRealTenureDaysExpression_WhenSignupDateIsNullableInferred()
+    {
+        // The nullable-value-typed-column fix (2026-08-27): with IsNullable: true (as
+        // NullabilityInference would set it, having found this exact ISNULL(SignupDate) usage),
+        // the ISNULL check itself uses the RAW (still-nullable) expression -- "is null" compiles
+        // fine against a nullable value type -- while DATEDIFF's own use of the SAME reference
+        // is unwrapped with .Value, trusting the ternary's own guard already ruled out null.
+        var ast = SsisExpression.Parse("ISNULL(SignupDate) ? -1 : DATEDIFF(\"dd\",SignupDate,GETDATE())");
+        var refs = RefsNullable(("SignupDate", "row.SignupDate", SsisType.DbDate, true));
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "TenureDays", refs);
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal(
+            "((row.SignupDate is null) ? -(1) : SsisFn.DateDiffDays(row.SignupDate.Value, ctx.LoadedAtUtc))",
+            ok.CSharpExpression);
     }
 
     [Fact]

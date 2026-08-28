@@ -803,7 +803,7 @@ A second, unrelated real bug (`GateRunner` not setting the job process's working
 which silently broke the job's own `appsettings.json` lookup and surfaced as an
 unrelated-looking Windows-auth failure) was also caught and fixed the same session.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile))
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile); nullable value-typed column support added 2026-08-27, same session -- an evidence-based minimal version (infer nullable from ISNULL(x) usage, unwrap with .Value everywhere else, a real named tradeoff vs. full null-flow analysis) scoped to SQL sources/Derived Columns only, verified end-to-end with a genuine NULL row against .\SQLFORPOC_2022)
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -2345,6 +2345,89 @@ Regression: 95/95 in `Ssis.Extract.Codegen.Tests` (was 94), 149/149 in
 containers, Conditional Split -> Sort -> Merge, Data Conversion component support (row-type
 generation), and the newly-named nullable-value-typed-column gap above. `DATEDIFF` itself is
 closed for the one evidenced datepart (`"dd"`) -- any other datepart remains a deliberate gap.
+
+### Nullable value-typed columns -- the minimal, evidence-based version (2026-08-27)
+
+Picked up immediately after DATEDIFF, same session, after sizing it live with the user first:
+the first pass at "just make the property nullable" turned out to need a real design decision
+once the actual evidenced usage pattern was traced through -- `ISNULL(x) ? fallback : f(x)`
+only works if `f(x)`'s own reference to `x` is unwrapped to a non-nullable value, and nothing
+in a naive translation would express "the ternary's OWN condition already ruled out null" to
+the type system. Framed the tradeoff to the user before building it (AskUserQuestion) rather
+than quietly shipping a guess; they picked the minimal version below.
+
+**The core design decision, stated as a real tradeoff, not hidden:** a column becomes
+"nullable-inferred" ONLY from direct evidence -- a bare `ISNULL(x)` check somewhere in the same
+Derived Column's own expressions (a `.dtsx` carries no nullability concept at all, confirmed the
+same way `PrimaryKeyInference`'s own doc comment already established for primary keys). Once
+inferred nullable, EVERY OTHER reference to that column (i.e. everywhere except inside the
+`ISNULL` check itself) is unwrapped with `.Value`, trusting that any code reaching it already
+passed through the same guard. **This is not proven null-safety** -- a column referenced with
+no `ISNULL` guard anywhere would still translate normally (non-nullable), but a HYPOTHETICAL
+future expression that referenced a nullable-inferred column WITHOUT going through its own
+guard would throw a `InvalidOperationException` at runtime (`.Value` on a null) rather than
+degrade to a `NotTranslatable` gap at generation time. Accepted deliberately: full null-flow
+analysis (proving the value truly can't be null at each specific use site) is a much larger
+undertaking, and the one real evidenced pattern (guard-then-use, in a ternary) is exactly what
+this handles correctly.
+
+**What was added:**
+- `NullabilityInference.cs` (new) -- walks a Derived Column's own output expressions (not just
+  the root; the real case has `ISNULL(x)` as a ternary's own *condition*, so the AST walk
+  recurses through `BinaryExpr`/`UnaryExpr`/`Cast`/`Conditional`/other `FunctionCall` args too)
+  and collects the NAME of any bare `Reference` passed directly to `ISNULL(...)`. Deliberately
+  scoped to Derived Column expressions only (not Conditional Split conditions -- RouterEmitter's
+  own, separate reference-resolution path) and SQL sources only (not CSV -- CsvRowEmitter/
+  ClassMapEmitter untouched) -- the one real evidenced need is a Derived Column over a SQL
+  source; RBC_Demo_ETL's own CSV-sourced equivalent is separately blocked on the (also unfixed)
+  Data Conversion gap anyway, so a CSV-sourced version of this fix couldn't be end-to-end
+  verified against it regardless. Both are named, explicit follow-ups, not silently skipped.
+- `ExpressionTranslator.cs`: a new `ColumnReference` record (`CSharpExpression, Type,
+  IsNullable = false`) replaces the raw `(string, SsisType)` tuple everywhere (19 call sites,
+  mechanical) as the `references` dictionary's value type. `TranslateScalar`'s `Reference` case
+  appends `.Value` when `IsNullable`; `TranslateIsNull` was changed to resolve a bare-Reference
+  argument directly against the RAW (still-nullable) expression instead of routing through
+  `TranslateScalar` -- routing through it would have double-applied the `.Value` unwrap and
+  broken the null check the function exists to perform in the first place.
+- `SqlRowEmitter`/`EntityEmitter`: append `?` to a nullable-inferred column's CLR type
+  (skipped for `string`, a reference type that needs no type-level change to hold null).
+  `EntityEmitter` matches by the DESTINATION column's own buffer name (`PipelineColumnName`),
+  since a passthrough column's entity property must mirror its source row property's own
+  nullability or the plain assignment between them won't compile.
+- `SqlRowReaderEmitter`: guards the read with `reader.IsDBNull(ordinal) ? null :
+  reader.GetFieldValue<T>(ordinal)` -- this one applies EVEN TO a nullable string column
+  (unlike the type-name change above), since `GetFieldValue<T>` throws on a genuinely-null
+  value regardless of the C# property's own nullable annotation; ADO.NET only ever checks
+  `IsDBNull`, never the CLR type.
+- `PackageGenerator.cs`: computes the nullable-name set once per single-destination flow (from
+  `flow.DerivedColumn`, before `ResolveFlowSource`/`EntityEmitter` are even called) and threads
+  it through; the Conditional Split flow path passes nothing (an empty set), matching the
+  RouterEmitter scope decision above.
+
+**Verified two ways:** a new `NullabilityInferenceTests.cs` (4 tests: the ternary-condition
+shape, an `&&`-condition shape, no-`ISNULL` returns empty, `ISNULL(UPPER(x))` does NOT flag
+`x` -- only a bare Reference argument counts) plus a new `ExpressionTranslatorTests` case
+proving the exact real TenureDays expression now translates to
+`((row.SignupDate is null) ? -(1) : SsisFn.DateDiffDays(row.SignupDate.Value, ctx.LoadedAtUtc))`
+when `SignupDate` is nullable-inferred (the *existing* non-nullable-case test, added last
+round, is untouched and still passes -- `IsNullable` defaults `false`, so nothing about
+previously-working translation changed). **Then closed the loop for real**: `SyntheticDateDiff.dtsx`
+(the fixture built last round specifically WITHOUT the `ISNULL(...)` wrapper to sidestep this
+exact gap) was updated back to the full, verbatim RBC_Demo_ETL expression, its backing
+`SignupDate` column made nullable again with a genuine `NULL` seed row. **Generated, built
+against a copy of `Etl.Core` (0 warnings/0 errors -- confirming `DateOnly?`/`SqlRowReaderEmitter`'s
+null-guard/the `.Value` unwrap all compose correctly), and actually RUN against
+`.\SQLFORPOC_2022`**: 4 rows, read back afterward -- `2026-08-18 -> 10`, `2026-08-28 -> 0`,
+`2026-09-02 -> -5`, `NULL -> -1` (the ISNULL branch, genuinely exercised with a real NULL row
+for the first time this session). Regenerating the real `Package_Transforms.dtsx` showed NO
+change (expected -- it's CSV-sourced, outside this round's scope, still separately blocked on
+Data Conversion). Regression: 100/100 in `Ssis.Extract.Codegen.Tests` (was 95), same 3
+pre-existing unrelated failures elsewhere.
+
+**Remaining known gaps, updated:** Flat File Destination, Excel Source, ForEach Loop
+containers, Conditional Split -> Sort -> Merge, Data Conversion component support, Conditional
+Split condition nullability (RouterEmitter), and CSV-source nullability (CsvRowEmitter/
+ClassMapEmitter) -- the last two are this round's own named follow-ups.
 
 ## Traps already hit once — don't re-derive these
 
