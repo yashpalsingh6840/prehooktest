@@ -84,14 +84,23 @@ public static class PackageGenerator
                 continue;
             }
 
-            var entityName = TryResolveEntityName(flow.TaskName, flow.DestinationComponent, gaps);
+            // A Flat File Destination has no OpenRowset/table at all, so it gets a DIFFERENT
+            // entity-name source (the task's own name, always present) and skips every
+            // SQL-shaped gate/step below (fast-load, EF Core table, the "no Derived Column"
+            // direct-copy restriction) that assumes a destination TABLE exists.
+            var isFlatFileDestination = flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination";
+
+            var entityName = isFlatFileDestination
+                ? SanitizeIdentifier(flow.TaskName)
+                : TryResolveEntityName(flow.TaskName, flow.DestinationComponent, gaps);
             if (entityName is null) continue;
 
             // Milestone 1 covers fast-load destinations only (plan §0.3's own resolution --
             // AccessMode itself is never decoded, this is the minimal check that decision
             // settled on). Anything else needs row-by-row insert generation this tool doesn't
-            // have yet.
-            if (!DestinationInfo.IsFastLoadConfigured(flow.DestinationComponent))
+            // have yet. A Flat File Destination has no fast-load concept at all -- it's always
+            // "supported" in that sense, so this gate simply doesn't apply to it.
+            if (!isFlatFileDestination && !DestinationInfo.IsFastLoadConfigured(flow.DestinationComponent))
             {
                 gaps.Add(new GenerationGap(flow.TaskName, $"destination '{flow.DestinationComponent.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
                 continue;
@@ -106,14 +115,34 @@ public static class PackageGenerator
             var transformClassName = entityName + "Transform";
             Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, nullableColumnNames));
 
-            if (flow.DerivedColumn is null && flow.DataConversion is null)
+            // OLE DB/ADO NET destinations still require a Derived Column or Data Conversion --
+            // a plain direct-copy pipeline's transform is a separate, still-unproven generator
+            // path for a SQL destination (see PackagePlanner's own "direct-copy" notes). A Flat
+            // File Destination is deliberately exempted: the two real evidenced instances
+            // (RBC_Demo_ETL's own DFT_ExportDelimited/DFT_ExportFixedWidth) are BOTH pure
+            // column-copy exports with no transform at all, and TransformEmitter already handles
+            // an empty DerivedColumns list correctly (every column just becomes a plain
+            // `row.ColumnName` passthrough assignment) -- there is nothing SQL-specific in that
+            // code path to be unproven about.
+            if (!isFlatFileDestination && flow.DerivedColumn is null && flow.DataConversion is null)
             {
                 gaps.Add(new GenerationGap(flow.TaskName, "no Derived Column or Data Conversion found in this Data Flow Task -- a direct-copy pipeline's transform is not generated yet, so this flow is not wired into Program.cs"));
                 continue;
             }
 
-            primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
-            tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
+            FlowSinkSpec sink;
+            if (isFlatFileDestination)
+            {
+                var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, flow.DestinationComponent, entityName, fileSourceEntries, gaps);
+                if (flatFileSink is null) continue; // ResolveFlatFileSink already added the reason
+                sink = flatFileSink;
+            }
+            else
+            {
+                primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
+                tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
+                sink = new SqlFlowSink();
+            }
 
             var transformResult = TransformEmitter.Emit(new TransformRequest(
                 MappingNamespace: $"{ns}.Mapping",
@@ -138,15 +167,21 @@ public static class PackageGenerator
                 continue;
             }
 
-            wiredFlows[flow] = new ProgramFlowSpec(flow.TaskName, programSource, rowTypeName, entityName, transformClassName);
+            wiredFlows[flow] = new ProgramFlowSpec(flow.TaskName, programSource, rowTypeName, entityName, transformClassName, sink);
 
-            if (authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
+            if (!isFlatFileDestination && authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
             {
                 (authMode, userId, targetServer, targetDatabase) = auth;
             }
         }
 
-        if (tables.Count > 0)
+        // A package whose only successfully-wired flows are Flat File Destinations has
+        // tables.Count == 0 but still needs a (now possibly-empty) DbContext class -- Program.cs
+        // always emits AddEtlDbContext<T>()/IUnitOfWork's own transaction wrapping needs a real
+        // DbContext type regardless of whether anything maps to a SQL table (see
+        // DbContextEmitter's own updated doc comment). Still correctly skipped when NOTHING
+        // wired at all (an all-gapped package), matching existing behavior.
+        if (tables.Count > 0 || wiredFlows.Count > 0 || wiredSplits.Count > 0)
             Merge(files, gaps, DbContextEmitter.Emit($"{ns}.Model", $"{package.ObjectName}DbContext", tables));
 
         Merge(files, gaps, SsisFnEmitter.Emit($"{ns}.Ssis", functionsUsed));
@@ -495,12 +530,20 @@ public static class PackageGenerator
             return null;
         }
 
-        var destCmName = DestinationInfo.ConnectionName(destinationComponent);
-        var destParsed = destCmName is not null ? FindConnectionManager(package, destCmName)?.Parsed : null;
-        if (destParsed is null || sourceParsed.Server != destParsed.Server || sourceParsed.Database != destParsed.Database)
+        // A Flat File Destination has no server/database of its own to compare against at all --
+        // its own connection is a file path, not a SQL connection -- so this check, which exists
+        // to catch a SQL source/SQL destination pair that would silently need a second untracked
+        // connection, doesn't apply: a Flat File Destination flow's SQL source is already the
+        // only SQL connection this flow uses.
+        if (destinationComponent.ComponentClassId != "Microsoft.FlatFileDestination")
         {
-            gaps.Add(new GenerationGap(taskName, $"Source '{source.Name}' targets a different server/database than this flow's own destination -- a separate source connection is not supported yet"));
-            return null;
+            var destCmName = DestinationInfo.ConnectionName(destinationComponent);
+            var destParsed = destCmName is not null ? FindConnectionManager(package, destCmName)?.Parsed : null;
+            if (destParsed is null || sourceParsed.Server != destParsed.Server || sourceParsed.Database != destParsed.Database)
+            {
+                gaps.Add(new GenerationGap(taskName, $"Source '{source.Name}' targets a different server/database than this flow's own destination -- a separate source connection is not supported yet"));
+                return null;
+            }
         }
 
         return source.OleDbSource is { } oleDbPayload
@@ -586,6 +629,88 @@ public static class PackageGenerator
         }
 
         return new FileSourceEntryRequest(key, Path.GetDirectoryName(filePath) ?? "", Path.GetFileName(filePath));
+    }
+
+    /// <summary>
+    /// Resolves a Flat File Destination's own file-format facts into a <see cref="FlatFileFlowSink"/>
+    /// -- everything about the file's PHYSICAL layout (delimited vs fixed-width, delimiters,
+    /// column widths, and the header row) lives on the flat file CONNECTION MANAGER
+    /// (<see cref="FlatFileFormatSpec"/>, already modeled generically for the source side), not
+    /// on the component itself; this only reads the component's own three bespoke properties
+    /// (<see cref="FlatFileDestinationPayload.Overwrite"/>/.Header/.EscapeQualifier).
+    ///
+    /// Columns are emitted in the CONNECTION MANAGER's own column order (the real physical file
+    /// layout), matched by name against the component's <see cref="PipelineColumnMappingSpec.ExternalColumnName"/>
+    /// to find each column's PROPERTY name on the generated row/entity type -- not the mapping
+    /// list's own declaration order, which isn't guaranteed to match the file's layout (though it
+    /// does in both real evidenced instances).
+    /// </summary>
+    private static FlatFileFlowSink? ResolveFlatFileSink(
+        PackageSpec package, string taskName, PipelineComponentSpec destination, string fileSourceKey,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps)
+    {
+        var payload = destination.FlatFileDestination;
+        var connectionManager = payload?.ConnectionName is { } cmName ? FindConnectionManager(package, cmName) : null;
+        var format = connectionManager?.FlatFileFormat;
+        if (payload is null || connectionManager is null || format is null)
+        {
+            gaps.Add(new GenerationGap(taskName, $"Flat File Destination '{destination.Name}' has no resolvable connection manager or file format -- not supported"));
+            return null;
+        }
+
+        if (!string.IsNullOrEmpty(payload.Header))
+        {
+            gaps.Add(new GenerationGap(taskName, $"Flat File Destination '{destination.Name}' has a literal Header property set -- not supported yet, only the connection manager's own ColumnNamesInFirstDataRow header is generated"));
+            return null;
+        }
+
+        // FixedWidth format with a generated header row is unevidenced -- neither real instance
+        // (RBC_Demo_ETL's own CM_FF_ExportDelimited/CM_FF_ExportFixed) combines the two, and how
+        // a header row's own column NAMES would be fixed-width-padded is not something this tool
+        // has ground truth for. Named as a gap rather than guessed.
+        if (format.Format == "FixedWidth" && format.ColumnNamesInFirstDataRow == true)
+        {
+            gaps.Add(new GenerationGap(taskName, $"Flat File Destination '{destination.Name}': a FixedWidth connection manager with ColumnNamesInFirstDataRow is not supported yet"));
+            return null;
+        }
+
+        var componentColumnNameByExternalName = payload.ColumnMappings.ToDictionary(m => m.ExternalColumnName, m => m.ComponentColumnName);
+
+        var columns = new List<FlatFileColumnFormatSpec>();
+        foreach (var column in format.Columns)
+        {
+            if (!componentColumnNameByExternalName.TryGetValue(column.ObjectName, out var propertyName))
+            {
+                gaps.Add(new GenerationGap(taskName, $"Flat File Destination '{destination.Name}': connection manager column '{column.ObjectName}' has no mapped input column -- not supported"));
+                return null;
+            }
+
+            // A fixed-width column is one the connection manager itself lays out by width with
+            // no delimiter of its own (ColumnDelimiterDecoded empty) -- SSIS's own FixedWidth
+            // format still encodes the ROW terminator as a synthetic trailing DELIMITED column
+            // (see FlatFileDestinationPayload's own doc comment for the real evidenced example,
+            // "RowEnd"), so this is a per-COLUMN decision, not a per-connection-manager one.
+            var isFixedWidth = format.Format == "FixedWidth" && string.IsNullOrEmpty(column.ColumnDelimiterDecoded);
+            columns.Add(new FlatFileColumnFormatSpec(propertyName, isFixedWidth ? column.MaximumWidth : null, column.ColumnDelimiterDecoded ?? ""));
+        }
+
+        // ColumnNamesInFirstDataRow is a source-and-destination-shared connection-manager
+        // property (it tells a SOURCE to skip/parse row 1 as headers, and a DESTINATION to WRITE
+        // row 1 as headers) -- confirmed real from CM_FF_ExportDelimited, the one evidenced
+        // instance that sets it true. The header line uses the identical per-column-delimiter
+        // algorithm as a data row, just with column NAMES instead of values (FixedWidth is
+        // already rejected above, so every column here is plain delimited).
+        string? headerLine = null;
+        if (format.ColumnNamesInFirstDataRow == true)
+        {
+            var header = new System.Text.StringBuilder();
+            foreach (var column in format.Columns)
+                header.Append(column.ObjectName).Append(column.ColumnDelimiterDecoded);
+            headerLine = header.ToString();
+        }
+
+        fileSourceEntries.Add(BuildFileSourceEntry(fileSourceKey, connectionManager, gaps));
+        return new FlatFileFlowSink(fileSourceKey, payload.Overwrite == true, headerLine, columns);
     }
 
     /// <summary>"SqlLogin" (ConnectionManagerSpec.Parsed.AuthMode) -> SqlServer auth (user

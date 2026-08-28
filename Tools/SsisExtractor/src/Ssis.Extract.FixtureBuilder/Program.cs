@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination]");
             return 2;
         }
 
@@ -128,9 +128,13 @@ internal static class Program
         {
             return BuildDataConversionSplitFixture(args[0]);
         }
+        if (fixtureName == "flat-file-destination")
+        {
+            return BuildFlatFileDestinationFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', or 'data-conversion-split'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', or 'flat-file-destination'.");
             return 2;
         }
 
@@ -1633,6 +1637,159 @@ internal static class Program
             // interface showed nothing; the real name only surfaced after casting a LIVE
             // column from a loaded real package to IDTSName100), not documented anywhere
             // obvious. Skipping this cast leaves every column silently unnamed.
+            ((IDTSName100)col).Name = columnName;
+        }
+
+        return cm;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand mode, 3 string columns matching RBC_Demo_ETL's own
+    /// DFT_ExportDelimited/DFT_ExportFixedWidth shape: CustomerID/FullName/CleanEmail) -> Flat
+    /// File Destination, twice -- once Delimited (with a ColumnNamesInFirstDataRow header, the
+    /// one real evidenced instance that sets it), once FixedWidth (with the real evidenced
+    /// synthetic trailing "RowEnd" delimited column carrying the CRLF row terminator, fed by a
+    /// literal <c>'' AS RowEnd</c> in the SELECT -- exactly how the real package's own author
+    /// worked around the destination's required row-terminator column). FullName is
+    /// deliberately seeded with one value LONGER than the fixed-width column's own width (see
+    /// the backing SQL script), to prove real truncation/padding behavior, not an assumption.
+    ///
+    /// Object-model facts confirmed empirically before writing this (same "ask the runtime,
+    /// don't guess" discipline as trap 12): <c>IDTSConnectionManagerFlatFileColumn100</c> has a
+    /// real <c>ColumnWidth</c> property distinct from <c>MaximumWidth</c> (both set here, both
+    /// evidenced true on the real package's own FixedWidth connection manager) -- reflected off
+    /// this GAC's DTSRuntimeWrap 16.0.0.0 first, not assumed from the earlier Delimited-only
+    /// helper's own signature.
+    ///
+    /// Requires the backing table from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-flat-file-destination-tables.sql</c>
+    /// already created and seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>, and the two output
+    /// paths' own directory to already exist on disk (the connection managers' own
+    /// ConnectionString values -- Overwrite=true means dtexec creates the files themselves, but
+    /// not their containing folder).
+    /// </summary>
+    private static int BuildFlatFileDestinationFixture(string outputPath)
+    {
+        var outDir = Path.Combine(TestFixturesDir(), "synthetic-flat-file-destination-output");
+        Directory.CreateDirectory(outDir);
+        var delimitedPath = Path.Combine(outDir, "customers-export.csv");
+        var fixedWidthPath = Path.Combine(outDir, "customers-fixed.txt");
+
+        var pkg = new RtPackage { Name = "SyntheticFlatFileDestination" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var delimitedCm = AddFlatFileDestinationConnectionManager(pkg, "CM_FF_ExportDelimited", delimitedPath,
+            format: "Delimited", columnNamesInFirstDataRow: true,
+            ("CustomerID", 20, false), ("FullName", 200, false), ("CleanEmail", 200, true));
+
+        var fixedWidthCm = AddFlatFileDestinationConnectionManager(pkg, "CM_FF_ExportFixed", fixedWidthPath,
+            format: "FixedWidth", columnNamesInFirstDataRow: false,
+            ("CustomerID", 10, false), ("FullName", 15, false), ("CleanEmail", 20, false), ("RowEnd", 1, true));
+
+        var delimitedDftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        delimitedDftHost.Name = "DFT_ExportDelimited";
+        BuildOleDbToFlatFileExport((MainPipe)delimitedDftHost.InnerObject, sqlCm, delimitedCm,
+            "SELECT CustomerID, FullName, CleanEmail FROM dbo.SyntheticFlatFileDestinationInput");
+
+        var fixedWidthDftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        fixedWidthDftHost.Name = "DFT_ExportFixedWidth";
+        BuildOleDbToFlatFileExport((MainPipe)fixedWidthDftHost.InnerObject, sqlCm, fixedWidthCm,
+            "SELECT CustomerID, FullName, CleanEmail, '' AS RowEnd FROM dbo.SyntheticFlatFileDestinationInput");
+
+        // A third, ordinary OLE DB Source -> Derived Column -> OLE DB Destination flow -- matches
+        // RBC_Demo_ETL's own Package_Exports.dtsx real shape (which ALSO has a SQL destination,
+        // DFT_AdoNetRoundTrip's ADO_DST_ExportLog), and is what gives the generated package a
+        // real SQL table for AddEtlDbContext<T>()/IUnitOfWork's transaction to wrap -- a package
+        // whose ONLY flows are Flat File Destinations is a separate, unevidenced shape this
+        // fixture is deliberately not proving.
+        var logDftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        logDftHost.Name = "DFT_Log";
+        var logPipe = (MainPipe)logDftHost.InnerObject;
+        var logSrcMeta = AddOleDbComponent(logPipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Note FROM dbo.SyntheticFlatFileDestinationLogSource");
+        ResolveOleDbMetadata(logSrcMeta, isDestination: false);
+        var logMainOutput = logSrcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+        var logDerivedMeta = BuildDerivedColumnLoadedAtUtc(logPipe, logMainOutput);
+        var logDestMeta = AddOleDbComponent(logPipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticFlatFileDestinationLog]");
+        AttachPath(logPipe, logDerivedMeta.OutputCollection[0], logDestMeta.InputCollection[0]);
+        ResolveOleDbMetadata(logDestMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>OLE DB Source (SqlCommand mode) -> Flat File Destination directly -- a deliberate
+    /// DIRECT COPY (no Derived Column), matching the real evidenced DFT_ExportDelimited/
+    /// DFT_ExportFixedWidth exactly, which is the whole point of this fixture (proving codegen's
+    /// Flat File Destination exemption from the "no Derived Column" gate reaches a real,
+    /// compiling, RUNNABLE Program.cs).</summary>
+    private static void BuildOleDbToFlatFileExport(MainPipe pipe, ConnectionManager sqlCm, ConnectionManager flatFileCm, string sqlCommand)
+    {
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: sqlCommand);
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var destMeta = pipe.ComponentMetaDataCollection.New();
+        destMeta.ComponentClassID = "Microsoft.FlatFileDestination";
+        var destInst = destMeta.Instantiate();
+        destInst.ProvideComponentProperties(); // resets Name -- see AddOleDbComponent's own comment
+        destMeta.Name = "Flat File Destination";
+        destInst.SetComponentProperty("Overwrite", true);
+
+        var destConn = destMeta.RuntimeConnectionCollection[0];
+        destConn.ConnectionManagerID = flatFileCm.ID;
+        destConn.ConnectionManager = DtsConvert.GetExtendedInterface(flatFileCm);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+        AttachPath(pipe, mainOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+    }
+
+    private static ConnectionManager AddFlatFileDestinationConnectionManager(
+        RtPackage pkg, string name, string filePath, string format, bool columnNamesInFirstDataRow,
+        params (string ColumnName, int Width, bool IsLast)[] columns)
+    {
+        var cm = pkg.Connections.Add("FLATFILE");
+        cm.Name = name;
+        cm.ConnectionString = filePath;
+
+        var ff = (IDTSConnectionManagerFlatFile100)cm.InnerObject;
+        ff.Format = format;
+        ff.ColumnNamesInFirstDataRow = columnNamesInFirstDataRow;
+        ff.HeaderRowDelimiter = "\r\n";
+        ff.CodePage = 1252;
+
+        foreach (var (columnName, width, isLast) in columns)
+        {
+            var col = ff.Columns.Add();
+            col.DataType = RtDataType.DT_WSTR;
+            col.DataPrecision = 0;
+            col.DataScale = 0;
+            if (format == "FixedWidth" && !isLast)
+            {
+                // A fixed-width data column: no delimiter of its own, laid out purely by width.
+                col.ColumnType = "FixedWidth";
+                col.ColumnDelimiter = "";
+                col.ColumnWidth = width;
+                col.MaximumWidth = width;
+            }
+            else
+            {
+                // Every Delimited-format column, AND FixedWidth's own synthetic trailing
+                // row-terminator column (see this method's caller for the real-evidenced
+                // "RowEnd" shape) -- delimited, no fixed ColumnWidth.
+                col.ColumnType = "Delimited";
+                col.ColumnDelimiter = isLast ? "\r\n" : ",";
+                col.MaximumWidth = width;
+            }
+
             ((IDTSName100)col).Name = columnName;
         }
 

@@ -84,6 +84,43 @@ public sealed class AdoNetSourcePayload
 }
 
 /// <summary>
+/// <c>Microsoft.FlatFileDestination</c>, the write-side mirror of <see cref="FlatFileSourcePayload"/>.
+/// Confirmed real via RBC_Demo_ETL's own Package_Exports.dtsx (<c>DFT_ExportDelimited_DST</c> /
+/// <c>DFT_ExportFixedWidth_DST</c>), discovered testing this tool against a real third-party
+/// portfolio (SSIS_From_Sandeep, 2026-08-27). Unlike <see cref="OleDbDestinationPayload"/>,
+/// there is no <c>usesDispositions</c>/AccessMode-style attribute at all -- the component's
+/// own three properties (<see cref="Overwrite"/>/<see cref="Header"/>/<see cref="EscapeQualifier"/>)
+/// are the entire bespoke surface; everything about the FILE'S OWN layout (delimited vs
+/// fixed-width, delimiters, column widths) lives on the FLAT FILE CONNECTION MANAGER instead
+/// (<see cref="Ssis.Extract.Model.Shared.FlatFileFormatSpec"/>, already modeled generically for
+/// the source side) -- resolve via <see cref="ConnectionName"/>, don't duplicate it here.
+///
+/// A genuinely surprising real-evidenced quirk, worth recording rather than re-deriving: SSIS's
+/// own Flat File Destination wizard, in FixedWidth mode, adds an extra trailing pipeline column
+/// (<c>RowEnd</c> in the real package) with NO fixed width of its own -- its connection-manager
+/// column entry is <c>ColumnType="Delimited"</c> with the row delimiter as its own
+/// <c>ColumnDelimiter</c> -- purely to carry the CRLF row terminator. The real package's own
+/// upstream SQL literally selects <c>'' AS RowEnd</c> to feed it. This needs NO special
+/// generator handling: it's an ordinary mapped column like any other, and the row-terminator
+/// behavior falls out of walking <c>FlatFileFormatSpec.Columns</c> in order at write time.
+/// </summary>
+public sealed class FlatFileDestinationPayload
+{
+    public string? ConnectionName { get; init; }
+
+    /// <summary>Whether each run truncates and rewrites the destination file (true) or appends to it (false).</summary>
+    public bool? Overwrite { get; init; }
+
+    /// <summary>Literal text written before any data row, or empty/null for none. Distinct from <see cref="Ssis.Extract.Model.Shared.FlatFileFormatSpec.ColumnNamesInFirstDataRow"/> -- observed empty on both real instances (they use the connection manager's own header-row-of-column-names behavior instead).</summary>
+    public string? Header { get; init; }
+
+    public bool? EscapeQualifier { get; init; }
+
+    /// <summary>Input columns ↔ external (file) columns, built from the main input's columns against their <c>externalMetadataColumns</c> -- same shape as <see cref="OleDbDestinationPayload.ColumnMappings"/>.</summary>
+    public List<PipelineColumnMappingSpec> ColumnMappings { get; init; } = [];
+}
+
+/// <summary>
 /// <c>Microsoft.OLEDBDestination</c> (plan §4.7 table). <see cref="AccessMode"/> is kept as
 /// the raw integer only -- the XML tags it <c>typeConverter="AccessMode"</c> but doesn't
 /// spell out the enum's text values in this file, and CLAUDE.md trap 12's lesson is to not

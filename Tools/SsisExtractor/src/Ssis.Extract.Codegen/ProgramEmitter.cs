@@ -8,6 +8,21 @@ public abstract record FlowSourceSpec(string ComponentName);
 public sealed record CsvFlowSource(string ComponentName, string FileSourceKey) : FlowSourceSpec(ComponentName);
 public sealed record SqlFlowSource(string ComponentName, string CommandText) : FlowSourceSpec(ComponentName);
 
+/// <summary>One column's write-time layout, mirroring Etl.Core.Data.FlatFileColumnFormat's own
+/// constructor shape verbatim -- this project never references the Etl.Core assembly (it emits
+/// TEXT, not types), so this is codegen's own plain DTO for the same three values.</summary>
+public sealed record FlatFileColumnFormatSpec(string PropertyName, int? FixedWidth, string Delimiter);
+
+/// <summary>How one flow's rows are written out -- a plain SQL table (the existing,
+/// EF-Core-backed default: AddBulkSink&lt;TEntity&gt;() resolves to SqlBulkSink&lt;TEntity&gt;) or a
+/// Flat File Destination (no EF Core table at all; constructed directly with an explicit file
+/// path + column layout, the same "construct directly, don't fight the DI container" pattern
+/// ConditionalSplitStep's own branches already use for their transforms). Exactly one concrete
+/// case per flow.</summary>
+public abstract record FlowSinkSpec;
+public sealed record SqlFlowSink : FlowSinkSpec;
+public sealed record FlatFileFlowSink(string FileSourceKey, bool Overwrite, string? HeaderLine, IReadOnlyList<FlatFileColumnFormatSpec> Columns) : FlowSinkSpec;
+
 /// <summary>One Data Flow Task's already-decided naming, combining PackagePlanner's
 /// DataFlowPlan facts (StepName, Source) with the naming choices the caller makes for the
 /// generated types (matching EntityEmitter/CsvRowEmitter|SqlRowEmitter/TransformEmitter's own
@@ -17,7 +32,8 @@ public sealed record ProgramFlowSpec(
     FlowSourceSpec Source,
     string RowTypeName,
     string EntityName,
-    string TransformClassName);
+    string TransformClassName,
+    FlowSinkSpec Sink);
 
 /// <summary>One branch of a generated Conditional Split step -- its own (RowType, EntityName)
 /// transform pair, same naming convention EntityEmitter/TransformEmitter use for a
@@ -73,10 +89,11 @@ public static class ProgramEmitter
 
         var usesCsv = flows.Any(f => f.Source is CsvFlowSource) || splits.Any(s => s.Source is CsvFlowSource);
         var usesSql = flows.Any(f => f.Source is SqlFlowSource) || splits.Any(s => s.Source is SqlFlowSource);
+        var usesFlatFileSink = flows.Any(f => f.Sink is FlatFileFlowSink);
 
         var lines = new List<string> { "using Etl.Core.Abstractions;" };
         if (usesCsv) lines.Add("using Etl.Core.Csv;");
-        if (usesSql) lines.Add("using Etl.Core.Data;");
+        if (usesSql || usesFlatFileSink) lines.Add("using Etl.Core.Data;");
         lines.Add("using Etl.Core.Hosting;");
         lines.Add("using Etl.Core.Notifications;");
         lines.Add("using Etl.Core.Pipeline;");
@@ -94,9 +111,15 @@ public static class ProgramEmitter
         lines.Add("");
         lines.Add($"builder.Services.AddEtlDbContext<{request.DbContextTypeName}>();");
 
+        // A Conditional Split branch's own sink is always SQL -- no evidenced package combines
+        // a split with a Flat File Destination -- so every branch entity keeps the plain
+        // AddBulkSink<T>() path unconditionally.
         var allBranchEntityNames = splits.SelectMany(s => s.Branches.Select(b => b.EntityName));
-        foreach (var entityName in flows.Select(f => f.EntityName).Concat(allBranchEntityNames).Distinct())
+        var sqlSinkEntityNames = flows.Where(f => f.Sink is SqlFlowSink).Select(f => f.EntityName).Concat(allBranchEntityNames).Distinct();
+        foreach (var entityName in sqlSinkEntityNames)
             lines.Add($"builder.Services.AddBulkSink<{entityName}>();");
+        foreach (var flow in flows.Where(f => f.Sink is FlatFileFlowSink))
+            EmitFlatFileSinkRegistration(lines, flow.EntityName, (FlatFileFlowSink)flow.Sink);
         lines.Add("builder.Services.AddEmailNotifications(builder.Configuration);");
         lines.Add("");
 
@@ -254,6 +277,55 @@ public static class ProgramEmitter
         lines.Add("");
     }
 
-    private static string CSharpStringLiteral(string value) =>
-        "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+    /// <summary>A Flat File Destination's own IBulkSink&lt;TEntity&gt; is constructed directly
+    /// (same "construct directly, don't fight the DI container" pattern a Conditional Split
+    /// branch's own transform already uses), reusing FileSourceOptions for the file path the
+    /// exact same way a CSV source already does -- a destination is just another named
+    /// folder/filename pair, not a fundamentally different configuration shape.</summary>
+    private static void EmitFlatFileSinkRegistration(List<string> lines, string entityName, FlatFileFlowSink sink)
+    {
+        lines.Add($"builder.Services.AddScoped<IBulkSink<{entityName}>>(sp =>");
+        lines.Add("{");
+        lines.Add("    var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;");
+        lines.Add($"    return new FlatFileBulkSink<{entityName}>(");
+        lines.Add($"        fileOptions[\"{sink.FileSourceKey}\"].ResolvedPath,");
+        lines.Add($"        {(sink.Overwrite ? "true" : "false")},");
+        lines.Add($"        {(sink.HeaderLine is null ? "null" : CSharpStringLiteral(sink.HeaderLine))},");
+        lines.Add("        [");
+        for (var i = 0; i < sink.Columns.Count; i++)
+        {
+            var column = sink.Columns[i];
+            var comma = i < sink.Columns.Count - 1 ? "," : "";
+            var width = column.FixedWidth is { } w ? w.ToString() : "null";
+            lines.Add($"            new FlatFileColumnFormat({CSharpStringLiteral(column.PropertyName)}, {width}, {CSharpStringLiteral(column.Delimiter)}){comma}");
+        }
+        lines.Add("        ],");
+        lines.Add($"        sp.GetRequiredService<ILogger<FlatFileBulkSink<{entityName}>>>());");
+        lines.Add("});");
+        lines.Add("");
+    }
+
+    /// <summary>Escapes backslash/quote AND control characters -- a flat file's own
+    /// ColumnDelimiterDecoded/HeaderLine can contain a literal CR/LF (SSIS's decoded row
+    /// delimiter, not its escape-sequence text), and a raw newline inside a non-verbatim C#
+    /// string literal is a compile error (CS1010), not just cosmetically wrong.</summary>
+    private static string CSharpStringLiteral(string value)
+    {
+        var sb = new System.Text.StringBuilder(value.Length + 2);
+        sb.Append('"');
+        foreach (var c in value)
+        {
+            sb.Append(c switch
+            {
+                '\\' => "\\\\",
+                '"' => "\\\"",
+                '\r' => "\\r",
+                '\n' => "\\n",
+                '\t' => "\\t",
+                _ => c.ToString(),
+            });
+        }
+        sb.Append('"');
+        return sb.ToString();
+    }
 }

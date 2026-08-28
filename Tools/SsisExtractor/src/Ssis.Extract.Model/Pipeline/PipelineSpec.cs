@@ -57,6 +57,11 @@ public sealed class PipelineComponentSpec
     public FlatFileSourcePayload? FlatFileSource { get; init; }
     public OleDbDestinationPayload? OleDbDestination { get; init; }
 
+    /// <summary>Added 2026-08-28 testing this tool against a real third-party portfolio
+    /// (SSIS_From_Sandeep) -- the write-side mirror of <see cref="FlatFileSourcePayload"/>, see
+    /// <see cref="FlatFileDestinationPayload"/>'s own doc comment.</summary>
+    public FlatFileDestinationPayload? FlatFileDestination { get; init; }
+
     // Added during the synthetic component-coverage pass (docs/report-schema.md) once real
     // evidence existed for these three types too -- same "read a real example first" rule.
     public OleDbSourcePayload? OleDbSource { get; init; }

@@ -46,8 +46,20 @@ public static class DbContextEmitter
 
         if (dbSetLines.Count == 0)
         {
-            if (gaps.Count == 0) gaps.Add(new GenerationGap(contextName, "no tables could be generated"));
-            return new EmitResult([], gaps);
+            // Two different situations produce zero DbSets, and only one is an actual failure:
+            // an empty TABLES LIST (a package whose only destinations are Flat File
+            // Destinations, e.g. RBC_Demo_ETL's own Package_Exports.dtsx once its one ADO NET
+            // destination hits its own separate, pre-existing "direct-copy" gap) still needs A
+            // DbContext -- IUnitOfWork's whole-package transaction (UnitOfWork.cs) is backed by
+            // one regardless of whether anything maps to a table, so PackageRunner/ExecuteSqlStep/
+            // FlatFileBulkSink all still need SOMETHING to resolve. Every table that was PASSED
+            // IN but individually failed EmitOneTable (a real per-table generation problem) still
+            // fails the whole context, unchanged.
+            if (tables.Count > 0)
+            {
+                if (gaps.Count == 0) gaps.Add(new GenerationGap(contextName, "no tables could be generated"));
+                return new EmitResult([], gaps);
+            }
         }
 
         var lines = new List<string>

@@ -271,4 +271,29 @@ public class PackagePlannerTests
         var fsStepIndex = plan.Steps.FindIndex(s => s is FileSystemStep);
         Assert.True(fsStepIndex > flowStepIndex);
     }
+
+    [Fact]
+    public void Plan_ResolvesAFlatFileDestination_AsAValidDestination_WithNoDerivedColumnRequired()
+    {
+        // SyntheticFlatFileDestination.dtsx's own DFT_ExportDelimited/DFT_ExportFixedWidth are
+        // both direct copies (OLE DB Source -> Flat File Destination, no Derived Column at all)
+        // -- the exact real evidenced shape of RBC_Demo_ETL's own Package_Exports.dtsx. Proves
+        // PackagePlanner recognizes Microsoft.FlatFileDestination as a destination at all
+        // (previously it only knew OLE DB/ADO NET Destination) without needing PackageGenerator's
+        // own separate "no Derived Column" exemption to even be reached.
+        var package = LoadSyntheticFixture("SyntheticFlatFileDestination.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        Assert.Equal(3, plan.Flows.Count);
+
+        var delimitedFlow = Assert.Single(plan.Flows, f => f.TaskName == "DFT_ExportDelimited");
+        Assert.Equal("Microsoft.FlatFileDestination", delimitedFlow.DestinationComponent.ComponentClassId);
+        Assert.Null(delimitedFlow.DerivedColumn);
+
+        var fixedWidthFlow = Assert.Single(plan.Flows, f => f.TaskName == "DFT_ExportFixedWidth");
+        Assert.Equal("Microsoft.FlatFileDestination", fixedWidthFlow.DestinationComponent.ComponentClassId);
+        Assert.Null(fixedWidthFlow.DerivedColumn);
+    }
 }

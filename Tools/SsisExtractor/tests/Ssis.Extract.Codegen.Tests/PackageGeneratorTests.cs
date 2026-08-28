@@ -340,4 +340,62 @@ public class PackageGeneratorTests
         Assert.Contains(result.Gaps, g => g.Reason.Contains("assumes each result-set column is named/aliased"));
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticConditionalSplit.Notification");
     }
+
+    [Fact]
+    public void Generate_WiresTwoFlatFileDestinationFlows_AsDirectCopiesWithFlatFileBulkSinks()
+    {
+        // SyntheticFlatFileDestination.dtsx: DFT_ExportDelimited/DFT_ExportFixedWidth (both OLE
+        // DB Source -> Flat File Destination directly, NO Derived Column -- the exact real
+        // evidenced shape of RBC_Demo_ETL's own Package_Exports.dtsx) plus DFT_Log (an ordinary
+        // OLE DB Source -> Derived Column -> OLE DB Destination flow, giving the package a real
+        // SQL table so AddEtlDbContext<T>() has something to back it). Confirmed beyond this
+        // test by actually running the generated exe against .\SQLFORPOC_2022 and reading the
+        // real output files/table back afterward (see Tools/SsisExtractor/CLAUDE.md) -- including
+        // real fixed-width truncation/padding on a deliberately over-length seeded value.
+        var package = LoadSyntheticFixture("SyntheticFlatFileDestination.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        // No Model/Mapping row-writer files at all for the flat-file flows beyond the plain
+        // source row type + a direct-copy transform -- EntityEmitter/TransformEmitter are reused
+        // verbatim, same as any SQL destination.
+        Assert.Contains(result.Files, f => f.RelativePath == "Model/DFT_ExportDelimited.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Model/DFT_ExportFixedWidth.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Mapping/DFT_ExportDelimitedTransform.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Mapping/DFT_ExportFixedWidthTransform.cs");
+        // No SQL table/DbSet for either flat-file destination -- only DFT_Log's own SyntheticFlatFileDestinationLog does.
+        var dbContextFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticFlatFileDestinationDbContext.cs");
+        Assert.Contains("public DbSet<SyntheticFlatFileDestinationLog>", dbContextFile.Content);
+        Assert.DoesNotContain("DFT_ExportDelimited", dbContextFile.Content);
+        Assert.DoesNotContain("DFT_ExportFixedWidth", dbContextFile.Content);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains("using Etl.Core.Data;", programFile.Content);
+        // Flat file sinks are constructed directly (not via AddBulkSink<T>(), which would
+        // resolve to a SqlBulkSink<T> -- wrong for a file).
+        Assert.DoesNotContain("AddBulkSink<DFT_ExportDelimited>", programFile.Content);
+        Assert.DoesNotContain("AddBulkSink<DFT_ExportFixedWidth>", programFile.Content);
+        Assert.Contains("builder.Services.AddBulkSink<SyntheticFlatFileDestinationLog>();", programFile.Content);
+        Assert.Contains("builder.Services.AddScoped<IBulkSink<DFT_ExportDelimited>>(sp =>", programFile.Content);
+        Assert.Contains("new FlatFileColumnFormat(\"CustomerID\", null, \",\")", programFile.Content);
+        Assert.Contains("new FlatFileColumnFormat(\"CleanEmail\", null, \"\\r\\n\")", programFile.Content);
+        Assert.Contains("\"CustomerID,FullName,CleanEmail\\r\\n\"", programFile.Content); // the header line
+        Assert.Contains("builder.Services.AddScoped<IBulkSink<DFT_ExportFixedWidth>>(sp =>", programFile.Content);
+        Assert.Contains("new FlatFileColumnFormat(\"CustomerID\", 10, \"\")", programFile.Content);
+        Assert.Contains("new FlatFileColumnFormat(\"FullName\", 15, \"\")", programFile.Content);
+        Assert.Contains("new FlatFileColumnFormat(\"RowEnd\", null, \"\\r\\n\")", programFile.Content);
+        Assert.Contains("fileOptions[\"DFT_ExportDelimited\"].ResolvedPath", programFile.Content);
+        Assert.Contains("fileOptions[\"DFT_ExportFixedWidth\"].ResolvedPath", programFile.Content);
+        Assert.Contains("Steps: [dFT_ExportDelimitedFlow, dFT_ExportFixedWidthFlow, syntheticFlatFileDestinationLogFlow],", programFile.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(dbContextFile.Content);
+
+        // Four expected gaps: the SqlCommand-mode column-name assumption on all three OLE DB
+        // Sources, plus the unavoidable Notification one -- neither flat-file flow reports its
+        // own gap.
+        Assert.Equal(4, result.Gaps.Count);
+        Assert.Equal(3, result.Gaps.Count(g => g.Reason.Contains("assumes each result-set column is named/aliased")));
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticFlatFileDestination.Notification");
+    }
 }

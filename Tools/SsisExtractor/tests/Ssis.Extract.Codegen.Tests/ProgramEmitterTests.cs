@@ -17,7 +17,7 @@ public class ProgramEmitterTests
             PreLoadFileActions: plan.PreLoadFileActions,
             Steps:
             [
-                new ProgramFlowStep(new ProgramFlowSpec(flow.TaskName, new CsvFlowSource(flow.FlatFileSource!.Name, "Employees"), "EmployeeCsvRow", "Employee", "EmployeeTransform")),
+                new ProgramFlowStep(new ProgramFlowSpec(flow.TaskName, new CsvFlowSource(flow.FlatFileSource!.Name, "Employees"), "EmployeeCsvRow", "Employee", "EmployeeTransform", new SqlFlowSink())),
             ]);
 
         var result = ProgramEmitter.Emit(request);
@@ -54,8 +54,8 @@ public class ProgramEmitterTests
             PreLoadFileActions: plan.PreLoadFileActions,
             Steps:
             [
-                new ProgramFlowStep(new ProgramFlowSpec(plan.Flows[0].TaskName, new CsvFlowSource(plan.Flows[0].FlatFileSource!.Name, "Department"), "DepartmentCsvRow", "Department", "DepartmentTransform")),
-                new ProgramFlowStep(new ProgramFlowSpec(plan.Flows[1].TaskName, new CsvFlowSource(plan.Flows[1].FlatFileSource!.Name, "Designation"), "DesignationCsvRow", "Designation", "DesignationTransform")),
+                new ProgramFlowStep(new ProgramFlowSpec(plan.Flows[0].TaskName, new CsvFlowSource(plan.Flows[0].FlatFileSource!.Name, "Department"), "DepartmentCsvRow", "Department", "DepartmentTransform", new SqlFlowSink())),
+                new ProgramFlowStep(new ProgramFlowSpec(plan.Flows[1].TaskName, new CsvFlowSource(plan.Flows[1].FlatFileSource!.Name, "Designation"), "DesignationCsvRow", "Designation", "DesignationTransform", new SqlFlowSink())),
             ]);
 
         var result = ProgramEmitter.Emit(request);
@@ -102,7 +102,7 @@ public class ProgramEmitterTests
             PreLoadFileActions: [],
             Steps:
             [
-                new ProgramFlowStep(new ProgramFlowSpec("DFT_LoadA", new CsvFlowSource("FF_SRC_LoadA", "LoadA"), "LoadACsvRow", "LoadA", "LoadATransform")),
+                new ProgramFlowStep(new ProgramFlowSpec("DFT_LoadA", new CsvFlowSource("FF_SRC_LoadA", "LoadA"), "LoadACsvRow", "LoadA", "LoadATransform", new SqlFlowSink())),
                 new ProgramSqlStep("SQL_UpdateLoadA", "UPDATE dbo.SyntheticLoadATemp SET EntryDate = EntryDate;"),
             ]);
 
@@ -138,7 +138,7 @@ public class ProgramEmitterTests
                 new ProgramFlowStep(new ProgramFlowSpec(
                     "DFT_Load",
                     new SqlFlowSource("OLE DB Source", "SELECT [OrderID] AS [OrderID], [Amount] AS [Amount] FROM [dbo].[SyntheticOleDbSourceInput]"),
-                    "OrderSqlRow", "Order", "OrderTransform")),
+                    "OrderSqlRow", "Order", "OrderTransform", new SqlFlowSink())),
             ]);
 
         var result = ProgramEmitter.Emit(request);

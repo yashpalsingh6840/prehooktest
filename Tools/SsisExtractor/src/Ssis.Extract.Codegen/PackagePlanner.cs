@@ -375,12 +375,13 @@ public static class PackagePlanner
         var destination = conditionalSplit is not null
             ? conditionalSplit.Branches[^1].Destination // the default branch, resolved last
             : pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.OLEDBDestination")
-                ?? pipeline.Components.FirstOrDefault(c => c.AdoNetDestination is not null);
+                ?? pipeline.Components.FirstOrDefault(c => c.AdoNetDestination is not null)
+                ?? pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.FlatFileDestination");
 
         if (destination is null)
         {
             gaps.Add(new GenerationGap(taskName,
-                "no OLE DB Destination or ADO NET Destination found in this Data Flow Task -- only [Flat File Source|OLE DB Source|ADO NET Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination] is supported yet"));
+                "no OLE DB Destination, ADO NET Destination, or Flat File Destination found in this Data Flow Task -- only [Flat File Source|OLE DB Source|ADO NET Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination|Flat File Destination] is supported yet"));
             return null;
         }
 

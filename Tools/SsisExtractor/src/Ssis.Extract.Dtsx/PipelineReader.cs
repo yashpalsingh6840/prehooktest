@@ -67,6 +67,7 @@ internal static class PipelineReader
         var connectionName = connections.Count == 1 ? connections[0].ConnectionManagerName : null;
 
         FlatFileSourcePayload? flatFileSource = null;
+        FlatFileDestinationPayload? flatFileDestination = null;
         OleDbDestinationPayload? oleDbDestination = null;
         OleDbSourcePayload? oleDbSource = null;
         LookupPayload? lookup = null;
@@ -143,6 +144,20 @@ internal static class PipelineReader
                 ColumnMappings = mainOutput is null ? [] : BuildColumnMappings(
                     mainOutput.Columns.Select(c => (c.Name, c.ExternalMetadataColumnId)),
                     mainOutput.ExternalMetadataColumns),
+            };
+        }
+        else if (componentClassId == "Microsoft.FlatFileDestination")
+        {
+            var mainInput = inputs.FirstOrDefault();
+            flatFileDestination = new FlatFileDestinationPayload
+            {
+                ConnectionName = connectionName,
+                Overwrite = ParseBool(GetProperty(properties, "Overwrite")),
+                Header = NullIfEmpty(GetProperty(properties, "Header")),
+                EscapeQualifier = ParseBool(GetProperty(properties, "EscapeQualifier")),
+                ColumnMappings = mainInput is null ? [] : BuildColumnMappings(
+                    mainInput.Columns.Select(c => (c.CachedName, c.ExternalMetadataColumnId)),
+                    mainInput.ExternalMetadataColumns),
             };
         }
         else if (componentClassId == "Microsoft.OLEDBDestination")
@@ -256,6 +271,7 @@ internal static class PipelineReader
             Inputs = inputs,
             Outputs = outputs,
             FlatFileSource = flatFileSource,
+            FlatFileDestination = flatFileDestination,
             OleDbDestination = oleDbDestination,
             OleDbSource = oleDbSource,
             Lookup = lookup,

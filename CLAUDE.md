@@ -803,7 +803,7 @@ A second, unrelated real bug (`GateRunner` not setting the job process's working
 which silently broke the job's own `appsettings.json` lookup and surfaced as an
 unrelated-looking Windows-auth failure) was also caught and fixed the same session.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile); nullable value-typed column support added 2026-08-27, same session -- an evidence-based minimal version (infer nullable from ISNULL(x) usage, unwrap with .Value everywhere else, a real named tradeoff vs. full null-flow analysis) scoped to SQL sources/Derived Columns only, verified end-to-end with a genuine NULL row against .\SQLFORPOC_2022; Data Conversion component support added 2026-08-28, first for SQL-source/single-destination flows only (a real dtexec probe run first to measure IgnoreFailure's actual behavior -- never drops a row, nulls the one failing column -- then LineageBuilder extended with a new "DataConversion" edge kind, TransformEmitter wired to emit SsisFn.ToNullableI4/ToNullableDate against the raw source column, and a real, previously-latent SqlRowEmitter/SqlRowReaderEmitter bug fixed along the way), then same day extended to the Conditional-Split-cross-reference case that round's own closing claim had missed -- RouterEmitter and a Derived-Column-referencing-a-Data-Conversion-column path both wired to the same TranslateDataConversion resolution, retiring both "Conditional Split condition nullability" and "CSV-source nullability" as gaps (the latter turned out not to exist at all for this feature), fixing two more real bugs found only by building/running the real package's whole regenerated solution for the first time (a missing nullableColumnNames thread into EntityEmitter, and a Roslyn nullable-flow-analysis CS8629 needing a targeted null-forgiving `!`), and closing a third, previously-SILENT PackagePlanner gap (a multi-source Merge Join flow used to generate broken code with zero reported gaps) -- `DFT_DerivedAndSplit` now closes fully end-to-end, verified against both the real package (0 warnings/0 errors across its whole generated solution) and a new dedicated fixture run against `.\SQLFORPOC_2022`)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile); nullable value-typed column support added 2026-08-27, same session -- an evidence-based minimal version (infer nullable from ISNULL(x) usage, unwrap with .Value everywhere else, a real named tradeoff vs. full null-flow analysis) scoped to SQL sources/Derived Columns only, verified end-to-end with a genuine NULL row against .\SQLFORPOC_2022; Data Conversion component support added 2026-08-28, first for SQL-source/single-destination flows only (a real dtexec probe run first to measure IgnoreFailure's actual behavior -- never drops a row, nulls the one failing column -- then LineageBuilder extended with a new "DataConversion" edge kind, TransformEmitter wired to emit SsisFn.ToNullableI4/ToNullableDate against the raw source column, and a real, previously-latent SqlRowEmitter/SqlRowReaderEmitter bug fixed along the way), then same day extended to the Conditional-Split-cross-reference case that round's own closing claim had missed -- RouterEmitter and a Derived-Column-referencing-a-Data-Conversion-column path both wired to the same TranslateDataConversion resolution, retiring both "Conditional Split condition nullability" and "CSV-source nullability" as gaps (the latter turned out not to exist at all for this feature), fixing two more real bugs found only by building/running the real package's whole regenerated solution for the first time (a missing nullableColumnNames thread into EntityEmitter, and a Roslyn nullable-flow-analysis CS8629 needing a targeted null-forgiving `!`), and closing a third, previously-SILENT PackagePlanner gap (a multi-source Merge Join flow used to generate broken code with zero reported gaps) -- `DFT_DerivedAndSplit` now closes fully end-to-end, verified against both the real package (0 warnings/0 errors across its whole generated solution) and a new dedicated fixture run against `.\SQLFORPOC_2022`; `EntityEmitter`'s own string-nullability exclusion fixed 2026-08-28, mirroring `SqlRowEmitter`'s earlier fix, verified with a unit test rather than a new fixture since it's mechanical parity with an already-proven fix; Flat File Destination support added 2026-08-28 -- a new Etl.Core FlatFileBulkSink write-side abstraction, a codegen bypass for the whole EF Core/DbContext path (a flat file has no table), and a narrow direct-copy exemption scoped to this destination type only -- closing RBC_Demo_ETL's own DFT_ExportDelimited/DFT_ExportFixedWidth fully (0 warnings/0 errors building the real package's whole regenerated solution) plus a dedicated fixture run end-to-end against `.\SQLFORPOC_2022` that empirically confirmed real fixed-width padding/truncation behavior, fixing two more real bugs along the way (BuildSqlFlowSource's server/database check wrongly assumed every destination has one, and a "zero SQL tables in the whole package" case that left Program.cs referencing a DbContext type that was never generated))
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -2730,6 +2730,146 @@ initializer, while every other string column (`FullName`) is untouched. Regressi
 containers, Conditional Split -> Sort -> Merge, multi-source merge/join flows, and Data
 Conversion target types other than DT_I4/DT_DBDATE. `EntityEmitter`'s string-nullability
 exclusion, named above, is now closed.
+
+### Flat File Destination (2026-08-28) -- closes RBC_Demo_ETL's own `DFT_ExportDelimited`/`DFT_ExportFixedWidth`
+
+Sized live with the user first (`AskUserQuestion`): a first look made this look like a small
+codegen addition, but it turned out to need a brand-new `Etl.Core` write-side abstraction (no
+CSV-writing sink existed at all, only SQL bulk-copy), a codegen bypass for the whole EF Core/
+DbContext/PrimaryKeyInference machinery (a flat file has no table), AND -- to actually close the
+real evidenced flows, both of which are pure column copies -- a narrow, deliberately-scoped
+exemption from the pre-existing "no Derived Column -> direct-copy pipeline is not generated"
+gate. Framed as three options (small/full/skip); the user picked full.
+
+**Extraction needed one new bespoke payload, `FlatFileDestinationPayload`** (`Overwrite`/
+`Header`/`EscapeQualifier` plus the usual generic `ColumnMappings`), wired into `PipelineReader`
+exactly like `Microsoft.OLEDBDestination`. Confirmed real from RBC_Demo_ETL's own
+`Package_Exports.dtsx` (`DFT_ExportDelimited_DST`/`DFT_ExportFixedWidth_DST`) before writing any
+reader code, same discipline as every other component type in this file. **A genuinely
+surprising, real-evidenced quirk, recorded rather than re-derived later:** everything about the
+file's PHYSICAL layout (delimited vs fixed-width, delimiters, column widths) lives on the FLAT
+FILE CONNECTION MANAGER, already modeled generically by `FlatFileFormatSpec` for the source
+side -- the destination component itself carries none of that. And SSIS's own FixedWidth wizard
+adds an extra trailing pipeline column (`RowEnd` in the real package) with NO fixed width of its
+own -- `ColumnType="Delimited"` with the ROW delimiter as its own `ColumnDelimiter` -- purely to
+carry the CRLF row terminator; the real package's own author literally selects `'' AS RowEnd` to
+feed it. This needs no special generator handling at all: it's an ordinary mapped column, and the
+row-terminator behavior falls out of walking the connection manager's own column list in order.
+
+**New `Etl.Core` abstraction** (`Data/FlatFileColumnFormat.cs`, `Data/FlatFileBulkSink.cs`):
+`FlatFileBulkSink<TEntity> : IBulkSink<TEntity>` never touches its own `IUnitOfWork` parameter (a
+flat file write has no transactional participant, the same separation `SqlRowSource<TRow>`
+already has on the read side) -- it reads properties BY NAME (never ordinal, same rule
+`SqlBulkSink<TEntity>` follows) against a `FlatFileColumnFormat` list resolved once at
+construction, in the CONNECTION MANAGER's own column order (the real physical file layout, not
+the entity's C# property order). A null `FixedWidth` means delimited (write the raw value, then
+the delimiter); a non-null one means pad-right-with-spaces-or-truncate, never erroring -- the
+component carries no `usesDispositions`/truncation-disposition attribute at all, unlike an OLE DB
+Destination's own input columns.
+
+**Codegen changes, `Ssis.Extract.Codegen`:**
+- `PackagePlanner.PlanDataFlow`'s destination resolution now also accepts
+  `Microsoft.FlatFileDestination` (previously only OLE DB/ADO NET Destination).
+- `PackageGenerator.Generate`'s per-flow loop gained an `isFlatFileDestination` branch that: (1)
+  derives the entity/row-type name from the Data Flow Task's own name (`SanitizeIdentifier`,
+  reused from the Lookup-cache naming) instead of an OpenRowset table name, since a flat file has
+  none; (2) skips the fast-load gate entirely (no such concept for a file); (3) is EXEMPTED from
+  the "no Derived Column found" direct-copy gate -- deliberately narrow, only for this
+  destination type, since `TransformEmitter` already handles an empty `DerivedColumns` list
+  correctly (every column becomes a plain `row.ColumnName` passthrough) and there's nothing
+  SQL-specific in that code path left unproven; the OLE DB/ADO NET direct-copy restriction is
+  UNCHANGED, still a separate, still-out-of-scope gap; (4) resolves a new `ResolveFlatFileSink`
+  helper instead of adding a `DbContextEmitter.TableSpec` -- reads the destination's own
+  connection manager's `FlatFileFormatSpec`, matches each connection-manager column (in ITS OWN
+  order -- the real physical layout) against the component's `ColumnMappings` by name to find
+  the row/entity PROPERTY name, and reuses the existing `BuildFileSourceEntry` helper for the
+  file path (a destination is just another named folder/filename pair, exactly like a CSV
+  source's own `FileSourceOptions` entry -- no new configuration shape needed). A literal
+  (non-empty) `Header` property, or a FixedWidth connection manager combined with
+  `ColumnNamesInFirstDataRow`, are both named gaps rather than guessed -- neither is evidenced
+  in either real instance.
+- `ProgramEmitter` gained a `FlowSinkSpec` abstraction (`SqlFlowSink`/`FlatFileFlowSink`,
+  parallel to the existing `FlowSourceSpec`) threaded onto `ProgramFlowSpec`. A flat-file sink's
+  `IBulkSink<TEntity>` is constructed directly inside a factory lambda (`AddScoped<IBulkSink<T>>(sp
+  => new FlatFileBulkSink<T>(...))`) rather than through the generic `AddBulkSink<T>()` (which
+  would resolve to a `SqlBulkSink<T>` -- wrong for a file).
+- `ProgramEmitter.CSharpStringLiteral` was hardened to escape `\r`/`\n`/`\t`, not just `\`/`"` --
+  a flat file's own `ColumnDelimiterDecoded`/header line can contain a literal CR/LF (SSIS's
+  DECODED row delimiter, not its escape-sequence text), and embedding a raw newline inside a
+  non-verbatim C# string literal is a compile error (CS1010), not just cosmetically wrong. A
+  strict superset of the old escaping, so this can only fix a latent bug elsewhere (e.g. a
+  multi-line Execute SQL Task statement), never introduce a new one.
+
+**Two real, previously-latent bugs found getting the REAL package's own generated output to
+actually build, neither visible from a hand-built fixture that happened to dodge them:**
+1. `BuildSqlFlowSource`'s own server/database match check (built for the OLE DB/ADO NET
+   destination case, to catch a source and destination silently needing two untracked
+   connections) unconditionally required a DESTINATION connection manager to compare against --
+   a Flat File Destination has no server/database at all, so every flat-file flow's SQL source
+   was rejected as "targets a different server/database" regardless of anything about the
+   source itself. Fixed by skipping that comparison specifically when the destination is a Flat
+   File Destination.
+2. **A real "zero SQL tables in the whole package" case, discovered ONLY by generating the REAL
+   package, not the hand-built fixture** (which was deliberately given a third, ordinary SQL
+   destination flow once this was understood -- see below): RBC_Demo_ETL's own
+   `Package_Exports.dtsx` has three flows -- the two Flat File Destinations, plus
+   `DFT_AdoNetRoundTrip` (an ADO NET Destination) -- but `DFT_AdoNetRoundTrip` fails on its OWN,
+   separate, pre-existing "no Derived Column" gap (that destination type's own direct-copy
+   restriction is unchanged), leaving `tables.Count == 0` for the WHOLE package. `Program.cs`
+   still unconditionally emitted `AddEtlDbContext<{Package}DbContext>()` referencing a type that
+   `DbContextEmitter` refused to generate for zero tables (`CS0246`) -- caught only by actually
+   building the real package's generated project, not the report's own gap count (which showed
+   nothing wrong). This is a real, general fact about the architecture, not specific to Flat File
+   Destination: `IUnitOfWork`'s whole-package transaction (`UnitOfWork.cs`) is backed by a live
+   `DbContext` regardless of whether anything maps to a table -- `PackageRunner`/`ExecuteSqlStep`/
+   `FlatFileBulkSink` all still need SOMETHING to resolve. Fixed by letting `DbContextEmitter.Emit`
+   succeed with an EMPTY `tables` list (a bare `DbContext` subclass, no `DbSet`s, empty
+   `OnModelCreating`) while still failing loudly if tables WERE passed in but every one
+   individually failed `EmitOneTable` (a real per-table problem, unchanged); `PackageGenerator`
+   now calls it whenever ANY flow got wired, not just when `tables.Count > 0`.
+
+**Verified two ways, same discipline as every other round:**
+1. **The real motivating case** -- `ssisx generate` against RBC_Demo_ETL's actual
+   `Package_Exports.dtsx`: both `DFT_ExportDelimited`/`DFT_ExportFixedWidth` now generate with
+   only the expected non-blocking SqlCommand-column-naming advisory (the same one every
+   AccessMode=2 OLE DB Source gets), matching the real connection managers' own column widths
+   (10/30/40) exactly. The whole regenerated solution (both flows plus a copy of `Etl.Core`)
+   builds with **0 warnings/0 errors**. A full RUN was not attempted against this real package --
+   its own source table (`dbo.StagingCustomers` in a `SSISDemo` database) is the third party's
+   own data, not available in this environment -- named honestly rather than glossed over, same
+   as the ADO NET Destination round's own unresolved connection-manager quirk.
+2. **A new dedicated fixture**, `tests/Ssis.Extract.Tests/Fixtures/SyntheticFlatFileDestination.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `flat-file-destination` mode): OLE DB Source -> Flat File
+   Destination, twice -- once Delimited (with a `ColumnNamesInFirstDataRow` header, the one real
+   evidenced instance that sets it), once FixedWidth (with the real evidenced synthetic trailing
+   `RowEnd` column) -- plus a third, ordinary OLE DB Source -> Derived Column -> OLE DB
+   Destination flow (`DFT_Log`), added once the "zero SQL tables" bug above was understood, so
+   this fixture proves the SAME shape the real package actually has, not an easier one. The
+   backing table's `FullName` seed value is deliberately 8 characters longer than the
+   FixedWidth connection manager's own column width, specifically to exercise real
+   truncation/padding rather than assume it. **Generated, built against a copy of `Etl.Core` (0
+   warnings/0 errors), and actually RUN against `.\SQLFORPOC_2022`**: read back the real output
+   afterward, not trusted from the exit code --
+   `customers-export.csv` (delimited): a header row plus 3 comma-separated rows, CRLF-terminated,
+   exactly as configured;
+   `customers-fixed.txt` (fixed-width): `"C001      "`/`"Alice Smith    "`/`"alice@example.com   "`
+   (short values RIGHT-PADDED with spaces to their column's exact width) and
+   `"C003      "`/`"Charlotte Fitzg"`/`"charlotte@example.co"` (the over-length `FullName`/
+   `CleanEmail` values SILENTLY TRUNCATED to fit, no error) -- confirming the documented SSIS
+   behavior for real, not by assumption; `dbo.SyntheticFlatFileDestinationLog` got its 1 row via
+   the ordinary `SqlBulkSink` path, unaffected by anything in this round.
+
+Two new unit tests: `PackagePlannerTests.Plan_ResolvesAFlatFileDestination_...` (both flows
+resolve as valid destinations, no Derived Column needed) and
+`PackageGeneratorTests.Generate_WiresTwoFlatFileDestinationFlows_...` (asserts the exact
+`FlatFileColumnFormat`/header-line/file-path-key wiring in the emitted `Program.cs`, and that the
+DbContext carries only `SyntheticFlatFileDestinationLog`, never either flat-file flow's own
+entity). Regression: 109/109 in `Ssis.Extract.Codegen.Tests` (was 107), same 3 pre-existing
+unrelated failures elsewhere.
+
+**Remaining known gaps, updated:** Excel Source, ForEach Loop containers, Conditional Split ->
+Sort -> Merge, multi-source merge/join flows, and Data Conversion target types other than
+DT_I4/DT_DBDATE. Flat File Destination, named above, is now closed.
 
 ## Traps already hit once — don't re-derive these
 
