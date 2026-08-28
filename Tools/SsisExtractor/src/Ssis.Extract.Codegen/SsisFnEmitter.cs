@@ -32,9 +32,12 @@ public static class SsisFnEmitter
         if (functionsUsed.Contains("ToNullableI4")) bodies.Add(ToNullableI4Body());
         if (functionsUsed.Contains("ToNullableDate")) bodies.Add(ToNullableDateBody());
         if (functionsUsed.Contains("NarrowR8ToI4")) bodies.Add(NarrowR8ToI4Body());
+        if (functionsUsed.Contains("ToNullableR8")) bodies.Add(ToNullableR8Body());
+        if (functionsUsed.Contains("ToNullableBool")) bodies.Add(ToNullableBoolBody());
+        if (functionsUsed.Contains("ToWstr")) bodies.Add(ToWstrBody());
 
         var lines = new List<string>();
-        if (functionsUsed.Contains("Str") || functionsUsed.Contains("ToNullableI4") || functionsUsed.Contains("ToNullableDate"))
+        if (functionsUsed.Contains("Str") || functionsUsed.Contains("ToNullableI4") || functionsUsed.Contains("ToNullableDate") || functionsUsed.Contains("ToNullableR8"))
         {
             lines.Add("using System.Globalization;");
             lines.Add("");
@@ -192,5 +195,56 @@ public static class SsisFnEmitter
         "    /// <summary>Nullable-source overload -- a NULL source value passes through as NULL,",
         "    /// matching SSIS's own measured behavior for this same pairing.</summary>",
         "    public static int? NarrowR8ToI4(double? value) => value is null ? null : NarrowR8ToI4(value.Value);",
+    ];
+
+    private static List<string> ToNullableR8Body() =>
+    [
+        "    /// <summary>",
+        "    /// Data Conversion to DT_R8 with both dispositions IgnoreFailure -- same",
+        "    /// empirically-measured semantics as ToNullableI4 above (NULL on any failure, never a",
+        "    /// dropped row or thrown exception); accepts scientific notation and locale-neutral",
+        "    /// leading/trailing whitespace, matching a real measured dtexec run",
+        "    /// (synthetic-data-conversion-types-tables.sql). Built speculatively (2026-08-28) --",
+        "    /// no real package needs DT_R8 conversion yet, this measurement was taken ahead of",
+        "    /// demand.",
+        "    /// </summary>",
+        "    public static double? ToNullableR8(string? value) =>",
+        "        !string.IsNullOrEmpty(value) && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var result)",
+        "            ? result",
+        "            : null;",
+    ];
+
+    private static List<string> ToNullableBoolBody() =>
+    [
+        "    /// <summary>",
+        "    /// Data Conversion to DT_BOOL with both dispositions IgnoreFailure -- measured",
+        "    /// against a real dtexec run (synthetic-data-conversion-types-tables.sql): accepts",
+        "    /// \"True\"/\"False\" (case-insensitive) AND the numeric strings \"1\"/\"0\" -- any other",
+        "    /// text, an empty string, or NULL all yield NULL, never a dropped row or thrown",
+        "    /// exception. Built speculatively (2026-08-28) -- no real package needs DT_BOOL",
+        "    /// conversion yet, this measurement was taken ahead of demand.",
+        "    /// </summary>",
+        "    public static bool? ToNullableBool(string? value)",
+        "    {",
+        "        if (string.IsNullOrEmpty(value)) return null;",
+        "        if (bool.TryParse(value, out var parsed)) return parsed;",
+        "        return value switch { \"0\" => false, \"1\" => true, _ => null };",
+        "    }",
+    ];
+
+    private static List<string> ToWstrBody() =>
+    [
+        "    /// <summary>",
+        "    /// Data Conversion to DT_WSTR,n with both dispositions IgnoreFailure -- measured",
+        "    /// against a real dtexec run (synthetic-data-conversion-types-tables.sql): a",
+        "    /// genuinely DIFFERENT failure mode from every other Data Conversion target -- an",
+        "    /// overlong source string is TRUNCATED to fit the declared width, never nulled out",
+        "    /// (there is no real \"failure\" to ignore here, unlike a bad numeric/date/bool",
+        "    /// string). NULL passes through as NULL; an empty string passes through as an empty",
+        "    /// string, not NULL. Built speculatively (2026-08-28) -- no real package needs",
+        "    /// DT_WSTR conversion yet, this measurement was taken ahead of demand.",
+        "    /// </summary>",
+        "    public static string? ToWstr(string? value, int maxLength) =>",
+        "        value is null || value.Length <= maxLength ? value : value[..maxLength];",
     ];
 }

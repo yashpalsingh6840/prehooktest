@@ -819,7 +819,14 @@ numeric-coercion fixture) measured round-to-nearest-ties-to-even as SSIS's own r
 then a new SsisFn.NarrowR8ToI4 helper reproduces it exactly (checked, so overflow throws rather
 than silently corrupting data -- a deliberate, unmeasured-against-real-SSIS conservative choice),
 closing RBC_Demo_ETL's own DFT_ExcelImport fully and verified end-to-end with the same fixture
-used for the probe, an exact row-for-row match against the real dtexec run
+used for the probe, an exact row-for-row match against the real dtexec run; Data Conversion
+DT_R8/DT_WSTR/DT_BOOL support added 2026-08-28, same day, built SPECULATIVELY with the user's
+explicit sign-off after confirming no real package in the portfolio needs any of the three (every
+real Microsoft.DataConvert instance targets only the already-supported i4/dbdate) -- another real
+dtexec probe measured DT_WSTR's own genuinely different failure mode (truncates rather than
+nulling out, the first Data Conversion target this tool has measured that isn't "NULL on
+failure"), verified end-to-end with an exact row-for-row match against that probe and zero
+regression on the one real package that does use Data Conversion
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -3658,12 +3665,91 @@ splitting that one test into two), same 3 pre-existing unrelated failures elsewh
 
 **Remaining known gaps, updated once more:** Aggregate/Row Count (only evidenced inside a flow
 already blocked by Lookup), Excel Source in SqlCommand mode, a ForEach Loop re-running a whole
-Data Flow Task per file, Data Conversion target types other than DT_I4/DT_DBDATE, and the
-numeric-passthrough-coercion gap for every OTHER numeric pairing (i8->i4, numeric->i4, r4->i4,
-etc. -- none measured, all still gap). The one evidenced r8-to-i4 OLE DB/ADO NET pairing, named
-above, is now closed. Overflow behavior for r8-to-i4 itself remains unmeasured against real SSIS
-(the generated code throws `OverflowException`, a deliberate conservative choice, not a confirmed
-match to real SSIS behavior).
+Data Flow Task per file, and the numeric-passthrough-coercion gap for every OTHER numeric pairing
+(i8->i4, numeric->i4, r4->i4, etc. -- none measured, all still gap). The one evidenced r8-to-i4 OLE
+DB/ADO NET pairing, named above, is now closed. Overflow behavior for r8-to-i4 itself remains
+unmeasured against real SSIS (the generated code throws `OverflowException`, a deliberate
+conservative choice, not a confirmed match to real SSIS behavior). Data Conversion target types
+other than DT_I4/DT_DBDATE, previously listed here, are now closed for DT_R8/DT_WSTR/DT_BOOL --
+see the next section.
+
+### Data Conversion — DT_R8/DT_WSTR/DT_BOOL, built speculatively (2026-08-28)
+
+Picked next after numeric-passthrough-coercion, by explicit user choice. **Before writing any
+code, checked how much real evidence actually exists for this round** — across the ENTIRE
+`SSIS_From_Sandeep` portfolio (all 5 packages, including every `.bak_*` backup), every single
+`Microsoft.DataConvert` instance (`DCONV_Types`, `DCONV_CustId_L`, `DCONV_CustId_R`,
+`DCONV_MergeId`) targets only `i4`/`dbdate`, both already supported since the original Data
+Conversion round. There is currently **no real package anywhere in this tool's own portfolio**
+that needs any other target type. Surfaced this to the user directly (`AskUserQuestion`) rather
+than silently building ahead of it or silently skipping it — they chose to proceed speculatively
+anyway, an explicit, informed deviation from this session's usual "don't build without a real
+evidenced need" discipline (the same discipline that closed `AccessMode`'s own resolver as a
+non-feature back in the original `ssisx generate` plan).
+
+**Real dtexec measurement still came first, even without a real caller** — the same "ask the
+runtime, don't guess" rule applies regardless of whether the caller is real or speculative. New
+`Ssis.Extract.FixtureBuilder` mode `data-conversion-types` builds an OLE DB Source (SqlCommand: 3
+raw string columns) -> Data Conversion (R8Text -> DT_R8, WstrText -> DT_WSTR,10, BoolText ->
+DT_BOOL, all dispositions IgnoreFailure, mirroring the real evidenced `DCONV_Types` shape exactly)
+-> OLE DB Destination. Backing tables:
+`tests/Ssis.Extract.Tests/Fixtures/synthetic-data-conversion-types-tables.sql`, 6 rows covering
+ordinary valid values, whitespace-padded values, invalid text, empty strings, NULL, and — for
+DT_WSTR specifically — a value exactly at the target width and one 5 characters OVER it. **Run for
+real via `DTExec.exe /File` against `.\SQLFORPOC_2022`** (`DTSER_SUCCESS`), then read back:
+
+- **DT_R8** follows the exact same "NULL on any failure" convention as DT_I4/DT_DBDATE — `"abc"`
+  and `""` both yield NULL, `" 2.5 "` parses to `2.5` (locale-neutral trim, same as I4/DATE), and
+  `"1e3"` parses to `1000.0` (scientific notation accepted).
+- **DT_BOOL** also yields NULL on failure (`"yes"` -> NULL), but accepts a WIDER input set than a
+  bare `bool.TryParse` would: `"True"`/`"False"` (case-insensitive-by-construction) AND the
+  numeric strings `"1"`/`"0"` (`"1"` -> true, `"0"` -> false) — neither of which `bool.TryParse`
+  recognizes on its own.
+- **DT_WSTR is a genuinely different failure mode, the first this tool has measured that ISN'T
+  "NULL on failure"**: `"HelloWorldExtra"` (15 chars) against a 10-char target TRUNCATES to
+  `"HelloWorld"` (the first 10 characters) rather than nulling out — there's no real numeric/date/
+  bool-style "failure" for a string-to-string conversion, so `TruncationRowDisposition=
+  IgnoreFailure`'s only real job is truncation. An empty source string passes through as an EMPTY
+  string, not NULL (unlike every numeric/date/bool target measured so far) — confirmed via
+  `DATALENGTH(...)/2`, not T-SQL's own `LEN()`, which silently trims trailing spaces and would
+  have under-reported the width-exactly-fits case (10 chars, including 2 trailing spaces) as 8.
+
+**What was built:** three new `SsisFn` helpers (`ToNullableR8(string?)`, `ToNullableBool(string?)`
+— `bool.TryParse` first, then falls back to `"0"`/`"1"`, matching the measured wider acceptance
+set — and `ToWstr(string?, int maxLength)`, truncating via `value[..maxLength]` only when
+`value.Length > maxLength`, never nulling out). `TransformEmitter.WrapDataConversion`'s switch
+gained `"r8"`, `"bool"`, and `"wstr"` cases — the WSTR case reads `conversion.Length` (already a
+generic field on `DataConversionColumnSpec`, no model change needed) for the target width, and
+gaps (rather than guessing a default) if no length was declared, which real SSIS never omits for
+a DT_WSTR conversion. `MapPipelineTypeToSsisType`/`CollectSsisFunctions` already had entries for
+`r8`/`bool`/`wstr` from earlier rounds (the expression-language type map and the general
+`SsisFn.*`-detection switch respectively) — no changes needed there.
+
+**Verified two ways, adapted for a speculative round with no real motivating package:**
+1. **No regression on the one real package that DOES use Data Conversion** — regenerating
+   `SSIS_From_Sandeep`'s actual `Package_Transforms.dtsx` produces the exact same 2 gaps as
+   before (`DFT_LookupAndAggregate`'s own pre-existing Aggregate gap, plus Notification), and its
+   whole regenerated solution still builds with **0 warnings/0 errors** — confirming the new
+   switch cases are additive and don't disturb the existing i4/dbdate paths.
+2. **A new dedicated fixture**, the same `SyntheticDataConversionTypes.dtsx` built for the probe
+   above (kept and checked in, same double-duty pattern as the numeric-coercion round).
+   **Generated, built against a copy of `Etl.Core` (0 warnings/0 errors), and actually RUN
+   against `.\SQLFORPOC_2022`**: all 6 rows loaded, read back afterward and diffed directly
+   against the real dtexec probe's own captured values — **exact row-for-row match** across all
+   three columns, including the DT_WSTR truncation case (`"HelloWorldExtra"` -> `"HelloWorld"`,
+   confirmed 10 characters via `DATALENGTH`) and the empty-string-stays-empty case.
+
+Two new tests: `SsisFnEmitterTests.Emit_ProducesTheThreeSpeculativeDataConversionTargets_R8BoolWstr`
+and `PackageGeneratorTests.Generate_TranslatesTheThreeSpeculativeDataConversionTargets_R8BoolWstr`
+(the latter reading the real fixture end to end, same pattern as the original Data Conversion
+round's own `Generate_TranslatesADataConversion_...` test). Regression: 131/131 in
+`Ssis.Extract.Codegen.Tests` (was 129), same 3 pre-existing unrelated failures elsewhere.
+
+**Remaining known gaps, updated once more:** Aggregate/Row Count (only evidenced inside a flow
+already blocked by Lookup), Excel Source in SqlCommand mode, a ForEach Loop re-running a whole
+Data Flow Task per file, and the numeric-passthrough-coercion gap for every numeric pairing other
+than r8-to-i4. Data Conversion target types other than DT_I4/DT_DBDATE/DT_R8/DT_WSTR/DT_BOOL
+remain unsupported (e.g. DT_I2/DT_I8/DT_NUMERIC/DT_DBTIMESTAMP) — none evidenced or measured yet.
 
 ## Traps already hit once — don't re-derive these
 

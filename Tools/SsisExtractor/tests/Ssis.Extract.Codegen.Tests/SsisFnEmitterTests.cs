@@ -69,4 +69,24 @@ public class SsisFnEmitterTests
 
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }
+
+    [Fact]
+    public void Emit_ProducesTheThreeSpeculativeDataConversionTargets_R8BoolWstr()
+    {
+        // Built speculatively 2026-08-28 -- no real package needs any of these yet. Each body's
+        // exact behavior is measured against a real dtexec run
+        // (synthetic-data-conversion-types-tables.sql), not guessed -- see DataConvertPayload's
+        // own doc comment for the full account.
+        var result = SsisFnEmitter.Emit("Package.Ssis", new HashSet<string> { "ToNullableR8", "ToNullableBool", "ToWstr" });
+
+        var file = Assert.Single(result.Files);
+        Assert.Contains("using System.Globalization;", file.Content);
+        Assert.Contains("public static double? ToNullableR8(string? value) =>", file.Content);
+        Assert.Contains("public static bool? ToNullableBool(string? value)", file.Content);
+        // The one genuinely different failure mode: truncates, never nulls out.
+        Assert.Contains("public static string? ToWstr(string? value, int maxLength) =>", file.Content);
+        Assert.Contains("value[..maxLength]", file.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
 }

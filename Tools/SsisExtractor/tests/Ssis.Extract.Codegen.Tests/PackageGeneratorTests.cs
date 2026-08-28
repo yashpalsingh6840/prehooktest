@@ -130,6 +130,51 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_TranslatesTheThreeSpeculativeDataConversionTargets_R8BoolWstr()
+    {
+        // SyntheticDataConversionTypes.dtsx: OLE DB Source (SqlCommand: ID, R8Text, WstrText,
+        // BoolText, all strings) -> Data Conversion (DCONV_Types: R8Text -> ValR8 DT_R8,
+        // WstrText -> ValWstr DT_WSTR,10, BoolText -> ValBool DT_BOOL, all dispositions
+        // IgnoreFailure) -> OLE DB Destination. Built speculatively (2026-08-28, with the
+        // user's sign-off) -- no real package needs any of these three target types, unlike
+        // SyntheticDataConversion.dtsx's own DT_I4/DT_DBDATE pair. Confirmed beyond this test by
+        // actually running the generated exe against .\SQLFORPOC_2022 and reading
+        // dbo.SyntheticDataConversionTypesTarget back afterward, matching a real dtexec run of
+        // this same fixture row for row -- see Tools/SsisExtractor/CLAUDE.md's own
+        // "Numeric-passthrough-coercion" / Data Conversion speculative-types section.
+        var package = LoadSyntheticFixture("SyntheticDataConversionTypes.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var entityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticDataConversionTypesTarget.cs");
+        Assert.Contains("public double? ValR8 { get; set; }", entityFile.Content);
+        Assert.Contains("public string? ValWstr { get; set; }", entityFile.Content);
+        Assert.Contains("public bool? ValBool { get; set; }", entityFile.Content);
+
+        var transformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticDataConversionTypesTargetTransform.cs");
+        Assert.Contains("ValR8 = SsisFn.ToNullableR8(row.R8Text),", transformFile.Content);
+        // Truncates to the declared target width (10) -- the one genuinely different failure
+        // mode among the three, not a NULL-on-failure shape.
+        Assert.Contains("ValWstr = SsisFn.ToWstr(row.WstrText, 10),", transformFile.Content);
+        Assert.Contains("ValBool = SsisFn.ToNullableBool(row.BoolText),", transformFile.Content);
+
+        var ssisFnFile = Assert.Single(result.Files, f => f.RelativePath == "Ssis/SsisFn.cs");
+        Assert.Contains("public static double? ToNullableR8(string? value) =>", ssisFnFile.Content);
+        Assert.Contains("public static bool? ToNullableBool(string? value)", ssisFnFile.Content);
+        Assert.Contains("public static string? ToWstr(string? value, int maxLength) =>", ssisFnFile.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(entityFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(transformFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(ssisFnFile.Content);
+
+        // Two expected gaps: the SqlCommand-mode column-name assumption, and the unavoidable
+        // Notification one -- same shape as every other SqlCommand-sourced flow's own test.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("assumes each result-set column is named/aliased"));
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticDataConversionTypes.Notification");
+    }
+
+    [Fact]
     public void Generate_ResolvesADataConversionColumn_ReferencedByAConditionalSplitConditionAndAPostSplitDerivedColumn()
     {
         // SyntheticDataConversionSplit.dtsx: OLE DB Source -> Data Conversion (CustomerIdText ->

@@ -320,6 +320,16 @@ public static class TransformEmitter
         {
             "i4" => new TranslatedOk($"SsisFn.ToNullableI4({sourceRef})"),
             "dbdate" => new TranslatedOk($"SsisFn.ToNullableDate({sourceRef})"),
+            "r8" => new TranslatedOk($"SsisFn.ToNullableR8({sourceRef})"),
+            "bool" => new TranslatedOk($"SsisFn.ToNullableBool({sourceRef})"),
+            // DT_WSTR is a genuinely different shape from every other target above -- measured
+            // against a real dtexec run (synthetic-data-conversion-types-tables.sql), an overlong
+            // source string TRUNCATES to fit under IgnoreFailure rather than nulling out, so the
+            // helper needs the declared target width, not just the raw value. No declared Length
+            // is a named gap, never a guessed default width.
+            "wstr" => conversion.Length is int maxLength
+                ? new TranslatedOk($"SsisFn.ToWstr({sourceRef}, {maxLength})")
+                : new NotTranslatable($"Data Conversion to DT_WSTR has no declared target width to truncate to"),
             _ => new NotTranslatable($"Data Conversion to target type '{conversion.TargetDataType}' is not supported yet"),
         };
 
@@ -337,6 +347,9 @@ public static class TransformEmitter
         if (csharpExpression.Contains("SsisFn.ToNullableI4(")) functionsUsed.Add("ToNullableI4");
         if (csharpExpression.Contains("SsisFn.ToNullableDate(")) functionsUsed.Add("ToNullableDate");
         if (csharpExpression.Contains("SsisFn.NarrowR8ToI4(")) functionsUsed.Add("NarrowR8ToI4");
+        if (csharpExpression.Contains("SsisFn.ToNullableR8(")) functionsUsed.Add("ToNullableR8");
+        if (csharpExpression.Contains("SsisFn.ToNullableBool(")) functionsUsed.Add("ToNullableBool");
+        if (csharpExpression.Contains("SsisFn.ToWstr(")) functionsUsed.Add("ToWstr");
     }
 
     /// <summary>Same evidenced surface as SsisPipelineTypeMap, mapped into the expression

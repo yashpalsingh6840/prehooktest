@@ -364,6 +364,22 @@ public sealed class ConditionalSplitCaseSpec
 /// column on the same row. Whitespace padding parses correctly (locale-neutral trim). This is
 /// what <c>ssisx generate</c>'s own <c>SsisFn</c> conversion helper is built to reproduce --
 /// see <c>Etl.Core</c>'s own doc comment for the generated code.</para>
+///
+/// <para><b>2026-08-28, same day -- three more target types measured SPECULATIVELY</b> (with the
+/// user's explicit sign-off; no real package in this tool's own portfolio needs any of them):
+/// DT_R8 follows the exact same "NULL on any failure" convention as DT_I4/DT_DBDATE above,
+/// including scientific-notation and whitespace-trimmed parsing. DT_BOOL also yields NULL on
+/// failure, but accepts a WIDER input set than a bare <c>bool.TryParse</c> would -- "True"/
+/// "False" case-insensitively AND the numeric strings "1"/"0". <b>DT_WSTR is a genuinely
+/// different failure mode</b>, the first Data Conversion target this tool has measured that
+/// ISN'T "NULL on failure": an overlong source string TRUNCATES to fit the declared target
+/// width under IgnoreFailure/TruncationRowDisposition=IgnoreFailure, rather than nulling out --
+/// there is no real numeric/date/bool "failure" to ignore for a string-to-string conversion, so
+/// the disposition's only real job is truncation. An empty source string passes through as an
+/// empty string, not NULL (unlike every numeric/date/bool target). See
+/// <c>synthetic-data-conversion-types-tables.sql</c> for the exact seeded values and
+/// <c>Ssis.Extract.Codegen.SsisFnEmitter</c>'s own <c>ToNullableR8</c>/<c>ToNullableBool</c>/
+/// <c>ToWstr</c> for the reproducing code.</para>
 /// </summary>
 public sealed class DataConvertPayload
 {
