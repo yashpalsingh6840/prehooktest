@@ -63,6 +63,45 @@ public class PackagePlannerTests
         Assert.Equal("FELC_Files", gap.Location);
         Assert.Contains("ForEach Loop", gap.Reason);
     }
+
+    [Fact]
+    public void Plan_FindsTheDataConversionComponent_ForTheSyntheticDataConversionFixture()
+    {
+        var package = LoadSyntheticFixture("SyntheticDataConversion.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var flow = Assert.Single(plan.Flows);
+        Assert.Equal("DFT_DataConversionDemo", flow.TaskName);
+        Assert.Equal("DCONV_Types", flow.DataConversion?.Name);
+        Assert.Null(flow.DerivedColumn); // this fixture has no Derived Column at all -- proves the widened gate
+        Assert.Equal(2, flow.DataConversion?.DataConvert?.Columns.Count);
+    }
+
+    [Fact]
+    public void Plan_ReportsAnExplicitGap_ForADataFlowTaskWithMultipleSourceComponents()
+    {
+        // SyntheticParallelShapes.dtsx's own DFT_DirectCopy: two INDEPENDENT OLE DB
+        // Source -> Destination pairs in one Data Flow Task, no Derived Column/Data Conversion
+        // anywhere. Discovered as a real, previously-SILENT failure class testing this tool
+        // against RBC_Demo_ETL's own DFT_SortAndMergeJoin (a Merge Join over two Flat File
+        // Sources) -- before this gate, PlanDataFlow silently picked just the FIRST source
+        // component found, built a row type from only ITS columns, and reported no gap at all;
+        // the flow only failed at BUILD time with a confusing "row type has no definition for"
+        // error once Data Conversion support (2026-08-28) happened to remove the ONE OTHER
+        // reason this flow used to fail to translate. This fixture's own two-source shape used
+        // to be caught one step later, by the pre-existing "no Derived Column found" gate --
+        // still correctly gapped either way, just with a clearer, earlier reason now.
+        var package = DtsxPackageReader.Read(Path.Combine(SsisProjectDir, "SyntheticParallelShapes.dtsx"), noRedact: false);
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.DoesNotContain(plan.Flows, f => f.TaskName == "DFT_DirectCopy");
+        var gap = Assert.Single(plan.Gaps, g => g.Location == "DFT_DirectCopy");
+        Assert.Contains("2 source components", gap.Reason);
+    }
+
     [Fact]
     public void Plan_FindsThePreLoadStatementAndTheOneFlow_ForTheRealLoadEmployeesPackage()
     {

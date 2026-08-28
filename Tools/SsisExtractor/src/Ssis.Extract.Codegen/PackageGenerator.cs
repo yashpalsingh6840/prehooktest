@@ -97,13 +97,7 @@ public static class PackageGenerator
                 continue;
             }
 
-            // Evidence-based, not a fact lookup -- see NullabilityInference's own doc comment.
-            // Computed up front (not after the DerivedColumn-null check below) since
-            // EntityEmitter/ResolveFlowSource's SQL row type both need it too, and both run
-            // before that check.
-            var nullableColumnNames = flow.DerivedColumn is null
-                ? new HashSet<string>()
-                : NullabilityInference.InferNullableColumnNames([flow.DerivedColumn]);
+            var nullableColumnNames = ResolveNullableColumnNames(flow);
 
             var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames);
             if (sourceResult is null) continue; // ResolveFlowSource already added the reason
@@ -112,9 +106,9 @@ public static class PackageGenerator
             var transformClassName = entityName + "Transform";
             Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, nullableColumnNames));
 
-            if (flow.DerivedColumn is null)
+            if (flow.DerivedColumn is null && flow.DataConversion is null)
             {
-                gaps.Add(new GenerationGap(flow.TaskName, "no Derived Column found in this Data Flow Task -- a direct-copy pipeline's transform is not generated yet, so this flow is not wired into Program.cs"));
+                gaps.Add(new GenerationGap(flow.TaskName, "no Derived Column or Data Conversion found in this Data Flow Task -- a direct-copy pipeline's transform is not generated yet, so this flow is not wired into Program.cs"));
                 continue;
             }
 
@@ -130,7 +124,8 @@ public static class PackageGenerator
                 EntityName: entityName,
                 SsisFnNamespace: $"{ns}.Ssis",
                 Pipeline: flow.Pipeline,
-                DerivedColumns: [flow.DerivedColumn],
+                DerivedColumns: flow.DerivedColumn is null ? [] : [flow.DerivedColumn],
+                DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
                 DestinationComponent: flow.DestinationComponent,
                 NullableColumnNames: nullableColumnNames));
             Merge(files, gaps, transformResult.Result);
@@ -250,6 +245,47 @@ public static class PackageGenerator
         return char.IsDigit(result[0]) ? "_" + result : result;
     }
 
+    /// <summary>Evidence-based, not a fact lookup -- see NullabilityInference's own doc comment
+    /// for the DerivedColumn half. Shared by the single-destination path and
+    /// <see cref="GenerateConditionalSplitFlow"/> (a Conditional Split's own branches can
+    /// reference a Data Conversion column exactly like a plain destination flow can -- e.g.
+    /// RBC_Demo_ETL's CSPLIT_Validity referencing CustomerID_i4 -- so both paths need the same
+    /// set). A Data Conversion output column is nullable BY CONSTRUCTION, not by ISNULL evidence
+    /// the way NullabilityInference's other entries are -- IgnoreFailure (the only disposition
+    /// this tool generates against, see DataConvertPayload's own doc comment) can always null
+    /// out the value, regardless of whether anything downstream ever guards it. EntityEmitter/
+    /// TransformEmitter/RouterEmitter all key off this same set by the destination's/split's own
+    /// pipeline column name, so computing it once here is sufficient for all three.</summary>
+    private static HashSet<string> ResolveNullableColumnNames(DataFlowPlan flow)
+    {
+        var nullableColumnNames = flow.DerivedColumn is null
+            ? new HashSet<string>()
+            : NullabilityInference.InferNullableColumnNames([flow.DerivedColumn]);
+
+        if (flow.DataConversion?.DataConvert is { } dataConvert)
+        {
+            foreach (var col in dataConvert.Columns)
+                nullableColumnNames.Add(col.OutputColumnName);
+
+            // The RAW source column feeding each conversion is just as capable of being NULL in
+            // the real data (confirmed empirically -- see DataConvertPayload's own doc comment,
+            // row ID=5's NULL source columns). SqlRowReaderEmitter's own IsDBNull guard already
+            // applies to a nullable-inferred STRING column (unlike EntityEmitter/SqlRowEmitter's
+            // "string never needs a type change" exclusion -- see that emitter's own comment) --
+            // it just needs these names in the same set. Without this, GetFieldValue<string>
+            // throws SqlNullValueException on a real NULL row, caught by actually running the
+            // generated code against seeded NULL data, not assumed.
+            var flowLineage = LineageBuilder.Build(flow.Pipeline);
+            foreach (var col in dataConvert.Columns)
+            {
+                var sourceEdge = flowLineage.Edges.FirstOrDefault(e => e.Kind == "DataConversion" && e.ToColumnName == col.OutputColumnName);
+                if (sourceEdge is not null) nullableColumnNames.Add(sourceEdge.FromColumnName);
+            }
+        }
+
+        return nullableColumnNames;
+    }
+
     /// <summary>Resolves a flow's source (Flat File or OLE DB) into a row-type file pair plus a
     /// <see cref="FlowSourceSpec"/> Program.cs can wire up -- shared by both the single-
     /// destination path and <see cref="GenerateConditionalSplitFlow"/>, since a Conditional
@@ -321,7 +357,16 @@ public static class PackageGenerator
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
         var defaultDestination = split.Branches[^1].Destination;
 
-        var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow, defaultDestination, fileSourceEntries, files, gaps);
+        // Computed before ResolveFlowSource (unlike the single-destination path's own ordering
+        // note doesn't apply here since there's no DerivedColumn-null gate before it in THIS
+        // path) -- CsvRowEmitter/SqlRowEmitter/SqlRowReaderEmitter all need it to mark a Data
+        // Conversion's own raw source column nullable. Missing this was a real bug, caught only
+        // by actually running the generated code against a seeded NULL row: the reader's
+        // GetFieldValue<string> (no IsDBNull guard, since the column wasn't in the set) threw
+        // SqlNullValueException on ID=2's NULL SignupDateText, not by a unit test.
+        var nullableColumnNames = ResolveNullableColumnNames(flow);
+
+        var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow, defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames);
         if (sourceResult is null) return null;
         var (rowTypeName, programSource) = sourceResult.Value;
         var rowTypeNamespace = programSource is CsvFlowSource ? $"{ns}.Csv" : $"{ns}.Sql";
@@ -337,7 +382,7 @@ public static class PackageGenerator
         }
 
         var routerClassName = SanitizeIdentifier(split.Component.Name) + "Router";
-        var routerResult = RouterEmitter.Emit($"{ns}.Mapping", routerClassName, rowTypeNamespace, rowTypeName, $"{ns}.Ssis", split);
+        var routerResult = RouterEmitter.Emit($"{ns}.Mapping", routerClassName, rowTypeNamespace, rowTypeName, $"{ns}.Ssis", split, flow.Pipeline, flow.DataConversion);
         if (routerResult.Result.Files.Count == 0)
         {
             gaps.AddRange(routerResult.Result.Gaps);
@@ -388,7 +433,7 @@ public static class PackageGenerator
 
             if (emittedDestinationRefIds.Add(branch.Destination.RefId))
             {
-                Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branch.Destination));
+                Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branch.Destination, nullableColumnNames));
                 primaryKeysByDestination.TryGetValue(branch.Destination.RefId, out var primaryKey);
                 branchTables.Add(new DbContextEmitter.TableSpec(entityName, branch.Destination, primaryKey));
             }
@@ -407,7 +452,9 @@ public static class PackageGenerator
                 SsisFnNamespace: $"{ns}.Ssis",
                 Pipeline: flow.Pipeline,
                 DerivedColumns: derivedColumns,
-                DestinationComponent: branch.Destination));
+                DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+                DestinationComponent: branch.Destination,
+                NullableColumnNames: nullableColumnNames));
             Merge(branchFiles, gaps, transformResult.Result);
             foreach (var fn in transformResult.SsisFunctionsUsed) branchFunctionsUsed.Add(fn);
 

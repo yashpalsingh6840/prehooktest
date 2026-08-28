@@ -78,6 +78,121 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_TranslatesADataConversion_IntoSsisFnCallsAgainstTheRawSourceColumn()
+    {
+        // SyntheticDataConversion.dtsx: OLE DB Source (SqlCommand: ID, CustomerIdText,
+        // SignupDateText, all strings) -> Data Conversion (DCONV_Types: CustomerIdText ->
+        // CustomerId_i4 DT_I4, SignupDateText -> SignupDate_dt DT_DBDATE, both dispositions
+        // IgnoreFailure) -> OLE DB Destination. No Derived Column anywhere -- proves the
+        // "no Derived Column or Data Conversion found" gate correctly widened rather than
+        // blocking this flow. Confirmed beyond this test by actually running the generated
+        // exe against .\SQLFORPOC_2022 (seeded with a valid row, a whitespace-padded valid
+        // row, an invalid row, an empty-string row, and a NULL row) and reading
+        // dbo.SyntheticDataConversionTarget back afterward, matching a real dtexec run of this
+        // same fixture row for row -- see Tools/SsisExtractor/CLAUDE.md's own "Data Conversion
+        // component" section.
+        var package = LoadSyntheticFixture("SyntheticDataConversion.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var entityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticDataConversionTarget.cs");
+        Assert.Contains("public int? CustomerId_i4 { get; set; }", entityFile.Content);
+        Assert.Contains("public DateOnly? SignupDate_dt { get; set; }", entityFile.Content);
+
+        var rowFile = Assert.Single(result.Files, f => f.RelativePath == "Sql/SyntheticDataConversionTargetSqlRow.cs");
+        Assert.Contains("public string? CustomerIdText { get; set; }", rowFile.Content);
+        Assert.Contains("public string? SignupDateText { get; set; }", rowFile.Content);
+
+        var readerFile = Assert.Single(result.Files, f => f.RelativePath == "Sql/SyntheticDataConversionTargetSqlRowReader.cs");
+        Assert.Contains("reader.IsDBNull(reader.GetOrdinal(\"CustomerIdText\")) ? null : reader.GetFieldValue<string>(reader.GetOrdinal(\"CustomerIdText\"))", readerFile.Content);
+
+        var transformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticDataConversionTargetTransform.cs");
+        Assert.Contains("CustomerId_i4 = SsisFn.ToNullableI4(row.CustomerIdText),", transformFile.Content);
+        Assert.Contains("SignupDate_dt = SsisFn.ToNullableDate(row.SignupDateText),", transformFile.Content);
+
+        var ssisFnFile = Assert.Single(result.Files, f => f.RelativePath == "Ssis/SsisFn.cs");
+        Assert.Contains("public static int? ToNullableI4(string? value) =>", ssisFnFile.Content);
+        Assert.Contains("public static DateOnly? ToNullableDate(string? value) =>", ssisFnFile.Content);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(entityFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(rowFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(readerFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(transformFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(ssisFnFile.Content);
+
+        // Two expected gaps: the SqlCommand-mode column-name assumption, and the unavoidable
+        // Notification one -- same shape as every other SqlCommand-sourced flow's own test.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("assumes each result-set column is named/aliased"));
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticDataConversion.Notification");
+    }
+
+    [Fact]
+    public void Generate_ResolvesADataConversionColumn_ReferencedByAConditionalSplitConditionAndAPostSplitDerivedColumn()
+    {
+        // SyntheticDataConversionSplit.dtsx: OLE DB Source -> Data Conversion (CustomerIdText ->
+        // CustomerId_i4, SignupDateText -> SignupDate_dt) -> Conditional Split
+        // (!ISNULL(CustomerId_i4) -> Valid; default -> Invalid) -> each branch's own Derived
+        // Column (TenureDays <- ISNULL(SignupDate_dt) ? -1 : DATEDIFF(...)) -> Union All -> one
+        // destination. Proves the two Data-Conversion cross-reference paths
+        // SyntheticDataConversion.dtsx alone never exercises (its converted columns flow
+        // straight to a destination, referenced by nothing else) -- the exact shape RBC_Demo_ETL's
+        // own Package_Transforms.dtsx (DFT_DerivedAndSplit) needs. Confirmed beyond this test by
+        // actually running the generated exe against .\SQLFORPOC_2022 (seeded with a valid row,
+        // a valid-CustomerID/NULL-date row, and an invalid-CustomerID row) and reading
+        // dbo.SyntheticDataConversionSplitTarget back afterward -- see CLAUDE.md's own "Data
+        // Conversion component" section.
+        var package = LoadSyntheticFixture("SyntheticDataConversionSplit.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var routerFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/CSPLIT_ValidityRouter.cs");
+        Assert.Contains("!((SsisFn.ToNullableI4(row.CustomerIdText) is null))", routerFile.Content);
+
+        var validTransformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticDataConversionSplitTargetValidTransform.cs");
+        Assert.Contains("SignupDate_dt = SsisFn.ToNullableDate(row.SignupDateText),", validTransformFile.Content);
+        // The null-forgiving "!" before .Value in the non-null ternary branch -- without it,
+        // calling SsisFn.ToNullableDate twice (once for the ISNULL check, once here) is a build
+        // ERROR (CS8629) under this project's Nullable+TreatWarningsAsErrors, since Roslyn's
+        // flow analysis never narrows a repeated METHOD CALL the way it narrows a plain
+        // row-property reference. Caught only by actually building the generated project, not
+        // unit tests alone.
+        Assert.Contains("TenureDays = ((SsisFn.ToNullableDate(row.SignupDateText) is null) ? -(1) : SsisFn.DateDiffDays(SsisFn.ToNullableDate(row.SignupDateText)!.Value, ctx.LoadedAtUtc)),", validTransformFile.Content);
+
+        var invalidTransformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticDataConversionSplitTargetInvalidTransform.cs");
+        Assert.Contains("SignupDate_dt = SsisFn.ToNullableDate(row.SignupDateText),", invalidTransformFile.Content);
+
+        var entityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticDataConversionSplitTarget.cs");
+        Assert.Contains("public int? CustomerId_i4 { get; set; }", entityFile.Content);
+        Assert.Contains("public DateOnly? SignupDate_dt { get; set; }", entityFile.Content);
+
+        // The raw source columns feeding the conversion are just as capable of being NULL --
+        // both need the same IsDBNull-guarded reader, a real bug caught only by actually running
+        // the generated code against a seeded NULL SignupDateText row (ID=2 in the backing
+        // table), not by this test alone (see ResolveNullableColumnNames's own doc comment for
+        // why it must run before ResolveFlowSource in this Conditional Split code path).
+        var readerFile = Assert.Single(result.Files, f => f.RelativePath == "Sql/DFT_DataConversionSplitDemoSqlRowReader.cs");
+        Assert.Contains("CustomerIdText = reader.IsDBNull(reader.GetOrdinal(\"CustomerIdText\")) ? null : reader.GetFieldValue<string>(reader.GetOrdinal(\"CustomerIdText\")),", readerFile.Content);
+        Assert.Contains("SignupDateText = reader.IsDBNull(reader.GetOrdinal(\"SignupDateText\")) ? null : reader.GetFieldValue<string>(reader.GetOrdinal(\"SignupDateText\")),", readerFile.Content);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(routerFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(validTransformFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(invalidTransformFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(entityFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(readerFile.Content);
+
+        // Two expected gaps: the SqlCommand-mode column-name assumption, and the unavoidable
+        // Notification one -- same shape as SyntheticDataConversion.dtsx's own test.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("assumes each result-set column is named/aliased"));
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticDataConversionSplit.Notification");
+    }
+
+    [Fact]
     public void Generate_ProducesAReferenceTableCacheScaffold_ForALookup_ButDoesNotWireItIntoProgramCs()
     {
         // SyntheticLookupSplit.dtsx: OLE DB Source -> Lookup -> Conditional Split -> 3 OLE DB

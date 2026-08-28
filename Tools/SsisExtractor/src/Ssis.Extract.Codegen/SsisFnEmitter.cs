@@ -29,9 +29,11 @@ public static class SsisFnEmitter
         if (functionsUsed.Contains("FindString")) bodies.Add(FindStringBody());
         if (functionsUsed.Contains("DateDiffDays")) bodies.Add(DateDiffDaysBody());
         if (functionsUsed.Contains("Str")) bodies.Add(StrBody());
+        if (functionsUsed.Contains("ToNullableI4")) bodies.Add(ToNullableI4Body());
+        if (functionsUsed.Contains("ToNullableDate")) bodies.Add(ToNullableDateBody());
 
         var lines = new List<string>();
-        if (functionsUsed.Contains("Str"))
+        if (functionsUsed.Contains("Str") || functionsUsed.Contains("ToNullableI4") || functionsUsed.Contains("ToNullableDate"))
         {
             lines.Add("using System.Globalization;");
             lines.Add("");
@@ -136,5 +138,34 @@ public static class SsisFnEmitter
     [
         "    /// <summary>(DT_WSTR,n) cast of an integer -- invariant, no thousands separator.</summary>",
         "    public static string Str(int value) => value.ToString(CultureInfo.InvariantCulture);",
+    ];
+
+    private static List<string> ToNullableI4Body() =>
+    [
+        "    /// <summary>",
+        "    /// Data Conversion to DT_I4 with both dispositions IgnoreFailure -- the only",
+        "    /// disposition combination this generator supports (see DataConvertPayload's own doc",
+        "    /// comment). Measured empirically against a real dtexec run: a NULL/empty/",
+        "    /// non-numeric source value never fails or drops the row, it just yields NULL here;",
+        "    /// a valid value surrounded by whitespace still parses (locale-neutral, matching SSIS's",
+        "    /// own FastParse=false behavior observed on the same run).",
+        "    /// </summary>",
+        "    public static int? ToNullableI4(string? value) =>",
+        "        !string.IsNullOrEmpty(value) && int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result)",
+        "            ? result",
+        "            : null;",
+    ];
+
+    private static List<string> ToNullableDateBody() =>
+    [
+        "    /// <summary>",
+        "    /// Data Conversion to DT_DBDATE with both dispositions IgnoreFailure -- same",
+        "    /// empirically-measured semantics as ToNullableI4 above (NULL on any failure, never a",
+        "    /// dropped row or thrown exception).",
+        "    /// </summary>",
+        "    public static DateOnly? ToNullableDate(string? value) =>",
+        "        !string.IsNullOrEmpty(value) && DateOnly.TryParse(value, CultureInfo.InvariantCulture, out var result)",
+        "            ? result",
+        "            : null;",
     ];
 }

@@ -22,7 +22,8 @@ public sealed record DataFlowPlan(
     PipelineComponentSpec? DerivedColumn,
     PipelineComponentSpec? Lookup,
     ConditionalSplitPlan? ConditionalSplit,
-    PipelineComponentSpec DestinationComponent);
+    PipelineComponentSpec DestinationComponent,
+    PipelineComponentSpec? DataConversion = null);
 
 /// <summary>One non-default, non-error branch of a Conditional Split resolves to a
 /// <see cref="FriendlyExpression"/> (case) or null (the default, no condition of its own) plus
@@ -330,12 +331,37 @@ public static class PackagePlanner
 
     private static DataFlowPlan? PlanDataFlow(string taskName, PipelineSpec pipeline, List<GenerationGap> gaps)
     {
+        // More than one source component in a single Data Flow Task means something merges them
+        // (Merge/Merge Join/Union All feeding a single destination directly, not via a
+        // Conditional Split -- that shape has its own chain-walking gate in ResolveBranch) --
+        // discovered as a real, previously-SILENT failure: RBC_Demo_ETL's own
+        // DFT_SortAndMergeJoin (a Merge Join over two Flat File Sources) used to pick just the
+        // FIRST source found here, generate a row type from only ITS columns, and report no gap
+        // at all -- only failing at BUILD time with a confusing "row type has no definition for
+        // 'Email'" once Data Conversion support (2026-08-28) removed the ONE OTHER reason this
+        // flow used to fail to translate. Caught by actually building the regenerated real
+        // package's whole solution, not by the gap-count report alone. A single Data Flow Task
+        // with two UNRELATED source/destination pairs (SyntheticParallelShapes.dtsx's own
+        // DFT_DirectCopy) is also caught here, one step earlier than its pre-existing
+        // "no Derived Column found" gate -- still correctly gapped, just with a clearer reason.
+        var sourceComponents = pipeline.Components
+            .Where(c => c.ComponentClassId == "Microsoft.FlatFileSource" || SourceInfo.IsSqlSource(c))
+            .ToList();
+        if (sourceComponents.Count > 1)
+        {
+            var names = string.Join(", ", sourceComponents.Select(c => c.Name));
+            gaps.Add(new GenerationGap(taskName,
+                $"this Data Flow Task has {sourceComponents.Count} source components ({names}) -- a merge/join across multiple sources (or multiple independent source/destination pairs) is not supported yet"));
+            return null;
+        }
+
         var flatFileSource = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.FlatFileSource");
         // OLE DB Source or ADO NET Source (Microsoft.DataReaderSourceAdapter, discriminated by
         // payload not ComponentClassId -- see AdoNetSourcePayload's own doc comment) -- either
         // way, a SQL-based source BuildSqlFlowSource resolves generically from here.
         var oleDbSource = pipeline.Components.FirstOrDefault(SourceInfo.IsSqlSource);
         var derivedColumn = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.DerivedColumn");
+        var dataConversion = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.DataConvert");
         var lookup = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.Lookup");
         var conditionalSplitComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.ConditionalSplit");
 
@@ -358,7 +384,7 @@ public static class PackagePlanner
             return null;
         }
 
-        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination);
+        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion);
     }
 
     /// <summary>Resolves every case (in EvaluationOrder) plus the default output to the OLE DB

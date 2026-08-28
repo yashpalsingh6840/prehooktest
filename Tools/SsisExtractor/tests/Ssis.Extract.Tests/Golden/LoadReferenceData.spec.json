@@ -571,6 +571,7 @@
                 }
               ],
               "ContactInfo": "Flat File Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;1",
+              "DataConvert": null,
               "Description": "Flat File Source",
               "FlatFileSource": {
                 "ColumnMappings": [
@@ -944,6 +945,7 @@
               "ConditionalSplit": null,
               "Connections": [],
               "ContactInfo": "Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0",
+              "DataConvert": null,
               "Description": "Creates new column values by applying expressions to transformation input columns.",
               "FlatFileSource": null,
               "Inputs": [
@@ -1145,6 +1147,7 @@
                 }
               ],
               "ContactInfo": "OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4",
+              "DataConvert": null,
               "Description": "OLE DB Destination",
               "FlatFileSource": null,
               "Inputs": [
@@ -1790,6 +1793,7 @@
                 }
               ],
               "ContactInfo": "Flat File Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;1",
+              "DataConvert": null,
               "Description": "Flat File Source",
               "FlatFileSource": {
                 "ColumnMappings": [
@@ -2163,6 +2167,7 @@
               "ConditionalSplit": null,
               "Connections": [],
               "ContactInfo": "Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0",
+              "DataConvert": null,
               "Description": "Creates new column values by applying expressions to transformation input columns.",
               "FlatFileSource": null,
               "Inputs": [
@@ -2364,6 +2369,7 @@
                 }
               ],
               "ContactInfo": "OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4",
+              "DataConvert": null,
               "Description": "OLE DB Destination",
               "FlatFileSource": null,
               "Inputs": [

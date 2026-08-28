@@ -151,8 +151,22 @@ public static class ExpressionTranslator
         // reference used with no such guard would throw at runtime instead of degrading to a
         // gap. TranslateIsNull below is the one place that must NOT go through this case, since
         // it needs the raw (still-nullable) expression to check for null at all.
+        // A call-expression reference (e.g. a Data Conversion column's own
+        // "SsisFn.ToNullableX(row.Y)", see TranslateDataConversion) is evaluated FRESH here,
+        // independently of whatever ISNULL(...) check guarded this value context -- Roslyn's
+        // nullable flow analysis narrows a plain member-access chain like "row.Y" across two
+        // syntactically-identical checks, but never a method call (no purity assumption), so
+        // ".Value" alone left CS8629 as a hard build error under TreatWarningsAsErrors (caught
+        // by actually building the generated project, not by unit tests). The null-forgiving
+        // "!" is semantically justified, not a suppression of a real risk: the ISNULL guard that
+        // put this reference in a non-null branch calls the exact same pure, deterministic
+        // function with the exact same input, so it cannot return null here. A plain row-property
+        // reference never ends in ')' and is left exactly as before (already correctly narrowed
+        // by the compiler, confirmed by the pre-existing nullable-columns golden text).
         Reference r => references.TryGetValue(r.Name, out var resolved)
-            ? new TranslatedOk(resolved.IsNullable ? $"{resolved.CSharpExpression}.Value" : resolved.CSharpExpression)
+            ? new TranslatedOk(resolved.IsNullable
+                ? $"{resolved.CSharpExpression}{(resolved.CSharpExpression.EndsWith(')') ? "!" : "")}.Value"
+                : resolved.CSharpExpression)
             : new NotTranslatable($"reference '{r.Name}' has no resolvable producing column"),
 
         StringLiteral s => new TranslatedOk(CSharpStringLiteral(s.Value)),

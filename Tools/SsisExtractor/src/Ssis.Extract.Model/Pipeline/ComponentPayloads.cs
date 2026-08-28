@@ -236,6 +236,61 @@ public sealed class ConditionalSplitCaseSpec
 /// "name only, never content" rule, except <c>BinaryCode</c>'s array elements carry no
 /// name at all to even capture -- just a presence flag.
 /// </summary>
+/// <summary>
+/// <c>Microsoft.DataConvert</c> -- discovered testing this tool against a real third-party
+/// portfolio (SSIS_From_Sandeep, 2026-08-27/28: <c>Package_Transforms.dtsx</c>'s
+/// <c>DFT_DerivedAndSplit.DCONV_Types</c>, converting <c>CustomerID</c>/<c>SignupDate</c>
+/// (both raw strings) to <c>CustomerID_i4</c> (DT_I4)/<c>SignupDate_dt</c> (DT_DBDATE), both
+/// dispositions IgnoreFailure). Unlike Lookup/Conditional Split, this component needed no new
+/// generic model fields at all -- every converted column's type/length/precision/scale/
+/// dispositions are already captured by the fully-generic <see cref="PipelineOutputColumnSpec"/>
+/// every other component's output columns already go through. The only genuinely bespoke piece
+/// is <see cref="DataConversionColumnSpec.SourceColumnLineageId"/>: unlike Derived Column (whose
+/// output column carries an <c>Expression</c> property with embedded <c>#{lineageId}</c>
+/// references), a Data Conversion output column instead carries a single-purpose
+/// <c>SourceInputColumnLineageID</c> custom property whose entire value is one
+/// <c>#{lineageId}</c> reference to the upstream column being converted -- confirmed via a
+/// live object-model round-trip (<c>SyntheticDataConversion.dtsx</c>), not guessed from
+/// Microsoft's own (evidently outdated) Data Conversion Transformation SDK sample, which shows
+/// a <c>MapOutputColumn</c>-based API this GAC's real <c>IDTSDesigntimeComponent100</c> doesn't
+/// use for this purpose at all (see the fixture builder's own doc comment for the two
+/// mechanism-level findings). <c>Ssis.Extract.Dtsx.LineageBuilder</c> treats this the same way
+/// it already treats an <c>Expression</c>'s embedded refs -- see that type's own doc comment.
+///
+/// <para><b>Empirically observed IgnoreFailure behaviour</b> (real dtexec run against
+/// <c>.\SQLFORPOC_2022</c>, seeded with a valid value, a valid-but-whitespace-padded value, a
+/// non-numeric/non-date string, an empty string, and a NULL): the row is <b>never dropped</b> --
+/// every seeded row landed at the destination -- and a failing conversion (or a NULL/empty
+/// source) simply yields <c>NULL</c> in that one output column, independent of every other
+/// column on the same row. Whitespace padding parses correctly (locale-neutral trim). This is
+/// what <c>ssisx generate</c>'s own <c>SsisFn</c> conversion helper is built to reproduce --
+/// see <c>Etl.Core</c>'s own doc comment for the generated code.</para>
+/// </summary>
+public sealed class DataConvertPayload
+{
+    public List<DataConversionColumnSpec> Columns { get; init; } = [];
+}
+
+/// <summary>One converted output column of a Data Conversion component. Every field except <see cref="SourceColumnLineageId"/> is a direct promotion of the same-named <see cref="PipelineOutputColumnSpec"/> field on this column -- kept here too so a consumer of <see cref="DataConvertPayload"/> doesn't need to cross-reference <see cref="PipelineComponentSpec.Outputs"/> by name.</summary>
+public sealed class DataConversionColumnSpec
+{
+    public required string OutputColumnName { get; init; }
+
+    /// <summary>The <c>#{...}</c> reference stripped down to the raw lineageId string, pointing at the upstream column being converted -- resolve the actual source column NAME via <c>Ssis.Extract.Dtsx.LineageBuilder</c>'s own producer index (same join key everything else in this model uses), not by string-matching here.</summary>
+    public string? SourceColumnLineageId { get; init; }
+
+    public string? TargetDataType { get; init; }
+    public int? Length { get; init; }
+    public int? Precision { get; init; }
+    public int? Scale { get; init; }
+    public int? CodePage { get; init; }
+    public string? ErrorRowDisposition { get; init; }
+    public string? TruncationRowDisposition { get; init; }
+
+    /// <summary>SSIS's own "use the faster, locale-neutral parsing routines" toggle -- observed <c>false</c> on the one real evidenced instance.</summary>
+    public bool? FastParse { get; init; }
+}
+
 public sealed class ScriptComponentPayload
 {
     public string? Language { get; init; }

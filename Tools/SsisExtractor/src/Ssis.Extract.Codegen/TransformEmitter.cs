@@ -18,7 +18,8 @@ public sealed record TransformRequest(
     PipelineSpec Pipeline,
     IReadOnlyList<PipelineComponentSpec> DerivedColumns,
     PipelineComponentSpec DestinationComponent,
-    IReadOnlySet<string>? NullableColumnNames = null);
+    IReadOnlySet<string>? NullableColumnNames = null,
+    IReadOnlyList<PipelineComponentSpec>? DataConversions = null);
 
 /// <summary>
 /// Emits one Data Flow Task's Derived Column transform, e.g.
@@ -58,6 +59,18 @@ public static class TransformEmitter
             }
         }
 
+        // A Data Conversion output column has no Expression (see DataConvertPayload's own doc
+        // comment) -- it's keyed separately here rather than folded into computedByName, since
+        // it needs a different translation path (a SsisFn.To*() call against the RAW source
+        // column, resolved via the "DataConversion" lineage edge LineageBuilder emits, not
+        // ExpressionTranslator).
+        var convertedByName = new Dictionary<string, DataConversionColumnSpec>();
+        foreach (var dataConversion in request.DataConversions ?? [])
+        {
+            foreach (var column in dataConversion.DataConvert?.Columns ?? [])
+                convertedByName.TryAdd(column.OutputColumnName, column);
+        }
+
         var resolved = PipelineResolver.ResolveDestinationInput(request.DestinationComponent);
         foreach (var unresolved in resolved.Unresolved)
             gaps.Add(new GenerationGap($"{request.EntityName}.{unresolved.ColumnName}", unresolved.Reason));
@@ -67,7 +80,7 @@ public static class TransformEmitter
         {
             if (computedByName.TryGetValue(column.PipelineColumnName, out var derivedColumn))
             {
-                var translated = TranslateDerivedColumn(derivedColumn, request.EntityName, column.ExternalColumnName, lineage, columnTypes, request.NullableColumnNames);
+                var translated = TranslateDerivedColumn(derivedColumn, request.EntityName, column.ExternalColumnName, lineage, columnTypes, request.NullableColumnNames, convertedByName);
                 if (translated is NotTranslatable notTranslatable)
                 {
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}", notTranslatable.Reason));
@@ -75,6 +88,19 @@ public static class TransformEmitter
                 }
 
                 var expr = ((TranslatedOk)translated).CSharpExpression;
+                CollectSsisFunctions(expr, functionsUsed);
+                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+            }
+            else if (convertedByName.TryGetValue(column.PipelineColumnName, out var conversion))
+            {
+                var converted = TranslateDataConversion(conversion, column.PipelineColumnName, lineage);
+                if (converted is NotTranslatable notTranslatable)
+                {
+                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}", notTranslatable.Reason));
+                    continue;
+                }
+
+                var expr = ((TranslatedOk)converted).CSharpExpression;
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
@@ -123,7 +149,7 @@ public static class TransformEmitter
     private static TranslatedExpression TranslateDerivedColumn(
         PipelineOutputColumnSpec derivedColumn, string entityName, string destinationColumnName,
         LineageSpec lineage, Dictionary<string, PipelineOutputColumnSpec> columnTypes,
-        IReadOnlySet<string>? nullableColumnNames)
+        IReadOnlySet<string>? nullableColumnNames, Dictionary<string, DataConversionColumnSpec> convertedByName)
     {
         var expressionText = derivedColumn.FriendlyExpression ?? derivedColumn.Expression;
         if (expressionText is null)
@@ -144,6 +170,23 @@ public static class TransformEmitter
         {
             if (references.ContainsKey(edge.FromColumnName)) continue;
 
+            // A reference to a Data Conversion's own output column (e.g. DER_Enrich.TenureDays
+            // referencing DCONV_Types.SignupDate_dt) has no row-type property of its own to read
+            // -- unlike every other producer here, it's computed inline from its RAW source
+            // column via the same SsisFn.ToNullable* helper TranslateDataConversion uses for the
+            // direct-to-destination case. Always nullable (IgnoreFailure's own guarantee, see
+            // DataConvertPayload's doc comment), independent of nullableColumnNames evidence.
+            if (convertedByName.TryGetValue(edge.FromColumnName, out var conversion))
+            {
+                var convertedExpr = TranslateDataConversion(conversion, edge.FromColumnName, lineage);
+                if (convertedExpr is NotTranslatable convertedGap) return convertedGap;
+
+                var convertedType = MapPipelineTypeToSsisType(conversion.TargetDataType)
+                    ?? throw new InvalidOperationException($"Data Conversion column '{edge.FromColumnName}' translated successfully but its target type '{conversion.TargetDataType}' has no SsisType mapping -- TranslateDataConversion and MapPipelineTypeToSsisType have drifted out of sync.");
+                references[edge.FromColumnName] = new ColumnReference(((TranslatedOk)convertedExpr).CSharpExpression, convertedType, IsNullable: true);
+                continue;
+            }
+
             if (!columnTypes.TryGetValue(edge.FromColumnRefId, out var producerColumn))
                 return new NotTranslatable($"referenced column '{edge.FromColumnName}' has no resolvable producer in this pipeline");
 
@@ -158,6 +201,33 @@ public static class TransformEmitter
         return ExpressionTranslator.TranslateColumn(ast, entityName, destinationColumnName, references);
     }
 
+    /// <summary>
+    /// Resolves a Data Conversion column's own RAW source column (via the "DataConversion"
+    /// lineage edge <c>LineageBuilder</c> emits -- see that method's own doc comment) and wraps
+    /// it in the <c>SsisFn.To*</c> helper matching this generator's empirically-observed
+    /// IgnoreFailure semantics (see <see cref="DataConvertPayload"/>'s own doc comment: a
+    /// failing/NULL/empty conversion yields NULL, never drops the row). Only the two evidenced
+    /// target types are supported -- anything else is a named gap, not a guess, same "gaps not
+    /// guesses" rule as everywhere else in this tool. Internal (not private) so RouterEmitter
+    /// can reuse it for a Conditional Split condition referencing a Data Conversion column --
+    /// same sharing precedent as CollectSsisFunctions/MapPipelineTypeToSsisType below.
+    /// </summary>
+    internal static TranslatedExpression TranslateDataConversion(
+        DataConversionColumnSpec conversion, string outputColumnName, LineageSpec lineage)
+    {
+        var edge = lineage.Edges.FirstOrDefault(e => e.Kind == "DataConversion" && e.ToColumnName == outputColumnName);
+        if (edge is null)
+            return new NotTranslatable($"Data Conversion column '{outputColumnName}' has no resolvable source column");
+
+        var sourceRef = $"row.{edge.FromColumnName}";
+        return conversion.TargetDataType?.ToLowerInvariant() switch
+        {
+            "i4" => new TranslatedOk($"SsisFn.ToNullableI4({sourceRef})"),
+            "dbdate" => new TranslatedOk($"SsisFn.ToNullableDate({sourceRef})"),
+            _ => new NotTranslatable($"Data Conversion to target type '{conversion.TargetDataType}' is not supported yet"),
+        };
+    }
+
     /// <summary>Internal (not private) so RouterEmitter can reuse the exact same SsisFn.*
     /// detection for Conditional Split condition translation instead of duplicating it -- same
     /// sharing precedent as MapPipelineTypeToSsisType below.</summary>
@@ -169,6 +239,8 @@ public static class TransformEmitter
         if (csharpExpression.Contains("SsisFn.FindString(")) functionsUsed.Add("FindString");
         if (csharpExpression.Contains("SsisFn.DateDiffDays(")) functionsUsed.Add("DateDiffDays");
         if (csharpExpression.Contains("SsisFn.Str(")) functionsUsed.Add("Str");
+        if (csharpExpression.Contains("SsisFn.ToNullableI4(")) functionsUsed.Add("ToNullableI4");
+        if (csharpExpression.Contains("SsisFn.ToNullableDate(")) functionsUsed.Add("ToNullableDate");
     }
 
     /// <summary>Same evidenced surface as SsisPipelineTypeMap, mapped into the expression

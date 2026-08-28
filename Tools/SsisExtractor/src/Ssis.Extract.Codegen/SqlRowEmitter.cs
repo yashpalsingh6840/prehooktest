@@ -40,9 +40,15 @@ public static class SqlRowEmitter
 
             if (propertyLines.Count > 0) propertyLines.Add("");
             // NullabilityInference's own evidence (an ISNULL(x) check on this column somewhere
-            // downstream) -- see EntityEmitter's identical note for why string is excluded
-            // (a reference type needs no type-level change to hold null).
-            var isNullable = column.Type.ClrTypeName != "string" && (nullableColumnNames?.Contains(column.PipelineColumnName) ?? false);
+            // downstream), OR -- added alongside Data Conversion support -- a raw source column
+            // feeding a conversion (always potentially null, see DataConvertPayload's own doc
+            // comment). Unlike EntityEmitter's identical-looking check, string is NOT excluded
+            // here: this project generates with <Nullable>enable</Nullable> +
+            // TreatWarningsAsErrors, so a `string` property assigned a genuinely-null value
+            // (SqlRowReaderEmitter's own IsDBNull guard, keyed off this same set) is a build
+            // ERROR (CS8601), not just a runtime risk -- caught by actually building the
+            // generated project against a real NULL row, not assumed safe from the type alone.
+            var isNullable = nullableColumnNames?.Contains(column.PipelineColumnName) ?? false;
             var typeName = isNullable ? column.Type.ClrTypeName + "?" : column.Type.ClrTypeName;
             var initializer = !isNullable && column.Type.ClrTypeName == "string" ? " = \"\";" : "";
             propertyLines.Add($"    public {typeName} {column.PipelineColumnName} {{ get; set; }}{initializer}");

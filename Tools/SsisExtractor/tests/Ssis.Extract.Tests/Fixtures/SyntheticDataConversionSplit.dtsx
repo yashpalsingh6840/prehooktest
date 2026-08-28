@@ -1,0 +1,1028 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:refId="Package"
+  DTS:CreationDate="8/28/2026 1:12:55 PM"
+  DTS:CreationName="Microsoft.Package"
+  DTS:CreatorComputerName="IRIS-CSG-8214"
+  DTS:CreatorName="IRISSOFTWARE\yashpal.singh01"
+  DTS:DTSID="{5A8A3018-F0C2-4D27-AD60-1CEA7A98CAB1}"
+  DTS:ExecutableType="Microsoft.Package"
+  DTS:LastModifiedProductVersion="16.0.1000.6"
+  DTS:LocaleID="1033"
+  DTS:ObjectName="SyntheticDataConversionSplit"
+  DTS:ProtectionLevel="0"
+  DTS:VersionGUID="{DF7F0257-56B4-4DA9-80AE-C65BB57A6789}">
+  <DTS:Property
+    DTS:Name="PackageFormatVersion">8</DTS:Property>
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_Sql]"
+      DTS:CreationName="OLEDB"
+      DTS:DTSID="{14ED9340-7FDC-4E5F-92BE-9DDBF8FDD7A8}"
+      DTS:ObjectName="CM_Sql">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectRetryCount="1"
+          DTS:ConnectRetryInterval="5"
+          DTS:ConnectionString="Data Source=.\SQLFORPOC_2022;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Variables />
+  <DTS:Executables>
+    <DTS:Executable
+      DTS:refId="Package\DFT_DataConversionSplitDemo"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:DTSID="{9FF57503-5B52-49DE-B855-D82C7AF86C62}"
+      DTS:ExecutableType="Microsoft.Pipeline"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="DFT_DataConversionSplitDemo"
+      DTS:TaskContact="Performs high-performance data extraction, transformation and loading;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <pipeline
+          version="1">
+          <components>
+            <component
+              refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity"
+              componentClassID="Microsoft.ConditionalSplit"
+              contactInfo="Conditional Split;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0"
+              description="Routes data rows to different outputs depending on the content of the data. Use conditions (SSIS expressions) to specify which rows are routed. For example, separate records that need to be cleaned from those that are ready to be loaded or route only a subset of records."
+              name="CSPLIT_Validity"
+              usesDispositions="true">
+              <inputs>
+                <input
+                  refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Inputs[Conditional Split Input]"
+                  description="Input to the Conditional Split Transformation"
+                  name="Conditional Split Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Inputs[Conditional Split Input].Columns[ID]"
+                      cachedDataType="i4"
+                      cachedName="ID"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[ID]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Inputs[Conditional Split Input].Columns[CustomerIdText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="CustomerIdText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[CustomerIdText]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Inputs[Conditional Split Input].Columns[SignupDateText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="SignupDateText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDateText]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Inputs[Conditional Split Input].Columns[CustomerId_i4]"
+                      cachedDataType="i4"
+                      cachedName="CustomerId_i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[CustomerId_i4]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Inputs[Conditional Split Input].Columns[SignupDate_dt]"
+                      cachedDataType="dbDate"
+                      cachedName="SignupDate_dt"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[SignupDate_dt]" />
+                  </inputColumns>
+                  <externalMetadataColumns />
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Outputs[Valid]"
+                  description="Output 1 of the Conditional Split Transformation"
+                  errorOrTruncationOperation="Computation"
+                  errorRowDisposition="FailComponent"
+                  exclusionGroup="1"
+                  name="Valid"
+                  synchronousInputId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Inputs[Conditional Split Input]"
+                  truncationRowDisposition="FailComponent">
+                  <properties>
+                    <property
+                      containsID="true"
+                      dataType="System.String"
+                      description="Specifies the expression. This expression version uses lineage identifiers instead of column names."
+                      name="Expression">![ISNULL](#{Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[CustomerId_i4]})</property>
+                    <property
+                      containsID="true"
+                      dataType="System.String"
+                      description="Specifies the friendly version of the expression. This expression version uses column names."
+                      expressionType="Notify"
+                      name="FriendlyExpression">!ISNULL(CustomerId_i4)</property>
+                    <property
+                      dataType="System.Int32"
+                      description="Specifies the position of the condition in the list of conditions that the transformation evaluates. The evaluation order is from the lowest to the highest value."
+                      name="EvaluationOrder">0</property>
+                  </properties>
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Outputs[Invalid]"
+                  description="Default Output of the Conditional Split Transformation"
+                  exclusionGroup="1"
+                  name="Invalid"
+                  synchronousInputId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Inputs[Conditional Split Input]">
+                  <properties>
+                    <property
+                      dataType="System.Boolean"
+                      name="IsDefaultOut">true</property>
+                  </properties>
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Outputs[Conditional Split Error Output]"
+                  description="Error Output of the Conditional Split Transformation"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="Conditional Split Error Output"
+                  synchronousInputId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Inputs[Conditional Split Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Outputs[Conditional Split Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Outputs[Conditional Split Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Outputs[Conditional Split Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Outputs[Conditional Split Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_DataConversionSplitDemo\DCONV_Types"
+              componentClassID="Microsoft.DataConvert"
+              contactInfo="Data Conversion;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0"
+              description="Data Conversion"
+              name="DCONV_Types"
+              usesDispositions="true">
+              <inputs>
+                <input
+                  refId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Inputs[Data Conversion Input]"
+                  name="Data Conversion Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Inputs[Data Conversion Input].Columns[CustomerIdText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="CustomerIdText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[CustomerIdText]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Inputs[Data Conversion Input].Columns[SignupDateText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="SignupDateText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDateText]" />
+                  </inputColumns>
+                  <externalMetadataColumns />
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output]"
+                  exclusionGroup="1"
+                  name="Data Conversion Output"
+                  synchronousInputId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Inputs[Data Conversion Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[CustomerId_i4]"
+                      dataType="i4"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="IgnoreFailure"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[CustomerId_i4]"
+                      name="CustomerId_i4"
+                      truncationRowDisposition="IgnoreFailure">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Specifies the input column used as the source of data for the conversion."
+                          name="SourceInputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[CustomerIdText]}</property>
+                        <property
+                          dataType="System.Boolean"
+                          description="Indicates whether the column uses the faster, locale-neutral parsing routines."
+                          name="FastParse">false</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[SignupDate_dt]"
+                      dataType="dbDate"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="IgnoreFailure"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[SignupDate_dt]"
+                      name="SignupDate_dt"
+                      truncationRowDisposition="IgnoreFailure">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Specifies the input column used as the source of data for the conversion."
+                          name="SourceInputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDateText]}</property>
+                        <property
+                          dataType="System.Boolean"
+                          description="Indicates whether the column uses the faster, locale-neutral parsing routines."
+                          name="FastParse">false</property>
+                      </properties>
+                    </outputColumn>
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Error Output]"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="Data Conversion Error Output"
+                  synchronousInputId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Inputs[Data Conversion Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure"
+              componentClassID="Microsoft.DerivedColumn"
+              contactInfo="Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0"
+              description="Creates new column values by applying expressions to transformation input columns. Create new columns or overwrite existing ones. For example, concatenate the values from the 'first name' and 'last name' column to make a 'full name' column."
+              name="DER_InvalidTenure"
+              usesDispositions="true">
+              <inputs>
+                <input
+                  refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Inputs[Derived Column Input]"
+                  description="Input to the Derived Column Transformation"
+                  name="Derived Column Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Inputs[Derived Column Input].Columns[ID]"
+                      cachedDataType="i4"
+                      cachedName="ID"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[ID]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Inputs[Derived Column Input].Columns[CustomerIdText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="CustomerIdText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[CustomerIdText]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Inputs[Derived Column Input].Columns[SignupDateText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="SignupDateText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDateText]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Inputs[Derived Column Input].Columns[CustomerId_i4]"
+                      cachedDataType="i4"
+                      cachedName="CustomerId_i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[CustomerId_i4]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Inputs[Derived Column Input].Columns[SignupDate_dt]"
+                      cachedDataType="dbDate"
+                      cachedName="SignupDate_dt"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[SignupDate_dt]" />
+                  </inputColumns>
+                  <externalMetadataColumns />
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Outputs[Derived Column Output]"
+                  description="Default Output of the Derived Column Transformation"
+                  exclusionGroup="1"
+                  name="Derived Column Output"
+                  synchronousInputId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Inputs[Derived Column Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Outputs[Derived Column Output].Columns[TenureDays]"
+                      dataType="i4"
+                      errorOrTruncationOperation="Computation"
+                      errorRowDisposition="FailComponent"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Outputs[Derived Column Output].Columns[TenureDays]"
+                      name="TenureDays"
+                      truncationRowDisposition="FailComponent">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Expression"
+                          name="Expression">[ISNULL](#{Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[SignupDate_dt]}) ? -1 : [DATEDIFF]("dd",#{Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[SignupDate_dt]},[GETDATE]())</property>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Friendly Expression"
+                          expressionType="Notify"
+                          name="FriendlyExpression">ISNULL(SignupDate_dt) ? -1 : DATEDIFF("dd",SignupDate_dt,GETDATE())</property>
+                      </properties>
+                    </outputColumn>
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Outputs[Derived Column Error Output]"
+                  description="Error Output of the Derived Column Transformation"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="Derived Column Error Output"
+                  synchronousInputId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Inputs[Derived Column Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Outputs[Derived Column Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Outputs[Derived Column Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure"
+              componentClassID="Microsoft.DerivedColumn"
+              contactInfo="Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0"
+              description="Creates new column values by applying expressions to transformation input columns. Create new columns or overwrite existing ones. For example, concatenate the values from the 'first name' and 'last name' column to make a 'full name' column."
+              name="DER_ValidTenure"
+              usesDispositions="true">
+              <inputs>
+                <input
+                  refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Inputs[Derived Column Input]"
+                  description="Input to the Derived Column Transformation"
+                  name="Derived Column Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Inputs[Derived Column Input].Columns[ID]"
+                      cachedDataType="i4"
+                      cachedName="ID"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[ID]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Inputs[Derived Column Input].Columns[CustomerIdText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="CustomerIdText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[CustomerIdText]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Inputs[Derived Column Input].Columns[SignupDateText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="SignupDateText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDateText]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Inputs[Derived Column Input].Columns[CustomerId_i4]"
+                      cachedDataType="i4"
+                      cachedName="CustomerId_i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[CustomerId_i4]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Inputs[Derived Column Input].Columns[SignupDate_dt]"
+                      cachedDataType="dbDate"
+                      cachedName="SignupDate_dt"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[SignupDate_dt]" />
+                  </inputColumns>
+                  <externalMetadataColumns />
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Outputs[Derived Column Output]"
+                  description="Default Output of the Derived Column Transformation"
+                  exclusionGroup="1"
+                  name="Derived Column Output"
+                  synchronousInputId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Inputs[Derived Column Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Outputs[Derived Column Output].Columns[TenureDays]"
+                      dataType="i4"
+                      errorOrTruncationOperation="Computation"
+                      errorRowDisposition="FailComponent"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Outputs[Derived Column Output].Columns[TenureDays]"
+                      name="TenureDays"
+                      truncationRowDisposition="FailComponent">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Expression"
+                          name="Expression">[ISNULL](#{Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[SignupDate_dt]}) ? -1 : [DATEDIFF]("dd",#{Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[SignupDate_dt]},[GETDATE]())</property>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Friendly Expression"
+                          expressionType="Notify"
+                          name="FriendlyExpression">ISNULL(SignupDate_dt) ? -1 : DATEDIFF("dd",SignupDate_dt,GETDATE())</property>
+                      </properties>
+                    </outputColumn>
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Outputs[Derived Column Error Output]"
+                  description="Error Output of the Derived Column Transformation"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="Derived Column Error Output"
+                  synchronousInputId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Inputs[Derived Column Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Outputs[Derived Column Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Outputs[Derived Column Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination"
+              componentClassID="Microsoft.OLEDBDestination"
+              contactInfo="OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4"
+              description="OLE DB Destination"
+              name="OLE DB Destination"
+              usesDispositions="true"
+              version="4">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset">[dbo].[SyntheticDataConversionSplitTarget]</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Forces the use of the DefaultCodePage property value when describing character data."
+                  name="AlwaysUseDefaultCodePage">false</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">3</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the values supplied for identity columns will be copied to the destination. If false, values for identity columns will be auto-generated at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepIdentity">false</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the columns containing null will have null inserted in the destination. If false, columns containing null will have their default values inserted at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepNulls">false</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies options to be used with fast load.  Applies only if fast load is turned on."
+                  name="FastLoadOptions"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies when commits are issued during data insertion.  A value of 0 specifies that one commit will be issued at the end of data insertion.  Applies only if fast load is turned on."
+                  name="FastLoadMaxInsertCommitSize">2147483647</property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_Sql]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_Sql]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <inputs>
+                <input
+                  refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input]"
+                  errorOrTruncationOperation="Insert"
+                  errorRowDisposition="FailComponent"
+                  hasSideEffects="true"
+                  name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[ID]"
+                      cachedDataType="i4"
+                      cachedName="ID"
+                      externalMetadataColumnId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[ID]"
+                      lineageId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[ID]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[CustomerId_i4]"
+                      cachedDataType="i4"
+                      cachedName="CustomerId_i4"
+                      externalMetadataColumnId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[CustomerId_i4]"
+                      lineageId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[CustomerId_i4]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[SignupDate_dt]"
+                      cachedDataType="dbDate"
+                      cachedName="SignupDate_dt"
+                      externalMetadataColumnId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[SignupDate_dt]"
+                      lineageId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[SignupDate_dt]" />
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[TenureDays]"
+                      cachedDataType="i4"
+                      cachedName="TenureDays"
+                      externalMetadataColumnId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[TenureDays]"
+                      lineageId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[TenureDays]" />
+                  </inputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[ID]"
+                      dataType="i4"
+                      name="ID" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[CustomerId_i4]"
+                      dataType="i4"
+                      name="CustomerId_i4" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[SignupDate_dt]"
+                      dataType="dbDate"
+                      name="SignupDate_dt" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[TenureDays]"
+                      dataType="i4"
+                      name="TenureDays" />
+                  </externalMetadataColumns>
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Outputs[OLE DB Destination Error Output]"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="OLE DB Destination Error Output"
+                  synchronousInputId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_DataConversionSplitDemo\OLE DB Source"
+              componentClassID="Microsoft.OLEDBSource"
+              contactInfo="OLE DB Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;7"
+              description="OLE DB Source"
+              name="OLE DB Source"
+              usesDispositions="true"
+              version="7">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset"></property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor">SELECT ID, CustomerIdText, SignupDateText FROM dbo.SyntheticDataConversionSplitInput</property>
+                <property
+                  dataType="System.String"
+                  description="The variable that contains the SQL command to be executed."
+                  name="SqlCommandVariable"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Forces the use of the DefaultCodePage property value when describing character data."
+                  name="AlwaysUseDefaultCodePage">false</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">2</property>
+                <property
+                  dataType="System.String"
+                  description="The mappings between the parameters in the SQL command and variables."
+                  name="ParameterMapping"></property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_Sql]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_Sql]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <outputs>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output]"
+                  name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[ID]"
+                      dataType="i4"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[ID]"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[ID]"
+                      name="ID"
+                      truncationRowDisposition="FailComponent" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[CustomerIdText]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[CustomerIdText]"
+                      length="50"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[CustomerIdText]"
+                      name="CustomerIdText"
+                      truncationRowDisposition="FailComponent" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDateText]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[SignupDateText]"
+                      length="50"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDateText]"
+                      name="SignupDateText"
+                      truncationRowDisposition="FailComponent" />
+                  </outputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[ID]"
+                      dataType="i4"
+                      name="ID" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[CustomerIdText]"
+                      dataType="wstr"
+                      length="50"
+                      name="CustomerIdText" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[SignupDateText]"
+                      dataType="wstr"
+                      length="50"
+                      name="SignupDateText" />
+                  </externalMetadataColumns>
+                </output>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Error Output]"
+                  isErrorOut="true"
+                  name="OLE DB Source Error Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ID]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ID]"
+                      name="ID" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[CustomerIdText]"
+                      dataType="wstr"
+                      length="50"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[CustomerIdText]"
+                      name="CustomerIdText" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[SignupDateText]"
+                      dataType="wstr"
+                      length="50"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[SignupDateText]"
+                      name="SignupDateText" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine"
+              componentClassID="Microsoft.UnionAll"
+              contactInfo="Union All;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;1"
+              description="Combines rows from multiple data flows without sorting. For example, add rows back to a data flow after correction of errors. If sorting is important, we recommend using the Merge transformation."
+              name="UNION_Recombine"
+              version="1">
+              <inputs>
+                <input
+                  refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[Union All Input 1]"
+                  name="Union All Input 1">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[Union All Input 1].Columns[ID]"
+                      cachedDataType="i4"
+                      cachedName="ID"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[ID]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[ID]}</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[Union All Input 1].Columns[CustomerIdText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="CustomerIdText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[CustomerIdText]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[CustomerIdText]}</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[Union All Input 1].Columns[SignupDateText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="SignupDateText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDateText]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[SignupDateText]}</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[Union All Input 1].Columns[CustomerId_i4]"
+                      cachedDataType="i4"
+                      cachedName="CustomerId_i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[CustomerId_i4]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[CustomerId_i4]}</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[Union All Input 1].Columns[SignupDate_dt]"
+                      cachedDataType="dbDate"
+                      cachedName="SignupDate_dt"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[SignupDate_dt]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[SignupDate_dt]}</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[Union All Input 1].Columns[TenureDays]"
+                      cachedDataType="i4"
+                      cachedName="TenureDays"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Outputs[Derived Column Output].Columns[TenureDays]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[TenureDays]}</property>
+                      </properties>
+                    </inputColumn>
+                  </inputColumns>
+                  <externalMetadataColumns />
+                </input>
+                <input
+                  refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[90]"
+                  name="">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[90].Columns[ID]"
+                      cachedDataType="i4"
+                      cachedName="ID"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[ID]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[ID]}</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[90].Columns[CustomerIdText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="CustomerIdText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[CustomerIdText]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[CustomerIdText]}</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[90].Columns[SignupDateText]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="SignupDateText"
+                      lineageId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output].Columns[SignupDateText]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[SignupDateText]}</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[90].Columns[CustomerId_i4]"
+                      cachedDataType="i4"
+                      cachedName="CustomerId_i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[CustomerId_i4]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[CustomerId_i4]}</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[90].Columns[SignupDate_dt]"
+                      cachedDataType="dbDate"
+                      cachedName="SignupDate_dt"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output].Columns[SignupDate_dt]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[SignupDate_dt]}</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[90].Columns[TenureDays]"
+                      cachedDataType="i4"
+                      cachedName="TenureDays"
+                      lineageId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Outputs[Derived Column Output].Columns[TenureDays]">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Output column lineage ID"
+                          name="OutputColumnLineageID">#{Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[TenureDays]}</property>
+                      </properties>
+                    </inputColumn>
+                  </inputColumns>
+                  <externalMetadataColumns />
+                </input>
+                <input
+                  refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[Union All Input 2]"
+                  dangling="true"
+                  hasSideEffects="true"
+                  name="Union All Input 2">
+                  <externalMetadataColumns />
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1]"
+                  name="Union All Output 1">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[ID]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[ID]"
+                      name="ID" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[CustomerIdText]"
+                      dataType="wstr"
+                      length="50"
+                      lineageId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[CustomerIdText]"
+                      name="CustomerIdText" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[SignupDateText]"
+                      dataType="wstr"
+                      length="50"
+                      lineageId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[SignupDateText]"
+                      name="SignupDateText" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[CustomerId_i4]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[CustomerId_i4]"
+                      name="CustomerId_i4" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[SignupDate_dt]"
+                      dataType="dbDate"
+                      lineageId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[SignupDate_dt]"
+                      name="SignupDate_dt" />
+                    <outputColumn
+                      refId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[TenureDays]"
+                      dataType="i4"
+                      lineageId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1].Columns[TenureDays]"
+                      name="TenureDays" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+          </components>
+          <paths>
+            <path
+              refId="Package\DFT_DataConversionSplitDemo.Paths[Data Conversion Output]"
+              endId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Inputs[Conditional Split Input]"
+              name="Data Conversion Output"
+              startId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Outputs[Data Conversion Output]" />
+            <path
+              refId="Package\DFT_DataConversionSplitDemo.Paths[Derived Column Output]"
+              endId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[Union All Input 1]"
+              name="Derived Column Output"
+              startId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Outputs[Derived Column Output]" />
+            <path
+              refId="Package\DFT_DataConversionSplitDemo.Paths[Derived Column Output1]"
+              endId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Inputs[90]"
+              name="Derived Column Output"
+              startId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Outputs[Derived Column Output]" />
+            <path
+              refId="Package\DFT_DataConversionSplitDemo.Paths[Invalid]"
+              endId="Package\DFT_DataConversionSplitDemo\DER_InvalidTenure.Inputs[Derived Column Input]"
+              name="Invalid"
+              startId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Outputs[Invalid]" />
+            <path
+              refId="Package\DFT_DataConversionSplitDemo.Paths[OLE DB Source Output]"
+              endId="Package\DFT_DataConversionSplitDemo\DCONV_Types.Inputs[Data Conversion Input]"
+              name="OLE DB Source Output"
+              startId="Package\DFT_DataConversionSplitDemo\OLE DB Source.Outputs[OLE DB Source Output]" />
+            <path
+              refId="Package\DFT_DataConversionSplitDemo.Paths[Union All Output 1]"
+              endId="Package\DFT_DataConversionSplitDemo\OLE DB Destination.Inputs[OLE DB Destination Input]"
+              name="Union All Output 1"
+              startId="Package\DFT_DataConversionSplitDemo\UNION_Recombine.Outputs[Union All Output 1]" />
+            <path
+              refId="Package\DFT_DataConversionSplitDemo.Paths[Valid]"
+              endId="Package\DFT_DataConversionSplitDemo\DER_ValidTenure.Inputs[Derived Column Input]"
+              name="Valid"
+              startId="Package\DFT_DataConversionSplitDemo\CSPLIT_Validity.Outputs[Valid]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+</DTS:Executable>

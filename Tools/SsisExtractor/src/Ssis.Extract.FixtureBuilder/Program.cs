@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split]");
             return 2;
         }
 
@@ -120,9 +120,17 @@ internal static class Program
         {
             return BuildDateDiffFixture(args[0]);
         }
+        if (fixtureName == "data-conversion")
+        {
+            return BuildDataConversionFixture(args[0]);
+        }
+        if (fixtureName == "data-conversion-split")
+        {
+            return BuildDataConversionSplitFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', or 'datediff'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', or 'data-conversion-split'.");
             return 2;
         }
 
@@ -731,6 +739,324 @@ internal static class Program
         var newCol = inst.InsertOutputColumnAt(output.ID, 0, "TenureDays", "");
         inst.SetOutputColumnDataTypeProperties(output.ID, newCol.ID, DataType.DT_I4, 0, 0, 0, 0);
         var expr = "ISNULL(SignupDate) ? -1 : DATEDIFF(\"dd\",SignupDate,GETDATE())";
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "FriendlyExpression", expr);
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "Expression", expr);
+
+        return meta;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand: ID, CustomerIdText, SignupDateText -- all three plain
+    /// strings) -> Data Conversion (CustomerIdText -&gt; CustomerId_i4 (DT_I4, IgnoreFailure/
+    /// IgnoreFailure); SignupDateText -&gt; SignupDate_dt (DT_DBDATE, IgnoreFailure/
+    /// IgnoreFailure)) -> OLE DB Destination.
+    ///
+    /// <para>Reproduces RBC_Demo_ETL's own Package_Transforms.dtsx (DFT_DerivedAndSplit,
+    /// DCONV_Types) shape exactly: two string-to-typed conversions, both dispositions
+    /// IgnoreFailure, discovered testing this tool against a real third-party portfolio
+    /// (SSIS_From_Sandeep, 2026-08-27/28). First used as an EMPIRICAL PROBE -- seeded with a
+    /// deliberate mix of valid/invalid/blank/whitespace-padded strings and actually EXECUTED
+    /// via dtexec against a real SSIS run (not guessed from Microsoft's own transformation
+    /// docs) to observe IgnoreFailure's real effect before any extractor/codegen code was
+    /// written against it -- then reused unchanged as the Gate-3 fixture once
+    /// DataConvertPayload/codegen existed. See CLAUDE.md's "Data Conversion component" section
+    /// for the exact observed results.</para>
+    ///
+    /// <para><b>Object-model shape, confirmed empirically before writing any reader/codegen
+    /// code</b> (same "ask the runtime, don't guess" discipline as trap 12) -- two real
+    /// findings neither obvious from Microsoft's own Data Conversion Transformation SDK sample
+    /// (which shows a DIFFERENT, apparently outdated API surface than this GAC's actual
+    /// <c>IDTSDesigntimeComponent100</c>):
+    /// <list type="bullet">
+    /// <item><c>MapOutputColumn</c> is NOT how a converted output column is created -- its real
+    /// signature (<c>MapOutputColumn(outputId, outputColumnId, externalMetadataColumnId,
+    /// bMatch)</c>, confirmed via reflection) is the OUTPUT-side mirror of
+    /// <c>MapInputColumn</c>, for wiring an EXISTING output column to an external metadata
+    /// column -- unrelated to creating a new converted column at all. The real mechanism is the
+    /// same <c>InsertOutputColumnAt</c> every other bespoke Derived-Column-shaped fixture in
+    /// this file already uses, plus <c>SetOutputColumnProperty(output.ID, newCol.ID,
+    /// "SourceInputColumnLineageID", vcol.LineageID)</c> to point the new column back at its
+    /// source -- matching the real evidenced XML's own <c>containsID="true"</c> custom
+    /// property exactly.</item>
+    /// <item><c>IDTSOutputColumn100.ErrorRowDisposition</c>/<c>.TruncationRowDisposition</c>
+    /// are ordinary settable properties (<c>DTSRowDisposition</c> enum: NotUsed=0,
+    /// IgnoreFailure=1, RedirectRow=2, FailComponent=4 -- confirmed via reflection, not
+    /// guessed), not custom properties -- set directly on the column returned by
+    /// <c>InsertOutputColumnAt</c>, unlike <c>SourceInputColumnLineageID</c>/<c>FastParse</c>
+    /// which ARE custom properties.</item>
+    /// </list>
+    /// The SOURCE string column being converted is marked <c>UT_READONLY</c> (its value is
+    /// read, not modified -- Data Conversion produces a NEW output column, exactly like Derived
+    /// Column's own convention), and -- matching the real DCONV_Types evidence exactly -- the
+    /// untouched <c>ID</c> passthrough column is NEVER explicitly marked at the Data Conversion
+    /// component itself (its own <c>&lt;inputColumns&gt;</c> lists only the two converted
+    /// source columns, not every upstream column); it still reaches the destination correctly,
+    /// confirmed by the destination's own <c>ResolveOleDbMetadata</c> resolving it via the
+    /// pipeline buffer's own lineage propagation, not by any explicit action here.</para>
+    ///
+    /// Requires the backing table from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-data-conversion-tables.sql</c> already
+    /// created and seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>. Lives under
+    /// tests/Ssis.Extract.Tests/Fixtures/ (test-tier, not SSDT-registered), same as
+    /// SyntheticDateDiff.dtsx.
+    /// </summary>
+    private static int BuildDataConversionFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticDataConversion" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_DataConversionDemo";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, CustomerIdText, SignupDateText FROM dbo.SyntheticDataConversionInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var dconvMeta = BuildDataConversion(pipe, srcOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticDataConversionTarget]");
+        AttachPath(pipe, dconvMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    private static IDTSComponentMetaData100 BuildDataConversion(MainPipe pipe, IDTSOutput100 upstreamOutput)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.DataConvert";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        meta.Name = "DCONV_Types";
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        var output = meta.OutputCollection[0];
+
+        AddConvertedColumn(meta, inst, input, virtualInput, output, 0, "CustomerIdText", "CustomerId_i4", DataType.DT_I4, 0, 0, 0, 0);
+        AddConvertedColumn(meta, inst, input, virtualInput, output, 1, "SignupDateText", "SignupDate_dt", DataType.DT_DBDATE, 0, 0, 0, 0);
+
+        return meta;
+    }
+
+    /// <summary>
+    /// Marks the SOURCE string column UT_READONLY (read, not modified) and adds ONE new
+    /// converted output column via InsertOutputColumnAt, pointed back at its source via the
+    /// SourceInputColumnLineageID custom property -- see BuildDataConversionFixture's own doc
+    /// comment for why this is the real mechanism (MapOutputColumn is not). Both dispositions
+    /// set to IgnoreFailure explicitly -- matches the real evidenced DCONV_Types shape, and is
+    /// this fixture's whole point: proving what IgnoreFailure actually does.
+    /// </summary>
+    private static void AddConvertedColumn(
+        IDTSComponentMetaData100 meta, IDTSDesigntimeComponent100 inst,
+        IDTSInput100 input, IDTSVirtualInput100 virtualInput, IDTSOutput100 output, int insertIndex,
+        string sourceColumnName, string outputColumnName, DataType targetType,
+        int length, int precision, int scale, int codePage)
+    {
+        var vcol = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>()
+            .First(v => v.Name == sourceColumnName);
+        inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+
+        var newCol = inst.InsertOutputColumnAt(output.ID, insertIndex, outputColumnName, "");
+        inst.SetOutputColumnDataTypeProperties(output.ID, newCol.ID, targetType, length, precision, scale, codePage);
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "SourceInputColumnLineageID", vcol.LineageID);
+        newCol.ErrorRowDisposition = DTSRowDisposition.RD_IgnoreFailure;
+        newCol.TruncationRowDisposition = DTSRowDisposition.RD_IgnoreFailure;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand: ID, CustomerIdText, SignupDateText) -> Data Conversion
+    /// (CustomerIdText -&gt; CustomerId_i4 DT_I4; SignupDateText -&gt; SignupDate_dt DT_DBDATE, both
+    /// dispositions IgnoreFailure) -> Conditional Split (case <c>!ISNULL(CustomerId_i4)</c> ->
+    /// Valid; default -> Invalid) -> each branch through its OWN Derived Column (<c>TenureDays
+    /// &lt;- ISNULL(SignupDate_dt) ? -1 : DATEDIFF("dd",SignupDate_dt,GETDATE())</c>) -> Union
+    /// All -> ONE shared OLE DB Destination.
+    ///
+    /// <para>Proves the two Data-Conversion cross-reference paths RBC_Demo_ETL's own
+    /// Package_Transforms.dtsx (DFT_DerivedAndSplit) actually needs, neither of which
+    /// <see cref="BuildDataConversionFixture"/> alone exercises (that fixture's converted
+    /// columns flow straight to a destination, never referenced by anything else):
+    /// <list type="bullet">
+    /// <item><b>RouterEmitter</b> resolving a Conditional Split condition that references a Data
+    /// Conversion output column (<c>CustomerId_i4</c>) -- the real package's own CSPLIT_Validity
+    /// does exactly this (<c>!ISNULL(CustomerID_i4) &amp;&amp; FINDSTRING(...)</c>), simplified
+    /// here to just the ISNULL half to isolate the cross-reference itself from FINDSTRING/TRIM
+    /// (already proven separately).</item>
+    /// <item><b>TransformEmitter</b> resolving a (per-branch, post-split) Derived Column
+    /// expression that references a Data Conversion output column (<c>SignupDate_dt</c>) -- the
+    /// real package's own DER_Enrich.TenureDays does exactly this.</item>
+    /// </list>
+    /// Added 2026-08-28, the same day full Conditional-Split/cross-reference support was added
+    /// to close the real package's own DFT_DerivedAndSplit gap -- confirmed structurally against
+    /// the real package first (regenerating it end to end, reading the emitted
+    /// CSPLIT_ValidityRouter.cs/CustomerEnrichedValidTransform.cs directly), then proven with
+    /// this dedicated, MINIMAL fixture (real package's own condition also needs FINDSTRING/TRIM,
+    /// which would mask whether the cross-reference itself works if reused verbatim here).</para>
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-data-conversion-split-tables.sql</c>
+    /// already created and seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>. Lives under
+    /// tests/Ssis.Extract.Tests/Fixtures/ (test-tier, not SSDT-registered), same as
+    /// SyntheticDataConversion.dtsx.
+    /// </summary>
+    private static int BuildDataConversionSplitFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticDataConversionSplit" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_DataConversionSplitDemo";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, CustomerIdText, SignupDateText FROM dbo.SyntheticDataConversionSplitInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var dconvMeta = BuildDataConversion(pipe, srcOutput);
+        var dconvOutput = dconvMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        var splitMeta = pipe.ComponentMetaDataCollection.New();
+        splitMeta.ComponentClassID = "Microsoft.ConditionalSplit";
+        var splitInst = splitMeta.Instantiate();
+        splitInst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        splitMeta.Name = "CSPLIT_Validity";
+
+        AttachPath(pipe, dconvOutput, splitMeta.InputCollection[0]);
+        splitInst.AcquireConnections(null);
+        splitInst.ReinitializeMetaData();
+        splitInst.ReleaseConnections();
+
+        var splitInput = splitMeta.InputCollection[0];
+        var splitVirtualInput = splitInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in splitVirtualInput.VirtualInputColumnCollection)
+        {
+            splitInst.SetUsageType(splitInput.ID, splitVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var defaultOutput = splitMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        defaultOutput.Name = "Invalid";
+
+        var caseOutput = splitInst.InsertOutput(DTSInsertPlacement.IP_AFTER, 0);
+        caseOutput.Name = "Valid";
+        // The real package's own CSPLIT_Validity is `!ISNULL(CustomerID_i4) &&
+        // FINDSTRING(...)` -- kept to just the ISNULL half here so this fixture isolates the
+        // Data-Conversion cross-reference itself, not FINDSTRING/TRIM (already proven
+        // separately by SyntheticFindStringTrim.dtsx).
+        var conditionText = "!ISNULL(CustomerId_i4)";
+        splitInst.SetOutputProperty(caseOutput.ID, "FriendlyExpression", conditionText);
+        splitInst.SetOutputProperty(caseOutput.ID, "Expression", conditionText);
+        splitInst.SetOutputProperty(caseOutput.ID, "EvaluationOrder", 0);
+
+        var validTenureMeta = BuildDerivedColumnTenureDaysFromConversion(pipe, caseOutput, "DER_ValidTenure");
+        var invalidTenureMeta = BuildDerivedColumnTenureDaysFromConversion(pipe, defaultOutput, "DER_InvalidTenure");
+
+        var unionMeta = pipe.ComponentMetaDataCollection.New();
+        unionMeta.ComponentClassID = "Microsoft.UnionAll";
+        var unionInst = unionMeta.Instantiate();
+        unionInst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        unionMeta.Name = "UNION_Recombine";
+
+        // Second input created BEFORE any path is attached -- see
+        // BuildConditionalSplitRemergeFixture's own doc comment for why (InsertInput throws
+        // 0xC020800E once the first input already has a live upstream connection).
+        var unionSecondInputId = unionMeta.InputCollection.New().ID;
+
+        AttachPath(pipe, validTenureMeta.OutputCollection[0], unionMeta.InputCollection[0]);
+        AttachPath(pipe, invalidTenureMeta.OutputCollection[0], unionMeta.InputCollection.GetObjectByID(unionSecondInputId));
+        unionInst.AcquireConnections(null);
+        unionInst.ReinitializeMetaData();
+        unionInst.ReleaseConnections();
+
+        var unionFirstInput = unionMeta.InputCollection[0];
+        var unionFirstVirtualInput = unionFirstInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in unionFirstVirtualInput.VirtualInputColumnCollection)
+        {
+            unionInst.SetUsageType(unionFirstInput.ID, unionFirstVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var unionSecondInput = unionMeta.InputCollection.GetObjectByID(unionSecondInputId);
+        var unionSecondVirtualInput = unionSecondInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in unionSecondVirtualInput.VirtualInputColumnCollection)
+        {
+            unionInst.SetUsageType(unionSecondInput.ID, unionSecondVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        // The second input's columns are NOT auto-mapped by ReinitializeMetaData() -- see
+        // BuildConditionalSplitRemergeFixture's own doc comment for why each must be pointed at
+        // the matching (by name) output column the first input already created.
+        var unionOutput = unionMeta.OutputCollection[0];
+        foreach (IDTSInputColumn100 inCol in unionSecondInput.InputColumnCollection)
+        {
+            var matchingOutputCol = unionOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>()
+                .FirstOrDefault(oc => oc.Name == inCol.Name)
+                ?? throw new InvalidOperationException($"fixture build error: Union All has no output column named '{inCol.Name}' to map the second input's own column onto.");
+            unionInst.SetInputColumnProperty(unionSecondInput.ID, inCol.ID, "OutputColumnLineageID", matchingOutputCol.LineageID);
+        }
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticDataConversionSplitTarget]");
+        AttachPath(pipe, unionOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A Derived Column that passes every upstream column through untouched and adds ONE new
+    /// column, <c>TenureDays &lt;- ISNULL(SignupDate_dt) ? -1 : DATEDIFF("dd",SignupDate_dt,
+    /// GETDATE())</c> -- referencing a Data Conversion column (SignupDate_dt) rather than a
+    /// plain source column, the exact shape RBC_Demo_ETL's own DER_Enrich.TenureDays uses. Named
+    /// per call site (<paramref name="componentName"/>) since this fixture needs two instances,
+    /// one per Conditional Split branch, matching BuildDerivedColumnLiteralTag's own per-branch
+    /// naming convention.
+    /// </summary>
+    private static IDTSComponentMetaData100 BuildDerivedColumnTenureDaysFromConversion(MainPipe pipe, IDTSOutput100 upstreamOutput, string componentName)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.DerivedColumn";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        meta.Name = componentName;
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var output = meta.OutputCollection[0];
+        var newCol = inst.InsertOutputColumnAt(output.ID, 0, "TenureDays", "");
+        inst.SetOutputColumnDataTypeProperties(output.ID, newCol.ID, DataType.DT_I4, 0, 0, 0, 0);
+        var expr = "ISNULL(SignupDate_dt) ? -1 : DATEDIFF(\"dd\",SignupDate_dt,GETDATE())";
         inst.SetOutputColumnProperty(output.ID, newCol.ID, "FriendlyExpression", expr);
         inst.SetOutputColumnProperty(output.ID, newCol.ID, "Expression", expr);
 
@@ -1352,8 +1678,19 @@ internal static class Program
 
         var input = meta.InputCollection[0];
         var virtualInput = input.GetVirtualInput();
+        var externalNames = new HashSet<string>(
+            input.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>().Select(e => e.Name));
+        // Only pull in virtual input columns the destination's own external metadata actually
+        // names -- a superfluous upstream column (e.g. a Data Conversion's own untouched raw
+        // string source, converted to a differently-named column the destination DOES want)
+        // marked UT_READONLY with no external mapping made "OLE DB Destination" fail runtime
+        // validation with VS_NEEDSNEWMETADATA (0xC004706B), confirmed empirically by comparing
+        // this fixture (which has exactly this shape) against every prior single-destination
+        // fixture (which never did). Every prior fixture's virtual input columns were already
+        // a subset of the destination's external columns, so this filter is a no-op for them.
         foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
         {
+            if (!externalNames.Contains(vcol.Name)) continue;
             inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
         }
 

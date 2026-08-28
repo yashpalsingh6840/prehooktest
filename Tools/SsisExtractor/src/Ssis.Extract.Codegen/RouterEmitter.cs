@@ -1,3 +1,5 @@
+using Ssis.Extract.Dtsx;
+using Ssis.Extract.Model.Pipeline;
 using Ssis.Runtime.Expressions;
 
 namespace Ssis.Extract.Codegen;
@@ -26,7 +28,9 @@ public static class RouterEmitter
     /// through to SsisFnEmitter.</summary>
     public sealed record RouterEmitResult(EmitResult Result, IReadOnlySet<string> SsisFunctionsUsed);
 
-    public static RouterEmitResult Emit(string ns, string routerClassName, string rowTypeNamespace, string rowTypeName, string ssisFnNamespace, ConditionalSplitPlan split)
+    public static RouterEmitResult Emit(
+        string ns, string routerClassName, string rowTypeNamespace, string rowTypeName, string ssisFnNamespace,
+        ConditionalSplitPlan split, PipelineSpec? pipeline = null, PipelineComponentSpec? dataConversion = null)
     {
         var splitComponent = split.Component;
         if (splitComponent.Inputs.Count != 1)
@@ -35,13 +39,40 @@ public static class RouterEmitter
                 $"Conditional Split '{splitComponent.Name}' has {splitComponent.Inputs.Count} input(s), expected exactly 1")]), new HashSet<string>());
         }
 
-        // Nullability is NOT inferred here -- NullabilityInference is deliberately scoped to
-        // Derived Column expressions only (see its own doc comment); a Conditional Split
-        // condition's own ISNULL(x) usage (e.g. RBC_Demo_ETL's CSPLIT_Validity) is a separate,
-        // still-open extension.
+        // A Conditional Split input column produced by a Data Conversion component (e.g.
+        // RBC_Demo_ETL's CSPLIT_Validity referencing CustomerID_i4) has no row-type property of
+        // its own -- same "computed inline from its RAW source column" shape TransformEmitter's
+        // own TranslateDerivedColumn resolves for a Derived Column referencing the same kind of
+        // column, reusing that exact translation rather than duplicating it. Always nullable
+        // (IgnoreFailure's own guarantee), independent of any ISNULL(x) usage evidence --
+        // unlike NullabilityInference (which stays scoped to Derived Column expressions, see its
+        // own doc comment), this recognition is structural, not usage-based, so it needs no
+        // separate "Conditional Split condition nullability" inference step at all.
+        var convertedByName = new Dictionary<string, DataConversionColumnSpec>();
+        foreach (var column in dataConversion?.DataConvert?.Columns ?? [])
+            convertedByName.TryAdd(column.OutputColumnName, column);
+        var lineage = pipeline is null ? null : LineageBuilder.Build(pipeline);
+
         var references = new Dictionary<string, ColumnReference>();
         foreach (var inputColumn in splitComponent.Inputs[0].Columns)
         {
+            if (lineage is not null && convertedByName.TryGetValue(inputColumn.CachedName, out var conversion))
+            {
+                var convertedExpr = TransformEmitter.TranslateDataConversion(conversion, inputColumn.CachedName, lineage);
+                if (convertedExpr is TranslatedOk ok)
+                {
+                    var convertedType = TransformEmitter.MapPipelineTypeToSsisType(conversion.TargetDataType);
+                    if (convertedType is not null)
+                    {
+                        references[inputColumn.CachedName] = new ColumnReference(ok.CSharpExpression, convertedType.Value, IsNullable: true);
+                        continue;
+                    }
+                }
+                // Unresolvable Data Conversion column -- fall through to the plain mapping below
+                // rather than failing the whole router; if a condition actually references it,
+                // TranslateCondition's own "no resolvable producing column" gap fires naturally.
+            }
+
             var mapped = TransformEmitter.MapPipelineTypeToSsisType(inputColumn.CachedDataType);
             if (mapped is null) continue; // unmapped buffer type -- simply unavailable as a reference, not a gap on its own
             references[inputColumn.CachedName] = new ColumnReference($"row.{inputColumn.CachedName}", mapped.Value);

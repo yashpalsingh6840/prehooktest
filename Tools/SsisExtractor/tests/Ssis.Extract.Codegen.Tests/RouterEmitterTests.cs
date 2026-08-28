@@ -31,6 +31,13 @@ public class RouterEmitterTests
             ?? throw new InvalidOperationException("expected SyntheticFindStringTrim.dtsx's flow to have a ConditionalSplit");
     }
 
+    private static DataFlowPlan LoadDataConversionSplitFlow()
+    {
+        var package = LoadSyntheticFixture("SyntheticDataConversionSplit.dtsx");
+        var plan = PackagePlanner.Plan(package);
+        return Assert.Single(plan.Flows);
+    }
+
     [Fact]
     public void Emit_TranslatesFindStringTrimCondition_AndReportsBothSsisFunctionsUsed()
     {
@@ -50,6 +57,30 @@ public class RouterEmitterTests
         Assert.Contains("using Generated.Ssis;", file.Content);
         Assert.Contains("SsisFn.FindString(SsisFn.Trim(row.Email), \"@\", 1) > 0", file.Content);
         Assert.Equal(new HashSet<string> { "FindString", "Trim" }, result.SsisFunctionsUsed);
+
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+    [Fact]
+    public void Emit_ResolvesAConditionReferencingADataConversionColumn_ViaSsisFnToNullable()
+    {
+        // The real-world motivating case: RBC_Demo_ETL's Package_Transforms.dtsx,
+        // CSPLIT_Validity's own condition references CustomerID_i4 -- a Data Conversion output
+        // column, not a plain buffer column -- via !ISNULL(...). Without dataConversion/pipeline
+        // passed through, the pre-existing reference-building here would have resolved it as an
+        // ordinary "row.CustomerId_i4" (which doesn't exist on the row type at all, since the
+        // conversion is computed inline, never materialized as a row property) -- proves the
+        // cross-reference resolves to the actual SsisFn.ToNullableI4 call against the RAW source
+        // column instead.
+        var flow = LoadDataConversionSplitFlow();
+        var split = flow.ConditionalSplit ?? throw new InvalidOperationException("expected SyntheticDataConversionSplit.dtsx's flow to have a ConditionalSplit");
+
+        var result = RouterEmitter.Emit("Generated.Mapping", "SplitRouter", "Generated.Sql", "SqlRow", "Generated.Ssis", split, flow.Pipeline, flow.DataConversion);
+
+        Assert.Empty(result.Result.Gaps);
+        var file = Assert.Single(result.Result.Files);
+        Assert.Contains("!((SsisFn.ToNullableI4(row.CustomerIdText) is null))", file.Content);
+        Assert.Equal(new HashSet<string> { "ToNullableI4" }, result.SsisFunctionsUsed);
 
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }

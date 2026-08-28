@@ -803,7 +803,7 @@ A second, unrelated real bug (`GateRunner` not setting the job process's working
 which silently broke the job's own `appsettings.json` lookup and surfaced as an
 unrelated-looking Windows-auth failure) was also caught and fixed the same session.
 
-## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile); nullable value-typed column support added 2026-08-27, same session -- an evidence-based minimal version (infer nullable from ISNULL(x) usage, unwrap with .Value everywhere else, a real named tradeoff vs. full null-flow analysis) scoped to SQL sources/Derived Columns only, verified end-to-end with a genuine NULL row against .\SQLFORPOC_2022)
+## Phase 0 extractor (`Tools/SsisExtractor/`, started 2026-08-13 — slice 5 complete, minus `pull`; synthetic component-coverage pass + slice 6's object-model oracle added 2026-08-14; Script Task AND Script Component source extraction — plan §4.5's both halves — plus `ssisx conformance` (migration-validation gate 1) added 2026-08-17; `Ssis.Runtime.Expressions` + `ssisx testgen` (migration-validation gate 2) added 2026-08-18; primary-key candidate detection added 2026-08-19; parallel-control-flow/direct-copy/error-routing synthetic fixture + client-facing portfolio survey added 2026-08-25; `ssisx generate` — SSIS-to-C# code generator, Phases 0-4 — built 2026-08-25, Gate 3 verified against its own output + nested-container support added 2026-08-26; portfolio survey now reports `ssisx generate` readiness too, added 2026-08-26; non-preload Execute SQL Task, OLE DB Source, and full-cache Lookup support added 2026-08-26, each Gate-3-or-equivalent verified; Conditional Split multi-destination routing — a new Etl.Core row-router abstraction plus condition translation — added 2026-08-26, Gate 3 verified; tested against a real 5-package/~30-component third-party portfolio (`SSIS_From_Sandeep`) 2026-08-27, one generation-gap classification bug fixed, Conditional Split multi-hop Union-All-remerge support added and end-to-end verified, File System Task pre-load/post-flow support added -- touching a new Etl.Core abstraction in the sibling SSIS_Rewrite repo -- and end-to-end verified; ADO NET Source/Destination support added, verified against the real package though not via a dedicated fixture -- an SSIS-object-model ADO.NET connection-manager creation issue in this environment blocked one, documented rather than resolved; FINDSTRING/TRIM support added to ExpressionTranslator 2026-08-27, closing a real router-level SsisFn-tracking bug along the way, verified against the real package and a dedicated fixture end-to-end; ternary and unary-negate support added to ExpressionTranslator 2026-08-27, same session, both already oracle-verified so no new semantics work needed, verified against the real package (gap reasons sharpened across two re-generations) and a dedicated fixture end-to-end; numeric '+' dispatch plus a computed SUBSTRING start argument added 2026-08-27, closing CustomerEnriched.EmailDomain fully -- verified with a fixture that reproduces the real package's own expression verbatim, run end-to-end; DATEDIFF("dd",...) support added 2026-08-27 with a new Ssis.Expression.Oracle corpus block (the first genuinely new semantics derivation this session, not just plumbing), closing CustomerEnriched.TenureDays fully -- found and named a new, separate, unfixed gap along the way (no SQL row/entity emitter tracks column nullability, so ISNULL on a nullable value-typed column fails to compile); nullable value-typed column support added 2026-08-27, same session -- an evidence-based minimal version (infer nullable from ISNULL(x) usage, unwrap with .Value everywhere else, a real named tradeoff vs. full null-flow analysis) scoped to SQL sources/Derived Columns only, verified end-to-end with a genuine NULL row against .\SQLFORPOC_2022; Data Conversion component support added 2026-08-28, first for SQL-source/single-destination flows only (a real dtexec probe run first to measure IgnoreFailure's actual behavior -- never drops a row, nulls the one failing column -- then LineageBuilder extended with a new "DataConversion" edge kind, TransformEmitter wired to emit SsisFn.ToNullableI4/ToNullableDate against the raw source column, and a real, previously-latent SqlRowEmitter/SqlRowReaderEmitter bug fixed along the way), then same day extended to the Conditional-Split-cross-reference case that round's own closing claim had missed -- RouterEmitter and a Derived-Column-referencing-a-Data-Conversion-column path both wired to the same TranslateDataConversion resolution, retiring both "Conditional Split condition nullability" and "CSV-source nullability" as gaps (the latter turned out not to exist at all for this feature), fixing two more real bugs found only by building/running the real package's whole regenerated solution for the first time (a missing nullableColumnNames thread into EntityEmitter, and a Roslyn nullable-flow-analysis CS8629 needing a targeted null-forgiving `!`), and closing a third, previously-SILENT PackagePlanner gap (a multi-source Merge Join flow used to generate broken code with zero reported gaps) -- `DFT_DerivedAndSplit` now closes fully end-to-end, verified against both the real package (0 warnings/0 errors across its whole generated solution) and a new dedicated fixture run against `.\SQLFORPOC_2022`)
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -2428,6 +2428,280 @@ pre-existing unrelated failures elsewhere.
 containers, Conditional Split -> Sort -> Merge, Data Conversion component support, Conditional
 Split condition nullability (RouterEmitter), and CSV-source nullability (CsvRowEmitter/
 ClassMapEmitter) -- the last two are this round's own named follow-ups.
+
+### Data Conversion component (2026-08-28) -- closes the last `SSIS_From_Sandeep` gap named above
+
+Picked up as the next round after nullable value-typed columns, same "run a real probe before
+guessing" discipline that built every other empirically-derived piece of this tool. Unlike
+DATEDIFF (a new SSIS *expression* function, needing `Ssis.Expression.Oracle`), Data Conversion
+is a pipeline *component* whose behavior (specifically: what `IgnoreFailure` actually does on a
+genuine conversion/truncation failure) is not documented anywhere trustworthy enough to guess
+from -- so the very first step was building a real fixture and running it through the real SSIS
+engine, before any reader/codegen code existed.
+
+**The probe, run for real via `dtexec` against `.\SQLFORPOC_2022`/`SsisPoC`** (backing tables:
+`tests/Ssis.Extract.Tests/Fixtures/synthetic-data-conversion-tables.sql`; fixture: `tests/
+Ssis.Extract.Tests/Fixtures/SyntheticDataConversion.dtsx`, `Ssis.Extract.FixtureBuilder`'s new
+`data-conversion` mode -- reproduces RBC_Demo_ETL's own `Package_Transforms.dtsx` shape exactly:
+`OLE DB Source` (SqlCommand: `ID, CustomerIdText, SignupDateText`, all plain strings) ->
+`Data Conversion` (`DCONV_Types`: `CustomerIdText` -> `CustomerId_i4` DT_I4,
+`SignupDateText` -> `SignupDate_dt` DT_DBDATE, both dispositions IgnoreFailure) ->
+`OLE DB Destination`) -- seeded five rows: a valid pair, a valid-but-whitespace-padded pair, an
+invalid pair (`"not-a-number"`/`"not-a-date"`), an empty-string pair, and a NULL pair. **Measured
+result, read back from the real target table after a real `DTSER_SUCCESS` run:** the row is
+**never dropped** -- all 5 rows landed at the destination -- and a failing/empty/NULL conversion
+simply yields `NULL` in that ONE output column, independent of every other column on the same
+row (`ID=3` -> `NULL/NULL`, `ID=4` -> `NULL/NULL`, `ID=5` -> `NULL/NULL`; `ID=2`'s
+whitespace-padded values parsed correctly -- confirms locale-neutral trimming). This is exactly
+what `ssisx generate`'s new `SsisFn.ToNullableI4`/`SsisFn.ToNullableDate` helpers reproduce, and
+what a later end-to-end run of the *generated* code was diffed against (exact match, see below).
+
+**Two real object-model facts nailed down building the fixture, neither guessed from
+Microsoft's own (evidently outdated) Data Conversion Transformation SDK sample, which shows a
+different API surface than this GAC's real `IDTSDesigntimeComponent100` uses**: `MapOutputColumn`
+is NOT how a converted output column is created -- it's the OUTPUT-side mirror of
+`MapInputColumn`, for wiring an EXISTING output column to an external metadata column, unrelated
+to creating one. The real mechanism is the same `InsertOutputColumnAt` every other bespoke
+Derived-Column-shaped fixture in this file already uses, plus `SetOutputColumnProperty(output.ID,
+newCol.ID, "SourceInputColumnLineageID", vcol.LineageID)` to point the new column back at its
+source. `IDTSOutputColumn100.ErrorRowDisposition`/`.TruncationRowDisposition` are ordinary
+settable properties (`DTSRowDisposition` enum, confirmed via reflection), not custom properties.
+
+**A real, unrelated destination-wiring bug was caught and fixed building this fixture, not
+shipped as a workaround.** The first version of the fixture failed dtexec's own runtime
+validation with `VS_NEEDSNEWMETADATA` (0xC004706B) on the OLE DB Destination -- root-caused
+(not guessed) by dumping every column's actual `DataType`/`Length`/`Precision`/`Scale` via a
+throwaway PowerShell object-model probe and finding they matched perfectly; the real cause was
+`Ssis.Extract.FixtureBuilder`'s own shared `ResolveOleDbMetadata` helper marking EVERY virtual
+input column reaching a destination as `UT_READONLY`, including the two untouched RAW string
+columns (`CustomerIdText`/`SignupDateText`) that flow through a synchronous Data Conversion
+component but were never wanted at the destination at all -- the first fixture in this file
+where a component's own raw input columns are genuinely superfluous at the destination (every
+earlier fixture's virtual input columns happened to already be a subset of what the destination
+wanted). Fixed generically in the shared helper (filter to only the destination's own external
+column names before marking `UT_READONLY`) -- a no-op for every prior fixture, verified by the
+full suite staying green.
+
+**Extraction needed almost no new machinery** -- confirmed by reading the code before writing
+any: every converted column's type/length/precision/scale/dispositions are already captured
+generically by the pre-existing `PipelineOutputColumnSpec` every other component's output columns
+go through. The only genuinely bespoke piece is `DataConversionColumnSpec.SourceColumnLineageId`:
+unlike Derived Column (whose output column carries an `Expression` property with embedded
+`#{lineageId}` references inside a larger expression string), a Data Conversion output column
+instead carries a single-purpose `SourceInputColumnLineageID` custom property whose ENTIRE value
+is one `#{lineageId}` reference -- `PipelineReader.StripLineageRef` strips the wrapper, nothing
+more.
+
+**The real codegen gap, exactly as this file's own "remaining gaps" list already named it, was
+in `LineageBuilder`, not any row-type emitter.** `LineageBuilder.Build` only ever derived an edge
+from a column's own `Expression` (Derived Column's mechanism) -- a Data Conversion output column
+has no `Expression` at all, so it was neither an edge NOR a `ConstantColumns` entry: invisible to
+every lineage-based consumer, which is exactly the `CS1061 does not contain a definition for
+CustomerID_i4` failure this file's own earlier `SSIS_From_Sandeep` note already predicted.
+`LineageBuilder` now also walks each component's own `DataConvertPayload.Columns`, emitting a new
+`"DataConversion"`-kind edge from the resolved raw source column straight to the converted output
+column -- confirmed correct by reading the extracted `spec.json`'s own lineage edges directly,
+not just trusting the code.
+
+**`TransformEmitter` needed a genuinely new resolution path, not a tweak to the existing one.** A
+destination column matching a Data Conversion's own output column name is now resolved via
+`TranslateDataConversion`: finds the `"DataConversion"` lineage edge, wraps the raw source
+column reference in `SsisFn.ToNullableI4`/`SsisFn.ToNullableDate` (the only two evidenced target
+types -- anything else is a named gap, never guessed) -- e.g. `CustomerId_i4 =
+SsisFn.ToNullableI4(row.CustomerIdText)`. Both helpers take `string?` and return a nullable value
+type, matching the measured IgnoreFailure semantics exactly (`.NET`'s own `int.TryParse`/
+`DateOnly.TryParse` already trim whitespace, so no extra locale-neutral-parsing logic was
+needed). **A converted column's destination-entity property is nullable BY CONSTRUCTION, not by
+ISNULL evidence** the way `NullabilityInference`'s other entries are -- `IgnoreFailure` can
+always null out the value regardless of whether anything downstream guards it, so
+`PackageGenerator` unconditionally adds every `DataConvertPayload` column name (both sides: the
+converted output name for `EntityEmitter`, and the raw source name -- resolved via the same new
+lineage edge -- for `SqlRowEmitter`/`SqlRowReaderEmitter`) to the shared nullable-column-names set
+that already existed for ISNULL-based inference. The pre-existing "no Derived Column found ->
+direct-copy pipeline" gate in `PackageGenerator` was widened to `flow.DerivedColumn is null &&
+flow.DataConversion is null` -- this fixture has NO Derived Column anywhere, proving the widened
+gate rather than assuming it.
+
+**A second real, previously-latent bug was caught building the Gate 3 run, not shipped --
+found by actually building the generated project, not by unit tests.** `SqlRowReaderEmitter`
+already had an `IsDBNull` guard mechanism (added for the earlier nullable-value-typed-column
+round), correctly gated on the same nullable-column-names set -- so the reader itself came out
+right immediately. But `SqlRowEmitter`'s row-type property emission had an explicit `column.
+Type.ClrTypeName != "string"` exclusion ("a reference type needs no type-level change to hold
+null" -- true in general C#, but this generated project builds with `<Nullable>enable</Nullable>`
++ `TreatWarningsAsErrors=true`), so a `string` property assigned a genuinely-null value
+(`CustomerIdText`/`SignupDateText`, from the real seeded NULL row) was a **build ERROR**
+(`CS8601`), not just a runtime risk -- the row type still said non-nullable `string` even though
+the reader now correctly assigned it `null`. Caught only by actually building the generated
+project against seeded NULL data and reading the compiler's own error, exactly the "verify by
+running it" discipline this whole file is built on. Fixed by dropping the same exclusion from
+`SqlRowEmitter` (string columns get the same nullable-set-driven `?` treatment as every other
+type now) -- verified as a no-op for every prior fixture (none had ever had a nullable-inferred
+STRING column reach `SqlRowEmitter` before this round) by the full suite staying green.
+`EntityEmitter` still carries the identical-looking exclusion, now known to be equally wrong
+under the same conditions -- deliberately NOT fixed this round (nothing in this fixture exercises
+a nullable destination-entity string column), named here as a real, precise follow-up rather than
+left implicit.
+
+**Golden files needed a mechanical update, patched byte-preservingly, not regenerated.** Every
+`PipelineComponentSpec` now serializes a `"DataConvert": null` field (alphabetically after
+`ContactInfo`) for every pipeline component in both real PoC packages -- confirmed via a
+byte-preserving PowerShell regex insert (trap 18's own discipline: `git diff --stat` showed
+exactly 3 lines changed in `LoadEmployees.spec.json`, 6 in `LoadReferenceData.spec.json`, nothing
+else), not `SSISX_REGENERATE_GOLDEN=1` (which would have silently absorbed the unrelated
+in-progress SSDT edits already sitting in this working tree into the baseline).
+
+**Verified end to end, the same real-corpus discipline as every other round:** `ssisx generate`
+against the fixture, built against a copy of `Etl.Core` (0 warnings/0 errors once both bugs above
+were fixed), truncated the real target table, and actually RUN against `.\SQLFORPOC_2022` --
+read back afterward, not trusted from the exit code: `123/2026-01-15`, `456/2026-02-20`,
+`NULL/NULL`, `NULL/NULL`, `NULL/NULL` -- an **exact row-for-row match against the real dtexec
+probe run above**, the strongest evidence this tool's whole "gaps not guesses" philosophy can
+produce: the generated C# reproduces genuine SSIS runtime behavior, not an assumption about it.
+Two new unit tests added (`PackagePlannerTests.Plan_FindsTheDataConversionComponent_...`,
+`PackageGeneratorTests.Generate_TranslatesADataConversion_...`, the latter asserting the emitted
+`SsisFn.ToNullableI4`/`ToNullableDate` calls, the `string?`/`int?`/`DateOnly?` types, and the
+`IsDBNull` reader guard directly). Regression: 102/102 in `Ssis.Extract.Codegen.Tests` (was 100),
+same 3 pre-existing unrelated failures elsewhere (someone else's in-progress SSDT edits to
+`SSIS/LoadReferenceData.dtsx`/`SSIS/SSIS.dtproj`, not this session's or the extractor's).
+
+**Remaining known gaps, updated:** Flat File Destination, Excel Source, ForEach Loop containers,
+Conditional Split -> Sort -> Merge, Conditional Split condition nullability (RouterEmitter),
+CSV-source nullability (CsvRowEmitter/ClassMapEmitter), `EntityEmitter`'s own identical
+string-nullability exclusion (named above, same fix shape as `SqlRowEmitter`'s), and Data
+Conversion target types other than DT_I4/DT_DBDATE (e.g. DT_R8, DT_WSTR) -- all named, none
+guessed at.
+
+### Data Conversion + Conditional Split cross-reference (2026-08-28, same day) -- the round above did NOT actually close DFT_DerivedAndSplit
+
+The section above's own closing claim ("closes the last `SSIS_From_Sandeep` gap") was premature,
+caught immediately by re-running `ssisx generate` against the real `Package_Transforms.dtsx`:
+`DFT_DerivedAndSplit`'s own gap was still there, unchanged. The SQL-source/single-destination
+work above is real and correct as far as it goes, but the real flow's Data Conversion output
+columns are referenced by TWO other components that round never touched: `CSPLIT_Validity`'s own
+condition (`!ISNULL(CustomerID_i4) && FINDSTRING(...)`) and `DER_Enrich`'s own `TenureDays`
+expression (`ISNULL(SignupDate_dt) ? -1 : DATEDIFF(...)`) -- both reference a Data Conversion
+column from OUTSIDE the direct-to-destination path `TranslateDataConversion` alone covers. Sized
+live with the user (`AskUserQuestion`) before starting, since "just wire up the cross-reference"
+turned out to also need fixing two independent, pre-existing bugs neither visible until an actual
+full build/run was attempted.
+
+**What was added, mirroring the direct-to-destination path's own resolution rather than
+duplicating it:**
+- `TransformEmitter.TranslateDerivedColumn` (the mechanism `DER_Enrich.TenureDays` itself goes
+  through) now checks whether a referenced column is a Data Conversion output BEFORE falling back
+  to a plain `row.{name}` reference -- if so, it calls the same `TranslateDataConversion` the
+  direct-to-destination case uses and marks the resulting `ColumnReference` `IsNullable: true`
+  unconditionally (structural, not ISNULL-usage-based, same reasoning as the direct case).
+- `RouterEmitter.Emit` gained two new optional parameters (`PipelineSpec? pipeline`,
+  `PipelineComponentSpec? dataConversion`) and the identical recognition logic for a Conditional
+  Split's own input columns -- reusing `TransformEmitter.TranslateDataConversion` directly
+  (promoted from `private` to `internal`, same sharing precedent as `CollectSsisFunctions`/
+  `MapPipelineTypeToSsisType`) rather than re-deriving the SsisFn wrapping a second time. This
+  closes the "Conditional Split condition nullability" gap named above -- and closes it more
+  cheaply than expected: because a Data Conversion column's nullability is STRUCTURAL (not
+  ISNULL-usage-inferred), no new `NullabilityInference`-style evidence-gathering pass was needed,
+  just the same recognition-and-delegate pattern already proven for Derived Column.
+- `PackageGenerator`'s nullable-column-names computation (Data Conversion output names + their
+  raw source column names) was factored out into a shared `ResolveNullableColumnNames(flow)`
+  helper, called from BOTH the single-destination path and `GenerateConditionalSplitFlow` --
+  threaded into `RouterEmitter.Emit`, `ResolveFlowSource`, `EntityEmitter.Emit`, and every
+  branch's own `TransformEmitter.Emit` call in the split path, none of which received it before.
+
+**This also revealed that "CSV-source nullability" -- named as a separate follow-up gap in the
+original nullable-value-typed-columns round -- doesn't actually exist as a real, separate gap for
+Data Conversion's own sake.** A Data Conversion's converted value is never materialized as a row
+property at all (it's computed inline via `SsisFn.ToNullable*` wherever referenced); the CSV/SQL
+row type only ever needs its RAW source column, which is already a plain `string`/`string?` --
+no CLR type change needed regardless of source kind. Confirmed directly: regenerating the REAL
+CSV-sourced `Package_Transforms.dtsx` after these changes produced a correct
+`CSPLIT_ValidityRouter.cs` (`!((SsisFn.ToNullableI4(row.CustomerID) is null))`) and
+`CustomerEnrichedValidTransform.cs` (`TenureDays = ((SsisFn.ToNullableDate(row.SignupDate) is
+null) ? -(1) : SsisFn.DateDiffDays(SsisFn.ToNullableDate(row.SignupDate)!.Value,
+ctx.LoadedAtUtc))`) with **zero** `CsvRowEmitter`/`ClassMapEmitter` changes -- CSV-source
+nullability is retired as a named gap, not deferred further.
+
+**Three real, previously-latent bugs were caught getting this far, each found by actually
+building/running generated code, none by unit tests alone:**
+1. **`EntityEmitter.Emit` inside `GenerateConditionalSplitFlow` was never passed
+   `nullableColumnNames` at all** (a pre-existing gap in the Conditional Split path specifically,
+   unrelated to Data Conversion -- it would have equally affected an ISNULL-inferred nullable
+   column in ANY Conditional Split branch, just never observed before this was the first
+   Conditional Split fixture with one). Symptom: the real package's own `CustomerEnriched.cs`
+   entity generated `public int CustomerID` (non-nullable) while the transform assigned it
+   `SsisFn.ToNullableI4(...)` (`int?`) -- `CS0266`, caught by actually building the regenerated
+   real package's whole solution, not by the gap-count report (which showed 0 gaps for this flow
+   and looked like success). Fixed by passing the same `nullableColumnNames` already computed for
+   the router into this call.
+2. **A genuine Roslyn nullable-flow-analysis limitation, not a logic bug**: `TranslateScalar`'s
+   Reference case appends `.Value` unconditionally when `IsNullable`, which is correct for a
+   plain row-property reference (`row.SignupDate.Value` -- Roslyn narrows a repeated
+   member-access chain across an `is null` check on the identical expression) but produces
+   `CS8629` ("nullable value type may be null") for a CALL-expression reference
+   (`SsisFn.ToNullableDate(row.SignupDate).Value` -- Roslyn never assumes a method call is pure,
+   so it cannot narrow across two separate invocations even of the exact same call). Both
+   `CustomerEnrichedValidTransform.cs`/`...InvalidTransform.cs` failed to build with this exact
+   error. Fixed with a targeted null-forgiving `!` inserted only when
+   `ColumnReference.CSharpExpression` ends in `)` (the one syntactic signal distinguishing a call
+   from a plain property chain in this codebase) -- semantically justified, not a blind
+   suppression: the ISNULL guard that put this reference in the non-null branch calls the exact
+   same pure, deterministic function with the exact same input, so it provably cannot be null
+   here. Verified as a no-op for the pre-existing plain-row-property nullable case (its own exact
+   golden string, asserted since the 2026-08-27 round, is unchanged).
+3. **A real, previously-SILENT gap in `PackagePlanner.PlanDataFlow`, discovered by building the
+   REAL package's whole regenerated solution for the first time (every earlier verification round
+   trusted the gap-count report alone).** `DFT_SortAndMergeJoin` (a Merge Join over TWO Flat File
+   Sources, `FF_SRC_Contacts`/`FF_SRC_Customers3`) used to report ZERO gaps and generate a
+   `CustomerWithContactTransform.cs` that referenced `row.Email` -- a column that doesn't exist on
+   the generated row type at all, since `PlanDataFlow` silently picks `pipeline.Components.
+   FirstOrDefault(...)` for its ONE source, discarding the second entirely. This flow used to fail
+   for an unrelated, ALREADY-gapped reason (no way to translate `CustomerID_i4` before Data
+   Conversion support existed) -- Data Conversion's own widened acceptance criteria is what
+   newly, silently let it through. Fixed with a generic, up-front check in `PlanDataFlow`: more
+   than one source component (`Microsoft.FlatFileSource` or `SourceInfo.IsSqlSource`) in one Data
+   Flow Task is now an explicit gap ("a merge/join across multiple sources... is not supported
+   yet") rather than silently picking the first and generating broken code. Also correctly (and
+   harmlessly) catches `SyntheticParallelShapes.dtsx`'s own `DFT_DirectCopy` (two INDEPENDENT
+   source/destination pairs) one step earlier than its pre-existing "no Derived Column found"
+   gate -- still gapped either way, just with a clearer reason now.
+
+**Verified two ways, same discipline as every other round:**
+1. **The real motivating case** -- regenerating `Package_Transforms.dtsx` after all three fixes:
+   `DFT_DerivedAndSplit`'s gap is GONE entirely (confirmed by reading the emitted router/transform
+   files directly, quoted above); `DFT_SortAndMergeJoin` is now a clean, explicit gap instead of
+   silently-broken code; the WHOLE regenerated solution (all 3 successfully-wired flows plus a
+   copy of `Etl.Core`) builds with **0 warnings/0 errors** -- the first time this real package's
+   full generated solution was actually built end to end in one shot, not just spot-read.
+2. **A new dedicated fixture**, `tests/Ssis.Extract.Tests/Fixtures/SyntheticDataConversionSplit.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `data-conversion-split` mode): OLE DB Source -> Data
+   Conversion (`CustomerIdText`/`SignupDateText` -> `CustomerId_i4`/`SignupDate_dt`) ->
+   Conditional Split (`!ISNULL(CustomerId_i4)` -> Valid; default -> Invalid, isolating the
+   ISNULL-cross-reference from FINDSTRING/TRIM, already proven separately) -> each branch's own
+   Derived Column (`TenureDays <- ISNULL(SignupDate_dt) ? -1 : DATEDIFF(...)`) -> Union All -> one
+   destination -- deliberately simpler than the real package's own condition so it isolates the
+   STRUCTURAL cross-reference, the same "prove the minimal case first" discipline as every earlier
+   fixture in this file. **Generated, built against a copy of `Etl.Core` (0 warnings/0 errors --
+   confirming the null-forgiving fix was necessary AND sufficient), and actually RUN against
+   `.\SQLFORPOC_2022`**, seeded with a valid pair (ID=1), a valid-CustomerID/NULL-date pair (ID=2,
+   exercising the raw-source-column-nullability ordering fix directly -- this row crashed with
+   `SqlNullValueException` before that fix, confirmed by reproducing the crash first), and an
+   invalid-CustomerID pair (ID=3): read back afterward, not trusted from the exit code --
+   `1: 123/2026-08-18/10`, `2: 456/NULL/-1` (routed Valid, ISNULL branch genuinely exercised),
+   `3: NULL/2026-01-01/239` (routed Invalid, `SignupDate_dt` still converts fine independent of
+   the split decision) -- every row correct, including both boundary conditions. Four new unit
+   tests (`PackagePlannerTests.Plan_ReportsAnExplicitGap_ForADataFlowTaskWithMultipleSourceComponents`,
+   `PackageGeneratorTests.Generate_ResolvesADataConversionColumn_...`,
+   `RouterEmitterTests.Emit_ResolvesAConditionReferencingADataConversionColumn_...`,
+   `ExpressionTranslatorTests.TranslateColumn_AppendsNullForgiving_...`). Regression: 106/106 in
+   `Ssis.Extract.Codegen.Tests` (was 102), same 3 pre-existing unrelated failures elsewhere.
+
+**Remaining known gaps, updated again:** Flat File Destination, Excel Source, ForEach Loop
+containers, Conditional Split -> Sort -> Merge, multi-source merge/join flows (e.g.
+`DFT_SortAndMergeJoin`'s own Merge Join -- now correctly gapped rather than silently broken, but
+still not GENERATED), `EntityEmitter`'s own string-nullability exclusion (still not fixed --
+nothing has yet exercised a nullable destination-entity string column), and Data Conversion
+target types other than DT_I4/DT_DBDATE. Both "Conditional Split condition nullability" and
+"CSV-source nullability", named as follow-ups above, are now closed/retired respectively.
 
 ## Traps already hit once — don't re-derive these
 

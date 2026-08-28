@@ -569,6 +569,7 @@
               "ConditionalSplit": null,
               "Connections": [],
               "ContactInfo": "Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0",
+              "DataConvert": null,
               "Description": "Creates new column values by applying expressions to transformation input columns. Create new columns or overwrite existing ones. For example, concatenate the values from the \u0027first name\u0027 and \u0027last name\u0027 column to make a \u0027full name\u0027 column.",
               "FlatFileSource": null,
               "Inputs": [
@@ -888,6 +889,7 @@
                 }
               ],
               "ContactInfo": "Flat File Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;1",
+              "DataConvert": null,
               "Description": "Flat File Source",
               "FlatFileSource": {
                 "ColumnMappings": [
@@ -1416,6 +1418,7 @@
                 }
               ],
               "ContactInfo": "OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4",
+              "DataConvert": null,
               "Description": "OLE DB Destination",
               "FlatFileSource": null,
               "Inputs": [

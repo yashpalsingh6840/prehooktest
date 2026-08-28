@@ -74,6 +74,7 @@ internal static class PipelineReader
         ScriptComponentPayload? scriptComponent = null;
         AdoNetDestinationPayload? adoNetDestination = null;
         AdoNetSourcePayload? adoNetSource = null;
+        DataConvertPayload? dataConvert = null;
 
         // Script Component's own componentClassID is the generic "Microsoft.ManagedComponentHost"
         // -- not a Script-Component-specific ID the way every other bespoke type here is --
@@ -218,6 +219,26 @@ internal static class PipelineReader
                 Cases = cases,
             };
         }
+        else if (componentClassId == "Microsoft.DataConvert")
+        {
+            var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            dataConvert = new DataConvertPayload
+            {
+                Columns = (mainOutput?.Columns ?? []).Select(c => new DataConversionColumnSpec
+                {
+                    OutputColumnName = c.Name,
+                    SourceColumnLineageId = StripLineageRef(GetProperty(c.Properties, "SourceInputColumnLineageID")),
+                    TargetDataType = c.DataType,
+                    Length = c.Length,
+                    Precision = c.Precision,
+                    Scale = c.Scale,
+                    CodePage = c.CodePage,
+                    ErrorRowDisposition = c.ErrorRowDisposition,
+                    TruncationRowDisposition = c.TruncationRowDisposition,
+                    FastParse = ParseBool(GetProperty(c.Properties, "FastParse")),
+                }).ToList(),
+            };
+        }
 
         return new PipelineComponentSpec
         {
@@ -242,8 +263,15 @@ internal static class PipelineReader
             ScriptComponent = scriptComponent,
             AdoNetDestination = adoNetDestination,
             AdoNetSource = adoNetSource,
+            DataConvert = dataConvert,
         };
     }
+
+    /// <summary>Strips a <c>SourceInputColumnLineageID</c>-style property value (its entire content is one <c>#{lineageId}</c> reference, unlike Derived Column's <c>Expression</c> which embeds refs inside a larger expression string) down to the bare lineageId. Null/unwrapped input passes through unchanged rather than throwing -- defensive, same as this file's other best-effort parses.</summary>
+    private static string? StripLineageRef(string? value) =>
+        value is not null && value.StartsWith("#{", StringComparison.Ordinal) && value.EndsWith('}')
+            ? value[2..^1]
+            : value;
 
     /// <summary>
     /// Best-effort parse of a Lookup's <c>ReferenceMetadataXml</c> custom property -- an

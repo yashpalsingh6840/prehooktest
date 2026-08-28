@@ -64,6 +64,29 @@ public static partial class LineageBuilder
                     }
                 }
             }
+
+            // A Data Conversion output column has no Expression at all -- its whole "how was
+            // this produced" story is the single SourceColumnLineageId reference promoted onto
+            // DataConvertPayload (see that type's own doc comment for why Expression-based
+            // parsing above never sees it). Without this, a converted column would be neither
+            // an edge nor a ConstantColumns entry -- invisible to every lineage-based consumer
+            // (TransformEmitter's reference resolution included), the exact "row-type
+            // generation" gap CLAUDE.md names for this component.
+            if (comp.DataConvert is { } dataConvert)
+            {
+                foreach (var dcol in dataConvert.Columns)
+                {
+                    if (dcol.SourceColumnLineageId is not { } refLineageId) continue;
+                    var outputCol = comp.Outputs
+                        .SelectMany(o => o.Columns)
+                        .FirstOrDefault(c => c.Name == dcol.OutputColumnName);
+                    if (outputCol is null) continue;
+
+                    var to = new ColumnRef(comp.RefId, comp.Name, outputCol.RefId, outputCol.Name, outputCol.LineageId);
+                    consumedLineageIds.Add(refLineageId);
+                    edges.Add(MakeEdge(producers, refLineageId, to, kind: "DataConversion", expression: null));
+                }
+            }
         }
 
         var constantColumns = new List<LineageColumnRefSpec>();

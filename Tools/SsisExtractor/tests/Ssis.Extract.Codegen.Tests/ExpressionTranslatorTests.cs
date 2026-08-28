@@ -292,6 +292,28 @@ public class ExpressionTranslatorTests
     }
 
     [Fact]
+    public void TranslateColumn_AppendsNullForgiving_WhenTheNullableReferenceIsACallExpression()
+    {
+        // A Data Conversion cross-reference (e.g. DER_Enrich.TenureDays referencing
+        // DCONV_Types.SignupDate_dt) resolves to "SsisFn.ToNullableDate(row.SignupDateText)",
+        // not a plain row property -- calling it twice (once for the ISNULL check above, once
+        // here for .Value) is a build ERROR (CS8629) without the null-forgiving "!" in between,
+        // since Roslyn's nullable flow analysis never narrows a repeated METHOD CALL the way it
+        // narrows the plain "row.SignupDate" case above. Caught by actually building the
+        // generated project against a real Conditional-Split-plus-Data-Conversion fixture, not
+        // by this test alone (see PackageGeneratorTests' own SyntheticDataConversionSplit case).
+        var ast = SsisExpression.Parse("ISNULL(SignupDate_dt) ? -1 : DATEDIFF(\"dd\",SignupDate_dt,GETDATE())");
+        var refs = RefsNullable(("SignupDate_dt", "SsisFn.ToNullableDate(row.SignupDateText)", SsisType.DbDate, true));
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "TenureDays", refs);
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal(
+            "((SsisFn.ToNullableDate(row.SignupDateText) is null) ? -(1) : SsisFn.DateDiffDays(SsisFn.ToNullableDate(row.SignupDateText)!.Value, ctx.LoadedAtUtc))",
+            ok.CSharpExpression);
+    }
+
+    [Fact]
     public void TranslateCondition_TranslatesStringEquality_WhenBothOperandsAreKnownFunctionCalls()
     {
         // Superseded by TryResolveOperandType now knowing UPPER's own return type (added
