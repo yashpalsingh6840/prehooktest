@@ -533,7 +533,12 @@ public static class PackageGenerator
             Pipeline: flow.Pipeline,
             DerivedColumns: [],
             DestinationComponent: flow.DestinationComponent,
-            NullableColumnNames: mergeJoinResult.NullableColumnNames));
+            NullableColumnNames: mergeJoinResult.NullableColumnNames,
+            // MergeJoinEmitter already resolved every one of rowTypeName's own columns itself
+            // (including through a Data Conversion, via its own SourceColumnLineageId walk) --
+            // the unrecognized-producer gate has no visibility into that resolution, so it must
+            // be skipped here (see TransformRequest.TrustAllPassthroughColumns's own doc comment).
+            TrustAllPassthroughColumns: true));
         Merge(files, gaps, transformResult.Result);
         foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
         foreach (var fn in mergeJoinResult.SsisFunctionsUsed) functionsUsed.Add(fn);

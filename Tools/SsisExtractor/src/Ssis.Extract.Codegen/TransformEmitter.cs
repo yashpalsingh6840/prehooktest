@@ -20,7 +20,16 @@ public sealed record TransformRequest(
     IReadOnlyList<PipelineComponentSpec> DerivedColumns,
     PipelineComponentSpec DestinationComponent,
     IReadOnlySet<string>? NullableColumnNames = null,
-    IReadOnlyList<PipelineComponentSpec>? DataConversions = null);
+    IReadOnlyList<PipelineComponentSpec>? DataConversions = null,
+    // True only for a Merge Join flow's own call (GenerateMergeJoinFlow): MergeJoinEmitter
+    // builds RowTypeName as its OWN combined row type, already resolving every output column's
+    // true value itself (including through a Data Conversion, via its own SourceColumnLineageId
+    // walk) -- independent of, and not threaded through, this request's own DerivedColumns/
+    // DataConversions. The unrecognized-producer gate below has no way to know that, so it must
+    // be skipped entirely for this one caller rather than misidentifying an already-resolved
+    // Data Conversion column as unsupported (found real 2026-08-30 testing the gate against
+    // RBC_Demo_ETL's own DFT_SortAndMergeJoin).
+    bool TrustAllPassthroughColumns = false);
 
 /// <summary>
 /// Emits one Data Flow Task's Derived Column transform, e.g.
@@ -152,6 +161,35 @@ public static class TransformEmitter
                 $"source column '{column.PipelineColumnName}' is buffered as {sourceType.ClrTypeName} but the destination column is {column.Type.ClrTypeName} -- a numeric coercion on a plain passthrough column is not generated yet (SSIS's own OLE DB provider performs this implicitly at insert time; this tool has no evidence for which rounding/truncation rule to reproduce)"));
         }
 
+        // A real, previously-SILENT bug (RBC_Demo_ETL's own Package.dtsx/DFT_LoadCustomers,
+        // found 2026-08-30): the "everything not computed/converted is a genuine passthrough"
+        // assumption below is only true when the column's actual producer is a real source or a
+        // known structural pass-through -- it breaks the moment SOME OTHER pipeline component
+        // (a Script Component being the concrete evidenced case: SCR_CleanseCustomerRow adds
+        // FullName/CleanEmail/IsValidRow/LoadDateTime, none of which exist on the raw CSV row
+        // type) genuinely SYNTHESIZES a new column with that name. The report showed ZERO gaps
+        // for this flow; only actually building the generated project surfaced the CS1061s. Not
+        // lineage-traced (Sort/Merge/UnionAll's own output columns get a FRESH lineageId,
+        // confirmed by reading Package_Transforms.dtsx's own MRG_SortedUnion input->output
+        // OutputColumnLineageID reference directly -- tracing lineage back from the destination
+        // would misidentify Sort/Merge themselves as "the producer" and wrongly gap every
+        // already-working Sort/Merge/UnionAll remerge flow). Instead: any component in this
+        // flow's pipeline whose type ISN'T recognized as a real source, a known structural
+        // pass-through, or one of the two types already resolved above (Derived Column, Data
+        // Conversion) has its own output columns collected here; a destination column matching
+        // one of those names by NAME is flagged as a gap instead of guessed at.
+        var unrecognizedComponentColumns = new Dictionary<string, PipelineComponentSpec>();
+        if (!request.TrustAllPassthroughColumns)
+        {
+            foreach (var comp in request.Pipeline.Components)
+            {
+                if (IsRecognizedPassthroughComponent(comp)) continue;
+                foreach (var output in comp.Outputs.Where(o => o.IsErrorOut != true))
+                    foreach (var col in output.Columns)
+                        unrecognizedComponentColumns.TryAdd(col.Name, comp);
+            }
+        }
+
         var assignments = new List<string>();
         foreach (var column in resolved.Columns)
         {
@@ -206,6 +244,11 @@ public static class TransformEmitter
                 var expr = $"SsisFn.ParseWstrToI4(row.{column.PipelineColumnName})";
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
+            }
+            else if (unrecognizedComponentColumns.TryGetValue(column.PipelineColumnName, out var producer))
+            {
+                gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                    $"column '{column.PipelineColumnName}' is produced by '{producer.Name}' ({producer.ComponentClassId}), a component type this tool does not translate -- cannot safely generate a passthrough reference. If this is a Script Component, its transform logic must be ported by hand, the same limitation as a Script Task."));
             }
             else if (!mismatchedTypeColumns.Contains(column.PipelineColumnName))
             {
@@ -355,6 +398,36 @@ public static class TransformEmitter
                 : new NotTranslatable($"Data Conversion to DT_WSTR has no declared target width to truncate to"),
             _ => new NotTranslatable($"Data Conversion to target type '{conversion.TargetDataType}' is not supported yet"),
         };
+
+    /// <summary>Component types whose own output columns are safe to assume an unresolved
+    /// destination column can reference via a plain `row.ColumnName` passthrough -- real
+    /// sources, recognized structural pass-throughs (a component that reorders/routes/merges
+    /// rows without ever synthesizing a genuinely NEW value), and the two destination shapes.
+    /// Derived Column and Data Conversion are deliberately NOT here -- those are resolved
+    /// explicitly above (computedByName/convertedByName), not via this passthrough gate.
+    /// Anything NOT in this set (a Script Component being the concrete real-evidenced case --
+    /// see Emit's own call site -- but this also covers Aggregate/Lookup/any future unmodeled
+    /// type) is treated as unsafe to guess at.</summary>
+    private static readonly HashSet<string> RecognizedPassthroughComponentClassIds =
+    [
+        "Microsoft.FlatFileSource",
+        "Microsoft.ExcelSource",
+        "Microsoft.Sort",
+        "Microsoft.Merge",
+        "Microsoft.UnionAll",
+        "Microsoft.RowCount",
+        "Microsoft.ConditionalSplit",
+        "Microsoft.Multicast",
+        "Microsoft.MergeJoin",
+        "Microsoft.OLEDBCommand",
+        "Microsoft.OLEDBDestination",
+        "Microsoft.FlatFileDestination",
+    ];
+
+    private static bool IsRecognizedPassthroughComponent(PipelineComponentSpec component) =>
+        RecognizedPassthroughComponentClassIds.Contains(component.ComponentClassId)
+        || SourceInfo.IsSqlSource(component)
+        || component.AdoNetDestination is not null;
 
     /// <summary>Internal (not private) so PackageGenerator's ResolveNullableColumnNames can
     /// detect the same string(wstr)-source/int(i4)-destination passthrough mismatch BEFORE

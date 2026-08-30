@@ -837,9 +837,20 @@ round-to-nearest-ties-to-even rule as NarrowR8ToI4 but a genuinely different, al
 FAILURE mode (fails hard on non-numeric/empty/out-of-range text, unlike r8-to-i4 which never
 fails and unlike Data Conversion's own IgnoreFailure which never fails either), verified
 end-to-end with an exact row-for-row match on both the success and failure paths against that
-probe, and along the way found (but deliberately did not fix, out of scope) a pre-existing,
-unrelated CS1061 build bug in the `Package` project's own StagingCustomers/SalesSummary
-transforms
+probe, and along the way found (but deliberately did not fix, out of scope that round) a
+pre-existing, unrelated CS1061 build bug in the `Package` project's own StagingCustomers/
+SalesSummary transforms; that bug root-caused and fixed 2026-08-30, same day -- a real,
+previously-silent TransformEmitter gap (a Script Component synthesizing brand-new columns was
+wrongly assumed to be a genuine passthrough, since "not computed, not converted" had always
+meant "safe to guess" until this flow broke that assumption) closed via a new allowlist of
+recognized "safe to guess" pipeline component types, NOT a lineage walk (confirmed empirically
+that Sort/Merge/UnionAll assign fresh lineageIds to their own output columns, so tracing lineage
+back to "the true producer" would have wrongly broken every already-working Sort/Merge remerge
+flow) -- found and fixed one real false positive along the way (Merge Join's own combined row
+type is resolved independently by MergeJoinEmitter itself, needing a new opt-out flag), verified
+against the real `Package.dtsx` (now builds 0 warnings/0 errors, closing two real instances of
+the same bug) and confirmed to introduce zero new false positives across the extractor's entire
+existing fixture corpus
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -3898,6 +3909,103 @@ ForEach Loop re-running a whole Data Flow Task per file, the numeric-passthrough
 every pairing other than r8-to-i4/wstr-to-i4 (i8→i4, numeric→i4, r4→i4, etc. — still unmeasured),
 Data Conversion target types other than DT_I4/DT_DBDATE/DT_R8/DT_WSTR/DT_BOOL, and the newly-found
 `Package` CS1061 row-type/transform mismatch bug named above.
+
+### Script Component silent passthrough — a real, previously-invisible bug, fixed (2026-08-30)
+
+Root-caused, same session, immediately after the string-to-int round: the `Package` CS1061 bug
+named above (found but deliberately not fixed at the time) turned out to be a real, general
+`TransformEmitter` gap, not something specific to that one flow. The user picked "investigate
+it" over the other three named speculative gaps when asked.
+
+**Root cause, confirmed from the real XML, not guessed:** `TransformEmitter`'s own passthrough
+fallback assumes ANY destination column not matched by `computedByName` (Derived Column) or
+`convertedByName` (Data Conversion) is a genuine, unchanged passthrough with a real `row.X`
+property — true for every flow this tool had been tested against, because in all of them the
+only components capable of adding a NEW column were exactly those two, already handled
+explicitly. RBC_Demo_ETL's own `Package.dtsx`/`DFT_LoadCustomers` breaks that assumption: a
+**Script Component** (`SCR_CleanseCustomerRow`) synthesizes four brand-new columns (`FullName`,
+`CleanEmail`, `IsValidRow`, `LoadDateTime`) that exist nowhere on the raw CSV row type — `ssisx
+generate`'s own report showed **zero gaps** for this flow; the CS1061s were only ever visible by
+actually building the generated project, exactly the "report says success, code doesn't compile"
+failure class this tool has hit before (`DFT_SortAndMergeJoin`'s own silent multi-source bug,
+`portfolio-digest.json`'s tuple-serialization bug).
+
+**Why lineage-tracing back to "the true original producer" is the WRONG fix, confirmed
+empirically before writing any code:** the obvious-looking approach — walk each destination
+column's lineage backward and check whether its ultimate origin is a real source — breaks
+already-working flows. Read `Package_Transforms.dtsx`'s own `MRG_SortedUnion` directly:
+`Microsoft.Merge`'s (and, by the same shape, `Microsoft.Sort`'s) own OUTPUT columns get a
+**FRESH lineageId**, distinct from their input's (confirmed via the `OutputColumnLineageID`
+custom property on the Merge's own input columns, pointing FORWARD to a *new* output lineageId)
+— so a column passing straight through Sort/Merge/Union All would have its "true producer"
+resolve to Sort/Merge ITSELF, not the flow's real source. Tracing lineage would have wrongly
+flagged every already-verified Sort/Merge/Union-All remerge flow (2026-08-28's own rounds) as
+broken.
+
+**The actual fix: an ALLOWLIST of recognized "safe to guess" component types, not a lineage
+walk.** A new `TransformEmitter.RecognizedPassthroughComponentClassIds` (Flat File/Excel/SQL
+sources, `Sort`, `Merge`, `UnionAll`, `RowCount`, `ConditionalSplit`, `Multicast`, `MergeJoin`,
+`OLEDBCommand`, both destination types) plus `IsRecognizedPassthroughComponent`. Any component in
+the flow's own pipeline NOT on this list — Script Component being the concrete evidenced case,
+but this also generically covers Aggregate, Lookup, Row Count if ever removed from the list, and
+any future unmodeled type — has its own output columns collected into a
+`unrecognizedComponentColumns` map; a destination column matching one of those names is now a
+named `GenerationGap` ("column 'X' is produced by 'Y' (ComponentClassId), a component type this
+tool does not translate... if this is a Script Component, its transform logic must be ported by
+hand, the same limitation as a Script Task") instead of a guessed `row.X`. `Microsoft.RowCount`
+was deliberately included even though nothing in the currently-tracked portfolio exercises it
+outside an already-Lookup-blocked flow — it structurally never adds/changes a column (its only
+job is writing a count into a variable), so recognizing it costs nothing and avoids a future
+false positive.
+
+**A real false positive was caught testing this against the WHOLE real portfolio, not just the
+motivating flow — fixed before shipping, not after.** `Package_Transforms.dtsx`'s own
+`DFT_SortAndMergeJoin` (the 2026-08-28 Merge Join round's own closed flow) has a Data Conversion
+on one side (`DCONV_CustId_L`). `GenerateMergeJoinFlow` calls `TransformEmitter.Emit` with an
+EMPTY `DataConversions` list (`MergeJoinEmitter` resolves every one of its own combined row
+type's columns itself — including through a Data Conversion, via its own `SourceColumnLineageId`
+walk — independently of `TransformEmitter`'s usual `convertedByName` threading), so the new gate
+had no way to know `CustomerID_i4` was already safely resolved and wrongly gapped it. Fixed with
+a new `TransformRequest.TrustAllPassthroughColumns` flag (default `false`), set `true` only in
+`GenerateMergeJoinFlow`'s own call — the only caller whose row type is built by a DIFFERENT
+emitter with its own independent resolution, not the flow's raw source buffer.
+
+**Verified two ways, same discipline as every other round:**
+1. **The real motivating case** — regenerating RBC_Demo_ETL's actual `Package.dtsx`: the 4
+   Script-Component-produced columns now correctly report as gaps (`StagingCustomers.FullName`/
+   `.CleanEmail`/`.IsValidRow`/`.LoadDateTime`, and the same shape on `SalesSummary.CustomerTier`/
+   `.ProcessedDateTime` from a second Script Component, `SCR_ComputeCustomerTier` — a SECOND real
+   instance of the exact same bug, closed by the same one generic fix). Confirmed the flow still
+   WIRES into `Program.cs` with the 4 columns simply omitted (same "per-column gap, rest still
+   generates" shape an untranslatable Derived Column expression already uses) — not dropped
+   entirely. **The whole regenerated `Package` project now builds with 0 warnings/0 errors**
+   (previously 6 `CS1061`s). Re-ran the WHOLE portfolio afterward to confirm the Merge Join fix:
+   `Package_Transforms` is back to its correct 2 gaps (`DFT_LookupAndAggregate`, Notification),
+   and the entire regenerated solution (all 5 packages plus a copy of `Etl.Core`) builds with
+   **0 warnings/0 errors** — genuinely the first time `Package` itself has ever built clean, even
+   though it's still excluded from the "generatable" count for its own, unrelated, unchanged
+   reason (2 `Microsoft.ScriptTask`s).
+2. **Regenerated the extractor's own full `tests/Ssis.Extract.Tests/Fixtures/` directory (24
+   packages) and this PoC's own real `SSIS/` folder** and grepped every gap reason for `"produced
+   by"` — zero matches in either, confirming the new gate introduces no false positive anywhere
+   in the existing tracked corpus, not just the two flows it was built against.
+3. Two new `TransformEmitterTests` (`Emit_ReportsAGap_ForAColumnProducedByAnUnrecognizedComponent_...`,
+   asserting the exact gap message and that the OTHER column in the same flow still generates;
+   `Emit_TrustsEveryPassthroughColumn_WhenTrustAllPassthroughColumnsIsSet`, proving the opt-out
+   suppresses that same gap). No dedicated dtexec-runnable fixture was built this round — unlike
+   a numeric-coercion round, this fix has no new SSIS *runtime* semantics to measure; it's a
+   detection/reporting correctness fix, verified by the real package's own build outcome plus
+   unit tests, the same evidence tier the earlier `DFT_SortAndMergeJoin` silent-bug fix used.
+   Regression: 137/137 in `Ssis.Extract.Codegen.Tests` (was 135), same 3 pre-existing unrelated
+   failures elsewhere. No `Etl.Core` changes this round.
+
+**Remaining known gaps, unchanged except for this round's own closure:** Aggregate/Row Count
+(still moot), Excel Source in SqlCommand mode, a ForEach Loop re-running a whole Data Flow Task
+per file, the numeric-passthrough-coercion gap for every pairing other than r8-to-i4/wstr-to-i4,
+and Data Conversion target types other than DT_I4/DT_DBDATE/DT_R8/DT_WSTR/DT_BOOL. The `Package`
+CS1061 bug, named above, is now closed — and Script Component (and any other genuinely
+unmodeled pipeline component type) is now a safe, named gap everywhere in this tool, not just in
+the one flow that happened to surface it.
 
 ## Traps already hit once — don't re-derive these
 

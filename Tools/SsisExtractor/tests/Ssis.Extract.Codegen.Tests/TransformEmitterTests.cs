@@ -372,4 +372,143 @@ public class TransformEmitterTests
 
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }
+
+    private static (PipelineComponentSpec ScriptComponent, PipelineComponentSpec Destination) BuildScriptComponentPassthroughShape()
+    {
+        // Mirrors the real shape RBC_Demo_ETL's own Package.dtsx/DFT_LoadCustomers has: a
+        // Script Component (Microsoft.ManagedComponentHost -- the same generic discriminator
+        // ADO NET Source/Destination use, disambiguated elsewhere by UserComponentTypeName, not
+        // relevant to this test) synthesizes a brand-new "FullName" column with its OWN fresh
+        // lineageId (no upstream producer at all -- the script genuinely created this value).
+        var scriptComponent = new PipelineComponentSpec
+        {
+            RefId = "SCR_Test",
+            Name = "SCR_CleanseCustomerRow",
+            ComponentClassId = "Microsoft.ManagedComponentHost",
+            Outputs =
+            [
+                new PipelineOutputSpec
+                {
+                    RefId = "SCR_Test.Outputs[Output 0]",
+                    Name = "Output 0",
+                    Columns =
+                    [
+                        new PipelineOutputColumnSpec
+                        {
+                            RefId = "SCR_Test.Outputs[Output 0].Columns[FullName]",
+                            Name = "FullName",
+                            LineageId = "SCR_Test.Outputs[Output 0].Columns[FullName]",
+                        },
+                    ],
+                },
+            ],
+        };
+
+        var destination = new PipelineComponentSpec
+        {
+            RefId = "DST_Test",
+            Name = "OLE DB Destination",
+            ComponentClassId = "Microsoft.OLEDBDestination",
+            Inputs =
+            [
+                new PipelineInputSpec
+                {
+                    RefId = "DST_Test.Inputs[OLE DB Destination Input]",
+                    Name = "OLE DB Destination Input",
+                    Columns =
+                    [
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[CustomerID]",
+                            CachedName = "CustomerID",
+                            CachedDataType = "wstr",
+                            LineageId = "SRC.Outputs[Output].Columns[CustomerID]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]",
+                        },
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[FullName]",
+                            CachedName = "FullName",
+                            CachedDataType = "wstr",
+                            LineageId = "SCR_Test.Outputs[Output 0].Columns[FullName]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[FullName]",
+                        },
+                    ],
+                    ExternalMetadataColumns =
+                    [
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]", Name = "CustomerID", DataType = "wstr", Length = 20 },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[FullName]", Name = "FullName", DataType = "wstr", Length = 200 },
+                    ],
+                },
+            ],
+        };
+
+        return (scriptComponent, destination);
+    }
+
+    [Fact]
+    public void Emit_ReportsAGap_ForAColumnProducedByAnUnrecognizedComponent_InsteadOfGuessingAPassthrough()
+    {
+        // The exact real, previously-SILENT shape RBC_Demo_ETL's own Package.dtsx/
+        // DFT_LoadCustomers hits (found 2026-08-30): a Script Component synthesizes brand-new
+        // columns (FullName/CleanEmail/IsValidRow/LoadDateTime) that don't exist on the raw CSV
+        // row type at all. Before this fix, "not computed, not converted" silently meant "genuine
+        // passthrough", producing a `row.FullName` reference with no such property -- a real
+        // CS1061, invisible to ssisx generate's own gap report until the generated project was
+        // actually built. See CLAUDE.md's own "Script Component silent passthrough" section.
+        var (scriptComponent, destination) = BuildScriptComponentPassthroughShape();
+        var pipeline = new PipelineSpec { Components = [scriptComponent, destination] };
+
+        var request = new TransformRequest(
+            "Generated.Mapping", "StagingCustomersTransform",
+            "Generated.Csv", "StagingCustomersCsvRow",
+            "Generated.Model", "StagingCustomers",
+            "Generated.Ssis",
+            pipeline, [], destination);
+
+        var result = TransformEmitter.Emit(request);
+
+        var gap = Assert.Single(result.Result.Gaps);
+        Assert.Equal("StagingCustomers.FullName", gap.Location);
+        Assert.Contains("produced by 'SCR_CleanseCustomerRow' (Microsoft.ManagedComponentHost)", gap.Reason);
+
+        // The genuinely-passthrough column still generates -- same per-column-gap shape as
+        // every other untranslatable case in this file (an unrelated column doesn't block the
+        // whole flow).
+        var file = Assert.Single(result.Result.Files);
+        Assert.DoesNotContain("FullName", file.Content);
+        Assert.Contains("CustomerID = row.CustomerID,", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+    [Fact]
+    public void Emit_TrustsEveryPassthroughColumn_WhenTrustAllPassthroughColumnsIsSet()
+    {
+        // GenerateMergeJoinFlow's own call site: MergeJoinEmitter already resolves every column
+        // of its own combined row type itself (including through a Data Conversion, via its own
+        // SourceColumnLineageId walk), so the unrecognized-producer gate above must be skipped
+        // entirely here -- a real false positive found 2026-08-30 testing this fix against
+        // RBC_Demo_ETL's own DFT_SortAndMergeJoin (a Merge Join with a Data Conversion on one
+        // side), which was wrongly gapped without this opt-out even though MergeJoinEmitter's
+        // own row type already has the column. Reuses the exact same pipeline shape as the
+        // unrecognized-producer test above to prove the flag suppresses that same gap.
+        var (scriptComponent, destination) = BuildScriptComponentPassthroughShape();
+        var pipeline = new PipelineSpec { Components = [scriptComponent, destination] };
+
+        var request = new TransformRequest(
+            "Generated.Mapping", "StagingCustomersTransform",
+            "Generated.Csv", "StagingCustomersCsvRow",
+            "Generated.Model", "StagingCustomers",
+            "Generated.Ssis",
+            pipeline, [], destination,
+            TrustAllPassthroughColumns: true);
+
+        var result = TransformEmitter.Emit(request);
+
+        Assert.Empty(result.Result.Gaps);
+        var file = Assert.Single(result.Result.Files);
+        Assert.Contains("FullName = row.FullName,", file.Content);
+        Assert.Contains("CustomerID = row.CustomerID,", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
 }
