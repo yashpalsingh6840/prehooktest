@@ -565,6 +565,7 @@
             {
               "AdoNetDestination": null,
               "AdoNetSource": null,
+              "Aggregate": null,
               "ComponentClassId": "Microsoft.DerivedColumn",
               "ConditionalSplit": null,
               "Connections": [],
@@ -884,6 +885,7 @@
             {
               "AdoNetDestination": null,
               "AdoNetSource": null,
+              "Aggregate": null,
               "ComponentClassId": "Microsoft.FlatFileSource",
               "ConditionalSplit": null,
               "Connections": [
@@ -1420,6 +1422,7 @@
             {
               "AdoNetDestination": null,
               "AdoNetSource": null,
+              "Aggregate": null,
               "ComponentClassId": "Microsoft.OLEDBDestination",
               "ConditionalSplit": null,
               "Connections": [

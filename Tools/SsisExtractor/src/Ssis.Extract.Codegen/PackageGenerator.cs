@@ -84,6 +84,20 @@ public static partial class PackageGenerator
                 continue;
             }
 
+            // Checked right after Lookup, before ConditionalSplit/MergeJoin/etc. -- built
+            // speculatively 2026-08-30 (see AggregatePlan's own doc comment). An Aggregate's own
+            // output is a structurally different row shape from the flow's raw source (fewer
+            // rows, new column set), so it must be resolved on its own dedicated path rather
+            // than the ordinary single-destination flow below.
+            if (flow.Aggregate is { } aggregate)
+            {
+                var aggregateFlow = GenerateAggregateFlow(
+                    package, ns, flow, aggregate, fileSourceEntries, files, tables, functionsUsed,
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                if (aggregateFlow is not null) wiredFlows[flow] = aggregateFlow;
+                continue;
+            }
+
             if (flow.ConditionalSplit is { } split)
             {
                 var splitStep = GenerateConditionalSplitFlow(
@@ -945,6 +959,110 @@ public static partial class PackageGenerator
         }
 
         return new ProgramOleDbCommandStep(flow.TaskName, programSource, rowTypeName, commandPlan.SqlTemplate, commandPlan.ParameterColumnNames);
+    }
+
+    /// <summary>
+    /// Generates a Microsoft.Aggregate flow (GroupBy + Count) -- built speculatively 2026-08-30,
+    /// see <see cref="PackagePlanner.AggregatePlan"/>'s own doc comment for why (the one real
+    /// evidenced instance is unreachable, blocked by its own upstream Lookup regardless). The
+    /// destination's own row type is the AGGREGATE's own output shape
+    /// (<see cref="AggregateRowEmitter"/>, NOT the flow's raw source row -- an Aggregate's own
+    /// output has no external metadata columns at all, the same reason <c>MergeJoinEmitter</c>
+    /// resolves its own combined row type straight off the raw output column rather than through
+    /// <see cref="PipelineResolver"/>), fed at runtime by <c>Etl.Core.Data.AggregateRowSource</c>
+    /// wrapping the flow's own true SQL source. Scoped deliberately narrow: only a SQL-sourced
+    /// flow (OLE DB/ADO NET Source) is supported -- a Flat File/Excel-sourced Aggregate is
+    /// unevidenced and out of scope for this already-speculative round.
+    /// </summary>
+    private static ProgramFlowSpec? GenerateAggregateFlow(
+        PackageSpec package, string ns, DataFlowPlan flow, AggregatePlan aggregate,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
+        HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+    {
+        if (flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination")
+        {
+            gaps.Add(new GenerationGap(flow.TaskName, $"Aggregate '{aggregate.Component.Name}' feeds a Flat File Destination -- only a SQL destination is supported for an Aggregate flow yet"));
+            return null;
+        }
+
+        if (!DestinationInfo.IsFastLoadConfigured(flow.DestinationComponent))
+        {
+            gaps.Add(new GenerationGap(flow.TaskName, $"destination '{flow.DestinationComponent.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
+            return null;
+        }
+
+        if (flow.OleDbSource is not { } sourceComponent)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Aggregate '{aggregate.Component.Name}': only a SQL-sourced flow (OLE DB/ADO NET Source) is supported -- a Flat File/Excel-sourced Aggregate flow is not evidenced and not supported yet"));
+            return null;
+        }
+
+        var entityName = TryResolveEntityName(flow.TaskName, flow.DestinationComponent, gaps);
+        if (entityName is null) return null;
+
+        var sourceOutput = sourceComponent.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+        var groupByType = sourceOutput is null
+            ? null
+            : PipelineResolver.Resolve(sourceOutput).Columns.FirstOrDefault(c => c.PipelineColumnName == aggregate.GroupBySourceColumnName)?.Type;
+        if (groupByType is null)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Aggregate '{aggregate.Component.Name}': GroupBy source column '{aggregate.GroupBySourceColumnName}' could not be resolved to a CLR type"));
+            return null;
+        }
+
+        // The source row's own counted column(s) are nullable BY CONSTRUCTION -- SSIS's own
+        // Count aggregation excludes NULL (measured via a real dtexec run, see
+        // AggregateCountSpec's own doc comment), so the generated `row.X != null` check must
+        // compile against a genuinely nullable property, not an inferred-non-nullable one.
+        var sourceNullableColumnNames = new HashSet<string>(aggregate.Counts.Select(c => c.SourceColumnName));
+
+        var sourceRowBaseName = SanitizeIdentifier(aggregate.Component.Name) + "Source";
+        var sourceResult = ResolveFlowSource(package, ns, sourceRowBaseName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, sourceNullableColumnNames);
+        if (sourceResult is null) return null; // ResolveFlowSource already added the reason
+        var (sourceRowTypeName, innerSource) = sourceResult.Value;
+
+        var aggregateRowTypeName = entityName + "AggregateRow";
+        Merge(files, gaps, AggregateRowEmitter.Emit($"{ns}.Sql", aggregateRowTypeName, aggregate.Component));
+
+        var counts = aggregate.Counts.Select(c => new AggregateCountFieldSpec(c.OutputColumnName, c.SourceColumnName)).ToList();
+        var aggregateSource = new AggregateFlowSource(aggregate.Component.Name, innerSource, sourceRowTypeName,
+            aggregate.GroupByOutputColumnName, groupByType.ClrTypeName, counts);
+
+        Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent));
+
+        var transformClassName = entityName + "Transform";
+        var transformResult = TransformEmitter.Emit(new TransformRequest(
+            MappingNamespace: $"{ns}.Mapping",
+            TransformClassName: transformClassName,
+            RowTypeNamespace: $"{ns}.Sql",
+            RowTypeName: aggregateRowTypeName,
+            EntityNamespace: $"{ns}.Model",
+            EntityName: entityName,
+            SsisFnNamespace: $"{ns}.Ssis",
+            Pipeline: flow.Pipeline,
+            DerivedColumns: [],
+            DataConversions: [],
+            DestinationComponent: flow.DestinationComponent,
+            // AggregateRowEmitter resolves aggregateRowTypeName's own properties independently
+            // (straight off the Aggregate component's own output columns, not through pipeline
+            // lineage) -- the same reasoning GenerateMergeJoinFlow's own call already
+            // established for its own independently-resolved combined row type.
+            TrustAllPassthroughColumns: true));
+        Merge(files, gaps, transformResult.Result);
+        foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
+
+        if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
+
+        primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
+        tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
+
+        if (authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
+            (authMode, userId, targetServer, targetDatabase) = auth;
+
+        return new ProgramFlowSpec(flow.TaskName, aggregateSource, aggregateRowTypeName, entityName, transformClassName, new SqlFlowSink());
     }
 
     /// <summary>Resolves an OLE DB or ADO NET Source into a SqlFlowSource -- dispatches to

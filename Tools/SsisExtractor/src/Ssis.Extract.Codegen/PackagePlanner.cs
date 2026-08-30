@@ -1,3 +1,4 @@
+using Ssis.Extract.Dtsx;
 using Ssis.Extract.Model.Package;
 using Ssis.Extract.Model.Pipeline;
 using Ssis.Extract.Model.Shared;
@@ -49,7 +50,17 @@ public sealed record DataFlowPlan(
     /// <see cref="DestinationComponent"/> points at the LAST branch's destination, same
     /// non-authoritative-placeholder convention <see cref="ConditionalSplit"/> already
     /// established.</summary>
-    MulticastPlan? Multicast = null);
+    MulticastPlan? Multicast = null,
+    /// <summary>Added 2026-08-30, built speculatively (RBC_Demo_ETL's own real instance,
+    /// <c>DFT_LookupAndAggregate\AGG_ByRegion</c>, sits downstream of a Lookup that already
+    /// blocks the whole flow regardless -- confirmed twice by re-surveying the portfolio; built
+    /// on the user's own explicit request, not to close a real gap). A <c>Microsoft.Aggregate</c>
+    /// component sitting between the flow's source and its destination -- when populated, the
+    /// destination's own row type is the AGGREGATE's own output shape, not the flow's raw
+    /// source row shape, so <see cref="PackageGenerator"/> checks this field before
+    /// <see cref="ConditionalSplit"/>/<see cref="MergeJoin"/>/etc., the same "must win first"
+    /// convention <see cref="Lookup"/>'s own doc comment already established.</summary>
+    AggregatePlan? Aggregate = null);
 
 /// <summary>A resolved <c>Microsoft.OLEDBCommand</c> flow -- <see cref="SqlTemplate"/> has every
 /// <c>?</c> placeholder rewritten to EF Core's own "{0}", "{1}", ... raw-SQL parameter syntax,
@@ -61,6 +72,26 @@ public sealed record OleDbCommandPlan(
     PipelineComponentSpec Component,
     string SqlTemplate,
     IReadOnlyList<string> ParameterColumnNames);
+
+/// <summary>One Count output column of an Aggregate, resolved back to the real SOURCE column
+/// it counts (via <c>Ssis.Extract.Dtsx.LineageBuilder</c>'s new "Aggregate" edge kind) -- e.g.
+/// <c>CustomerCount</c> counting non-NULL values of the source's own <c>CustomerID</c> column
+/// (confirmed via a real dtexec run that AggregationType=1 excludes NULLs, matching ordinary SQL
+/// <c>COUNT(column)</c>, not <c>COUNT(*)</c> -- see <c>AggregatePayload</c>'s own doc comment).</summary>
+public sealed record AggregateCountSpec(string OutputColumnName, string SourceColumnName);
+
+/// <summary>A resolved <c>Microsoft.Aggregate</c> flow, built speculatively 2026-08-30 -- see
+/// <c>Ssis.Extract.Model.Pipeline.AggregatePayload</c>'s own doc comment for why. Scoped
+/// deliberately to exactly the evidenced shape: one GroupBy column
+/// (<see cref="GroupByOutputColumnName"/>, resolved back to its own real source column via
+/// lineage) plus one or more Count columns. Any other AggregationType, zero or more than one
+/// GroupBy column, or an unresolvable source reference is a generation gap, not a guess -- see
+/// <see cref="PackagePlanner"/>'s own <c>PlanAggregate</c>.</summary>
+public sealed record AggregatePlan(
+    PipelineComponentSpec Component,
+    string GroupByOutputColumnName,
+    string GroupBySourceColumnName,
+    List<AggregateCountSpec> Counts);
 
 /// <summary>One side (Left or Right) of a Merge Join, resolved back through its own Sort and
 /// (if present) Data Conversion to the true source component -- mirrors
@@ -625,6 +656,14 @@ public static class PackagePlanner
         var lookup = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.Lookup");
         var conditionalSplitComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.ConditionalSplit");
 
+        AggregatePlan? aggregate = null;
+        var aggregateComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.Aggregate");
+        if (aggregateComponent is not null)
+        {
+            aggregate = PlanAggregate(taskName, pipeline, aggregateComponent, gaps);
+            if (aggregate is null) return null; // PlanAggregate already added the gap
+        }
+
         ConditionalSplitPlan? conditionalSplit = null;
         if (conditionalSplitComponent is not null)
         {
@@ -668,7 +707,7 @@ public static class PackagePlanner
                 // Multicast is never populated here -- destination being null already implies no
                 // multicast was found either, per the mutual-exclusion check above.
                 return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup,
-                    conditionalSplit, commandComponents[0], dataConversion, ExcelSource: excelSource, OleDbCommand: oleDbCommandPlan);
+                    conditionalSplit, commandComponents[0], dataConversion, ExcelSource: excelSource, OleDbCommand: oleDbCommandPlan, Aggregate: aggregate);
             }
 
             gaps.Add(new GenerationGap(taskName,
@@ -676,7 +715,82 @@ public static class PackagePlanner
             return null;
         }
 
-        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, ExcelSource: excelSource, Multicast: multicast);
+        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, ExcelSource: excelSource, Multicast: multicast, Aggregate: aggregate);
+    }
+
+    /// <summary>
+    /// Resolves a <c>Microsoft.Aggregate</c> component into an <see cref="AggregatePlan"/> --
+    /// built speculatively 2026-08-30, see <c>AggregatePayload</c>'s own doc comment. Deliberately
+    /// narrow: exactly one GroupBy column (AggregationType=0) plus one or more Count columns
+    /// (AggregationType=1), each resolved back to its own real source column name via
+    /// <see cref="LineageBuilder"/>'s "Aggregate" edge kind. Any other AggregationType value, zero
+    /// or more than one GroupBy column, or an unresolvable source reference is a generation gap,
+    /// never a guess -- none of Sum/Average/Minimum/Maximum/CountDistinct/CountAll is evidenced
+    /// anywhere in the tracked portfolio, and none was measured.
+    /// </summary>
+    private static AggregatePlan? PlanAggregate(string taskName, PipelineSpec pipeline, PipelineComponentSpec component, List<GenerationGap> gaps)
+    {
+        var payload = component.Aggregate;
+        if (payload is null || payload.Columns.Count == 0)
+        {
+            gaps.Add(new GenerationGap(taskName, $"Aggregate '{component.Name}' has no output columns -- not supported"));
+            return null;
+        }
+
+        var lineage = LineageBuilder.Build(pipeline);
+        string? ResolveSourceColumnName(string outputColumnName) =>
+            lineage.Edges.FirstOrDefault(e =>
+                e.Kind == "Aggregate" && e.ToComponentRefId == component.RefId && e.ToColumnName == outputColumnName)?.FromColumnName;
+
+        var groupByColumns = payload.Columns.Where(c => c.AggregationTypeRaw == 0).ToList();
+        var countColumns = payload.Columns.Where(c => c.AggregationTypeRaw == 1).ToList();
+        var otherColumns = payload.Columns.Where(c => c.AggregationTypeRaw is not (0 or 1)).ToList();
+
+        if (otherColumns.Count > 0)
+        {
+            var names = string.Join(", ", otherColumns.Select(c => $"{c.OutputColumnName} (AggregationType={(c.AggregationTypeRaw?.ToString() ?? "(unknown)")})"));
+            gaps.Add(new GenerationGap(taskName,
+                $"Aggregate '{component.Name}' has column(s) using an unsupported AggregationType: {names} -- only GroupBy (0) and Count (1) are supported"));
+            return null;
+        }
+
+        if (groupByColumns.Count != 1)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Aggregate '{component.Name}' has {groupByColumns.Count} GroupBy column(s) -- only exactly one is supported"));
+            return null;
+        }
+
+        if (countColumns.Count == 0)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Aggregate '{component.Name}' has no Count column -- a GroupBy with nothing aggregated is not supported"));
+            return null;
+        }
+
+        var groupByCol = groupByColumns[0];
+        var groupBySource = ResolveSourceColumnName(groupByCol.OutputColumnName);
+        if (groupBySource is null)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Aggregate '{component.Name}': GroupBy column '{groupByCol.OutputColumnName}' has no resolvable source column -- not supported"));
+            return null;
+        }
+
+        var counts = new List<AggregateCountSpec>();
+        foreach (var col in countColumns)
+        {
+            var source = ResolveSourceColumnName(col.OutputColumnName);
+            if (source is null)
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"Aggregate '{component.Name}': Count column '{col.OutputColumnName}' has no resolvable source column -- not supported"));
+                return null;
+            }
+            counts.Add(new AggregateCountSpec(col.OutputColumnName, source));
+        }
+
+        return new AggregatePlan(component, groupByCol.OutputColumnName, groupBySource, counts);
     }
 
     /// <summary>Resolves one <c>Microsoft.OLEDBCommand</c> component into an <see cref="OleDbCommandPlan"/>

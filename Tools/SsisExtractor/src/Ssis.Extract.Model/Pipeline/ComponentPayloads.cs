@@ -488,3 +488,40 @@ public sealed class MergeJoinOutputColumnSpec
 
     public required string SourceColumnLineageId { get; init; }
 }
+
+/// <summary>
+/// <c>Microsoft.Aggregate</c>, built speculatively 2026-08-30: RBC_Demo_ETL's own real instance
+/// (<c>DFT_LookupAndAggregate\AGG_ByRegion</c>) sits downstream of a <c>Microsoft.Lookup</c> that
+/// already blocks the whole flow regardless of Aggregate support (confirmed twice by re-surveying
+/// the tracked portfolio), so this was built on the user's own explicit request rather than to
+/// close a real gap. <see cref="AggregateColumnSpec.AggregationTypeRaw"/>'s own enum has no public
+/// Microsoft SDK reference and no managed CLR type backs it (confirmed by reflecting every loaded
+/// assembly and finding nothing named <c>AggregationType</c>) -- its two evidenced values (0 for
+/// the GroupBy column, 1 for a Count column, from <c>AGG_ByRegion</c>'s own real saved XML) were
+/// confirmed via a genuine dtexec run, not guessed: seed data with one NULL in the counted column
+/// showed AggregationType=1 excludes NULLs, matching ordinary SQL <c>COUNT(column)</c> semantics
+/// rather than <c>COUNT(*)</c>. Any other AggregationType value (Sum/Average/Minimum/Maximum/
+/// CountDistinct/CountAll) is a named generation gap, not attempted -- none is evidenced anywhere
+/// in the tracked portfolio, and none was measured.
+/// </summary>
+public sealed class AggregatePayload
+{
+    public List<AggregateColumnSpec> Columns { get; init; } = [];
+}
+
+/// <summary>One output column of an Aggregate component -- either the GroupBy key
+/// (<see cref="AggregationTypeRaw"/> == 0) or a Count column (== 1). Every other value is a
+/// generation gap, see <see cref="AggregatePayload"/>'s own doc comment.</summary>
+public sealed class AggregateColumnSpec
+{
+    public required string OutputColumnName { get; init; }
+
+    /// <summary>The <c>#{...}</c> reference stripped down to the raw lineageId string, pointing
+    /// at the upstream column this aggregation reads (the GroupBy key's own source column, or
+    /// the column being counted) -- resolve the actual source column NAME via
+    /// <c>Ssis.Extract.Dtsx.LineageBuilder</c>'s own producer index, same as every other
+    /// lineageId-shaped reference in this model.</summary>
+    public string? SourceColumnLineageId { get; init; }
+
+    public int? AggregationTypeRaw { get; init; }
+}

@@ -614,6 +614,47 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WiresAnAggregateFlow_ViaAggregateRowSourceWrappingTheRawSqlSource()
+    {
+        // SyntheticAggregate.dtsx, built speculatively 2026-08-30 (see PackagePlannerTests' own
+        // sibling test for the real-portfolio context). Confirmed beyond this test by actually
+        // building the generated exe against a copy of Etl.Core and running it against
+        // .\SQLFORPOC_2022 -- an exact row-for-row match against a real dtexec probe run of the
+        // same fixture (East=2, West=1 -- CustomerCount excludes the one NULL CustomerID row).
+        var package = LoadSyntheticFixture("SyntheticAggregate.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        Assert.Contains(result.Files, f => f.RelativePath == "Sql/AGG_ByRegionSourceSqlRow.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Sql/SyntheticAggregateTargetAggregateRow.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Mapping/SyntheticAggregateTargetTransform.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Model/SyntheticAggregateTarget.cs");
+
+        var aggregateRow = Assert.Single(result.Files, f => f.RelativePath == "Sql/SyntheticAggregateTargetAggregateRow.cs");
+        Assert.Contains("public string Region { get; set; } = \"\";", aggregateRow.Content);
+        Assert.Contains("public long CustomerCount { get; set; }", aggregateRow.Content);
+
+        var sourceRow = Assert.Single(result.Files, f => f.RelativePath == "Sql/AGG_ByRegionSourceSqlRow.cs");
+        Assert.Contains("public string? CustomerID { get; set; }", sourceRow.Content); // nullable by construction -- Count excludes NULL
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains(
+            "builder.Services.AddScoped<IRowSource<SyntheticAggregateTargetAggregateRow>>(sp =>",
+            programFile.Content);
+        Assert.Contains(
+            "return new AggregateRowSource<AGG_ByRegionSourceSqlRow, string, SyntheticAggregateTargetAggregateRow>(",
+            programFile.Content);
+        Assert.Contains("row => row.Region,", programFile.Content);
+        Assert.Contains("CustomerCount = rows.Count(r => r.CustomerID != null)", programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Only the two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption
+        // on the source, and Notification.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+    }
+
+    [Fact]
     public void Generate_WiresAnExcelSourcedFlow_IntoProgramCsViaExcelRowSource()
     {
         // SyntheticExcelSource.dtsx: Microsoft.ExcelSource (reading the real, checked-in

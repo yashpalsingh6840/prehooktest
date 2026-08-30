@@ -402,6 +402,49 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ResolvesAnAggregate_WithOneGroupByColumnAndOneCountColumn()
+    {
+        // SyntheticAggregate.dtsx, built speculatively 2026-08-30 (RBC_Demo_ETL's own real
+        // instance, AGG_ByRegion, sits downstream of a Lookup that already blocks the whole flow
+        // regardless of Aggregate support -- confirmed twice by re-surveying the portfolio; built
+        // on the user's own explicit request, not to close a real gap): OLE DB Source -> Aggregate
+        // (GroupBy Region, Count(CustomerID) AS CustomerCount -- the exact real evidenced
+        // AggregationType values from AGG_ByRegion itself) -> OLE DB Destination.
+        var package = LoadSyntheticFixture("SyntheticAggregate.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var flow = Assert.Single(plan.Flows);
+        Assert.NotNull(flow.Aggregate);
+        Assert.Equal("AGG_ByRegion", flow.Aggregate!.Component.Name);
+        Assert.Equal("Region", flow.Aggregate.GroupByOutputColumnName);
+        Assert.Equal("Region", flow.Aggregate.GroupBySourceColumnName);
+        var count = Assert.Single(flow.Aggregate.Counts);
+        Assert.Equal("CustomerCount", count.OutputColumnName);
+        Assert.Equal("CustomerID", count.SourceColumnName);
+    }
+
+    [Fact]
+    public void Plan_ReportsAGap_ForAnAggregate_UsingAnUnsupportedAggregationType()
+    {
+        // SyntheticAggregateUnsupportedType.dtsx: a byte-preserving derived copy of
+        // SyntheticAggregate.dtsx with its own CustomerCount column's AggregationType changed
+        // from 1 (Count, supported) to 3 (an unsupported value -- Sum/Average/Minimum/Maximum/
+        // CountDistinct/CountAll are none of them evidenced or measured) -- reported as an
+        // explicit gap rather than guessed.
+        var package = LoadSyntheticFixture("SyntheticAggregateUnsupportedType.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Flows);
+        var gap = Assert.Single(plan.Gaps, g => g.Location == "DFT_Aggregate");
+        Assert.Contains("AGG_ByRegion", gap.Reason);
+        Assert.Contains("unsupported AggregationType", gap.Reason);
+        Assert.Contains("AggregationType=3", gap.Reason);
+    }
+
+    [Fact]
     public void Plan_ResolvesAnExcelSource_AsADirectCopyFlow_WithNoDerivedColumnNeeded()
     {
         // SyntheticExcelSource.dtsx: Microsoft.ExcelSource (reading the real, checked-in

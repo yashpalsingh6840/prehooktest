@@ -98,6 +98,12 @@ public sealed class PipelineComponentSpec
     /// (SSIS_From_Sandeep) -- <c>Microsoft.OLEDBCommand</c>, see <see cref="OleDbCommandPayload"/>'s
     /// own doc comment.</summary>
     public OleDbCommandPayload? OleDbCommand { get; init; }
+
+    /// <summary>Added 2026-08-30, built speculatively (RBC_Demo_ETL's own real instance,
+    /// <c>DFT_LookupAndAggregate\AGG_ByRegion</c>, sits downstream of a Lookup that already
+    /// blocks the whole flow regardless of Aggregate support) -- <c>Microsoft.Aggregate</c>, see
+    /// <see cref="AggregatePayload"/>'s own doc comment.</summary>
+    public AggregatePayload? Aggregate { get; init; }
 }
 
 /// <summary>A component's reference to a connection manager. <see cref="ConnectionManagerRefRaw"/> is the pipeline's own reference shape (a refId path, e.g. "Package.ConnectionManagers[CM_EmployeesCsv]") -- notably NOT the DTSID-GUID form Execute SQL Task uses (see <c>ExecuteSqlTaskPayload.ConnectionRefRaw</c>'s doc comment); resolved the same way, by matching against <c>ConnectionManagerSpec.RefId</c> this time instead of <c>DtsId</c>.</summary>

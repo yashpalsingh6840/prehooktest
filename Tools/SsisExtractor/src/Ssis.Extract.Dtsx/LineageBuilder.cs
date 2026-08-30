@@ -87,6 +87,26 @@ public static partial class LineageBuilder
                     edges.Add(MakeEdge(producers, refLineageId, to, kind: "DataConversion", expression: null));
                 }
             }
+
+            // An Aggregate output column (GroupBy key or Count) has no Expression either --
+            // same reasoning as Data Conversion above, just a different payload/property name
+            // (AggregationColumnId, promoted onto AggregatePayload -- see that type's own doc
+            // comment). Built speculatively 2026-08-30.
+            if (comp.Aggregate is { } aggregate)
+            {
+                foreach (var acol in aggregate.Columns)
+                {
+                    if (acol.SourceColumnLineageId is not { } refLineageId) continue;
+                    var outputCol = comp.Outputs
+                        .SelectMany(o => o.Columns)
+                        .FirstOrDefault(c => c.Name == acol.OutputColumnName);
+                    if (outputCol is null) continue;
+
+                    var to = new ColumnRef(comp.RefId, comp.Name, outputCol.RefId, outputCol.Name, outputCol.LineageId);
+                    consumedLineageIds.Add(refLineageId);
+                    edges.Add(MakeEdge(producers, refLineageId, to, kind: "Aggregate", expression: null));
+                }
+            }
         }
 
         var constantColumns = new List<LineageColumnRefSpec>();

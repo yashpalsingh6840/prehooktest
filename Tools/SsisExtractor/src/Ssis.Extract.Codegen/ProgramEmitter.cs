@@ -29,6 +29,29 @@ public sealed record MergeJoinFlowSource(
     string MapperClassName,
     string KeyClrType) : FlowSourceSpec(ComponentName);
 
+/// <summary>One Count column of an Aggregate flow -- <see cref="OutputPropertyName"/> on the
+/// destination-facing row, counting non-null values of <see cref="SourcePropertyName"/> on the
+/// flow's own raw SOURCE row (SSIS's own Count aggregation excludes NULL, confirmed via a real
+/// dtexec run -- see <c>PackagePlanner.AggregateCountSpec</c>'s own doc comment). Built
+/// speculatively 2026-08-30.</summary>
+public sealed record AggregateCountFieldSpec(string OutputPropertyName, string SourcePropertyName);
+
+/// <summary>A Microsoft.Aggregate flow (GroupBy + Count), built speculatively 2026-08-30 -- see
+/// <c>Ssis.Extract.Model.Pipeline.AggregatePayload</c>'s own doc comment for why (the one real
+/// evidenced instance is unreachable, blocked by its own upstream Lookup regardless). Wraps
+/// <see cref="InnerSource"/> (the flow's own raw source, e.g. a <see cref="SqlFlowSource"/>) in
+/// <c>Etl.Core.Data.AggregateRowSource&lt;TSourceRow,TKey,TRow&gt;</c> -- <see cref="SourceRowTypeName"/>
+/// is that raw source's own row type (TSourceRow); the outer <see cref="FlowSourceSpec.ComponentName"/>
+/// carries the Aggregate component's own name, used only for the wrapped IRowSource's own
+/// logging identity, matching <see cref="MergeJoinFlowSource"/>'s own convention.</summary>
+public sealed record AggregateFlowSource(
+    string ComponentName,
+    FlowSourceSpec InnerSource,
+    string SourceRowTypeName,
+    string GroupByPropertyName,
+    string GroupByKeyClrType,
+    List<AggregateCountFieldSpec> Counts) : FlowSourceSpec(ComponentName);
+
 /// <summary>One column's write-time layout, mirroring Etl.Core.Data.FlatFileColumnFormat's own
 /// constructor shape verbatim -- this project never references the Etl.Core assembly (it emits
 /// TEXT, not types), so this is codegen's own plain DTO for the same three values.</summary>
@@ -179,6 +202,7 @@ public static class ProgramEmitter
         {
             allSources.Add(source);
             if (source is MergeJoinFlowSource mj) { allSources.Add(mj.LeftSource); allSources.Add(mj.RightSource); }
+            if (source is AggregateFlowSource agg) allSources.Add(agg.InnerSource);
         }
         // A ForEach-Data-Flow-Loop step has no top-level FlowSourceSpec at all (its own source
         // is constructed fresh, inline, per iteration -- see ProgramForEachDataFlowLoopStep's
@@ -191,7 +215,7 @@ public static class ProgramEmitter
         // and MergeJoinRowSource<>/MergeJoinType both live in Etl.Core.Data/.Abstractions -- so a
         // Merge Join flow needs these usings even when BOTH its sides happen to be CSV-sourced
         // (the real evidenced case).
-        var usesSql = allSources.Any(s => s is SqlFlowSource or MergeJoinFlowSource);
+        var usesSql = allSources.Any(s => s is SqlFlowSource or MergeJoinFlowSource or AggregateFlowSource);
         var usesFlatFileSink = flows.Any(f => f.Sink is FlatFileFlowSink) || multicasts.Any(m => m.Branches.Any(b => b.Sink is FlatFileFlowSink));
         // An OLE DB Command flow is the one flow shape with no IRowTransform/TransformEmitter
         // output at all -- a package whose ONLY flow is an OLE DB Command has no Mapping/
@@ -497,6 +521,9 @@ public static class ProgramEmitter
             case ExcelFlowSource excel:
                 EmitSourceConstruction(lines, "    ", rowTypeName, excel);
                 break;
+            case AggregateFlowSource agg:
+                EmitSourceConstruction(lines, "    ", rowTypeName, agg);
+                break;
         }
         lines.Add("});");
         lines.Add("");
@@ -523,6 +550,31 @@ public static class ProgramEmitter
                 lines.Add($"{indent}var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;");
                 lines.Add($"{indent}var excelOptions = new ExcelSourceOptions {{ FilePath = fileOptions[\"{excel.FileSourceKey}\"].ResolvedPath, WorksheetName = {CSharpStringLiteral(excel.WorksheetName)}, HasHeaderRow = {(excel.HasHeaderRow ? "true" : "false")} }};");
                 lines.Add($"{indent}return new ExcelRowSource<{rowTypeName}>(\"{excel.ComponentName}\", excelOptions, {rowTypeName}Reader.Read);");
+                break;
+            case AggregateFlowSource agg:
+                // Same "build the inner source via a local function" shape MergeJoinFlowSource's
+                // own two sides already use -- the inner IRowSource<TSourceRow> is not a real,
+                // independently-useful DI service; it exists only to feed this one
+                // AggregateRowSource. Built speculatively 2026-08-30.
+                lines.Add($"{indent}IRowSource<{agg.SourceRowTypeName}> BuildAggregateSource()");
+                lines.Add($"{indent}{{");
+                EmitSourceConstruction(lines, indent + "    ", agg.SourceRowTypeName, agg.InnerSource);
+                lines.Add($"{indent}}}");
+                lines.Add($"{indent}");
+                lines.Add($"{indent}return new AggregateRowSource<{agg.SourceRowTypeName}, {agg.GroupByKeyClrType}, {rowTypeName}>(");
+                lines.Add($"{indent}    {CSharpStringLiteral(agg.ComponentName)},");
+                lines.Add($"{indent}    BuildAggregateSource(),");
+                lines.Add($"{indent}    row => row.{agg.GroupByPropertyName},");
+                lines.Add($"{indent}    (key, rows) => new {rowTypeName}");
+                lines.Add($"{indent}    {{");
+                lines.Add($"{indent}        {agg.GroupByPropertyName} = key,");
+                for (var i = 0; i < agg.Counts.Count; i++)
+                {
+                    var count = agg.Counts[i];
+                    var comma = i < agg.Counts.Count - 1 ? "," : "";
+                    lines.Add($"{indent}        {count.OutputPropertyName} = rows.Count(r => r.{count.SourcePropertyName} != null){comma}");
+                }
+                lines.Add($"{indent}    }});");
                 break;
         }
     }

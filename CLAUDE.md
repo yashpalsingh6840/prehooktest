@@ -869,7 +869,16 @@ shared transform/sink via a fresh DataFlowStep instance each time) plus PackageP
 PackageGenerator/ProgramEmitter changes to resolve and wire a plain single-destination flow
 sourced from an expression-driven Flat File Source, verified end-to-end (generated, built 0
 warnings/0 errors, run against .\SQLFORPOC_2022 and two real checked-in CSV files, all 3 rows
-across both files landing correctly)
+across both files landing correctly); Aggregate + Row Count support (GroupBy + Count only) built
+2026-08-30 despite confirmed zero real payoff (the one real Aggregate instance is blocked by its
+own upstream Lookup regardless), on the user's own explicit request -- Row Count needed nothing
+at all (already a recognized passthrough component), Aggregate got a new AggregatePayload/
+LineageBuilder "Aggregate" edge kind, a new AggregateRowEmitter (resolving its row type straight
+off raw output columns, an Aggregate having no external metadata columns of its own, same reason
+MergeJoinEmitter already established), and a new Etl.Core.Data.AggregateRowSource (blocking on
+its input side, ordinary streaming IRowSource on its output side), verified end-to-end with an
+exact row-for-row match against a real dtexec probe that also measured AggregationType=1's own
+NULL-exclusion rule (SQL COUNT(column), not COUNT(*))
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -4230,6 +4239,117 @@ file, named above, is now closed for the one scoped shape (a plain single-destin
 sourced from an expression-driven Flat File Source) — every other loop-body combination remains
 a named gap, not a future target, since combining any of them with this already-speculative
 feature would stack one unevidenced shape on top of another.
+
+### Aggregate + Row Count, built anyway despite confirmed zero payoff (2026-08-30)
+
+Picked from the "remaining known gaps" list by explicit user choice, with the user told directly
+first that Aggregate/Row Count support closes nothing real: `DFT_LookupAndAggregate` (the one
+real evidenced `Microsoft.Aggregate` instance, RBC_Demo_ETL's own `AGG_ByRegion`) sits downstream
+of a `Microsoft.Lookup` that already blocks the whole flow regardless — confirmed twice by
+re-surveying the portfolio. The user chose to build it anyway, for completeness.
+
+**Row Count needed nothing at all** — `Microsoft.RowCount` was already in
+`TransformEmitter.RecognizedPassthroughComponentClassIds` (added during the Script Component
+silent-passthrough fix, since RowCount structurally never adds/changes a column — its only real
+job is writing a count into an SSIS variable, a side effect this generator has no consumer for
+regardless). So this round is entirely Aggregate.
+
+**A real, previously-unnoticed environment issue was hit and root-caused before any real work
+started**: an ad hoc PowerShell probe script (`LoadWithPartialName` for the three usual GAC
+assemblies) failed `ProvideComponentProperties()` on `Microsoft.Aggregate` with "Element not
+found" — NOT because Aggregate itself has some special requirement, but because that script's
+own assembly resolution differs from this project's own `Build/Ssis.Gac.props`-driven references.
+The identical construction sequence worked cleanly once run through a temporary probe mode added
+to `Ssis.Extract.FixtureBuilder` itself (which already references the GAC correctly) — a reminder
+that this project's own established pattern (probe through a properly-referenced project, not a
+bare ad hoc script) exists for a real reason, not just style.
+
+**Two real object-model facts nailed down via that properly-referenced probe, neither guessed:**
+`AggregationType`/`KeyScale` are native COM type converters with NO managed CLR enum backing them
+anywhere (confirmed by reflecting every loaded assembly and finding nothing named either) — unlike
+some other raw-enum properties in this codebase, there is no public Microsoft SDK reference for
+this one either. And an Aggregate output column's own data type is derived AUTOMATICALLY from
+whichever input column `AggregationColumnId` references — calling `SetOutputColumnDataTypeProperties`
+on a freshly-inserted output column throws `COMException 0xC020401A`; setting only
+`AggregationColumnId`/`AggregationType` and reading the column back afterward showed Region
+resolving to `DT_WSTR`/50 (matching its source column) and CustomerCount resolving to `DT_UI8`/0
+on its own (matching the real evidenced XML's own `ui8` Count-column type) — this is also why
+`AggregateRowEmitter` (new, see below) resolves its row type straight off the Aggregate's own raw
+output columns rather than through `PipelineResolver`, the same reason `MergeJoinEmitter` already
+established (a pure pipeline transform has no external metadata columns of its own to join
+against).
+
+**A real dtexec probe measured `AggregationType=1`'s (Count) own NULL-handling rule, not
+guessed**: seed data (`synthetic-aggregate-tables.sql`) deliberately includes one row with a NULL
+in the counted column. Real result: the group with the NULL row landed `CustomerCount=2`, not 3 —
+confirming AggregationType=1 excludes NULLs, matching ordinary SQL `COUNT(column)` semantics,
+never `COUNT(*)`. `SsisPipelineTypeMap` gained a new `"ui8"` entry (`DT_UI8` → `long`, not the
+more literally-accurate `ulong` — EF Core's SQL Server provider has no native mapping for any
+unsigned integer wider than byte, so a `ulong` property would fail model creation; `long`/`bigint`
+is what a real destination column for this value is in practice anyway).
+
+**Extraction: new `AggregatePayload`/`AggregateColumnSpec`**, wired into `PipelineReader.cs`
+exactly like every other bespoke payload (a column's own `AggregationColumnId` custom property is
+a `#{lineageId}` reference, stripped the same way `DataConvertPayload`'s own
+`SourceInputColumnLineageID` already is). `LineageBuilder` gained a new `"Aggregate"` edge kind,
+mirroring its own `"DataConversion"` edge exactly — resolving each output column (GroupBy key or
+Count) back to its TRUE source column by name, the same lineage-based resolution every other
+bespoke payload in this tool already relies on. Golden files needed the usual mechanical update
+(a new `"Aggregate": null,` field on every `PipelineComponentSpec`) — patched byte-preservingly
+(trap 18's own discipline), and this round's own byte-level surprise worth recording: this
+project's JSON writer serializes properties in ALPHABETICAL order, not C# declaration order (an
+initial golden-file edit inserted the new field in declaration-order position and the test still
+failed — the true anchor turned out to be `"AdoNetSource": null,`, immediately before
+`"Aggregate"` alphabetically, not `"OleDbCommand": null,` where declaration order would have
+placed it). Worth remembering before the next round adds a new `PipelineComponentSpec` field.
+
+**Codegen: new `AggregateRowEmitter.cs`** (the Aggregate's own OUTPUT row type, resolved straight
+off raw output columns per the object-model finding above) plus `PackagePlanner.AggregatePlan`/
+`AggregateCountSpec` (one GroupBy column + one-or-more Count columns, each resolved via the new
+lineage edge kind; any other AggregationType, zero/multiple GroupBy columns, or an unresolvable
+source reference is a named gap) and `PackageGenerator.GenerateAggregateFlow`, hoisted right after
+the Lookup check in the per-flow loop (an Aggregate's own output is a structurally different row
+shape from the flow's raw source — fewer rows, a new column set — so it needs its own resolution
+path, the same "must win first" convention Lookup's own doc comment already established).
+Deliberately narrow: only a SQL-sourced flow (OLE DB/ADO NET Source) is supported, and the
+destination must be SQL (not Flat File) — neither is evidenced for an Aggregate flow, and
+combining either with this already-speculative feature was ruled out up front. The resulting
+`ProgramFlowSpec` slots into the EXISTING `wiredFlows` dictionary unchanged (no new dictionary,
+no new `ProgramStep` case) — an Aggregate flow is still, from `ProgramEmitter`'s point of view,
+just an ordinary flow with an unusual `FlowSourceSpec`.
+
+**`Etl.Core` (`D:\PoC\SSIS_Rewrite`): one new type, `Data/AggregateRowSource.cs`.** Deliberately
+minimal: blocking on its INPUT side (must read every row from the wrapped source before producing
+its first output row — a group's count isn't known until every row belonging to it has been seen)
+but an ordinary streaming `IRowSource<TRow>` on its OUTPUT side, so it slots into the existing
+`DataFlowStep<TRow,TEntity>` pipeline with zero changes to that type. It has no built-in notion of
+"Count" or any other aggregation function at all — the generated `(key, rows) => new {Row} { ...
+rows.Count(r => r.X != null) ... }` projection is where the actual aggregation happens, matching
+this project's own long-standing preference for generated code to carry the semantics rather than
+a runtime helper guessing at them.
+
+**New fixture, `SyntheticAggregate.dtsx`** (`Ssis.Extract.FixtureBuilder`'s new `aggregate` mode):
+OLE DB Source (SqlCommand: Region, CustomerID) → Aggregate (GroupBy Region, Count(CustomerID) AS
+CustomerCount — the real evidenced AggregationType values) → OLE DB Destination. **Generated,
+built against a copy of `Etl.Core` (0 warnings/0 errors), and actually RUN against
+`.\SQLFORPOC_2022`**: East=2/West=1 — an **exact row-for-row match** against the real dtexec probe
+run of the same fixture, confirming the generated C# reproduces genuine SSIS Aggregate behavior
+bit-for-bit, not an assumption about it. A second, byte-preserving derived fixture,
+`SyntheticAggregateUnsupportedType.dtsx` (CustomerCount's own `AggregationType` changed from 1 to
+3 via a targeted regex replace, Region's own GroupBy value left untouched), proves the gap path.
+
+Two new `PackagePlannerTests` (the resolved-plan shape; the unsupported-AggregationType gap) and
+one new `PackageGeneratorTests` (asserting the exact `Program.cs` wiring — no top-level
+`IRowSource<TRow>` registration for the raw source, the `AggregateRowSource<...>` construction,
+the nullable-by-construction `CustomerID` property, the `rows.Count(r => r.CustomerID != null)`
+projection). Regression: 145/145 in `Ssis.Extract.Codegen.Tests` (was 142), same 3 pre-existing
+unrelated failures elsewhere.
+
+**Remaining known gaps, updated:** the numeric-passthrough-coercion gap for every pairing other
+than r8-to-i4/wstr-to-i4, and Data Conversion target types other than DT_I4/DT_DBDATE/DT_R8/
+DT_WSTR/DT_BOOL. Aggregate/Row Count, named above, is now closed for the one evidenced shape
+(GroupBy + Count) — Sum/Average/Minimum/Maximum/CountDistinct/CountAll remain unsupported,
+correctly, since none is evidenced anywhere in the tracked portfolio and none was measured.
 
 ## Traps already hit once — don't re-derive these
 

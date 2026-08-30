@@ -81,6 +81,17 @@ public static class SsisPipelineTypeMap
         ["i8"] = new("DT_I8", "long", SsisFacetKind.None, null, Evidenced: false),
         ["ui1"] = new("DT_UI1", "byte", SsisFacetKind.None, null, Evidenced: false),
 
+        // DT_UI8 (unsigned 8-byte int) is the type Microsoft.Aggregate's own Count function
+        // always produces (confirmed real from RBC_Demo_ETL's own AGG_ByRegion, and via the
+        // object model: an Aggregate output column's data type resolves to this automatically,
+        // never settable directly -- see Ssis.Extract.FixtureBuilder's own BuildAggregateFixture
+        // doc comment). Mapped to `long`, not the more literally-accurate `ulong` -- EF Core's
+        // SQL Server provider has no native type mapping for any unsigned integer wider than
+        // byte, so a `ulong` property would fail model creation; `long`/`bigint` is what a real
+        // destination column for this value is in practice anyway (a row count can never
+        // realistically approach long's own max value), so this is safe, not just convenient.
+        ["ui8"] = new("DT_UI8", "long", SsisFacetKind.None, null, Evidenced: true),
+
         // --- floating point / exact numeric ---
         ["r4"] = new("DT_R4", "float", SsisFacetKind.None, null, Evidenced: false),
         ["r8"] = new("DT_R8", "double", SsisFacetKind.None, null, Evidenced: false),

@@ -80,6 +80,7 @@ internal static class PipelineReader
         MergeJoinPayload? mergeJoin = null;
         ExcelSourcePayload? excelSource = null;
         OleDbCommandPayload? oleDbCommand = null;
+        AggregatePayload? aggregate = null;
 
         // Script Component's own componentClassID is the generic "Microsoft.ManagedComponentHost"
         // -- not a Script-Component-specific ID the way every other bespoke type here is --
@@ -312,6 +313,19 @@ internal static class PipelineReader
                 .ToList();
             sort = new SortPayload { Keys = keys };
         }
+        else if (componentClassId == "Microsoft.Aggregate")
+        {
+            var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            aggregate = new AggregatePayload
+            {
+                Columns = (mainOutput?.Columns ?? []).Select(c => new AggregateColumnSpec
+                {
+                    OutputColumnName = c.Name,
+                    SourceColumnLineageId = StripLineageRef(GetProperty(c.Properties, "AggregationColumnId")),
+                    AggregationTypeRaw = ParseInt(GetProperty(c.Properties, "AggregationType")),
+                }).ToList(),
+            };
+        }
         else if (componentClassId == "Microsoft.MergeJoin")
         {
             var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
@@ -379,6 +393,7 @@ internal static class PipelineReader
             MergeJoin = mergeJoin,
             ExcelSource = excelSource,
             OleDbCommand = oleDbCommand,
+            Aggregate = aggregate,
         };
     }
 

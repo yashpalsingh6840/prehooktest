@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate]");
             return 2;
         }
 
@@ -148,6 +148,10 @@ internal static class Program
         {
             return BuildForEachDataFlowLoopFixture(args[0]);
         }
+        if (fixtureName == "aggregate")
+        {
+            return BuildAggregateFixture(args[0]);
+        }
         if (fixtureName == "excel-source")
         {
             return BuildExcelSourceFixture(args[0]);
@@ -178,7 +182,7 @@ internal static class Program
         }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', or 'excel-source-sqlcommand'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', or 'aggregate'.");
             return 2;
         }
 
@@ -2125,6 +2129,99 @@ internal static class Program
     /// under <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-foreach-data-flow-loop-files/</c>
     /// present on disk.
     /// </summary>
+    /// <summary>
+    /// A Microsoft.Aggregate flow -- built speculatively 2026-08-30 (RBC_Demo_ETL's own real
+    /// instance, <c>DFT_LookupAndAggregate\AGG_ByRegion</c>, sits downstream of a Lookup that
+    /// already blocks the whole flow regardless of Aggregate support, confirmed by re-surveying
+    /// the portfolio twice; built anyway on the user's own explicit request, "for completeness"
+    /// rather than to close a real gap). OLE DB Source (SqlCommand: Region, CustomerID) -&gt;
+    /// Aggregate (GroupBy Region, Count(CustomerID) AS CustomerCount -- the exact real evidenced
+    /// shape from <c>AGG_ByRegion</c> itself: AggregationType=0 for the group-by column,
+    /// AggregationType=1 for the count column) -&gt; OLE DB Destination.
+    ///
+    /// <para><b>Object-model facts confirmed empirically while building this</b> (same "ask the
+    /// runtime, don't guess" discipline as trap 12): the ad hoc PowerShell probe this method's
+    /// own commit replaced failed with "Element not found" trying to <c>Instantiate()</c> a
+    /// Microsoft.Aggregate component -- NOT because Aggregate itself is unsupported, but because
+    /// that PowerShell script's own <c>LoadWithPartialName</c> calls resolve a different (wrong)
+    /// GAC assembly set than this project's own <c>Build/Ssis.Gac.props</c>-driven references;
+    /// the identical construction sequence works cleanly once run through this properly-
+    /// referenced project. <c>AggregationType</c>/<c>KeyScale</c> are native COM type converters
+    /// with no managed CLR enum backing them (confirmed by reflecting every loaded assembly and
+    /// finding nothing named either) -- unlike some other raw-enum properties in this codebase,
+    /// there is no public Microsoft SDK reference for this one either, so its real semantics
+    /// were measured via a genuine dtexec run (see <c>synthetic-aggregate-tables.sql</c>'s own
+    /// seed data, which deliberately includes one NULL CustomerID specifically to distinguish
+    /// COUNT(column) semantics -- excludes NULL -- from COUNT(*) semantics -- includes it).
+    /// Confirmed real: AggregationType=1 with an <c>AggregationColumnId</c> set is COUNT(column)
+    /// -- NULLs excluded, matching ordinary SQL COUNT(column) rather than COUNT(*). Also
+    /// confirmed: calling <c>SetOutputColumnDataTypeProperties</c> on a freshly-inserted output
+    /// column throws <c>COMException 0xC020401A</c> -- unlike Derived Column/Conditional Split,
+    /// an Aggregate output column's data type is derived AUTOMATICALLY from whichever input
+    /// column <c>AggregationColumnId</c> references (confirmed by reading the column back after
+    /// setting only <c>AggregationColumnId</c>/<c>AggregationType</c>: Region resolved to
+    /// DT_WSTR/50, matching its source column exactly; CustomerCount resolved to DT_UI8/0 on its
+    /// own, matching the real evidenced XML's <c>ui8</c> Count-column type) -- so this method
+    /// never calls it at all.</para>
+    /// </summary>
+    private static int BuildAggregateFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticAggregate" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Aggregate";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT Region, CustomerID FROM dbo.SyntheticAggregateSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+
+        var aggMeta = pipe.ComponentMetaDataCollection.New();
+        aggMeta.ComponentClassID = "Microsoft.Aggregate";
+        var aggInst = aggMeta.Instantiate();
+        aggInst.ProvideComponentProperties(); // resets Name to the class default -- must set Name after this
+        aggMeta.Name = "AGG_ByRegion";
+
+        AttachPath(pipe, srcOutput, aggMeta.InputCollection[0]);
+        aggInst.AcquireConnections(null);
+        aggInst.ReinitializeMetaData();
+        aggInst.ReleaseConnections();
+
+        var aggInput = aggMeta.InputCollection[0];
+        var aggVirtualInput = aggInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in aggVirtualInput.VirtualInputColumnCollection)
+            aggInst.SetUsageType(aggInput.ID, aggVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+
+        var regionInputCol = aggInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "Region");
+        var customerIdInputCol = aggInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "CustomerID");
+
+        var aggOutput = aggMeta.OutputCollection[0];
+
+        var regionOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, 0, "Region", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, regionOutCol.ID, "AggregationColumnId", regionInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, regionOutCol.ID, "AggregationType", 0); // GroupBy -- real evidenced value
+
+        var countOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, 1, "CustomerCount", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, countOutCol.ID, "AggregationColumnId", customerIdInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, countOutCol.ID, "AggregationType", 1); // Count -- real evidenced value
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticAggregateTarget]");
+        AttachPath(pipe, aggOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
     private static int BuildForEachDataFlowLoopFixture(string outputPath)
     {
         var filesDir = Path.Combine(TestFixturesDir(), "synthetic-foreach-data-flow-loop-files");
