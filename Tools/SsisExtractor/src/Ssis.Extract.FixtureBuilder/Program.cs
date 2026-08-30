@@ -168,9 +168,13 @@ internal static class Program
         {
             return BuildStringToIntCoercionFixture(args[0]);
         }
+        if (fixtureName == "excel-source-sqlcommand")
+        {
+            return BuildExcelSourceSqlCommandFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', or 'string-to-int-coercion'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', or 'excel-source-sqlcommand'.");
             return 2;
         }
 
@@ -2137,6 +2141,59 @@ internal static class Program
 
         var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
             accessMode: 3, openRowset: "[dbo].[SyntheticExcelSourceTarget]");
+        AttachPath(pipe, mainOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// PROBE, built speculatively 2026-08-30 (no real package needs this -- the only real Excel
+    /// Source in the tracked portfolio, RBC_Demo_ETL's own EXCEL_SRC_Drip, is AccessMode=0/
+    /// OpenRowset): an Excel Source with AccessMode=2 (SqlCommand) instead of OpenRowset,
+    /// SqlCommand set to a bare "SELECT * FROM [DripEligibility$]" -- the simplest possible Jet/
+    /// ACE SQL query, functionally equivalent to just naming the worksheet. Reuses the exact
+    /// same real checked-in workbook (<c>synthetic-excel-source.xlsx</c>) as the OpenRowset-mode
+    /// fixture, so its own known-good row values are the ground truth to diff against. Confirms
+    /// (or refutes) whether the real ACE OLEDB provider in this environment accepts this SQL
+    /// shape and resolves metadata identically to OpenRowset mode -- ask the runtime, don't
+    /// guess, same discipline as everywhere else in this file.
+    /// </summary>
+    private static int BuildExcelSourceSqlCommandFixture(string outputPath)
+    {
+        var excelPath = Path.Combine(TestFixturesDir(), "synthetic-excel-source.xlsx");
+        if (!File.Exists(excelPath))
+        {
+            Console.Error.WriteLine($"error: expected the real sample .xlsx at {excelPath} -- this tool's checked-in test fixture is missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticExcelSourceSqlCommand" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var excelCm = pkg.Connections.Add("EXCEL");
+        excelCm.Name = "CM_Excel_Fixture";
+        excelCm.ConnectionString = $"Provider=Microsoft.ACE.OLEDB.12.0;Data Source={excelPath};Extended Properties=\"EXCEL 12.0 XML;HDR=YES\";";
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_ExcelLoad";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "Excel Source", "Microsoft.ExcelSource", excelCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT * FROM [DripEligibility$]");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticExcelSourceSqlCommandTarget]");
         AttachPath(pipe, mainOutput, destMeta.InputCollection[0]);
         ResolveOleDbMetadata(destMeta, isDestination: true);
 

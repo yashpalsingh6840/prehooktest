@@ -608,6 +608,54 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WiresAnExcelSourceInSqlCommandMode_WhenTheQueryIsABareSelectStarFromSheet()
+    {
+        // SyntheticExcelSourceSqlCommand.dtsx: hand-derived (byte-preserving edit, not a fresh
+        // object-model build -- see the fixture's own note in CLAUDE.md's "Excel Source
+        // SqlCommand mode" section for why: attaching an OLE DB Destination downstream of a
+        // SqlCommand-mode Excel Source fails SSIS's own object-model validation in this
+        // environment, a confirmed, left-unresolved quirk, unrelated to the SQL itself -- a raw
+        // System.Data.OleDb probe against the real workbook proved the query executes fine)
+        // from SyntheticExcelSource.dtsx: AccessMode=2 (SqlCommand), SqlCommand="SELECT * FROM
+        // [DripEligibility$]" instead of AccessMode=0/OpenRowset="DripEligibility$". Built
+        // SPECULATIVELY 2026-08-30 -- no real package in the tracked portfolio uses Excel Source
+        // in SqlCommand mode. Proves the bare "SELECT * FROM [SheetName$]" pattern resolves to
+        // the exact same WorksheetName a real OpenRowset-mode Excel Source would use. Confirmed
+        // beyond this test by actually building the generated exe against a copy of Etl.Core and
+        // running it against .\SQLFORPOC_2022 and the real checked-in workbook -- byte-for-byte
+        // the same 9 rows as the OpenRowset-mode fixture's own verified run.
+        var package = LoadSyntheticFixture("SyntheticExcelSourceSqlCommand.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains(
+            "var excelOptions = new ExcelSourceOptions { FilePath = fileOptions[\"Excel Source\"].ResolvedPath, WorksheetName = \"DripEligibility$\", HasHeaderRow = true };",
+            programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        var gap = Assert.Single(result.Gaps);
+        Assert.Equal("SyntheticExcelSourceSqlCommand.Notification", gap.Location);
+    }
+
+    [Fact]
+    public void Generate_ReportsAGap_ForAnExcelSourceSqlCommand_ThatIsNotABareSelectStarFromSheet()
+    {
+        // Same fixture as above, with a WHERE clause added to the SqlCommand -- this generator's
+        // ExcelRowSource is an ExcelDataReader-backed grid reader with no query engine at all, so
+        // anything beyond a bare worksheet reference must gap rather than guess (a WHERE clause,
+        // column list, JOIN, or range address has no way to execute against that reader).
+        var package = LoadSyntheticFixture("SyntheticExcelSourceSqlCommandUnsupported.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        Assert.DoesNotContain(result.Files, f => f.RelativePath == "Program.cs");
+        var gap = Assert.Single(result.Gaps, g => g.Location == "DFT_ExcelLoad");
+        Assert.Contains("cannot translate", gap.Reason);
+        Assert.Contains("only a bare 'SELECT * FROM [SheetName$]' is supported", gap.Reason);
+    }
+
+    [Fact]
     public void Generate_WiresAnOleDbCommandFlow_WithNoEntityOrDbTable()
     {
         // SyntheticOleDbCommand.dtsx: OLE DB Source -> OLE DB Command, no destination component

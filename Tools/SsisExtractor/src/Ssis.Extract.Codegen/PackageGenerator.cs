@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Ssis.Extract.Dtsx;
 using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Package;
@@ -27,7 +28,7 @@ public sealed record PackageGenerateResult(
 /// "pure function returning GeneratedFiles, command is a thin shell" split every other
 /// emitter in this project already follows.
 /// </summary>
-public static class PackageGenerator
+public static partial class PackageGenerator
 {
     public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix)
     {
@@ -1001,33 +1002,64 @@ public static class PackageGenerator
         }
     }
 
-    /// <summary>Resolves an Excel Source into an <see cref="ExcelFlowSource"/>. AccessMode must
-    /// be 0 (OpenRowset, i.e. a worksheet) -- the one evidenced value; a SqlCommand-mode Excel
-    /// Source (see <see cref="ExcelSourcePayload"/>'s own doc comment for why its Jet/ACE "SQL"
-    /// dialect isn't assumed) is a named gap, never guessed. The worksheet's own header-row
-    /// setting (Extended Properties=HDR=YES/NO) lives on the EXCEL connection manager, not the
-    /// component -- resolved from <see cref="ParsedConnectionString.Extras"/>, the generic
-    /// pass-through capture every OLEDB-shaped connection string already gets for a segment with
-    /// no bespoke field. That capture has a real, benign quirk here: "Extended
-    /// Properties=&quot;EXCEL 12.0 XML;HDR=YES&quot;" contains an UNQUOTED-parser-visible ';'
-    /// inside its own quoted value, so the generic ';'-split (which has no quote awareness) lands
-    /// "HDR" as its own extras key with a trailing stray '"' -- convenient, not a bug to fix,
-    /// since it means HDR is directly readable without any Excel-specific parsing.</summary>
+    /// <summary>Matches a bare "SELECT * FROM [SheetName$]" -- optionally without brackets, with
+    /// a trailing semicolon -- and captures the sheet reference (including its own trailing
+    /// "$"). This is deliberately the ONLY SqlCommand shape this tool ever translates for an
+    /// Excel Source: <c>Etl.Core.Excel.ExcelRowSource</c> is an ExcelDataReader-backed grid
+    /// reader with no query engine at all (see that type's own doc comment) -- it can select a
+    /// worksheet by name, nothing more. A WHERE clause, column list, JOIN, or range address
+    /// (e.g. "[Sheet1$A1:C10]") has no way to execute against that reader and is a named gap,
+    /// never guessed.</summary>
+    [GeneratedRegex(@"^SELECT\s+\*\s+FROM\s+\[?([^\[\]\s]+\$)\]?\s*;?\s*$", RegexOptions.IgnoreCase)]
+    private static partial Regex BareSelectStarFromSheetPattern();
+
+    /// <summary>Resolves an Excel Source into an <see cref="ExcelFlowSource"/>. AccessMode=0
+    /// (OpenRowset, i.e. a worksheet) is the one evidenced value across the tracked portfolio.
+    /// AccessMode=2 (SqlCommand) -- built SPECULATIVELY 2026-08-30, no real package needs it --
+    /// is accepted ONLY when the SQL text is a bare <see cref="BareSelectStarFromSheetPattern"/>
+    /// match, functionally equivalent to naming the worksheet directly (confirmed via a raw
+    /// System.Data.OleDb probe against the real checked-in workbook: the real ACE OLEDB provider
+    /// returns the identical 9 rows/3 columns for "SELECT * FROM [DripEligibility$]" as it does
+    /// for the bare worksheet OpenRowset) -- any other Jet/ACE SQL shape (see
+    /// <see cref="ExcelSourcePayload"/>'s own doc comment) is a named gap, never guessed. The
+    /// worksheet's own header-row setting (Extended Properties=HDR=YES/NO) lives on the EXCEL
+    /// connection manager, not the component -- resolved from
+    /// <see cref="ParsedConnectionString.Extras"/>, the generic pass-through capture every
+    /// OLEDB-shaped connection string already gets for a segment with no bespoke field. That
+    /// capture has a real, benign quirk here: "Extended Properties=&quot;EXCEL 12.0
+    /// XML;HDR=YES&quot;" contains an UNQUOTED-parser-visible ';' inside its own quoted value, so
+    /// the generic ';'-split (which has no quote awareness) lands "HDR" as its own extras key
+    /// with a trailing stray '"' -- convenient, not a bug to fix, since it means HDR is directly
+    /// readable without any Excel-specific parsing.</summary>
     private static ExcelFlowSource? BuildExcelFlowSource(
         PackageSpec package, string taskName, PipelineComponentSpec source,
         List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps)
     {
         var payload = source.ExcelSource!;
 
-        if (payload.AccessMode is not (null or 0))
+        string worksheetName;
+        if (payload.AccessMode is null or 0)
         {
-            gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has AccessMode={payload.AccessMode} -- only OpenRowset (0, a worksheet) is supported yet, not a SqlCommand"));
-            return null;
+            if (string.IsNullOrEmpty(payload.OpenRowset))
+            {
+                gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has AccessMode=0 (OpenRowset) but no OpenRowset (worksheet name) to read from"));
+                return null;
+            }
+            worksheetName = payload.OpenRowset;
         }
-
-        if (string.IsNullOrEmpty(payload.OpenRowset))
+        else if (payload.AccessMode == 2)
         {
-            gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has AccessMode=0 (OpenRowset) but no OpenRowset (worksheet name) to read from"));
+            var match = string.IsNullOrEmpty(payload.SqlCommand) ? null : BareSelectStarFromSheetPattern().Match(payload.SqlCommand.Trim());
+            if (match is not { Success: true })
+            {
+                gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has AccessMode=2 (SqlCommand) with a query this tool cannot translate -- this generator's ExcelRowSource has no query engine, only a worksheet-name reader, so only a bare 'SELECT * FROM [SheetName$]' is supported; a WHERE clause, column list, JOIN, or range address is not."));
+                return null;
+            }
+            worksheetName = match.Groups[1].Value;
+        }
+        else
+        {
+            gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has AccessMode={payload.AccessMode} -- only OpenRowset (0) or a bare 'SELECT * FROM [SheetName$]' SqlCommand (2) are supported yet"));
             return null;
         }
 
@@ -1048,7 +1080,7 @@ public static class PackageGenerator
             hasHeaderRow = found.Value.TrimEnd('"').Equals("YES", StringComparison.OrdinalIgnoreCase);
         }
 
-        return new ExcelFlowSource(source.Name, fileSourceKey, payload.OpenRowset, hasHeaderRow);
+        return new ExcelFlowSource(source.Name, fileSourceKey, worksheetName, hasHeaderRow);
     }
 
     /// <summary>ADO NET Source's own AccessMode enum is not reverse-engineered (see

@@ -850,7 +850,18 @@ flow) -- found and fixed one real false positive along the way (Merge Join's own
 type is resolved independently by MergeJoinEmitter itself, needing a new opt-out flag), verified
 against the real `Package.dtsx` (now builds 0 warnings/0 errors, closing two real instances of
 the same bug) and confirmed to introduce zero new false positives across the extractor's entire
-existing fixture corpus
+existing fixture corpus; a follow-up portfolio re-survey the same session held steady at 3/5 with
+no new real gaps, so Excel Source SqlCommand mode was picked next and built SPECULATIVELY 2026-08-30
+(the user was told first that this option, initially mis-framed as "real", actually has zero
+evidence in the tracked portfolio, and chose to proceed anyway) -- a raw System.Data.OleDb probe
+against the real checked-in workbook confirmed a bare "SELECT * FROM [SheetName$]" query returns
+identical rows to OpenRowset mode through the real ACE provider, so that one shape (and only that
+shape, since Etl.Core.Excel.ExcelRowSource has no query engine at all) is now translated;
+verified end-to-end via a byte-preserving-derived fixture (not a fresh object-model build -- a
+real, confirmed, left-unresolved SSIS object-model quirk blocks attaching an OLE DB Destination
+downstream of a SqlCommand-mode Excel Source in this environment, documented rather than solved)
+run against .\SQLFORPOC_2022 and the real workbook, landing byte-for-byte the same 9 rows as the
+OpenRowset-mode fixture
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -4006,6 +4017,94 @@ and Data Conversion target types other than DT_I4/DT_DBDATE/DT_R8/DT_WSTR/DT_BOO
 CS1061 bug, named above, is now closed — and Script Component (and any other genuinely
 unmodeled pipeline component type) is now a safe, named gap everywhere in this tool, not just in
 the one flow that happened to surface it.
+
+### Excel Source SqlCommand mode, built speculatively (2026-08-30)
+
+A re-survey the same session confirmed the portfolio held steady at 3/5 with no new real gaps,
+so the next round had no free evidenced win the way the string-to-int round did. Before starting
+this one, the initial framing ("Excel SqlCommand mode is real, not speculative") was checked
+against the actual XML and found WRONG: the one real Excel Source in the whole tracked portfolio
+(`Package_Advanced`'s own `EXCEL_SRC_Drip`) is `AccessMode=0`/OpenRowset with an empty
+`SqlCommand` — there is genuinely **zero** real evidence for SqlCommand mode anywhere. Surfaced
+this correction to the user directly (`AskUserQuestion`, per the established
+`ssis-poc-speculative-work-signoff` discipline) rather than quietly building ahead of demand;
+they chose to proceed speculatively anyway.
+
+**What's actually possible, confirmed via a raw probe before any codegen work**: this
+generator's own `Etl.Core.Excel.ExcelRowSource` (built for the OpenRowset-mode round) is an
+`ExcelDataReader`-backed grid reader with **no query engine at all** — it can only select a
+worksheet by name. So a real Excel Source SqlCommand can only ever be translated when it's
+semantically equivalent to naming a worksheet. Confirmed empirically, not assumed: a raw
+`System.Data.OleDb.OleDbConnection` probe against the real checked-in workbook
+(`synthetic-excel-source.xlsx`) ran `SELECT * FROM [DripEligibility$]` directly through the real
+ACE OLEDB provider and got back the identical 9 rows/3 columns as the OpenRowset-mode fixture —
+proof that a **bare** `SELECT * FROM [SheetName$]` really is nothing more than the worksheet
+reference wrapped in SQL syntax, for this provider, in this environment.
+
+**Built:** a new `PackageGenerator.BareSelectStarFromSheetPattern` regex
+(`^SELECT\s+\*\s+FROM\s+\[?([^\[\]\s]+\$)\]?\s*;?\s*$`, case-insensitive) recognizing ONLY that
+exact shape. `BuildExcelFlowSource` now branches on `AccessMode`: `0`/`null` resolves
+`OpenRowset` exactly as before (unchanged, zero regression risk for the one real portfolio
+instance); `2` requires the `SqlCommand` text to match the pattern, extracting the captured
+`SheetName$` and feeding it through the IDENTICAL downstream code as OpenRowset mode (same
+`ExcelFlowSource`, same `ExcelRowSource<TRow>` at runtime — there is no second implementation to
+drift out of sync with); anything else (a WHERE clause, column list, JOIN, range address, or any
+other `AccessMode`) is a named gap stating plainly that this generator's reader has no query
+engine, never a guess at what a more complex query would do.
+
+**A real SSIS object-model quirk was hit and documented rather than papered over, matching this
+project's own precedent (the ADO NET connection-manager and MergeJoin-extra-columns quirks
+elsewhere in this file) for something confirmed-real-but-left-unsolved.** Building a genuine
+`.dtsx` fixture via the SSIS object model (`Ssis.Extract.FixtureBuilder`, the usual technique) —
+an Excel Source with `AccessMode=2`/`SqlCommand="SELECT * FROM [DripEligibility$]"` wired
+straight to an OLE DB Destination — consistently failed with `COMException 0xC0202040` when the
+**destination's own** `ReinitializeMetaData()` ran, never the source's. Isolated with a
+dedicated, throwaway object-model probe (outside the normal fixture-builder, same "ask the
+runtime" discipline as everywhere else): the Excel Source's OWN metadata resolves perfectly in
+isolation (confirmed identical output columns/types to OpenRowset mode); the failure appears only
+once a downstream OLE DB Destination tries to resolve ITS OWN input metadata against that
+upstream. Re-acquiring the source's connection before the destination's own resolution call did
+not help. Left unresolved after real, genuine attempts — not guessed around.
+
+**Verification therefore used a different, still-rigorous tier, the same one the MergeJoin
+round's own unresolved dtexec-fixture quirk fell back on:**
+1. **A hand-derived fixture, not a fresh object-model build.** `SyntheticExcelSourceSqlCommand.dtsx`
+   is a byte-preserving edit (trap 18's own discipline: read all bytes, regex-replace only the
+   Excel Source's own three properties — `OpenRowset` cleared, `SqlCommand` set to `SELECT * FROM
+   [DripEligibility$]`, `AccessMode` 0→2 — scoped to the text BEFORE the destination component's
+   own `componentClassID` marker so the destination is untouched) of the already-proven
+   `SyntheticExcelSource.dtsx`. `ssisx` parses raw XML directly (plan §2.1) and never invokes the
+   SSIS object model at all, so this fixture is exactly as valid an input to `ssisx generate` as
+   one built through SSDT would be — it just could never be dtexec-executed, which is not
+   something this generator's own test tier needs.
+2. **Generated, built against a copy of `Etl.Core` (0 warnings/0 errors), and actually RUN
+   against `.\SQLFORPOC_2022` and the real checked-in workbook**: 9 rows landed, read back
+   afterward — **byte-for-byte identical** to the OpenRowset-mode fixture's own already-verified
+   9 rows (same `CustomerID`/`DripEligible`/`ReviewedBy` values). The strongest evidence tier this
+   project's philosophy asks for, just reached via a hand-derived `.dtsx` instead of a fresh
+   object-model one.
+3. **The gap path verified the same way**: a second fixture,
+   `SyntheticExcelSourceSqlCommandUnsupported.dtsx` (same byte-preserving technique, SqlCommand
+   changed to add `WHERE CustomerID > 5`), correctly produces the named gap and generates no
+   `Program.cs` at all — confirming the pattern match is neither too loose nor silently guessing
+   past an unsupported shape.
+4. **Regenerated the real portfolio afterward**: `Package_Advanced`'s own real, OpenRowset-mode
+   `EXCEL_SRC_Drip` is completely unaffected — same file, same gap count, still fully
+   generatable. Two new `PackageGeneratorTests`
+   (`Generate_WiresAnExcelSourceInSqlCommandMode_...`,
+   `Generate_ReportsAGap_ForAnExcelSourceSqlCommand_ThatIsNotABareSelectStarFromSheet`).
+   Regression: 139/139 in `Ssis.Extract.Codegen.Tests` (was 137), same 3 pre-existing unrelated
+   failures elsewhere. No `Etl.Core` changes this round (the runtime read path is unchanged;
+   only the design-time worksheet-name extraction is new), so `D:\PoC\SSIS_Rewrite` has nothing
+   to commit.
+
+**Remaining known gaps, updated:** Aggregate/Row Count (still moot), a ForEach Loop re-running a
+whole Data Flow Task per file, the numeric-passthrough-coercion gap for every pairing other than
+r8-to-i4/wstr-to-i4, and Data Conversion target types other than DT_I4/DT_DBDATE/DT_R8/DT_WSTR/
+DT_BOOL. Excel Source in SqlCommand mode, named above, is now closed for the one shape that can
+ever be translated given `ExcelRowSource`'s own no-query-engine design (a bare worksheet
+reference) — anything more expressive remains, correctly, a permanent gap rather than a future
+target, since there is no way to execute it against this generator's own portable reader.
 
 ## Traps already hit once — don't re-derive these
 
