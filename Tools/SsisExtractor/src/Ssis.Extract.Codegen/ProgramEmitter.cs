@@ -88,6 +88,26 @@ public sealed record ProgramForEachFileLoopStep(
     string StepName, string Folder, string FileSpec, bool Recurse, string NameMode,
     string CurrentFileParamName, string SqlExpression) : ProgramStep;
 
+/// <summary>A ForEach File Enumerator loop whose body is a whole Data Flow Task -- built
+/// speculatively 2026-08-30, see <c>Ssis.Extract.Codegen.PackagePlanner.ForEachFileDataFlowPlan</c>'s
+/// own doc comment. Unlike <see cref="ProgramFlowSpec"/>, there is no top-level
+/// <c>IRowSource&lt;TRow&gt;</c> DI registration for this step at all -- the whole point is a
+/// FRESH source per file, so it is constructed inline inside the lambda this emitter wraps
+/// around <see cref="FilePathExpression"/> (an ALREADY-TRANSLATED C# expression, produced by
+/// <c>ForEachLoopEmitter</c> in <c>PackageGenerator</c> -- reusing the exact translator
+/// <see cref="ProgramForEachFileLoopStep.SqlExpression"/> already uses, since a connection
+/// manager's ConnectionString expression and an Execute SQL Task's SqlStatementSource
+/// expression are both just "build a string from <c>@[Namespace::Variable]</c> references")
+/// referencing <see cref="CurrentFileParamName"/> as a bare identifier. <see cref="RowTypeName"/>/
+/// <see cref="EntityName"/>/<see cref="TransformClassName"/> match EntityEmitter/CsvRowEmitter/
+/// TransformEmitter's own outputs exactly like <see cref="ProgramFlowSpec"/>'s do -- the flow
+/// body is generated the same way an ordinary single-destination CSV flow is, only the source
+/// construction differs.</summary>
+public sealed record ProgramForEachDataFlowLoopStep(
+    string StepName, string Folder, string FileSpec, bool Recurse, string NameMode,
+    string CurrentFileParamName, string FilePathExpression,
+    string SourceComponentName, string RowTypeName, string EntityName, string TransformClassName) : ProgramStep;
+
 public sealed record ProgramConditionalSplitStep(
     string StepName,
     FlowSourceSpec Source,
@@ -149,7 +169,8 @@ public static class ProgramEmitter
         var splits = request.Steps.OfType<ProgramConditionalSplitStep>().ToList();
         var multicasts = request.Steps.OfType<ProgramMulticastStep>().ToList();
         var oleDbCommands = request.Steps.OfType<ProgramOleDbCommandStep>().ToList();
-        if (flows.Count == 0 && splits.Count == 0 && multicasts.Count == 0 && oleDbCommands.Count == 0)
+        var dataFlowLoops = request.Steps.OfType<ProgramForEachDataFlowLoopStep>().ToList();
+        if (flows.Count == 0 && splits.Count == 0 && multicasts.Count == 0 && oleDbCommands.Count == 0 && dataFlowLoops.Count == 0)
             return new EmitResult([], [new GenerationGap(request.PackageName, "no Data Flow Task could be planned for this package")]);
 
         var allSources = new List<FlowSourceSpec>();
@@ -159,7 +180,11 @@ public static class ProgramEmitter
             allSources.Add(source);
             if (source is MergeJoinFlowSource mj) { allSources.Add(mj.LeftSource); allSources.Add(mj.RightSource); }
         }
-        var usesCsv = allSources.Any(s => s is CsvFlowSource);
+        // A ForEach-Data-Flow-Loop step has no top-level FlowSourceSpec at all (its own source
+        // is constructed fresh, inline, per iteration -- see ProgramForEachDataFlowLoopStep's
+        // own doc comment), but it is always CSV-sourced this round (PlanForEachDataFlowLoop's
+        // own gate requires a Flat File Source), so it still needs the same usings/namespace.
+        var usesCsv = allSources.Any(s => s is CsvFlowSource) || dataFlowLoops.Count > 0;
         var usesExcel = allSources.Any(s => s is ExcelFlowSource);
         // A Merge Join's own combined row type always lands in the .Sql namespace/folder
         // (MergeJoinEmitter's own choice, independent of what its two SIDES are sourced from),
@@ -174,7 +199,7 @@ public static class ProgramEmitter
         // exists: DbContextEmitter emits a table-less DbContext even then). Confirmed real: an
         // OLE DB Command-only package failed CS0234 ("namespace 'Mapping' does not exist")
         // before this fix, caught by actually building the generated project.
-        var usesMapping = flows.Count > 0 || splits.Count > 0 || multicasts.Count > 0;
+        var usesMapping = flows.Count > 0 || splits.Count > 0 || multicasts.Count > 0 || dataFlowLoops.Count > 0;
 
         var lines = new List<string> { "using Etl.Core.Abstractions;" };
         if (usesCsv) lines.Add("using Etl.Core.Csv;");
@@ -212,7 +237,8 @@ public static class ProgramEmitter
         var multicastBranchesByEntity = multicasts.SelectMany(m => m.Branches).DistinctBy(b => b.EntityName).ToList();
         var multicastSqlBranchEntityNames = multicastBranchesByEntity.Where(b => b.Sink is SqlFlowSink).Select(b => b.EntityName);
         var sqlSinkEntityNames = flows.Where(f => f.Sink is SqlFlowSink).Select(f => f.EntityName)
-            .Concat(allBranchEntityNames).Concat(multicastSqlBranchEntityNames).Distinct();
+            .Concat(allBranchEntityNames).Concat(multicastSqlBranchEntityNames)
+            .Concat(dataFlowLoops.Select(l => l.EntityName)).Distinct();
         foreach (var entityName in sqlSinkEntityNames)
             lines.Add($"builder.Services.AddBulkSink<{entityName}>();");
         foreach (var flow in flows.Where(f => f.Sink is FlatFileFlowSink))
@@ -243,6 +269,17 @@ public static class ProgramEmitter
 
         foreach (var cmd in oleDbCommands)
             EmitRowSourceRegistration(lines, cmd.RowTypeName, cmd.Source);
+
+        // No EmitRowSourceRegistration call for a ForEach-Data-Flow-Loop -- deliberately: there
+        // is no single IRowSource<TRow> to register up front, since a fresh one is constructed
+        // per iteration inline (see the ProgramForEachDataFlowLoopStep case below). Only its own
+        // IRowTransform is a DI service, same registration shape a plain flow's own transform
+        // gets.
+        foreach (var loop in dataFlowLoops)
+        {
+            lines.Add($"builder.Services.AddScoped<IRowTransform<{loop.RowTypeName}, {loop.EntityName}>, {loop.TransformClassName}>();");
+            lines.Add("");
+        }
 
         lines.Add("builder.Services.AddScoped<IEtlPackage>(sp =>");
         lines.Add("{");
@@ -282,6 +319,18 @@ public static class ProgramEmitter
                     lines.Add($"        new ForEachFileLoopAction({CSharpStringLiteral(loopStep.Folder)}, {CSharpStringLiteral(loopStep.FileSpec)}, {(loopStep.Recurse ? "true" : "false")}, ForEachFileNameMode.{loopStep.NameMode}),");
                     lines.Add($"        {loopStep.CurrentFileParamName} => {loopStep.SqlExpression},");
                     lines.Add("        sp.GetRequiredService<ILogger<ForEachLoopStep>>());");
+                    lines.Add("");
+                    break;
+                case ProgramForEachDataFlowLoopStep dfLoopStep:
+                    var dfLoopLocal = SqlStepLocalName(dfLoopStep.StepName); // same lowercase-first convention, generic enough to reuse
+                    orderedLocalNames.Add(dfLoopLocal);
+                    lines.Add($"    var {dfLoopLocal} = new ForEachFileDataFlowStep<{dfLoopStep.RowTypeName}, {dfLoopStep.EntityName}>(");
+                    lines.Add($"        \"{dfLoopStep.StepName}\",");
+                    lines.Add($"        new ForEachFileLoopAction({CSharpStringLiteral(dfLoopStep.Folder)}, {CSharpStringLiteral(dfLoopStep.FileSpec)}, {(dfLoopStep.Recurse ? "true" : "false")}, ForEachFileNameMode.{dfLoopStep.NameMode}),");
+                    lines.Add($"        {dfLoopStep.CurrentFileParamName} => new CsvRowSource<{dfLoopStep.RowTypeName}>({CSharpStringLiteral(dfLoopStep.SourceComponentName)}, new CsvSourceOptions {{ FilePath = {dfLoopStep.FilePathExpression} }}, new {dfLoopStep.RowTypeName}Map()),");
+                    lines.Add($"        sp.GetRequiredService<IRowTransform<{dfLoopStep.RowTypeName}, {dfLoopStep.EntityName}>>(),");
+                    lines.Add($"        sp.GetRequiredService<IBulkSink<{dfLoopStep.EntityName}>>(),");
+                    lines.Add($"        sp.GetRequiredService<ILogger<DataFlowStep<{dfLoopStep.RowTypeName}, {dfLoopStep.EntityName}>>>());");
                     lines.Add("");
                     break;
                 case ProgramConditionalSplitStep splitStep:

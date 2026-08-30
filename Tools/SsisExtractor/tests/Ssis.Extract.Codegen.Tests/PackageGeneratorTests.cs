@@ -571,6 +571,49 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WiresAForEachDataFlowLoop_ConstructingAFreshCsvRowSourcePerIteration()
+    {
+        // SyntheticForEachDataFlowLoop.dtsx, built speculatively 2026-08-30: a ForEach Loop whose
+        // body is a whole Data Flow Task (Flat File Source, expression-driven off the loop's own
+        // mapped variable -> Derived Column -> OLE DB Destination), re-run once per enumerated
+        // file. Confirmed beyond this test by actually building the generated exe against a copy
+        // of Etl.Core and running it against .\SQLFORPOC_2022 and two real checked-in .csv files
+        // -- see CLAUDE.md's "ForEach Loop over a Data Flow Task" section: all 3 rows across both
+        // files landed correctly, read back from the table afterward.
+        var package = LoadSyntheticFixture("SyntheticForEachDataFlowLoop.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        Assert.Contains(result.Files, f => f.RelativePath == "Csv/SyntheticForEachDataFlowLoopTargetCsvRow.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Csv/SyntheticForEachDataFlowLoopTargetCsvRowMap.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Mapping/SyntheticForEachDataFlowLoopTargetTransform.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Model/SyntheticForEachDataFlowLoopTarget.cs");
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        // No top-level IRowSource<TRow> registration for this step at all -- the source is
+        // constructed fresh, inline, per iteration.
+        Assert.DoesNotContain("AddScoped<IRowSource<SyntheticForEachDataFlowLoopTargetCsvRow>>", programFile.Content);
+        Assert.Contains(
+            "builder.Services.AddScoped<IRowTransform<SyntheticForEachDataFlowLoopTargetCsvRow, SyntheticForEachDataFlowLoopTarget>, SyntheticForEachDataFlowLoopTargetTransform>();",
+            programFile.Content);
+        Assert.Contains(
+            "var fEL_SampleFilesStep = new ForEachFileDataFlowStep<SyntheticForEachDataFlowLoopTargetCsvRow, SyntheticForEachDataFlowLoopTarget>(",
+            programFile.Content);
+        Assert.Contains("new ForEachFileLoopAction(", programFile.Content);
+        Assert.Contains(
+            "currentFile => new CsvRowSource<SyntheticForEachDataFlowLoopTargetCsvRow>(\"Flat File Source\", new CsvSourceOptions { FilePath = currentFile }, new SyntheticForEachDataFlowLoopTargetCsvRowMap()),",
+            programFile.Content);
+        Assert.Contains("sp.GetRequiredService<IBulkSink<SyntheticForEachDataFlowLoopTarget>>(),", programFile.Content);
+        Assert.Contains("sp.GetRequiredService<ILogger<DataFlowStep<SyntheticForEachDataFlowLoopTargetCsvRow, SyntheticForEachDataFlowLoopTarget>>>());", programFile.Content);
+        Assert.Contains("fEL_SampleFilesStep", programFile.Content); // present in the final Steps: [...] wiring too
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Only the unavoidable, non-blocking Notification gap.
+        var gap = Assert.Single(result.Gaps);
+        Assert.Equal("SyntheticForEachDataFlowLoop.Notification", gap.Location);
+    }
+
+    [Fact]
     public void Generate_WiresAnExcelSourcedFlow_IntoProgramCsViaExcelRowSource()
     {
         // SyntheticExcelSource.dtsx: Microsoft.ExcelSource (reading the real, checked-in

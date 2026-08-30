@@ -861,7 +861,15 @@ verified end-to-end via a byte-preserving-derived fixture (not a fresh object-mo
 real, confirmed, left-unresolved SSIS object-model quirk blocks attaching an OLE DB Destination
 downstream of a SqlCommand-mode Excel Source in this environment, documented rather than solved)
 run against .\SQLFORPOC_2022 and the real workbook, landing byte-for-byte the same 9 rows as the
-OpenRowset-mode fixture
+OpenRowset-mode fixture; a ForEach Loop whose body is a whole Data Flow Task (re-run once per
+enumerated file, not just a single SQL statement) built speculatively 2026-08-30 after confirming
+the real portfolio's only ForEach Loop uses the SQL-body shape instead -- a new Etl.Core
+ForEachFileDataFlowStep (constructing a fresh IRowSource per iteration and running it through a
+shared transform/sink via a fresh DataFlowStep instance each time) plus PackagePlanner/
+PackageGenerator/ProgramEmitter changes to resolve and wire a plain single-destination flow
+sourced from an expression-driven Flat File Source, verified end-to-end (generated, built 0
+warnings/0 errors, run against .\SQLFORPOC_2022 and two real checked-in CSV files, all 3 rows
+across both files landing correctly)
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -4105,6 +4113,123 @@ DT_BOOL. Excel Source in SqlCommand mode, named above, is now closed for the one
 ever be translated given `ExcelRowSource`'s own no-query-engine design (a bare worksheet
 reference) — anything more expressive remains, correctly, a permanent gap rather than a future
 target, since there is no way to execute it against this generator's own portable reader.
+
+### ForEach Loop over a Data Flow Task, built speculatively (2026-08-30)
+
+Picked from the "remaining known gaps" list by explicit user choice. **Checked the real
+portfolio first, same discipline as every other round**: the only `STOCK:FOREACHLOOP` anywhere
+in `SSIS_From_Sandeep` (`Package_Advanced.dtsx`'s own `FEL_SampleFiles`) has a single Execute SQL
+Task body — the shape already closed 2026-08-28 — not a Data Flow Task. Surfaced this directly to
+the user (`AskUserQuestion`) before writing any code, per the established
+`ssis-poc-speculative-work-signoff` discipline; they chose to build it anyway.
+
+**The scoped shape, decided up front rather than discovered mid-build:** a ForEach File
+Enumerator loop whose single child is a Data Flow Task, itself a plain single-destination flow
+(Flat File Source → optional Derived Column → SQL destination) whose Flat File Source's own
+connection manager has its `ConnectionString` entirely driven by a `PropertyExpression`
+referencing the loop's own mapped variable — the natural, most-minimal real-world pattern
+(`@[User::CurrentFile]` as a bare reference, needing no folder-concatenation translation).
+Lookup/Conditional Split/Merge Join/Multicast/OLE DB Command/Flat File Destination/Excel/ADO NET
+inside a loop body are each a named gap, not attempted — stacking one unevidenced per-iteration
+shape on top of another was ruled out deliberately, the same "don't compound speculation"
+discipline every earlier speculative round in this file has followed.
+
+**Confirmed via a real isolated object-model probe before writing any FixtureBuilder code**
+(same "ask the runtime, don't guess" discipline as trap 12): a connection manager's own
+`Properties["ConnectionString"]` supports `.SetExpression(cm, expr)` exactly like any ordinary
+task property, producing the identical `<DTS:PropertyExpression DTS:Name="ConnectionString">`
+shape `ConnectionManagerSpec.PropertyExpressions` already reads for a real package's own
+expression-driven CSV connection managers (e.g. `LoadReferenceData`'s own `CM_DepartmentCsv`) —
+not a guess extrapolated from task-property behavior.
+
+**`Etl.Core` (`D:\PoC\SSIS_Rewrite`): one new type, `Pipeline/ForEachFileDataFlowStep.cs`.**
+Deliberately NOT a new low-level abstraction — each iteration constructs a fresh
+`IRowSource<TRow>` for that file's own path (via a caller-supplied `Func<string,IRowSource<TRow>>`,
+the per-iteration "current file" value computed the identical way `ForEachLoopStep` already
+does) and runs it through the SAME `transform`/`sink` every other iteration uses via a fresh
+`DataFlowStep<TRow,TEntity>` instance per file — reusing that type's own streaming
+Source→Transform→Sink loop and its own "zero rows read is an error" guard rather than
+duplicating either. Same ordinal-sorted file enumeration and same single-shared-transaction
+all-or-nothing semantics as `ForEachLoopStep`. `ForEachFileLoopAction`'s own doc comment (which
+previously stated flatly "there is no per-iteration re-run capability here for anything beyond a
+single SQL statement") was updated to describe both shapes now, not just the SQL one.
+
+**`Ssis.Extract.Codegen`: the biggest share of the work, three files.**
+- `PackagePlanner.cs`: new `ForEachFileDataFlowPlan` record (folder/mask/variable/raw
+  ConnectionString-expression text, plus a fully-resolved `DataFlowPlan` for the loop's own inner
+  flow — reusing `PlanDataFlow` verbatim, since a per-iteration Data Flow Task is structurally
+  identical to an ordinary one; only its SOURCE FILE PATH varies per iteration) and a new
+  `ForEachDataFlowLoopStep : PackageStep`. `PlanForEachFileLoop` was restructured to return a
+  `PackageStep?` directly (either shape) instead of a single plan type, branching on whether the
+  loop's one child is `inner.DataFlowTask` or `inner.ExecuteSqlTask` — a new
+  `PlanForEachDataFlowLoop` helper resolves the Data Flow Task via `PlanDataFlow`, then requires
+  its source be a Flat File Source whose own connection manager carries a `ConnectionString`
+  PropertyExpression, gapping with the same "would read the identical file every iteration, very
+  likely not intended" wording the SQL-body case already uses for a static `SqlStatementSource`.
+  **A ForEach-Data-Flow-Loop's own inner flow is deliberately NOT duplicated into
+  `PackagePlan.Flows`** (that list is purely a convenience projection of ordinary `FlowStep`s,
+  per its own doc comment) — which surfaced a real interaction to fix, not just a new field:
+  `PackageGenerator.Generate`'s own early-exit gate (`plan.Flows.Count == 0` → "nothing to
+  generate") would otherwise silently swallow a package whose ONLY real content is this kind of
+  loop, so it was widened to also check `plan.Steps.Any(s => s is ForEachDataFlowLoopStep)`.
+- `PackageGenerator.cs`: a new `GenerateForEachDataFlowLoop`, mirroring the ordinary
+  single-destination flow's own generation (EntityEmitter/TransformEmitter/
+  `DbContextEmitter.TableSpec` all resolve identically) but explicitly gapping on
+  Lookup/Conditional Split/Merge Join/Multicast/OLE DB Command/Flat File Destination rather than
+  attempting any of them, and skipping `ResolveFlowSource`/`BuildFileSourceEntry` entirely — this
+  source's file path is never a static `appsettings.json` value, so only `CsvRowEmitter`/
+  `ClassMapEmitter` are called (they only depend on the connection manager's own column FORMAT,
+  never its path). The `ForEachFileNameMode` raw-enum resolution was factored out of
+  `ResolveForEachFileLoop` into a small shared `ResolveForEachFileNameMode` helper, used by both
+  loop-body shapes now.
+- `ProgramEmitter.cs`: new `ProgramForEachDataFlowLoopStep` record and wiring. **Deliberately no
+  top-level `IRowSource<TRow>` DI registration for this step at all** — the whole point is a
+  fresh source per file, so `EmitRowSourceRegistration` is never called for it; only its own
+  `IRowTransform<TRow,TEntity>` is a DI service (registered the same way an ordinary flow's own
+  transform is). The step-construction switch emits
+  `new ForEachFileDataFlowStep<TRow,TEntity>("Name", new ForEachFileLoopAction(...),
+  currentFile => new CsvRowSource<TRow>(...), sp.GetRequiredService<IRowTransform<...>>(),
+  sp.GetRequiredService<IBulkSink<...>>(), sp.GetRequiredService<ILogger<DataFlowStep<...>>>())`
+  — the file-path expression (already translated to C# by `PackageGenerator`, reusing
+  `ForEachLoopEmitter.TranslateSqlTemplate` verbatim, since a connection manager's
+  `ConnectionString` expression and an Execute SQL Task's `SqlStatementSource` expression are
+  both just "build a string from `@[Namespace::Variable]` references") is spliced directly into
+  the `CsvSourceOptions { FilePath = ... }` initializer inside that lambda.
+
+**New fixture, `SyntheticForEachDataFlowLoop.dtsx`** (`Ssis.Extract.FixtureBuilder`'s new
+`foreach-data-flow-loop` mode): a `STOCK:FOREACHLOOP` over `*.csv` files (`FileNameRetrieval`
+left at its schema default, 0/FullyQualified, so `@[User::CurrentFile]` resolves to each file's
+own FULL path per iteration) whose single child, `DFT_Load`, is Flat File Source → Derived
+Column (`LoadedAtUtc`) → OLE DB Destination. **No companion top-level flow was added** (unlike
+`SyntheticForEachFileLoop.dtsx`, which needed one purely to dodge the pre-existing early-exit
+gate) — this fixture's package has NOTHING else in it, deliberately, so it directly proves this
+round's own gate-widening fix rather than sidestepping the question. **Generated, built against
+a copy of `Etl.Core` (0 warnings/0 errors), and actually RUN against `.\SQLFORPOC_2022` and two
+real checked-in `.csv` files** (`sales-jan.csv`: Alice/Bob; `sales-feb.csv`: Carol) — read back
+afterward, not trusted from the exit code: all 3 rows landed correctly across both files
+(`sales-feb.csv` processed before `sales-jan.csv`, confirming the ordinal — not date — file sort
+order), each with its own real `LoadedAtUtc` stamp. Backing table:
+`tests/Ssis.Extract.Tests/Fixtures/synthetic-foreach-data-flow-loop-tables.sql`. A second,
+byte-preserving derived fixture, `SyntheticForEachDataFlowLoopStaticPath.dtsx` (the
+`PropertyExpression` stripped via a regex replace, trap 18's own discipline — never `sed`/text-
+replace a `.dtsx`), proves the gap path: no per-iteration expression → an explicit, named gap,
+not a silent guess.
+
+Two new `PackagePlannerTests` (the resolved-plan shape; the static-ConnectionString gap) and one
+new `PackageGeneratorTests` (asserting the exact `Program.cs` wiring — no top-level
+`IRowSource<TRow>` registration, the `ForEachFileDataFlowStep<...>` construction, the spliced
+`CsvSourceOptions { FilePath = currentFile }`). Regression: 142/142 in
+`Ssis.Extract.Codegen.Tests` (was 139), same 3 pre-existing unrelated failures elsewhere
+(someone else's in-progress SSDT edits to `SSIS/LoadReferenceData.dtsx`/`SSIS/SSIS.dtproj`, not
+this session's or the extractor's).
+
+**Remaining known gaps, updated:** Aggregate/Row Count (still moot), the numeric-passthrough-
+coercion gap for every pairing other than r8-to-i4/wstr-to-i4, and Data Conversion target types
+other than DT_I4/DT_DBDATE/DT_R8/DT_WSTR/DT_BOOL. A ForEach Loop re-running a Data Flow Task per
+file, named above, is now closed for the one scoped shape (a plain single-destination SQL flow
+sourced from an expression-driven Flat File Source) — every other loop-body combination remains
+a named gap, not a future target, since combining any of them with this already-speculative
+feature would stack one unevidenced shape on top of another.
 
 ## Traps already hit once — don't re-derive these
 

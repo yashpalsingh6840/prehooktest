@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand]");
             return 2;
         }
 
@@ -144,6 +144,10 @@ internal static class Program
         {
             return BuildForEachFileLoopFixture(args[0]);
         }
+        if (fixtureName == "foreach-data-flow-loop")
+        {
+            return BuildForEachDataFlowLoopFixture(args[0]);
+        }
         if (fixtureName == "excel-source")
         {
             return BuildExcelSourceFixture(args[0]);
@@ -174,7 +178,7 @@ internal static class Program
         }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', or 'excel-source-sqlcommand'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', or 'excel-source-sqlcommand'.");
             return 2;
         }
 
@@ -2081,6 +2085,133 @@ internal static class Program
         sqlTaskHost.Properties["Connection"].SetValue(sqlTaskHost, sqlCm.Name);
         sqlTaskHost.Properties["SqlStatementSource"].SetExpression(sqlTaskHost,
             "\"INSERT INTO dbo.SyntheticForEachFileLoopLog (FileName) VALUES (N'\" + @[User::CurrentFile] + \"');\"");
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A ForEach File Enumerator loop whose BODY is a Data Flow Task, re-run once per enumerated
+    /// file -- built speculatively 2026-08-30 (zero real evidenced package anywhere in the
+    /// tracked portfolio has this shape; the one real ForEach Loop, RBC_Demo_ETL's own
+    /// FEL_SampleFiles, uses a single Execute SQL Task body instead, see
+    /// <see cref="BuildForEachFileLoopFixture"/>). The loop's single child, <c>DFT_Load</c>, is a
+    /// Flat File Source (its OWN connection manager's <c>ConnectionString</c> driven entirely by
+    /// a PropertyExpression referencing the loop's own mapped variable, <c>@[User::CurrentFile]</c>
+    /// -- confirmed via an isolated object-model probe before writing this method: the connection
+    /// manager's <c>Properties["ConnectionString"]</c> supports <c>SetExpression</c> exactly like
+    /// any task property, producing the identical <c>&lt;DTS:PropertyExpression Name=
+    /// "ConnectionString"&gt;</c> shape <c>ConnectionManagerSpec.PropertyExpressions</c> already
+    /// reads for a real package's own expression-driven CSV connection managers, e.g.
+    /// LoadReferenceData's <c>CM_DepartmentCsv</c>) -&gt; Derived Column (<c>LoadedAtUtc</c>,
+    /// the same minimal audit-stamp shape every other fixture in this file uses) -&gt; OLE DB
+    /// Destination. The enumerator's <c>FileNameRetrieval</c> is left at its schema default (0 =
+    /// FullyQualified) so <c>@[User::CurrentFile]</c> resolves to each file's own FULL path per
+    /// iteration -- the simplest, bare-reference connection-string expression shape this round's
+    /// own <c>ForEachLoopEmitter</c> reuse supports directly, needing no folder-concatenation
+    /// translation.
+    ///
+    /// <para><b>No companion top-level flow is needed</b> (unlike <c>SyntheticForEachFileLoop.dtsx</c>,
+    /// which added <c>DFT_Load</c> outside its own loop purely to avoid Generate's own "no Data
+    /// Flow Task" early-exit gate) -- this round's own generator fix widens that gate to also
+    /// recognize a <c>ForEachDataFlowLoopStep</c>, so a package whose ONLY content is this loop
+    /// is exactly what proves that fix.</para>
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-foreach-data-flow-loop-tables.sql</c>
+    /// already created on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>, and the two small .csv files
+    /// under <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-foreach-data-flow-loop-files/</c>
+    /// present on disk.
+    /// </summary>
+    private static int BuildForEachDataFlowLoopFixture(string outputPath)
+    {
+        var filesDir = Path.Combine(TestFixturesDir(), "synthetic-foreach-data-flow-loop-files");
+        if (!Directory.Exists(filesDir) || Directory.GetFiles(filesDir, "*.csv").Length == 0)
+        {
+            Console.Error.WriteLine($"error: expected .csv sample files at {filesDir} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticForEachDataFlowLoop" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        pkg.Variables.Add("CurrentFile", false, "User", "");
+
+        var feLoopExec = pkg.Executables.Add("STOCK:FOREACHLOOP");
+        var feLoop = (Microsoft.SqlServer.Dts.Runtime.ForEachLoop)feLoopExec;
+        feLoop.Name = "FEL_SampleFiles";
+
+        var app = new Microsoft.SqlServer.Dts.Runtime.Application();
+        var feInfo = app.ForEachEnumeratorInfos["Foreach File Enumerator"];
+        var feHost = feInfo.CreateNew();
+        feHost.Properties["Directory"].SetValue(feHost, filesDir);
+        feHost.Properties["FileSpec"].SetValue(feHost, "*.csv");
+        feHost.Properties["Recurse"].SetValue(feHost, false);
+        feHost.Properties["FileNameRetrieval"].SetValue(feHost, 0); // 0 = fully qualified name -- see this method's own doc comment
+        feLoop.ForEachEnumerator = feHost;
+
+        var mapping = feLoop.VariableMappings.Add();
+        mapping.VariableName = "User::CurrentFile";
+        mapping.ValueIndex = 0;
+
+        // A FLATFILE connection manager whose ConnectionString is entirely expression-driven --
+        // deliberately NOT AddFlatFileConnectionManager (that helper always sets a STATIC
+        // ConnectionString), since the whole point here is a per-iteration path with no design-
+        // time default at all.
+        var csvCm = pkg.Connections.Add("FLATFILE");
+        csvCm.Name = "CM_CurrentFileCsv";
+        var ff = (IDTSConnectionManagerFlatFile100)csvCm.InnerObject;
+        ff.Format = "Delimited";
+        ff.ColumnNamesInFirstDataRow = true;
+        ff.HeaderRowDelimiter = "\r\n";
+        ff.CodePage = 1252;
+        (string ColumnName, string DtType, int MaxWidth)[] csvColumns = [("ID", "DT_I4", 0), ("Name", "DT_WSTR", 50)];
+        for (var i = 0; i < csvColumns.Length; i++)
+        {
+            var (columnName, dtType, maxWidth) = csvColumns[i];
+            var col = ff.Columns.Add();
+            col.ColumnType = "Delimited";
+            col.ColumnDelimiter = i == csvColumns.Length - 1 ? "\r\n" : ",";
+            col.DataType = (RtDataType)Enum.Parse(typeof(RtDataType), dtType);
+            col.MaximumWidth = maxWidth;
+            ((IDTSName100)col).Name = columnName;
+        }
+        // Confirmed via an isolated probe (see this method's own doc comment): ConnectionString
+        // IS an ordinary expression-capable property on a connection manager, same
+        // Properties["X"].SetExpression(cm, expr) shape a task property uses -- no design-time
+        // default is set at all, matching a real package whose CSV connection manager has none
+        // (CLAUDE.md's own note on LoadReferenceData's expression-driven connection managers).
+        csvCm.Properties["ConnectionString"].SetExpression(csvCm, "@[User::CurrentFile]");
+
+        var dftHost = (RtTaskHost)feLoop.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = pipe.ComponentMetaDataCollection.New();
+        srcMeta.ComponentClassID = "Microsoft.FlatFileSource";
+        var srcInst = srcMeta.Instantiate();
+        srcInst.ProvideComponentProperties(); // resets Name to the class default -- must set Name after this
+        srcMeta.Name = "Flat File Source";
+        var srcConn = srcMeta.RuntimeConnectionCollection[0];
+        srcConn.ConnectionManagerID = csvCm.ID;
+        srcConn.ConnectionManager = DtsConvert.GetExtendedInterface(csvCm);
+        srcInst.AcquireConnections(null);
+        srcInst.ReinitializeMetaData();
+        srcInst.ReleaseConnections();
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnLoadedAtUtc(pipe, mainOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticForEachDataFlowLoopTarget]");
+        AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));

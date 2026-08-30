@@ -353,6 +353,55 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ResolvesAForEachDataFlowLoop_WhoseBodyIsAWholeDataFlowTask()
+    {
+        // SyntheticForEachDataFlowLoop.dtsx, built speculatively 2026-08-30 (zero real evidenced
+        // package anywhere in the tracked portfolio has this shape): a Microsoft.
+        // ForEachFileEnumerator loop whose single body executable is a Data Flow Task (Flat File
+        // Source, its own connection manager's ConnectionString entirely driven by a
+        // PropertyExpression referencing the loop's own mapped variable -> Derived Column ->
+        // OLE DB Destination). Before this round, ANY STOCK:FOREACHLOOP body other than a single
+        // Execute SQL Task reported an unconditional "not supported" gap.
+        var package = LoadSyntheticFixture("SyntheticForEachDataFlowLoop.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        Assert.Empty(plan.Flows); // deliberately NOT duplicated into plan.Flows -- see PackagePlan.Flows' own doc comment
+        var loopStep = Assert.Single(plan.Steps, s => s is ForEachDataFlowLoopStep);
+        var loop = ((ForEachDataFlowLoopStep)loopStep).Loop;
+
+        Assert.Equal("FEL_SampleFiles", loop.TaskName);
+        Assert.EndsWith("synthetic-foreach-data-flow-loop-files", loop.Folder);
+        Assert.Equal("*.csv", loop.FileSpec);
+        Assert.False(loop.Recurse);
+        Assert.Equal(0, loop.NameRetrievalTypeRaw); // fully qualified -- see this fixture's own doc comment
+        Assert.Equal("User::CurrentFile", loop.VariableName);
+        Assert.Equal("@[User::CurrentFile]", loop.FilePathExpression);
+        Assert.Equal("DFT_Load", loop.Flow.TaskName);
+        Assert.NotNull(loop.Flow.FlatFileSource);
+        Assert.Equal("Microsoft.OLEDBDestination", loop.Flow.DestinationComponent.ComponentClassId);
+    }
+
+    [Fact]
+    public void Plan_ReportsAGap_ForAForEachDataFlowLoop_WhoseFlatFileSourceHasNoPerIterationExpression()
+    {
+        // SyntheticForEachDataFlowLoopStaticPath.dtsx: a byte-preserving derived copy of
+        // SyntheticForEachDataFlowLoop.dtsx with its Flat File connection manager's own
+        // PropertyExpression removed -- every iteration would try to read the same (non-existent)
+        // static path, which is very likely not intended; reported as an explicit gap rather than
+        // silently generating code that fails at runtime.
+        var package = LoadSyntheticFixture("SyntheticForEachDataFlowLoopStaticPath.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Steps);
+        var gap = Assert.Single(plan.Gaps, g => g.Location == "FEL_SampleFiles");
+        Assert.Contains("CM_CurrentFileCsv", gap.Reason);
+        Assert.Contains("no per-iteration expression", gap.Reason);
+    }
+
+    [Fact]
     public void Plan_ResolvesAnExcelSource_AsADirectCopyFlow_WithNoDerivedColumnNeeded()
     {
         // SyntheticExcelSource.dtsx: Microsoft.ExcelSource (reading the real, checked-in

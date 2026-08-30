@@ -122,15 +122,13 @@ public sealed record MulticastPlan(PipelineComponentSpec Component, List<Conditi
 public sealed record FileSystemActionPlan(string Operation, string SourcePath, string? DestinationPath, bool Overwrite);
 
 /// <summary>One <c>STOCK:FOREACHLOOP</c> container using a <c>Microsoft.ForEachFileEnumerator</c>,
-/// scoped to the one real evidenced body shape (RBC_Demo_ETL's own Package_Advanced.dtsx
-/// FEL_SampleFiles): a single Execute SQL Task whose <c>SqlStatementSource</c> is entirely
-/// driven by a PropertyExpression referencing the loop's own mapped variable (confirmed real:
-/// <c>"..." + @[User::CurrentFile] + "..."</c>). Any OTHER loop body -- a Data Flow Task
-/// re-run per file, a File System Task, more than one child, a nested container -- is a
-/// generation gap, not something this record can represent: <c>Etl.Core</c> has no
-/// per-iteration re-run capability for anything beyond a single SQL statement, and inventing one
-/// without real evidence would be exactly the kind of guessed scaffolding this tool refuses to
-/// produce. <see cref="SqlTemplate"/>'s own C# translation happens in
+/// whose body is a single Execute SQL Task -- the real evidenced shape (RBC_Demo_ETL's own
+/// Package_Advanced.dtsx FEL_SampleFiles) -- entirely driven by a PropertyExpression referencing
+/// the loop's own mapped variable (confirmed real: <c>"..." + @[User::CurrentFile] + "..."</c>).
+/// See <see cref="ForEachFileDataFlowPlan"/> for the OTHER supported body shape (a Data Flow
+/// Task, built speculatively). A File System Task body, more than one child, or a nested
+/// container is still a generation gap, not something either record can represent.
+/// <see cref="SqlTemplate"/>'s own C# translation happens in
 /// <see cref="ForEachLoopEmitter"/>, not here -- this record only carries the resolved, still-SSIS
 /// facts (folder/mask/variable/raw expression text), the same "planner resolves facts, emitter
 /// produces code" split every other plan record in this file already follows.</summary>
@@ -143,6 +141,36 @@ public sealed record ForEachFileLoopPlan(
     string VariableName,
     string InnerTaskName,
     string SqlTemplate);
+
+/// <summary>One <c>STOCK:FOREACHLOOP</c> container whose body is a Data Flow Task, re-run once
+/// per enumerated file -- built speculatively 2026-08-30 (see CLAUDE.md's "ForEach Loop over a
+/// Data Flow Task" section for the sign-off): zero real evidenced package anywhere in the
+/// tracked portfolio has this shape (the one real ForEach Loop, RBC_Demo_ETL's own
+/// FEL_SampleFiles, uses the single-Execute-SQL-Task body <see cref="ForEachFileLoopPlan"/>
+/// already models). <see cref="Flow"/> is resolved via the SAME <c>PlanDataFlow</c> every
+/// ordinary Data Flow Task goes through -- a per-iteration Data Flow Task is structurally
+/// identical to an ordinary one (Derived Column, destination, etc. all resolve the same way);
+/// only its own SOURCE FILE PATH varies per iteration, which is why
+/// <see cref="FilePathExpression"/> (the source's own Flat File connection manager's
+/// <c>ConnectionString</c> PropertyExpression, raw SSIS text -- translated to C# in
+/// <c>PackageGenerator</c>, reusing <see cref="ForEachLoopEmitter"/> verbatim, since a
+/// connection-manager ConnectionString expression and an Execute SQL Task's SqlStatementSource
+/// expression are both just "build a string from <c>@[Namespace::Variable]</c> references", the
+/// identical AST shape) is threaded separately rather than folded into <see cref="Flow"/>
+/// itself. Scoped deliberately narrow: only a plain single-destination SQL flow sourced from a
+/// Flat File Source is supported -- Lookup/Conditional Split/Merge Join/Multicast/OLE DB
+/// Command/Excel/ADO NET/Flat File Destination inside a loop body are each a generation gap,
+/// never attempted, since combining any of them with this already-speculative feature would
+/// stack one unevidenced shape on top of another.</summary>
+public sealed record ForEachFileDataFlowPlan(
+    string TaskName,
+    string Folder,
+    string FileSpec,
+    bool Recurse,
+    int? NameRetrievalTypeRaw,
+    string VariableName,
+    DataFlowPlan Flow,
+    string FilePathExpression);
 
 /// <summary>One step after pre-load: a Data Flow Task, an Execute SQL Task, a File System
 /// Task, or a ForEach File Loop that runs AFTER at least one Data Flow Task has already run (a
@@ -157,6 +185,7 @@ public sealed record FlowStep(DataFlowPlan Flow) : PackageStep;
 public sealed record SqlStep(string TaskName, string Sql) : PackageStep;
 public sealed record FileSystemStep(string TaskName, FileSystemActionPlan Action) : PackageStep;
 public sealed record ForEachFileLoopStep(ForEachFileLoopPlan Loop) : PackageStep;
+public sealed record ForEachDataFlowLoopStep(ForEachFileDataFlowPlan Loop) : PackageStep;
 
 /// <summary><see cref="Flows"/> is kept alongside <see cref="Steps"/>, duplicating every
 /// FlowStep's own DataFlowPlan, purely so callers that only ever cared about "all the flows,
@@ -212,11 +241,16 @@ public sealed record PackagePlan(
 /// <c>Microsoft.ForEachFileEnumerator</c> loop whose own single child is an Execute SQL Task
 /// entirely driven by a PropertyExpression referencing the loop's own mapped variable resolves
 /// via <see cref="PlanForEachFileLoop"/> into one <see cref="ForEachFileLoopStep"/> instead --
-/// <c>Etl.Core</c>'s new <c>ForEachLoopStep</c> re-runs that ONE SQL statement per matching
-/// file, never "the container's children" generically. Any other enumerator type, or any other
-/// loop body shape (a Data Flow Task, a File System Task, more than one child, a nested
-/// container), still reports its own explicit gap -- <c>Etl.Core</c> has no per-iteration
-/// re-run capability beyond this one evidenced shape.
+/// <c>Etl.Core</c>'s <c>ForEachLoopStep</c> re-runs that ONE SQL statement per matching file,
+/// never "the container's children" generically. Extended 2026-08-30, built speculatively (zero
+/// real evidenced package has this shape): the same loop can instead resolve to a
+/// <see cref="ForEachDataFlowLoopStep"/> when its single child is a Data Flow Task sourced from
+/// a Flat File Source whose own connection manager is expression-driven off the loop's mapped
+/// variable -- <c>Etl.Core</c>'s new <c>ForEachFileDataFlowStep&lt;TRow,TEntity&gt;</c> re-runs
+/// that whole flow once per file instead. Any other enumerator type, or any other loop body
+/// shape (a File System Task, more than one child, a nested container), still reports its own
+/// explicit gap -- <c>Etl.Core</c> has no per-iteration re-run capability beyond these two
+/// evidenced/speculative shapes.
 ///
 /// An executable type that is none of Sequence/ForEach/Data Flow/Execute SQL, or a Data Flow
 /// Task with no OLE DB Destination, is reported as a gap rather than silently skipped.
@@ -296,10 +330,10 @@ public static class PackagePlanner
 
             if (executable.ExecutableType == "STOCK:FOREACHLOOP")
             {
-                var loopPlan = PlanForEachFileLoop(executable, gaps);
-                if (loopPlan is not null)
+                var loopStep = PlanForEachFileLoop(executable, connectionManagers, gaps);
+                if (loopStep is not null)
                 {
-                    steps.Add(new ForEachFileLoopStep(loopPlan));
+                    steps.Add(loopStep);
                     flowOrAfter.Add(refId);
                 }
                 continue;
@@ -363,16 +397,18 @@ public static class PackagePlanner
     }
 
     /// <summary>
-    /// Resolves a <c>STOCK:FOREACHLOOP</c> executable to a <see cref="ForEachFileLoopPlan"/>, or
-    /// reports exactly why it can't be generated -- fatal for just this loop, not the whole
-    /// package, matching every other single-executable gap in <see cref="WalkContainer"/>.
-    /// Deliberately narrow: only a <c>Microsoft.ForEachFileEnumerator</c> whose loop body is
-    /// EXACTLY one Execute SQL Task, itself entirely driven by a PropertyExpression referencing
-    /// the loop's own mapped variable, is supported -- the one shape evidenced from
-    /// RBC_Demo_ETL's own <c>FEL_SampleFiles</c>. See <see cref="ForEachFileLoopPlan"/>'s own doc
-    /// comment for why every other shape is a gap rather than a guess.
+    /// Resolves a <c>STOCK:FOREACHLOOP</c> executable to a <see cref="ForEachFileLoopStep"/> or
+    /// <see cref="ForEachDataFlowLoopStep"/>, or reports exactly why it can't be generated --
+    /// fatal for just this loop, not the whole package, matching every other single-executable
+    /// gap in <see cref="WalkContainer"/>. Deliberately narrow: only a
+    /// <c>Microsoft.ForEachFileEnumerator</c> whose loop body is EXACTLY one child, either an
+    /// Execute SQL Task entirely driven by a PropertyExpression referencing the loop's own
+    /// mapped variable (the shape evidenced from RBC_Demo_ETL's own <c>FEL_SampleFiles</c>) or a
+    /// Data Flow Task sourced from an expression-driven Flat File Source (built speculatively --
+    /// see <see cref="ForEachFileDataFlowPlan"/>'s own doc comment), is supported. See either
+    /// plan record's own doc comment for why every other shape is a gap rather than a guess.
     /// </summary>
-    private static ForEachFileLoopPlan? PlanForEachFileLoop(ExecutableSpec loop, List<GenerationGap> gaps)
+    private static PackageStep? PlanForEachFileLoop(ExecutableSpec loop, List<ConnectionManagerSpec> connectionManagers, List<GenerationGap> gaps)
     {
         var taskName = loop.ObjectName ?? loop.RefId;
         var payload = loop.ForEachLoop;
@@ -399,15 +435,22 @@ public static class PackagePlanner
         if (loop.Children.Count != 1)
         {
             gaps.Add(new GenerationGap(taskName,
-                $"ForEach Loop has {loop.Children.Count} child executable(s) -- only a single Execute SQL Task body is supported"));
+                $"ForEach Loop has {loop.Children.Count} child executable(s) -- only a single Execute SQL Task or Data Flow Task body is supported"));
             return null;
         }
 
         var inner = loop.Children[0];
+
+        if (inner.DataFlowTask is { } dataFlowTask)
+        {
+            var dataFlowPlan = PlanForEachDataFlowLoop(taskName, fileEnum, mapping.VariableName, inner, dataFlowTask, connectionManagers, gaps);
+            return dataFlowPlan is null ? null : new ForEachDataFlowLoopStep(dataFlowPlan);
+        }
+
         if (inner.ExecuteSqlTask is not { } sqlTask)
         {
             gaps.Add(new GenerationGap(taskName,
-                $"ForEach Loop's own body is '{inner.ExecutableType}', not an Execute SQL Task -- not supported"));
+                $"ForEach Loop's own body is '{inner.ExecutableType}', not an Execute SQL Task or a Data Flow Task -- not supported"));
             return null;
         }
 
@@ -426,8 +469,45 @@ public static class PackagePlanner
             return null;
         }
 
-        return new ForEachFileLoopPlan(taskName, fileEnum.Folder!, fileEnum.FileSpec!, fileEnum.Recurse ?? false,
-            fileEnum.FileNameRetrievalTypeRaw, mapping.VariableName, inner.ObjectName ?? inner.RefId, expr);
+        return new ForEachFileLoopStep(new ForEachFileLoopPlan(taskName, fileEnum.Folder!, fileEnum.FileSpec!, fileEnum.Recurse ?? false,
+            fileEnum.FileNameRetrievalTypeRaw, mapping.VariableName, inner.ObjectName ?? inner.RefId, expr));
+    }
+
+    /// <summary>Resolves a ForEach Loop's body when it's a Data Flow Task rather than the single
+    /// Execute SQL Task shape above -- built speculatively 2026-08-30, see
+    /// <see cref="ForEachFileDataFlowPlan"/>'s own doc comment. Reuses <see cref="PlanDataFlow"/>
+    /// verbatim for the flow's own internals (Derived Column, destination, etc. all resolve
+    /// exactly like an ordinary Data Flow Task); the only new fact resolved here is which
+    /// connection manager's own <c>ConnectionString</c> PropertyExpression drives the
+    /// per-iteration file path -- the same "must be an expression, not a static default" check
+    /// <see cref="PlanForEachFileLoop"/>'s own Execute SQL Task branch already makes for
+    /// <c>SqlStatementSource</c>.</summary>
+    private static ForEachFileDataFlowPlan? PlanForEachDataFlowLoop(
+        string taskName, ForEachFileEnumeratorSpec fileEnum, string variableName,
+        ExecutableSpec inner, DataFlowTaskPayload dataFlowTask, List<ConnectionManagerSpec> connectionManagers, List<GenerationGap> gaps)
+    {
+        var innerTaskName = inner.ObjectName ?? inner.RefId;
+        var flow = PlanDataFlow(innerTaskName, dataFlowTask.Pipeline, gaps);
+        if (flow is null) return null; // PlanDataFlow already added the reason
+
+        if (flow.FlatFileSource is not { } flatFileSource || flatFileSource.FlatFileSource?.ConnectionName is not { } csvCmName)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"{innerTaskName}: ForEach Loop's own Data Flow Task body has no Flat File Source with a resolvable connection manager -- only a per-iteration Flat File Source is supported inside a loop body"));
+            return null;
+        }
+
+        var connectionManager = connectionManagers.FirstOrDefault(cm => cm.ObjectName == csvCmName);
+        var expr = connectionManager?.PropertyExpressions.FirstOrDefault(p => p.PropertyName == "ConnectionString")?.Expression;
+        if (string.IsNullOrEmpty(expr))
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"{innerTaskName}: connection manager '{csvCmName}' has a static ConnectionString with no per-iteration expression -- every iteration would read the identical file, which is very likely not intended; not supported"));
+            return null;
+        }
+
+        return new ForEachFileDataFlowPlan(taskName, fileEnum.Folder!, fileEnum.FileSpec!, fileEnum.Recurse ?? false,
+            fileEnum.FileNameRetrievalTypeRaw, variableName, flow, expr);
     }
 
     /// <summary>

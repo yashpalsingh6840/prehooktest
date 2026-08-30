@@ -39,7 +39,12 @@ public static partial class PackageGenerator
         var plan = PackagePlanner.Plan(package);
         gaps.AddRange(plan.Gaps);
 
-        if (plan.Flows.Count == 0)
+        // A ForEach-Data-Flow-Loop's own inner Data Flow Task is deliberately NOT duplicated
+        // into plan.Flows (see PackagePlan.Flows' own doc comment -- it exists purely as a
+        // convenience projection of ordinary FlowSteps), so this gate must also check for one
+        // directly or a package whose ONLY real content is such a loop would be wrongly
+        // reported as having nothing to generate at all.
+        if (plan.Flows.Count == 0 && !plan.Steps.Any(s => s is ForEachDataFlowLoopStep))
         {
             gaps.Add(new GenerationGap(package.ObjectName, "no Data Flow Task could be planned for this package -- nothing to generate"));
             return new PackageGenerateResult(package.ObjectName, files, gaps);
@@ -54,6 +59,7 @@ public static partial class PackageGenerator
         var wiredSplits = new Dictionary<DataFlowPlan, ProgramConditionalSplitStep>();
         var wiredMulticasts = new Dictionary<DataFlowPlan, ProgramMulticastStep>();
         var wiredOleDbCommands = new Dictionary<DataFlowPlan, ProgramOleDbCommandStep>();
+        var wiredDataFlowLoops = new Dictionary<ForEachFileDataFlowPlan, ProgramForEachDataFlowLoopStep>();
         var fileSourceEntries = new List<FileSourceEntryRequest>();
         var functionsUsed = new HashSet<string>();
         string? authMode = null;
@@ -209,6 +215,17 @@ public static partial class PackageGenerator
             }
         }
 
+        // A ForEach-Data-Flow-Loop's own inner flow is not in plan.Flows (see the gate above),
+        // so it needs its own generation loop here -- built speculatively 2026-08-30, see
+        // GenerateForEachDataFlowLoop's own doc comment.
+        foreach (var dataFlowLoopStep in plan.Steps.OfType<ForEachDataFlowLoopStep>())
+        {
+            var programLoop = GenerateForEachDataFlowLoop(
+                package, ns, dataFlowLoopStep.Loop, files, tables, functionsUsed,
+                primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase);
+            if (programLoop is not null) wiredDataFlowLoops[dataFlowLoopStep.Loop] = programLoop;
+        }
+
         // A package whose only successfully-wired flows are Flat File Destinations has
         // tables.Count == 0 but still needs a (now possibly-empty) DbContext class -- Program.cs
         // always emits AddEtlDbContext<T>()/IUnitOfWork's own transaction wrapping needs a real
@@ -220,7 +237,7 @@ public static partial class PackageGenerator
         // connection/transaction as everything else in the package -- so a package whose ONLY
         // successfully-wired flow is an OLE DB Command still needs a (possibly table-less)
         // DbContext generated, same reasoning as the Flat File Destination case right above.
-        if (tables.Count > 0 || wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0)
+        if (tables.Count > 0 || wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0 || wiredDataFlowLoops.Count > 0)
             Merge(files, gaps, DbContextEmitter.Emit($"{ns}.Model", $"{package.ObjectName}DbContext", tables));
 
         Merge(files, gaps, SsisFnEmitter.Emit($"{ns}.Ssis", functionsUsed));
@@ -258,10 +275,13 @@ public static partial class PackageGenerator
                     if (programLoop is not null) programSteps.Add(programLoop);
                     break;
                 }
+                case ForEachDataFlowLoopStep { Loop: var dataFlowLoop } when wiredDataFlowLoops.TryGetValue(dataFlowLoop, out var programDataFlowLoop):
+                    programSteps.Add(programDataFlowLoop);
+                    break;
             }
         }
 
-        if (wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0)
+        if (wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0 || wiredDataFlowLoops.Count > 0)
         {
             Merge(files, gaps, ProgramEmitter.Emit(new ProgramRequest(
                 PackageName: package.ObjectName,
@@ -1242,11 +1262,21 @@ public static partial class PackageGenerator
             return null;
         }
 
-        // Raw values from Microsoft's public IDTSForEachFileEnumerator documentation -- see
-        // Etl.Core.Abstractions.ForEachFileNameMode's own doc comment for why this one enum
-        // mapping was not independently probed against a live object model the way most raw
-        // enums elsewhere in this tool are.
-        var nameMode = loop.NameRetrievalTypeRaw switch
+        var nameMode = ResolveForEachFileNameMode(loop.NameRetrievalTypeRaw, loop.TaskName, gaps);
+        if (nameMode is null) return null;
+
+        return new ProgramForEachFileLoopStep(loop.TaskName, loop.Folder, loop.FileSpec, loop.Recurse, nameMode,
+            currentFileParamName, ((TranslatedOk)translated).CSharpExpression);
+    }
+
+    /// <summary>Raw values from Microsoft's public IDTSForEachFileEnumerator documentation --
+    /// see Etl.Core.Abstractions.ForEachFileNameMode's own doc comment for why this one enum
+    /// mapping was not independently probed against a live object model the way most raw enums
+    /// elsewhere in this tool are. Shared by both loop-body shapes (SQL and Data Flow) -- the
+    /// enumerator's own config is identical regardless of what its body does with it.</summary>
+    private static string? ResolveForEachFileNameMode(int? raw, string taskName, List<GenerationGap> gaps)
+    {
+        var nameMode = raw switch
         {
             null or 0 => "FullyQualified",
             1 => "NameAndExtension",
@@ -1255,12 +1285,115 @@ public static partial class PackageGenerator
         };
         if (nameMode is null)
         {
+            gaps.Add(new GenerationGap(taskName,
+                $"ForEach File Enumerator's own FileNameRetrievalType ({raw}) is not a recognized value -- not supported"));
+        }
+        return nameMode;
+    }
+
+    /// <summary>
+    /// Generates a ForEach File Enumerator loop whose body is a Data Flow Task -- built
+    /// speculatively 2026-08-30 (see <see cref="PackagePlanner.ForEachFileDataFlowPlan"/>'s own
+    /// doc comment; zero real evidenced package anywhere in the tracked portfolio has this
+    /// shape). Mirrors the ordinary single-destination flow's own generation (EntityEmitter/
+    /// TransformEmitter/DbContextEmitter.TableSpec all resolve identically -- a per-iteration
+    /// Data Flow Task is structurally the same flow, just re-run N times) with a deliberate
+    /// narrowing, reported as its own named gap rather than attempted: the flow must be a plain
+    /// single-destination SQL flow (Lookup/Conditional Split/Merge Join/Multicast/OLE DB
+    /// Command/Flat File Destination inside a loop body would each need their own, separately
+    /// unevidenced per-iteration semantics, so combining any of them with this already-
+    /// speculative feature is out of scope). Skips ResolveFlowSource/BuildFileSourceEntry
+    /// entirely -- unlike an ordinary flow, this source's file path is never a static
+    /// appsettings.json value. The CSV row type/class map are still emitted via the SAME
+    /// CsvRowEmitter/ClassMapEmitter an ordinary CSV flow uses (they only depend on the
+    /// connection manager's own column FORMAT, never its path); the actual IRowSource
+    /// construction happens fresh, per iteration, inside ProgramEmitter's own lambda around
+    /// <see cref="PackagePlanner.ForEachFileDataFlowPlan.FilePathExpression"/>'s C# translation.
+    /// </summary>
+    private static ProgramForEachDataFlowLoopStep? GenerateForEachDataFlowLoop(
+        PackageSpec package, string ns, ForEachFileDataFlowPlan loop,
+        List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
+        Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+    {
+        var flow = loop.Flow;
+
+        if (flow.Lookup is not null || flow.ConditionalSplit is not null || flow.MergeJoin is not null
+            || flow.Multicast is not null || flow.OleDbCommand is not null)
+        {
             gaps.Add(new GenerationGap(loop.TaskName,
-                $"ForEach File Enumerator's own FileNameRetrievalType ({loop.NameRetrievalTypeRaw}) is not a recognized value -- not supported"));
+                $"{flow.TaskName}: ForEach Loop's own Data Flow Task body uses a Lookup/Conditional Split/Merge Join/Multicast/OLE DB Command -- only a plain single-destination flow is supported inside a loop body yet"));
             return null;
         }
 
-        return new ProgramForEachFileLoopStep(loop.TaskName, loop.Folder, loop.FileSpec, loop.Recurse, nameMode,
-            currentFileParamName, ((TranslatedOk)translated).CSharpExpression);
+        if (flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination")
+        {
+            gaps.Add(new GenerationGap(loop.TaskName,
+                $"{flow.TaskName}: ForEach Loop's own Data Flow Task body writes to a Flat File Destination -- only a SQL destination is supported inside a loop body yet"));
+            return null;
+        }
+
+        if (!DestinationInfo.IsFastLoadConfigured(flow.DestinationComponent))
+        {
+            gaps.Add(new GenerationGap(loop.TaskName,
+                $"{flow.TaskName}: destination '{flow.DestinationComponent.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
+            return null;
+        }
+
+        var entityName = TryResolveEntityName(flow.TaskName, flow.DestinationComponent, gaps);
+        if (entityName is null) return null;
+
+        // PlanForEachDataFlowLoop already required a Flat File Source with a resolvable
+        // connection manager before a ForEachFileDataFlowPlan was ever built.
+        var csvCmName = flow.FlatFileSource!.FlatFileSource!.ConnectionName!;
+        var csvConnectionManager = FindConnectionManager(package, csvCmName)!;
+
+        var translated = ForEachLoopEmitter.TranslateSqlTemplate(loop.FilePathExpression, loop.VariableName, "currentFile");
+        if (translated is NotTranslatable notTranslatable)
+        {
+            gaps.Add(new GenerationGap(loop.TaskName, $"{csvCmName}'s own ConnectionString expression: {notTranslatable.Reason}"));
+            return null;
+        }
+
+        var nameMode = ResolveForEachFileNameMode(loop.NameRetrievalTypeRaw, loop.TaskName, gaps);
+        if (nameMode is null) return null;
+
+        var nullableColumnNames = ResolveNullableColumnNames(flow);
+
+        var rowTypeName = entityName + "CsvRow";
+        Merge(files, gaps, CsvRowEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+        Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+
+        Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, nullableColumnNames));
+
+        var transformClassName = entityName + "Transform";
+        var transformResult = TransformEmitter.Emit(new TransformRequest(
+            MappingNamespace: $"{ns}.Mapping",
+            TransformClassName: transformClassName,
+            RowTypeNamespace: $"{ns}.Csv",
+            RowTypeName: rowTypeName,
+            EntityNamespace: $"{ns}.Model",
+            EntityName: entityName,
+            SsisFnNamespace: $"{ns}.Ssis",
+            Pipeline: flow.Pipeline,
+            DerivedColumns: flow.DerivedColumn is null ? [] : [flow.DerivedColumn],
+            DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+            DestinationComponent: flow.DestinationComponent,
+            NullableColumnNames: nullableColumnNames));
+        Merge(files, gaps, transformResult.Result);
+        foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
+
+        if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
+
+        primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
+        tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
+
+        if (authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
+            (authMode, userId, targetServer, targetDatabase) = auth;
+
+        return new ProgramForEachDataFlowLoopStep(
+            loop.TaskName, loop.Folder, loop.FileSpec, loop.Recurse, nameMode,
+            "currentFile", ((TranslatedOk)translated).CSharpExpression,
+            flow.FlatFileSource.Name, rowTypeName, entityName, transformClassName);
     }
 }
