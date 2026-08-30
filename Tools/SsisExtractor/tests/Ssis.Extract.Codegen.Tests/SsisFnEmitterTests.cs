@@ -89,4 +89,22 @@ public class SsisFnEmitterTests
 
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }
+
+    [Fact]
+    public void Emit_ProducesParseWstrToI4_ForTheStringToIntPassthroughPairing()
+    {
+        // Measured 2026-08-30 against a real dtexec run
+        // (synthetic-string-to-int-coercion-tables.sql): the same round-to-nearest-ties-to-even
+        // rule as NarrowR8ToI4, but unlike that pairing the FAILURE mode is also measured --
+        // non-numeric/empty/whitespace-only/out-of-range text fails the real probe hard, so this
+        // throws to match rather than nulling out.
+        var result = SsisFnEmitter.Emit("Package.Ssis", new HashSet<string> { "ParseWstrToI4" });
+
+        var file = Assert.Single(result.Files);
+        Assert.Contains("using System.Globalization;", file.Content);
+        Assert.Contains("public static int? ParseWstrToI4(string? value) =>", file.Content);
+        Assert.Contains("double.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture)", file.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
 }

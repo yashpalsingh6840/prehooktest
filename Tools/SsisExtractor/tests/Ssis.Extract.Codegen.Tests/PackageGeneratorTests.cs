@@ -238,6 +238,56 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_ResolvesAStringSourceIntDestinationPassthroughColumn_ViaParseWstrToI4()
+    {
+        // SyntheticStringToIntCoercion.dtsx: OLE DB Source (SqlCommand, an NVARCHAR "Val"
+        // column) -> OLE DB Destination (an int "Val" column), a plain passthrough with no
+        // Data Conversion/Derived Column in between -- the exact real shape RBC_Demo_ETL's own
+        // Package_Exports/DFT_AdoNetRoundTrip has (CustomerID: wstr,20 from an ADO NET Source,
+        // i4 at CustomerExportLog). Confirmed beyond this test by actually running the generated
+        // exe against .\SQLFORPOC_2022 and reading dbo.SyntheticStringToIntCoercionTarget back
+        // afterward -- see CLAUDE.md's own "Numeric-passthrough-coercion for OLE DB/ADO NET
+        // destinations" section for the r8->i4 precedent and this same section's own
+        // string->int follow-up.
+        var package = LoadSyntheticFixture("SyntheticStringToIntCoercion.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var transformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticStringToIntCoercionTargetTransform.cs");
+        Assert.Contains("Val = SsisFn.ParseWstrToI4(row.Val),", transformFile.Content);
+
+        // ParseWstrToI4 always returns int? (string/string? share one runtime type, so unlike
+        // NarrowR8ToI4's double/double? pair there is no non-nullable overload to fall back on)
+        // -- the destination entity property must be nullable BY CONSTRUCTION, resolved BEFORE
+        // EntityEmitter runs (PackageGenerator.ResolveNullableColumnNames), not just inside
+        // TransformEmitter's own later mismatch detection.
+        var entityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticStringToIntCoercionTarget.cs");
+        Assert.Contains("public int? Val { get; set; }", entityFile.Content);
+
+        // The raw source column is just as capable of being NULL in real data (confirmed
+        // empirically -- ID=7 in the backing table) -- SqlRowReaderEmitter needs the same
+        // IsDBNull guard a Data Conversion's own raw source column already gets.
+        var readerFile = Assert.Single(result.Files, f => f.RelativePath == "Sql/SyntheticStringToIntCoercionTargetSqlRowReader.cs");
+        Assert.Contains("Val = reader.IsDBNull(reader.GetOrdinal(\"Val\")) ? null : reader.GetFieldValue<string>(reader.GetOrdinal(\"Val\")),", readerFile.Content);
+
+        var ssisFnFile = Assert.Single(result.Files, f => f.RelativePath == "Ssis/SsisFn.cs");
+        Assert.Contains("public static int? ParseWstrToI4(string? value) =>", ssisFnFile.Content);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        CodeAssertions.AssertNoSyntaxErrors(transformFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(entityFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(readerFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(ssisFnFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Two expected gaps: the SqlCommand-mode column-name assumption, and the unavoidable
+        // Notification one -- same shape as every other SqlCommand-sourced flow's own test.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("assumes each result-set column is named/aliased"));
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticStringToIntCoercion.Notification");
+    }
+
+    [Fact]
     public void Generate_ProducesAReferenceTableCacheScaffold_ForALookup_ButDoesNotWireItIntoProgramCs()
     {
         // SyntheticLookupSplit.dtsx: OLE DB Source -> Lookup -> Conditional Split -> 3 OLE DB

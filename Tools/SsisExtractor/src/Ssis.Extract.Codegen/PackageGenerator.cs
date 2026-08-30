@@ -369,6 +369,15 @@ public static class PackageGenerator
             }
         }
 
+        // A string-source/int-destination passthrough column (SsisFn.ParseWstrToI4, 2026-08-30)
+        // is nullable BY CONSTRUCTION, the same reasoning as a Data Conversion column above --
+        // ParseWstrToI4 always returns int? (string and string? are the same runtime type, so
+        // there is no non-nullable overload the way NarrowR8ToI4's double/double? pair has), so
+        // the destination entity property must already be nullable by the time EntityEmitter
+        // runs, not just inside TransformEmitter's own later mismatch detection.
+        foreach (var col in TransformEmitter.DetectParsedWstrToI4Columns(flow.DestinationComponent))
+            nullableColumnNames.Add(col);
+
         return nullableColumnNames;
     }
 

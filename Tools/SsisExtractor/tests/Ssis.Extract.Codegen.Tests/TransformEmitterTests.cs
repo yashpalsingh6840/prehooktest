@@ -140,6 +140,128 @@ public class TransformEmitterTests
         Assert.Contains("Name = row.Name,", file.Content);
     }
 
+    [Fact]
+    public void Emit_ResolvesAPlainPassthroughColumn_WhenSourceIsStringAndDestinationIsInt()
+    {
+        // The exact real shape RBC_Demo_ETL's own Package_Exports/DFT_AdoNetRoundTrip hits: an
+        // ADO NET Source buffers CustomerID as wstr,20 (its own real dbo.StagingCustomers.CustomerID
+        // column is text-typed), but the real destination table's own CustomerID column is i4/int.
+        // Resolved (2026-08-30) via SsisFn.ParseWstrToI4, whose round-to-nearest-ties-to-even
+        // rule -- and whose hard-failure mode on non-numeric/empty/out-of-range text -- were
+        // both measured against a real dtexec run of exactly this pairing
+        // (synthetic-string-to-int-coercion-tables.sql), not guessed -- see CLAUDE.md's own
+        // "Numeric-passthrough-coercion for OLE DB/ADO NET destinations" section.
+        var destination = new PipelineComponentSpec
+        {
+            RefId = "DST_Test",
+            Name = "OLE DB Destination",
+            ComponentClassId = "Microsoft.OLEDBDestination",
+            Inputs =
+            [
+                new PipelineInputSpec
+                {
+                    RefId = "DST_Test.Inputs[OLE DB Destination Input]",
+                    Name = "OLE DB Destination Input",
+                    Columns =
+                    [
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[CustomerID]",
+                            CachedName = "CustomerID",
+                            CachedDataType = "wstr",
+                            LineageId = "SRC.Outputs[Output].Columns[CustomerID]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]",
+                        },
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[FullName]",
+                            CachedName = "FullName",
+                            CachedDataType = "wstr",
+                            LineageId = "SRC.Outputs[Output].Columns[FullName]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[FullName]",
+                        },
+                    ],
+                    ExternalMetadataColumns =
+                    [
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]", Name = "CustomerID", DataType = "i4" },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[FullName]", Name = "FullName", DataType = "wstr", Length = 200 },
+                    ],
+                },
+            ],
+        };
+        var pipeline = new PipelineSpec { Components = [destination] };
+
+        var request = new TransformRequest(
+            "Generated.Mapping", "CustomerExportLogTransform",
+            "Generated.Sql", "CustomerExportLogRow",
+            "Generated.Model", "CustomerExportLog",
+            "Generated.Ssis",
+            pipeline, [], destination);
+
+        var result = TransformEmitter.Emit(request);
+
+        Assert.Empty(result.Result.Gaps);
+        Assert.Equal(["ParseWstrToI4"], result.SsisFunctionsUsed);
+
+        var file = Assert.Single(result.Result.Files);
+        Assert.Contains("CustomerID = SsisFn.ParseWstrToI4(row.CustomerID),", file.Content);
+        Assert.Contains("FullName = row.FullName,", file.Content);
+        Assert.Contains("using Generated.Ssis;", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+    [Fact]
+    public void DetectParsedWstrToI4Columns_FindsOnlyTheStringToIntMismatch()
+    {
+        // Shared with PackageGenerator.ResolveNullableColumnNames -- must return the SAME
+        // answer Emit's own inline mismatch detection reaches, since ParseWstrToI4 always
+        // returns int? and the destination entity property must be nullable-inferred BEFORE
+        // EntityEmitter runs (unlike NarrowR8ToI4's double/double? overload pair, string and
+        // string? are the same runtime type, so there is no non-nullable overload to select).
+        var destination = new PipelineComponentSpec
+        {
+            RefId = "DST_Test",
+            Name = "OLE DB Destination",
+            ComponentClassId = "Microsoft.OLEDBDestination",
+            Inputs =
+            [
+                new PipelineInputSpec
+                {
+                    RefId = "DST_Test.Inputs[OLE DB Destination Input]",
+                    Name = "OLE DB Destination Input",
+                    Columns =
+                    [
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[CustomerID]",
+                            CachedName = "CustomerID",
+                            CachedDataType = "wstr",
+                            LineageId = "SRC.Outputs[Output].Columns[CustomerID]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]",
+                        },
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[FullName]",
+                            CachedName = "FullName",
+                            CachedDataType = "wstr",
+                            LineageId = "SRC.Outputs[Output].Columns[FullName]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[FullName]",
+                        },
+                    ],
+                    ExternalMetadataColumns =
+                    [
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]", Name = "CustomerID", DataType = "i4" },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[FullName]", Name = "FullName", DataType = "wstr", Length = 200 },
+                    ],
+                },
+            ],
+        };
+
+        var result = TransformEmitter.DetectParsedWstrToI4Columns(destination);
+
+        Assert.Equal(new HashSet<string> { "CustomerID" }, result);
+    }
+
 
     [Fact]
     public void Emit_ReproducesTheHandWrittenEmployeeTransform_FromTheRealLoadEmployeesPackage()

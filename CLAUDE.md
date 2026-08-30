@@ -826,7 +826,20 @@ real Microsoft.DataConvert instance targets only the already-supported i4/dbdate
 dtexec probe measured DT_WSTR's own genuinely different failure mode (truncates rather than
 nulling out, the first Data Conversion target this tool has measured that isn't "NULL on
 failure"), verified end-to-end with an exact row-for-row match against that probe and zero
-regression on the one real package that does use Data Conversion
+regression on the one real package that does use Data Conversion; portfolio re-survey run
+2026-08-30 (2/5 -> confirmed-still-2/5 with a changed blocker set, then 3/5 after the round
+below), confirming Aggregate/Row Count really is moot (DFT_LookupAndAggregate has BOTH a Lookup
+and an Aggregate downstream of its Multicast, so the Lookup gate wins regardless) and surfacing
+one genuinely new gap; string-to-int passthrough coercion (SsisFn.ParseWstrToI4) added
+2026-08-30, same day, closing RBC_Demo_ETL's own Package_Exports/DFT_AdoNetRoundTrip fully (0
+warnings/0 errors) and taking the portfolio to 3/5 -- another real dtexec probe measured the same
+round-to-nearest-ties-to-even rule as NarrowR8ToI4 but a genuinely different, also-measured
+FAILURE mode (fails hard on non-numeric/empty/out-of-range text, unlike r8-to-i4 which never
+fails and unlike Data Conversion's own IgnoreFailure which never fails either), verified
+end-to-end with an exact row-for-row match on both the success and failure paths against that
+probe, and along the way found (but deliberately did not fix, out of scope) a pre-existing,
+unrelated CS1061 build bug in the `Package` project's own StagingCustomers/SalesSummary
+transforms
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -3750,6 +3763,141 @@ already blocked by Lookup), Excel Source in SqlCommand mode, a ForEach Loop re-r
 Data Flow Task per file, and the numeric-passthrough-coercion gap for every numeric pairing other
 than r8-to-i4. Data Conversion target types other than DT_I4/DT_DBDATE/DT_R8/DT_WSTR/DT_BOOL
 remain unsupported (e.g. DT_I2/DT_I8/DT_NUMERIC/DT_DBTIMESTAMP) — none evidenced or measured yet.
+
+### Portfolio re-survey + string-to-int passthrough coercion (2026-08-30) — closes `Package_Exports`
+
+Re-ran `ssisx report`/`ssisx generate` against the full `SSIS_From_Sandeep` portfolio from a
+clean rebuild, specifically to get a fresh generatable-count now that nearly every prior gap was
+closed — the user picked this over jumping straight to another named gap. Result: **2/5 →
+confirmed-still-2/5 at survey time**, but with the exact blocker set changed since the last
+count: `Package_Advanced`/`Package_Legacy` are now BOTH fully generatable (closed by this
+session's earlier rounds, not previously re-verified together), `Package` (the orchestrator) is
+still blocked on its 2 `Microsoft.ScriptTask`s (unchanged, out of scope), and `Package_Transforms`
+is still blocked by `DFT_LookupAndAggregate` — confirmed, by reading the real XML directly, that
+this flow has BOTH a `Microsoft.Lookup` and a `Microsoft.Aggregate` downstream of its Multicast,
+so building Aggregate/Row Count support would not close it anyway (the Lookup gate, hoisted to
+the top of `PackageGenerator`'s per-flow loop, still wins regardless of what Aggregate support
+would add — verified this is NOT an ordering bug: `PackagePlanner.PlanMulticast` fails first here
+because Aggregate is unsupported, short-circuiting before the `DataFlowPlan.Lookup` field is ever
+populated, but if Aggregate becomes supported the constructed `DataFlowPlan` would still carry
+`Lookup: lookup` and `PackageGenerator`'s existing Lookup-first check would still catch it before
+ever reaching `flow.Multicast` — the safety net holds for a future round too, just wasn't the
+gap-message the report showed today). Confirms the pre-existing "remaining known gaps" list was
+accurate on Aggregate/Row Count being moot.
+
+**One genuinely NEW, real, evidenced gap surfaced, not previously named**:
+`Package_Exports`/`DFT_AdoNetRoundTrip`'s `CustomerID` — an ADO NET Source reads it as `wstr,20`
+(the real `dbo.StagingCustomers.CustomerID` column is text-typed in the third party's own staging
+table), but `CustomerExportLog.CustomerID` is `i4`. A DIFFERENT case from the r8-to-i4 rounding
+fix (2026-08-28 above) — this needs PARSING text, not just rounding a float — and newly reachable
+only because the OLE DB/ADO NET direct-copy gate was lifted in the Excel Source round (this flow
+has no Derived Column at all). Picked as the next round over the other three named gaps
+(Excel SqlCommand mode, ForEach-over-a-Data-Flow-Task, other numeric/Data-Conversion targets) —
+real and evidenced beats speculative every time, per this project's own discipline.
+
+**Real dtexec probe measured first, same discipline as every other coercion this project has
+built** (`Ssis.Extract.FixtureBuilder`'s new `string-to-int-coercion` mode, OLE DB Source/
+Destination standing in for the real ADO NET components — this environment still cannot
+construct an ADO.NET connection manager via the object model, see the "ADO NET Source/
+Destination" section above; the coercion itself is source-agnostic, keyed only off buffered type
+`wstr` vs. destination `i4`, same as the r8-to-i4 round). Backing tables:
+`tests/Ssis.Extract.Tests/Fixtures/synthetic-string-to-int-coercion-tables.sql`. **Two real
+findings, neither guessed:**
+- The **success** path: `"123"`, `"  456  "` (whitespace-padded), `"-42"`, `"007"`, `"+15"`,
+  `"0"`, and a literal `NULL` all landed correctly (`123, 456, -42, 7, 15, 0, NULL`) — locale-
+  neutral, whitespace/sign-tolerant. Decimal-looking (`"12.5"`) and scientific-notation
+  (`"1e3"`) strings ALSO succeed (`12`, `1000`) — the string is parsed as a NUMBER first, then
+  rounded. Midpoint probes (`"12.5"→12`, `"13.5"→14`, `"-13.5"→-14`) confirm the **exact same
+  round-to-nearest-ties-to-even rule as `NarrowR8ToI4`**.
+- The **failure** path, measured separately (one pathological row at a time, truncating between
+  runs — a single failing row would otherwise roll back the whole fast-load batch and
+  contaminate the success-path measurement, same reasoning as the r8-to-i4 probe's own overflow
+  exclusion): non-numeric text (`"abc"`), an empty string, a whitespace-only string, and an
+  out-of-range value (`"99999999999999"`) all made the real probe **FAIL HARD** —
+  `DTSER_FAILURE`, zero rows landed, real OLE DB error *"Invalid character value for cast
+  specification"*. This is a genuinely different failure mode from `NarrowR8ToI4` (which never
+  fails — a float is already numeric) and from every Data Conversion target (`IgnoreFailure`
+  always nulls out, never fails hard) — the destination input column's disposition here defaults
+  to `FailComponent`, and this pairing has no Data Conversion component at all to configure
+  `IgnoreFailure` on in the first place.
+
+**Built `SsisFn.ParseWstrToI4(string?)`** (`checked((int)Math.Round(double.Parse(value,
+NumberStyles.Float, CultureInfo.InvariantCulture)))`, `null` passes through as `null` unchanged)
+— throws `FormatException`/`OverflowException` on the measured failure inputs, deliberately NOT
+swallowed, to match the real hard-failure behavior instead of guessing a null-out convention that
+was measured NOT to apply here. `TransformEmitter`'s mismatch-detection loop gained a
+`sourceType == "string" && destType == "int"` branch alongside the existing r8→i4 one.
+
+**A real design wrinkle, absent from the r8→i4 case, that needed a genuine fix, not just a new
+branch:** `string`/`string?` are the SAME runtime type in .NET (unlike `double`/`double?`), so
+there is no non-nullable overload of `ParseWstrToI4` the way `NarrowR8ToI4(double)` vs.
+`NarrowR8ToI4(double?)` lets the SOURCE column's own declared nullability pick the right one —
+`ParseWstrToI4` always returns `int?`. That means the destination entity property MUST be
+nullable-inferred structurally (the same "nullable BY CONSTRUCTION" reasoning Data Conversion's
+own converted columns already use), and — because `PackageGenerator` calls `EntityEmitter` BEFORE
+`TransformEmitter` — that inference has to happen up front in `ResolveNullableColumnNames`, not
+inside `TransformEmitter.Emit`'s own later mismatch loop (too late; `EntityEmitter` would already
+have emitted a non-nullable `int` property). Extracted the detection into a new, shared
+`TransformEmitter.DetectParsedWstrToI4Columns(destinationComponent)` (internal, same sharing
+precedent as `CollectSsisFunctions`/`MapPipelineTypeToSsisType`), called from BOTH
+`ResolveNullableColumnNames` (seeds the nullable set before `EntityEmitter` runs) and
+`TransformEmitter.Emit` itself (reuses the same answer instead of re-deriving it, so the two can
+never drift apart). This also correctly makes the RAW source row property nullable too (same
+name, no rename on a plain passthrough), which is actually MORE correct than before — the real
+data can genuinely contain NULL (row ID=7 in the probe), so `SqlRowReaderEmitter`'s `IsDBNull`
+guard is now warranted here for a reason unrelated to any Data Conversion.
+
+**Verified two ways, same discipline as every other round:**
+1. **A new dedicated fixture**, `tests/Ssis.Extract.Tests/Fixtures/SyntheticStringToIntCoercion.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `string-to-int-coercion` mode — the same probe fixture,
+   doing double duty). **Generated, built against a copy of `Etl.Core` (0 warnings/0 errors), and
+   actually RUN against `.\SQLFORPOC_2022`**: the 7-row success batch produced an **exact
+   row-for-row match** against the real dtexec probe (`123, 456, -42, 7, 0, 15, NULL`).
+   Re-running the pathological cases through the GENERATED exe (not just dtexec) confirmed the
+   same class of outcome both ways: `"abc"` → `FormatException`, transaction rolled back, 0 rows
+   landed (dtexec: `DTSER_FAILURE`, 0 rows); `"99999999999999"` → `OverflowException`, 0 rows
+   landed (dtexec: `DTSER_FAILURE`, 0 rows); `"12.5"` → succeeded, landed `12` (dtexec: same).
+   The exact exception type necessarily differs from SSIS's own OLE DB error, but the essential
+   property — fail hard, land nothing, never silently succeed with garbage — matches exactly.
+2. **The real motivating case** — regenerating `SSIS_From_Sandeep`'s actual `Package_Exports.dtsx`:
+   the `CustomerExportLog.CustomerID` gap is GONE entirely; `Package_Exports` moved from 1
+   blocking gap to fully generatable, taking the portfolio from **2/5 to 3/5**. `Package_Exports`
+   alone builds with **0 warnings/0 errors** against a copy of `Etl.Core`. (A full RUN against
+   this real package was not attempted — its own source data lives in the third party's own
+   `SSISDemo` database, unavailable here, same honest limitation as every other real-package
+   check in this file that can't be executed end to end.)
+
+**A genuinely new, unrelated, PRE-EXISTING bug was found while building the whole regenerated
+solution, not caused by this round — found, named, and deliberately NOT fixed here (out of
+scope; confirmed by checking today's OWN "before" generation output, saved before this round's
+code change, and finding the identical failure already there).** The `Package` project (the
+orchestrator, already blocked on its 2 Script Tasks, never previously claimed to build) fails
+with 6 `CS1061` errors: `Mapping/StagingCustomersTransform.cs`/`SalesSummaryTransform.cs`
+reference row-type properties (`FullName`, `CleanEmail`, `IsValidRow`, `LoadDateTime`,
+`CustomerTier`, `ProcessedDateTime`) that don't exist on their own generated
+`StagingCustomersCsvRow`/`SalesSummarySqlRow` types. Not root-caused further this round — named
+here as a real, precise follow-up rather than silently left for someone to rediscover from
+scratch. Since `Package` is already excluded from the "generatable" count for an unrelated
+reason (Script Task), this doesn't affect today's 3/5 result, but it does mean `Package`'s
+OTHER, individually-gap-free flows have a real, previously-unnoticed generation bug of their own.
+
+Two new `TransformEmitterTests` (the resolved-pairing case, mirroring the r8→i4 test exactly;
+`DetectParsedWstrToI4Columns` in isolation), one new `SsisFnEmitterTests`
+(`Emit_ProducesParseWstrToI4_...`), and one new `PackageGeneratorTests`
+(`Generate_ResolvesAStringSourceIntDestinationPassthroughColumn_ViaParseWstrToI4`, reading the
+real fixture end to end and asserting the nullable entity property, the `IsDBNull`-guarded
+reader, and the `ParseWstrToI4` call all compose correctly). Regression: 135/135 in
+`Ssis.Extract.Codegen.Tests` (was 131), same 3 pre-existing unrelated failures elsewhere. No
+`Etl.Core` changes needed this round (same as the r8-to-i4 round — the coercion lives entirely
+in per-package generated code, not shared plumbing), so `D:\PoC\SSIS_Rewrite` has nothing to
+commit for this round.
+
+**Remaining known gaps, updated:** Aggregate/Row Count (still moot — confirmed again this round,
+now with the exact reason why building it wouldn't help), Excel Source in SqlCommand mode, a
+ForEach Loop re-running a whole Data Flow Task per file, the numeric-passthrough-coercion gap for
+every pairing other than r8-to-i4/wstr-to-i4 (i8→i4, numeric→i4, r4→i4, etc. — still unmeasured),
+Data Conversion target types other than DT_I4/DT_DBDATE/DT_R8/DT_WSTR/DT_BOOL, and the newly-found
+`Package` CS1061 row-type/transform mismatch bug named above.
 
 ## Traps already hit once — don't re-derive these
 

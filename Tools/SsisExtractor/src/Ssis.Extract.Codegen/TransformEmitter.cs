@@ -102,7 +102,15 @@ public static class TransformEmitter
         // resolved via SsisFn.NarrowR8ToI4 instead of gapping (2026-08-28) -- measured empirically
         // against a real dtexec run (synthetic-numeric-coercion-tables.sql) rather than guessed:
         // SSIS's own OLE DB Destination rounds to the nearest integer, ties-to-EVEN, exactly
-        // matching .NET's own default Math.Round rule. Any OTHER numeric pairing (e.g. i8->i4,
+        // matching .NET's own default Math.Round rule. A second evidenced pairing (string source
+        // -> int destination, e.g. Package_Exports' own DFT_AdoNetRoundTrip: CustomerID read as
+        // wstr,20 from a text-typed staging column, i4 at CustomerExportLog) is resolved via
+        // SsisFn.ParseWstrToI4 the same way (2026-08-30) -- measured empirically against a real
+        // dtexec run (synthetic-string-to-int-coercion-tables.sql): the string parses as a
+        // number then rounds ties-to-even, the same rule, but unlike r8->i4 this pairing's
+        // FAILURE mode is ALSO measured (non-numeric/empty/whitespace-only/out-of-range text
+        // makes the real probe fail hard), so the generated helper throws to match rather than
+        // nulling out. Any OTHER numeric pairing (e.g. i8->i4,
         // numeric->i4) has no such evidence and still gaps rather than guessing the same rule
         // applies -- a wrong guess would silently corrupt data instead of failing loudly.
         var isFlatFileDestination = request.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination";
@@ -111,6 +119,13 @@ public static class TransformEmitter
         var mismatchedTypeColumns = new HashSet<string>();
         var flatFileStringConversionColumns = new HashSet<string>();
         var narrowedR8ToI4Columns = new HashSet<string>();
+        // Precomputed via the shared detector (not inline) because PackageGenerator's
+        // ResolveNullableColumnNames needs the SAME answer before EntityEmitter runs --
+        // ParseWstrToI4 always returns int? (string/string? are the same runtime type, unlike
+        // double/double?, so there's no non-nullable overload to fall back on), so the
+        // destination entity property must already be nullable-inferred by the time
+        // EntityEmitter sees it. Computing this twice would risk the two answers drifting apart.
+        var parsedWstrToI4Columns = DetectParsedWstrToI4Columns(request.DestinationComponent);
         foreach (var column in resolved.Columns)
         {
             if (column.Type is null) continue;
@@ -129,6 +144,8 @@ public static class TransformEmitter
                 narrowedR8ToI4Columns.Add(column.PipelineColumnName);
                 continue;
             }
+
+            if (parsedWstrToI4Columns.Contains(column.PipelineColumnName)) continue;
 
             mismatchedTypeColumns.Add(column.PipelineColumnName);
             gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
@@ -181,6 +198,12 @@ public static class TransformEmitter
                 // File string-conversion case above (which needs the null-conditional `?`
                 // operator itself, not just an overload).
                 var expr = $"SsisFn.NarrowR8ToI4(row.{column.PipelineColumnName})";
+                CollectSsisFunctions(expr, functionsUsed);
+                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+            }
+            else if (parsedWstrToI4Columns.Contains(column.PipelineColumnName))
+            {
+                var expr = $"SsisFn.ParseWstrToI4(row.{column.PipelineColumnName})";
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
@@ -333,6 +356,27 @@ public static class TransformEmitter
             _ => new NotTranslatable($"Data Conversion to target type '{conversion.TargetDataType}' is not supported yet"),
         };
 
+    /// <summary>Internal (not private) so PackageGenerator's ResolveNullableColumnNames can
+    /// detect the same string(wstr)-source/int(i4)-destination passthrough mismatch BEFORE
+    /// EntityEmitter runs -- see this method's own call site in Emit for why the entity property
+    /// must be nullable-inferred structurally rather than by ISNULL evidence.</summary>
+    internal static HashSet<string> DetectParsedWstrToI4Columns(PipelineComponentSpec destinationComponent)
+    {
+        var result = new HashSet<string>();
+        var resolved = PipelineResolver.ResolveDestinationInput(destinationComponent);
+        var inputColumnsByRefId = destinationComponent.Inputs.FirstOrDefault()?.Columns
+            .ToDictionary(c => c.RefId) ?? [];
+        foreach (var column in resolved.Columns)
+        {
+            if (column.Type is null) continue;
+            if (!inputColumnsByRefId.TryGetValue(column.PipelineColumnRefId, out var inputColumn)) continue;
+            var sourceType = SsisPipelineTypeMap.Resolve(inputColumn.CachedDataType);
+            if (sourceType?.ClrTypeName == "string" && column.Type.ClrTypeName == "int")
+                result.Add(column.PipelineColumnName);
+        }
+        return result;
+    }
+
     /// <summary>Internal (not private) so RouterEmitter can reuse the exact same SsisFn.*
     /// detection for Conditional Split condition translation instead of duplicating it -- same
     /// sharing precedent as MapPipelineTypeToSsisType below.</summary>
@@ -347,6 +391,7 @@ public static class TransformEmitter
         if (csharpExpression.Contains("SsisFn.ToNullableI4(")) functionsUsed.Add("ToNullableI4");
         if (csharpExpression.Contains("SsisFn.ToNullableDate(")) functionsUsed.Add("ToNullableDate");
         if (csharpExpression.Contains("SsisFn.NarrowR8ToI4(")) functionsUsed.Add("NarrowR8ToI4");
+        if (csharpExpression.Contains("SsisFn.ParseWstrToI4(")) functionsUsed.Add("ParseWstrToI4");
         if (csharpExpression.Contains("SsisFn.ToNullableR8(")) functionsUsed.Add("ToNullableR8");
         if (csharpExpression.Contains("SsisFn.ToNullableBool(")) functionsUsed.Add("ToNullableBool");
         if (csharpExpression.Contains("SsisFn.ToWstr(")) functionsUsed.Add("ToWstr");

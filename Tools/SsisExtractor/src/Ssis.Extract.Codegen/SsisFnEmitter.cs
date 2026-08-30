@@ -32,12 +32,13 @@ public static class SsisFnEmitter
         if (functionsUsed.Contains("ToNullableI4")) bodies.Add(ToNullableI4Body());
         if (functionsUsed.Contains("ToNullableDate")) bodies.Add(ToNullableDateBody());
         if (functionsUsed.Contains("NarrowR8ToI4")) bodies.Add(NarrowR8ToI4Body());
+        if (functionsUsed.Contains("ParseWstrToI4")) bodies.Add(ParseWstrToI4Body());
         if (functionsUsed.Contains("ToNullableR8")) bodies.Add(ToNullableR8Body());
         if (functionsUsed.Contains("ToNullableBool")) bodies.Add(ToNullableBoolBody());
         if (functionsUsed.Contains("ToWstr")) bodies.Add(ToWstrBody());
 
         var lines = new List<string>();
-        if (functionsUsed.Contains("Str") || functionsUsed.Contains("ToNullableI4") || functionsUsed.Contains("ToNullableDate") || functionsUsed.Contains("ToNullableR8"))
+        if (functionsUsed.Contains("Str") || functionsUsed.Contains("ToNullableI4") || functionsUsed.Contains("ToNullableDate") || functionsUsed.Contains("ToNullableR8") || functionsUsed.Contains("ParseWstrToI4"))
         {
             lines.Add("using System.Globalization;");
             lines.Add("");
@@ -195,6 +196,30 @@ public static class SsisFnEmitter
         "    /// <summary>Nullable-source overload -- a NULL source value passes through as NULL,",
         "    /// matching SSIS's own measured behavior for this same pairing.</summary>",
         "    public static int? NarrowR8ToI4(double? value) => value is null ? null : NarrowR8ToI4(value.Value);",
+    ];
+
+    private static List<string> ParseWstrToI4Body() =>
+    [
+        "    /// <summary>",
+        "    /// A plain passthrough column whose source buffer is string (DT_WSTR) but whose",
+        "    /// destination column is int (DT_I4), with no explicit Data Conversion component --",
+        "    /// the real shape RBC_Demo_ETL's own Package_Exports/DFT_AdoNetRoundTrip has",
+        "    /// (CustomerID: wstr,20 from an ADO NET Source reading a text-typed staging column,",
+        "    /// i4 at the destination table). SSIS's own OLE DB Destination accepts this pairing",
+        "    /// and performs the conversion itself at insert time; measured empirically against a",
+        "    /// real dtexec run (synthetic-string-to-int-coercion-tables.sql): the string is",
+        "    /// parsed as a NUMBER first (accepts a leading sign, a decimal point, scientific",
+        "    /// notation, and locale-neutral leading/trailing whitespace), then rounded to the",
+        "    /// nearest integer, ties-to-EVEN -- the exact same rounding rule as NarrowR8ToI4",
+        "    /// above. Unlike NarrowR8ToI4, this pairing's FAILURE mode was also measured, not",
+        "    /// left conservative and unverified: non-numeric text, an empty string, a",
+        "    /// whitespace-only string, and an out-of-range value all made the real probe FAIL",
+        "    /// HARD (\"Invalid character value for cast specification\", DTSER_FAILURE) rather",
+        "    /// than null out or drop the row -- this throws (FormatException/OverflowException)",
+        "    /// to match that. Only a literal NULL source value passes through as NULL.",
+        "    /// </summary>",
+        "    public static int? ParseWstrToI4(string? value) =>",
+        "        value is null ? null : checked((int)Math.Round(double.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture)));",
     ];
 
     private static List<string> ToNullableR8Body() =>

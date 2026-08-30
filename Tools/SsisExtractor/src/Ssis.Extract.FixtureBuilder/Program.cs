@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion]");
             return 2;
         }
 
@@ -164,9 +164,13 @@ internal static class Program
         {
             return BuildDataConversionTypesFixture(args[0]);
         }
+        if (fixtureName == "string-to-int-coercion")
+        {
+            return BuildStringToIntCoercionFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', or 'data-conversion-types'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', or 'string-to-int-coercion'.");
             return 2;
         }
 
@@ -2551,6 +2555,50 @@ internal static class Program
 
         var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
             accessMode: 3, openRowset: "[dbo].[SyntheticNumericCoercionTarget]");
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand, an NVARCHAR "Val" column) -> OLE DB Destination (an int "Val"
+    /// column), a plain passthrough with NO Data Conversion and NO Derived Column in between --
+    /// reproduces, in isolation, the exact real shape RBC_Demo_ETL's own Package_Exports/
+    /// DFT_AdoNetRoundTrip has (CustomerID: wstr,20 from an ADO NET Source reading
+    /// dbo.StagingCustomers, i4 at CustomerExportLog). Uses OLE DB rather than the real ADO NET
+    /// component because this environment cannot construct an ADO.NET connection manager
+    /// through the SSIS object model (see CLAUDE.md's "ADO NET Source/Destination" section) --
+    /// the coercion this measures is source-agnostic, keyed only off the buffered type (wstr)
+    /// vs. the destination's external metadata type (i4), same as the r8-to-i4 round.
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-string-to-int-coercion-tables.sql</c>
+    /// already created on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildStringToIntCoercionFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticStringToIntCoercion" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Coerce";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Val FROM dbo.SyntheticStringToIntCoercionInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticStringToIntCoercionTarget]");
         var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
         AttachPath(pipe, srcOutput, destMeta.InputCollection[0]);
         ResolveOleDbMetadata(destMeta, isDestination: true);
