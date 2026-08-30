@@ -32,6 +32,9 @@ public static class SsisFnEmitter
         if (functionsUsed.Contains("ToNullableI4")) bodies.Add(ToNullableI4Body());
         if (functionsUsed.Contains("ToNullableDate")) bodies.Add(ToNullableDateBody());
         if (functionsUsed.Contains("NarrowR8ToI4")) bodies.Add(NarrowR8ToI4Body());
+        if (functionsUsed.Contains("NarrowI8ToI4")) bodies.Add(NarrowI8ToI4Body());
+        if (functionsUsed.Contains("NarrowNumericToI4")) bodies.Add(NarrowNumericToI4Body());
+        if (functionsUsed.Contains("NarrowR4ToI4")) bodies.Add(NarrowR4ToI4Body());
         if (functionsUsed.Contains("ParseWstrToI4")) bodies.Add(ParseWstrToI4Body());
         if (functionsUsed.Contains("ToNullableR8")) bodies.Add(ToNullableR8Body());
         if (functionsUsed.Contains("ToNullableBool")) bodies.Add(ToNullableBoolBody());
@@ -196,6 +199,65 @@ public static class SsisFnEmitter
         "    /// <summary>Nullable-source overload -- a NULL source value passes through as NULL,",
         "    /// matching SSIS's own measured behavior for this same pairing.</summary>",
         "    public static int? NarrowR8ToI4(double? value) => value is null ? null : NarrowR8ToI4(value.Value);",
+    ];
+
+    private static List<string> NarrowI8ToI4Body() =>
+    [
+        "    /// <summary>",
+        "    /// A plain passthrough column whose source buffer is long (DT_I8) but whose",
+        "    /// destination column is int (DT_I4), with no explicit Data Conversion component --",
+        "    /// built speculatively 2026-08-30, no real evidenced instance in the tracked",
+        "    /// portfolio. Both sides are already integers, so there is no rounding question at",
+        "    /// all (unlike NarrowR8ToI4/NarrowNumericToI4/NarrowR4ToI4) -- an out-of-range value",
+        "    /// throws OverflowException (checked) rather than silently wrapping, the same",
+        "    /// deliberate, conservative, NOT independently measured overflow choice every other",
+        "    /// narrowing helper in this file makes.",
+        "    /// </summary>",
+        "    public static int NarrowI8ToI4(long value) => checked((int)value);",
+        "",
+        "    /// <summary>Nullable-source overload -- a NULL source value passes through as NULL.</summary>",
+        "    public static int? NarrowI8ToI4(long? value) => value is null ? null : NarrowI8ToI4(value.Value);",
+    ];
+
+    private static List<string> NarrowNumericToI4Body() =>
+    [
+        "    /// <summary>",
+        "    /// A plain passthrough column whose source buffer is decimal (DT_NUMERIC) but whose",
+        "    /// destination column is int (DT_I4), with no explicit Data Conversion component --",
+        "    /// built speculatively 2026-08-30 (synthetic-int-numeric-coercion-tables.sql), no real",
+        "    /// evidenced instance in the tracked portfolio. Measured via a real dtexec run: rounds",
+        "    /// to the NEAREST integer, ties-to-EVEN -- the exact same rule as NarrowR8ToI4",
+        "    /// (2.5 -> 2, 3.5 -> 4, 4.5 -> 4, -3.5 -> -4), matching .NET's own default",
+        "    /// Math.Round(decimal) midpoint rule exactly. An out-of-range result throws",
+        "    /// OverflowException (checked) rather than silently wrapping -- a deliberate,",
+        "    /// conservative choice, NOT independently measured against real SSIS overflow",
+        "    /// behavior, same reasoning as NarrowR8ToI4's own doc comment.",
+        "    /// </summary>",
+        "    public static int NarrowNumericToI4(decimal value) => checked((int)Math.Round(value));",
+        "",
+        "    /// <summary>Nullable-source overload -- a NULL source value passes through as NULL.</summary>",
+        "    public static int? NarrowNumericToI4(decimal? value) => value is null ? null : NarrowNumericToI4(value.Value);",
+    ];
+
+    private static List<string> NarrowR4ToI4Body() =>
+    [
+        "    /// <summary>",
+        "    /// A plain passthrough column whose source buffer is float, single-precision (DT_R4)",
+        "    /// but whose destination column is int (DT_I4), with no explicit Data Conversion",
+        "    /// component -- built speculatively 2026-08-30 (synthetic-int-numeric-coercion-tables.sql),",
+        "    /// no real evidenced instance in the tracked portfolio. Measured via a real dtexec run:",
+        "    /// the exact same round-to-nearest-ties-to-even rule as NarrowR8ToI4 (2.5 -> 2,",
+        "    /// 3.5 -> 4, 4.5 -> 4, -3.5 -> -4) -- widened to double before rounding since",
+        "    /// Math.Round has no float overload, an exact, lossless widening for every value this",
+        "    /// pairing can produce. An out-of-range result throws OverflowException (checked)",
+        "    /// rather than silently wrapping -- a deliberate, conservative choice, NOT",
+        "    /// independently measured against real SSIS overflow behavior, same reasoning as",
+        "    /// NarrowR8ToI4's own doc comment.",
+        "    /// </summary>",
+        "    public static int NarrowR4ToI4(float value) => checked((int)Math.Round((double)value));",
+        "",
+        "    /// <summary>Nullable-source overload -- a NULL source value passes through as NULL.</summary>",
+        "    public static int? NarrowR4ToI4(float? value) => value is null ? null : NarrowR4ToI4(value.Value);",
     ];
 
     private static List<string> ParseWstrToI4Body() =>

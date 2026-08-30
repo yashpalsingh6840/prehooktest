@@ -73,12 +73,18 @@ public class TransformEmitterTests
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }
 
-    [Fact]
-    public void Emit_ReportsAGap_ForAPlainPassthroughColumn_WithAnUnevidencedNumericMismatch()
+    [Theory]
+    [InlineData("i8", "NarrowI8ToI4")]
+    [InlineData("numeric", "NarrowNumericToI4")]
+    [InlineData("r4", "NarrowR4ToI4")]
+    public void Emit_ResolvesAPlainPassthroughColumn_ForEachSpeculativeNumericToI4Pairing(string sourceDataType, string expectedHelper)
     {
-        // i8 (bigint) -> i4 (int) has never been measured against a real dtexec run -- unlike
-        // the r8->i4 pairing above, this must still gap rather than assume the same round-to-
-        // nearest-ties-to-even rule applies. A wrong guess here would silently corrupt data.
+        // Built speculatively 2026-08-30 (synthetic-int-numeric-coercion-tables.sql) -- no real
+        // evidenced instance of any of these three pairings anywhere in the tracked portfolio,
+        // named as candidates in CLAUDE.md's own "remaining known gaps" list. A real dtexec run
+        // measured the same round-to-nearest-ties-to-even rule as NarrowR8ToI4 for the two
+        // float-shaped pairings (numeric, r4); i8->i4 has no rounding question at all (both sides
+        // are already integers).
         var destination = new PipelineComponentSpec
         {
             RefId = "DST_Test",
@@ -94,11 +100,11 @@ public class TransformEmitterTests
                     [
                         new PipelineInputColumnSpec
                         {
-                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[BigId]",
-                            CachedName = "BigId",
-                            CachedDataType = "i8",
-                            LineageId = "SRC.Outputs[Output].Columns[BigId]",
-                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[BigId]",
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[Val]",
+                            CachedName = "Val",
+                            CachedDataType = sourceDataType,
+                            LineageId = "SRC.Outputs[Output].Columns[Val]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Val]",
                         },
                         new PipelineInputColumnSpec
                         {
@@ -111,7 +117,72 @@ public class TransformEmitterTests
                     ],
                     ExternalMetadataColumns =
                     [
-                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[BigId]", Name = "BigId", DataType = "i4" },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Val]", Name = "Val", DataType = "i4" },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Name]", Name = "Name", DataType = "wstr", Length = 50 },
+                    ],
+                },
+            ],
+        };
+        var pipeline = new PipelineSpec { Components = [destination] };
+
+        var request = new TransformRequest(
+            "Generated.Mapping", "WidgetTransform",
+            "Generated.Sql", "WidgetRow",
+            "Generated.Model", "Widget",
+            "Generated.Ssis",
+            pipeline, [], destination);
+
+        var result = TransformEmitter.Emit(request);
+
+        Assert.Empty(result.Result.Gaps);
+        Assert.Equal([expectedHelper], result.SsisFunctionsUsed);
+
+        var file = Assert.Single(result.Result.Files);
+        Assert.Contains($"Val = SsisFn.{expectedHelper}(row.Val),", file.Content);
+        Assert.Contains("Name = row.Name,", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+    [Fact]
+    public void Emit_ReportsAGap_ForAPlainPassthroughColumn_WithAnUnevidencedNumericMismatch()
+    {
+        // i2 (smallint) -> i4 (int) has never been measured against a real dtexec run -- unlike
+        // r8/i8/numeric/r4 -> i4 above, this must still gap rather than assume the same round-to-
+        // nearest-ties-to-even (or plain-narrowing) rule applies. A wrong guess here would
+        // silently corrupt data.
+        var destination = new PipelineComponentSpec
+        {
+            RefId = "DST_Test",
+            Name = "OLE DB Destination",
+            ComponentClassId = "Microsoft.OLEDBDestination",
+            Inputs =
+            [
+                new PipelineInputSpec
+                {
+                    RefId = "DST_Test.Inputs[OLE DB Destination Input]",
+                    Name = "OLE DB Destination Input",
+                    Columns =
+                    [
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[SmallId]",
+                            CachedName = "SmallId",
+                            CachedDataType = "i2",
+                            LineageId = "SRC.Outputs[Output].Columns[SmallId]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[SmallId]",
+                        },
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[Name]",
+                            CachedName = "Name",
+                            CachedDataType = "wstr",
+                            LineageId = "SRC.Outputs[Output].Columns[Name]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Name]",
+                        },
+                    ],
+                    ExternalMetadataColumns =
+                    [
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[SmallId]", Name = "SmallId", DataType = "i4" },
                         new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Name]", Name = "Name", DataType = "wstr", Length = 50 },
                     ],
                 },
@@ -129,14 +200,14 @@ public class TransformEmitterTests
         var result = TransformEmitter.Emit(request);
 
         var gap = Assert.Single(result.Result.Gaps);
-        Assert.Equal("Widget.BigId", gap.Location);
-        Assert.Contains("buffered as long but the destination column is int", gap.Reason);
+        Assert.Equal("Widget.SmallId", gap.Location);
+        Assert.Contains("buffered as short but the destination column is int", gap.Reason);
 
         // The MISMATCHED column is dropped from the assignments, but the file still generates
         // with every OTHER column -- same per-column-gap shape as an untranslatable Derived
         // Column expression, not a whole-flow failure.
         var file = Assert.Single(result.Result.Files);
-        Assert.DoesNotContain("BigId", file.Content);
+        Assert.DoesNotContain("SmallId", file.Content);
         Assert.Contains("Name = row.Name,", file.Content);
     }
 

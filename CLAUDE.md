@@ -878,7 +878,11 @@ off raw output columns, an Aggregate having no external metadata columns of its 
 MergeJoinEmitter already established), and a new Etl.Core.Data.AggregateRowSource (blocking on
 its input side, ordinary streaming IRowSource on its output side), verified end-to-end with an
 exact row-for-row match against a real dtexec probe that also measured AggregationType=1's own
-NULL-exclusion rule (SQL COUNT(column), not COUNT(*))
+NULL-exclusion rule (SQL COUNT(column), not COUNT(*)); three more numeric-passthrough-coercion
+pairings (i8/numeric/r4 -> i4) built speculatively 2026-08-30, same session, via a real dtexec
+probe that measured both float-shaped pairings round to the same nearest-ties-to-even rule as
+NarrowR8ToI4/ParseWstrToI4, with i8->i4 needing only a plain checked narrowing cast -- verified
+end-to-end with an exact row-for-row match across all 9 seeded rows, midpoints included
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -4350,6 +4354,60 @@ than r8-to-i4/wstr-to-i4, and Data Conversion target types other than DT_I4/DT_D
 DT_WSTR/DT_BOOL. Aggregate/Row Count, named above, is now closed for the one evidenced shape
 (GroupBy + Count) — Sum/Average/Minimum/Maximum/CountDistinct/CountAll remain unsupported,
 correctly, since none is evidenced anywhere in the tracked portfolio and none was measured.
+
+### Numeric-passthrough-coercion: three more pairings (i8/numeric/r4 → i4), built speculatively (2026-08-30)
+
+Picked next by explicit user choice ("build both" remaining speculative rounds). No real
+evidenced instance of any of the three exists anywhere in the tracked portfolio — named purely as
+candidates in the "remaining known gaps" list, same speculative-work-signoff discipline as every
+other round in this file.
+
+**A real dtexec probe measured all three at once**, same discipline as the original r8-to-i4/
+wstr-to-i4 rounds: `SyntheticIntNumericCoercion.dtsx` (`Ssis.Extract.FixtureBuilder`'s new
+`int-numeric-coercion` mode) — one OLE DB Source (SqlCommand: `I8Val bigint`, `NumericVal
+decimal(18,2)`, `R4Val real`) → OLE DB Destination (all three narrowed to `int`), seeded with
+midpoint values chosen to distinguish rounding rules (`synthetic-int-numeric-coercion-tables.sql`).
+**Confirmed real, not guessed:** both float-shaped pairings (`numeric`, `r4`) round to the
+NEAREST integer, ties-to-EVEN — the exact same rule as `NarrowR8ToI4`/`ParseWstrToI4` (2.5→2,
+3.5→4, 4.5→4, -3.5→-4, matching .NET's own default `Math.Round` midpoint rule exactly).
+`i8`→`i4` has no rounding question at all (both sides are already integers) — trivially safe to
+narrow with `checked((int)value)`.
+
+**Three new `SsisFn` helpers** (`NarrowI8ToI4`, `NarrowNumericToI4`, `NarrowR4ToI4`), each with a
+nullable-source overload mirroring `NarrowR8ToI4`'s own pair exactly — since `long`/`decimal`/
+`float` each have a genuinely separate nullable variant (unlike `ParseWstrToI4`'s own
+`string`/`string?` runtime-type collision), no `ResolveNullableColumnNames`-level structural
+nullability was needed; the same call expression works whether or not the column happens to be
+nullable-inferred for some other reason. `TransformEmitter`'s mismatch-detection loop gained three
+new `HashSet<string>` branches (`narrowedI8ToI4Columns`/`narrowedNumericToI4Columns`/
+`narrowedR4ToI4Columns`), mirroring `narrowedR8ToI4Columns`'s own shape exactly — checked BEFORE
+the general `mismatchedTypeColumns` gap, same ordering as every other resolved pairing.
+`SsisPipelineTypeMap` needed no new entries — `i8`/`numeric`/`r4` were already mapped from earlier
+rounds (`long`/`decimal`/`float` respectively).
+
+**A pre-existing test's own premise changed, caught immediately by the suite, not shipped
+silently**: `TransformEmitterTests.Emit_ReportsAGap_ForAPlainPassthroughColumn_
+WithAnUnevidencedNumericMismatch` used `i8`→`i4` as its own "still genuinely unsupported"
+example — now resolved, so that test would have asserted a gap that no longer exists. Repointed
+at `i2`(smallint)→`i4`, still genuinely unmeasured, preserving the same coverage (an unevidenced
+pairing still gaps) without asserting something now false.
+
+**Verified end to end, same discipline as every prior coercion round**: `ssisx generate` against
+the fixture (only the two unavoidable/non-blocking gaps — SqlCommand column-naming advisory,
+Notification), built against a copy of `Etl.Core` (0 warnings/0 errors), and actually RUN against
+`.\SQLFORPOC_2022` — all 9 rows, midpoints included, an **exact row-for-row match** against the
+real dtexec probe run above. New tests: a 3-case `[Theory]` in `TransformEmitterTests` (one per
+pairing, each asserting the correct `SsisFn.*` call and zero gaps), one `SsisFnEmitterTests` case
+(asserting all six emitted method signatures — three functions × two overloads each), and one
+`PackageGeneratorTests` case reading the real fixture end to end. Regression: 150/150 in
+`Ssis.Extract.Codegen.Tests` (was 145), same 3 pre-existing unrelated failures elsewhere. No
+`Etl.Core` changes this round (the coercion lives entirely in per-package generated code, same as
+every prior numeric-coercion round), so `D:\PoC\SSIS_Rewrite` has nothing to commit.
+
+**Remaining known gaps, updated:** Data Conversion target types other than DT_I4/DT_DBDATE/DT_R8/
+DT_WSTR/DT_BOOL, and the numeric-passthrough-coercion gap for every OTHER pairing beyond the five
+now closed (r8/i8/numeric/r4/wstr → i4) — e.g. i2→i4, i4→i2, any pairing not ending in i4 at all.
+None of those has been measured or evidenced; none is guessed at.
 
 ## Traps already hit once — don't re-derive these
 

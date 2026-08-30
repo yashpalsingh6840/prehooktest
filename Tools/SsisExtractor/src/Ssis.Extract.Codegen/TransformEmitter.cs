@@ -119,15 +119,22 @@ public static class TransformEmitter
         // number then rounds ties-to-even, the same rule, but unlike r8->i4 this pairing's
         // FAILURE mode is ALSO measured (non-numeric/empty/whitespace-only/out-of-range text
         // makes the real probe fail hard), so the generated helper throws to match rather than
-        // nulling out. Any OTHER numeric pairing (e.g. i8->i4,
-        // numeric->i4) has no such evidence and still gaps rather than guessing the same rule
-        // applies -- a wrong guess would silently corrupt data instead of failing loudly.
+        // nulling out. Three more pairings (i8->i4, numeric->i4, r4->i4) were named as candidates
+        // with no real evidenced instance anywhere in the tracked portfolio, and measured
+        // speculatively 2026-08-30 (synthetic-int-numeric-coercion-tables.sql): a real dtexec run
+        // confirmed the SAME round-to-nearest-ties-to-even rule as r8->i4/wstr->i4 for both
+        // float-shaped pairings (numeric, r4); i8->i4 has no rounding question at all (both sides
+        // are already integers). Any OTHER numeric pairing still gaps rather than guessing the
+        // same rule applies -- a wrong guess would silently corrupt data instead of failing loudly.
         var isFlatFileDestination = request.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination";
         var inputColumnsByRefId = request.DestinationComponent.Inputs.FirstOrDefault()?.Columns
             .ToDictionary(c => c.RefId) ?? [];
         var mismatchedTypeColumns = new HashSet<string>();
         var flatFileStringConversionColumns = new HashSet<string>();
         var narrowedR8ToI4Columns = new HashSet<string>();
+        var narrowedI8ToI4Columns = new HashSet<string>();
+        var narrowedNumericToI4Columns = new HashSet<string>();
+        var narrowedR4ToI4Columns = new HashSet<string>();
         // Precomputed via the shared detector (not inline) because PackageGenerator's
         // ResolveNullableColumnNames needs the SAME answer before EntityEmitter runs --
         // ParseWstrToI4 always returns int? (string/string? are the same runtime type, unlike
@@ -151,6 +158,24 @@ public static class TransformEmitter
             if (sourceType.ClrTypeName == "double" && column.Type.ClrTypeName == "int")
             {
                 narrowedR8ToI4Columns.Add(column.PipelineColumnName);
+                continue;
+            }
+
+            if (sourceType.ClrTypeName == "long" && column.Type.ClrTypeName == "int")
+            {
+                narrowedI8ToI4Columns.Add(column.PipelineColumnName);
+                continue;
+            }
+
+            if (sourceType.ClrTypeName == "decimal" && column.Type.ClrTypeName == "int")
+            {
+                narrowedNumericToI4Columns.Add(column.PipelineColumnName);
+                continue;
+            }
+
+            if (sourceType.ClrTypeName == "float" && column.Type.ClrTypeName == "int")
+            {
+                narrowedR4ToI4Columns.Add(column.PipelineColumnName);
                 continue;
             }
 
@@ -236,6 +261,24 @@ public static class TransformEmitter
                 // File string-conversion case above (which needs the null-conditional `?`
                 // operator itself, not just an overload).
                 var expr = $"SsisFn.NarrowR8ToI4(row.{column.PipelineColumnName})";
+                CollectSsisFunctions(expr, functionsUsed);
+                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+            }
+            else if (narrowedI8ToI4Columns.Contains(column.PipelineColumnName))
+            {
+                var expr = $"SsisFn.NarrowI8ToI4(row.{column.PipelineColumnName})";
+                CollectSsisFunctions(expr, functionsUsed);
+                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+            }
+            else if (narrowedNumericToI4Columns.Contains(column.PipelineColumnName))
+            {
+                var expr = $"SsisFn.NarrowNumericToI4(row.{column.PipelineColumnName})";
+                CollectSsisFunctions(expr, functionsUsed);
+                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+            }
+            else if (narrowedR4ToI4Columns.Contains(column.PipelineColumnName))
+            {
+                var expr = $"SsisFn.NarrowR4ToI4(row.{column.PipelineColumnName})";
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
@@ -464,6 +507,9 @@ public static class TransformEmitter
         if (csharpExpression.Contains("SsisFn.ToNullableI4(")) functionsUsed.Add("ToNullableI4");
         if (csharpExpression.Contains("SsisFn.ToNullableDate(")) functionsUsed.Add("ToNullableDate");
         if (csharpExpression.Contains("SsisFn.NarrowR8ToI4(")) functionsUsed.Add("NarrowR8ToI4");
+        if (csharpExpression.Contains("SsisFn.NarrowI8ToI4(")) functionsUsed.Add("NarrowI8ToI4");
+        if (csharpExpression.Contains("SsisFn.NarrowNumericToI4(")) functionsUsed.Add("NarrowNumericToI4");
+        if (csharpExpression.Contains("SsisFn.NarrowR4ToI4(")) functionsUsed.Add("NarrowR4ToI4");
         if (csharpExpression.Contains("SsisFn.ParseWstrToI4(")) functionsUsed.Add("ParseWstrToI4");
         if (csharpExpression.Contains("SsisFn.ToNullableR8(")) functionsUsed.Add("ToNullableR8");
         if (csharpExpression.Contains("SsisFn.ToNullableBool(")) functionsUsed.Add("ToNullableBool");

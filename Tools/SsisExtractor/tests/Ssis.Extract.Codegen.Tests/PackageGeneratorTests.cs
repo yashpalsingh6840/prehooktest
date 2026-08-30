@@ -614,6 +614,35 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_ResolvesTheThreeSpeculativeNumericToI4Pairings_I8NumericR4()
+    {
+        // SyntheticIntNumericCoercion.dtsx, built speculatively 2026-08-30 -- see
+        // TransformEmitterTests' own theory test for the real-portfolio context. Confirmed
+        // beyond this test by actually building the generated exe against a copy of Etl.Core
+        // and running it against .\SQLFORPOC_2022 -- an exact row-for-row match against a real
+        // dtexec probe run of the same fixture across all nine seeded rows, midpoints included.
+        var package = LoadSyntheticFixture("SyntheticIntNumericCoercion.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var transform = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticIntNumericCoercionTargetTransform.cs");
+        Assert.Contains("I8Val = SsisFn.NarrowI8ToI4(row.I8Val),", transform.Content);
+        Assert.Contains("NumericVal = SsisFn.NarrowNumericToI4(row.NumericVal),", transform.Content);
+        Assert.Contains("R4Val = SsisFn.NarrowR4ToI4(row.R4Val),", transform.Content);
+        CodeAssertions.AssertNoSyntaxErrors(transform.Content);
+
+        var ssisFn = Assert.Single(result.Files, f => f.RelativePath == "Ssis/SsisFn.cs");
+        Assert.Contains("NarrowI8ToI4", ssisFn.Content);
+        Assert.Contains("NarrowNumericToI4", ssisFn.Content);
+        Assert.Contains("NarrowR4ToI4", ssisFn.Content);
+
+        // Only the two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption
+        // on the source, and Notification. No numeric-mismatch gap for any of the three columns.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+    }
+
+    [Fact]
     public void Generate_WiresAnAggregateFlow_ViaAggregateRowSourceWrappingTheRawSqlSource()
     {
         // SyntheticAggregate.dtsx, built speculatively 2026-08-30 (see PackagePlannerTests' own

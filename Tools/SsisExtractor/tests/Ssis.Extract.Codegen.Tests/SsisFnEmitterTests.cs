@@ -107,4 +107,24 @@ public class SsisFnEmitterTests
 
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }
+
+    [Fact]
+    public void Emit_ProducesTheThreeSpeculativeNumericToI4Coercions_I8NumericR4()
+    {
+        // Built speculatively 2026-08-30 (synthetic-int-numeric-coercion-tables.sql) -- no real
+        // evidenced instance of any of the three anywhere in the tracked portfolio. A real
+        // dtexec run measured the same round-to-nearest-ties-to-even rule as NarrowR8ToI4 for
+        // both float-shaped pairings (numeric, r4); i8->i4 has no rounding question at all.
+        var result = SsisFnEmitter.Emit("Package.Ssis", new HashSet<string> { "NarrowI8ToI4", "NarrowNumericToI4", "NarrowR4ToI4" });
+
+        var file = Assert.Single(result.Files);
+        Assert.Contains("public static int NarrowI8ToI4(long value) => checked((int)value);", file.Content);
+        Assert.Contains("public static int? NarrowI8ToI4(long? value)", file.Content);
+        Assert.Contains("public static int NarrowNumericToI4(decimal value) => checked((int)Math.Round(value));", file.Content);
+        Assert.Contains("public static int? NarrowNumericToI4(decimal? value)", file.Content);
+        Assert.Contains("public static int NarrowR4ToI4(float value) => checked((int)Math.Round((double)value));", file.Content);
+        Assert.Contains("public static int? NarrowR4ToI4(float? value)", file.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
 }
