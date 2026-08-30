@@ -431,6 +431,12 @@ public static class TransformEmitter
             "dbdate" => new TranslatedOk($"SsisFn.ToNullableDate({sourceRef})"),
             "r8" => new TranslatedOk($"SsisFn.ToNullableR8({sourceRef})"),
             "bool" => new TranslatedOk($"SsisFn.ToNullableBool({sourceRef})"),
+            // i2/i8/dbtimestamp built speculatively 2026-08-30 (synthetic-data-conversion-types2-
+            // tables.sql) -- no real package needs any of the three yet; measured via a real
+            // dtexec run to follow the same "NULL on any failure" convention as i4/dbdate/r8/bool.
+            "i2" => new TranslatedOk($"SsisFn.ToNullableI2({sourceRef})"),
+            "i8" => new TranslatedOk($"SsisFn.ToNullableI8({sourceRef})"),
+            "dbtimestamp" => new TranslatedOk($"SsisFn.ToNullableDateTime({sourceRef})"),
             // DT_WSTR is a genuinely different shape from every other target above -- measured
             // against a real dtexec run (synthetic-data-conversion-types-tables.sql), an overlong
             // source string TRUNCATES to fit under IgnoreFailure rather than nulling out, so the
@@ -514,6 +520,9 @@ public static class TransformEmitter
         if (csharpExpression.Contains("SsisFn.ToNullableR8(")) functionsUsed.Add("ToNullableR8");
         if (csharpExpression.Contains("SsisFn.ToNullableBool(")) functionsUsed.Add("ToNullableBool");
         if (csharpExpression.Contains("SsisFn.ToWstr(")) functionsUsed.Add("ToWstr");
+        if (csharpExpression.Contains("SsisFn.ToNullableI2(")) functionsUsed.Add("ToNullableI2");
+        if (csharpExpression.Contains("SsisFn.ToNullableI8(")) functionsUsed.Add("ToNullableI8");
+        if (csharpExpression.Contains("SsisFn.ToNullableDateTime(")) functionsUsed.Add("ToNullableDateTime");
     }
 
     /// <summary>Same evidenced surface as SsisPipelineTypeMap, mapped into the expression

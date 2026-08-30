@@ -38,10 +38,14 @@ public static class SsisFnEmitter
         if (functionsUsed.Contains("ParseWstrToI4")) bodies.Add(ParseWstrToI4Body());
         if (functionsUsed.Contains("ToNullableR8")) bodies.Add(ToNullableR8Body());
         if (functionsUsed.Contains("ToNullableBool")) bodies.Add(ToNullableBoolBody());
+        if (functionsUsed.Contains("ToNullableI2")) bodies.Add(ToNullableI2Body());
+        if (functionsUsed.Contains("ToNullableI8")) bodies.Add(ToNullableI8Body());
+        if (functionsUsed.Contains("ToNullableDateTime")) bodies.Add(ToNullableDateTimeBody());
         if (functionsUsed.Contains("ToWstr")) bodies.Add(ToWstrBody());
 
         var lines = new List<string>();
-        if (functionsUsed.Contains("Str") || functionsUsed.Contains("ToNullableI4") || functionsUsed.Contains("ToNullableDate") || functionsUsed.Contains("ToNullableR8") || functionsUsed.Contains("ParseWstrToI4"))
+        if (functionsUsed.Contains("Str") || functionsUsed.Contains("ToNullableI4") || functionsUsed.Contains("ToNullableDate") || functionsUsed.Contains("ToNullableR8") || functionsUsed.Contains("ParseWstrToI4")
+            || functionsUsed.Contains("ToNullableI2") || functionsUsed.Contains("ToNullableI8") || functionsUsed.Contains("ToNullableDateTime"))
         {
             lines.Add("using System.Globalization;");
             lines.Add("");
@@ -317,6 +321,53 @@ public static class SsisFnEmitter
         "        if (bool.TryParse(value, out var parsed)) return parsed;",
         "        return value switch { \"0\" => false, \"1\" => true, _ => null };",
         "    }",
+    ];
+
+    private static List<string> ToNullableI2Body() =>
+    [
+        "    /// <summary>",
+        "    /// Data Conversion to DT_I2 with both dispositions IgnoreFailure -- built speculatively",
+        "    /// 2026-08-30 (synthetic-data-conversion-types2-tables.sql), no real package needs DT_I2",
+        "    /// conversion yet. Measured against a real dtexec run: same empirically-measured",
+        "    /// semantics as ToNullableI4 above -- NULL on any failure (non-numeric/empty/NULL),",
+        "    /// never a dropped row or thrown exception; a valid value surrounded by whitespace",
+        "    /// still parses (locale-neutral).",
+        "    /// </summary>",
+        "    public static short? ToNullableI2(string? value) =>",
+        "        !string.IsNullOrEmpty(value) && short.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result)",
+        "            ? result",
+        "            : null;",
+    ];
+
+    private static List<string> ToNullableI8Body() =>
+    [
+        "    /// <summary>",
+        "    /// Data Conversion to DT_I8 with both dispositions IgnoreFailure -- built speculatively",
+        "    /// 2026-08-30 (synthetic-data-conversion-types2-tables.sql), no real package needs DT_I8",
+        "    /// conversion yet. Measured against a real dtexec run: same empirically-measured",
+        "    /// semantics as ToNullableI4 above -- NULL on any failure, never a dropped row or",
+        "    /// thrown exception.",
+        "    /// </summary>",
+        "    public static long? ToNullableI8(string? value) =>",
+        "        !string.IsNullOrEmpty(value) && long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result)",
+        "            ? result",
+        "            : null;",
+    ];
+
+    private static List<string> ToNullableDateTimeBody() =>
+    [
+        "    /// <summary>",
+        "    /// Data Conversion to DT_DBTIMESTAMP with both dispositions IgnoreFailure -- built",
+        "    /// speculatively 2026-08-30 (synthetic-data-conversion-types2-tables.sql), no real",
+        "    /// package needs DT_DBTIMESTAMP conversion yet. Measured against a real dtexec run:",
+        "    /// same empirically-measured semantics as ToNullableDate above (NULL on any failure),",
+        "    /// just DateTime (date + time) rather than DateOnly (date only) -- a genuinely",
+        "    /// different .NET type, not just a renamed copy of ToNullableDate.",
+        "    /// </summary>",
+        "    public static DateTime? ToNullableDateTime(string? value) =>",
+        "        !string.IsNullOrEmpty(value) && DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var result)",
+        "            ? result",
+        "            : null;",
     ];
 
     private static List<string> ToWstrBody() =>

@@ -882,7 +882,11 @@ NULL-exclusion rule (SQL COUNT(column), not COUNT(*)); three more numeric-passth
 pairings (i8/numeric/r4 -> i4) built speculatively 2026-08-30, same session, via a real dtexec
 probe that measured both float-shaped pairings round to the same nearest-ties-to-even rule as
 NarrowR8ToI4/ParseWstrToI4, with i8->i4 needing only a plain checked narrowing cast -- verified
-end-to-end with an exact row-for-row match across all 9 seeded rows, midpoints included
+end-to-end with an exact row-for-row match across all 9 seeded rows, midpoints included; three
+more Data Conversion target types (DT_I2/DT_I8/DT_DBTIMESTAMP) built speculatively the same
+session, closing this session's second "build both" round -- a real dtexec probe confirmed all
+three follow the same "NULL on any failure" convention as the already-closed DT_I4/DT_DBDATE/
+DT_R8/DT_BOOL, verified end-to-end with an exact match across all 5 seeded rows
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -4408,6 +4412,47 @@ every prior numeric-coercion round), so `D:\PoC\SSIS_Rewrite` has nothing to com
 DT_WSTR/DT_BOOL, and the numeric-passthrough-coercion gap for every OTHER pairing beyond the five
 now closed (r8/i8/numeric/r4/wstr → i4) — e.g. i2→i4, i4→i2, any pairing not ending in i4 at all.
 None of those has been measured or evidenced; none is guessed at.
+
+### Data Conversion: three more target types (DT_I2/DT_I8/DT_DBTIMESTAMP), built speculatively (2026-08-30)
+
+The last of the two "build both" speculative rounds picked this session. No real evidenced
+instance of any of the three exists anywhere in the tracked portfolio — DT_I4/DT_DBDATE/DT_R8/
+DT_WSTR/DT_BOOL are the only target types any real or prior-speculative package has ever needed.
+
+**A real dtexec probe measured all three at once**, same shape and seed pattern as the original
+DT_R8/DT_WSTR/DT_BOOL round: `SyntheticDataConversionTypes2.dtsx` (`Ssis.Extract.FixtureBuilder`'s
+new `data-conversion-types2` mode, reusing the existing `AddConvertedColumn` helper unchanged) —
+OLE DB Source (three raw text columns) → Data Conversion (→ DT_I2/DT_I8/DT_DBTIMESTAMP, all
+dispositions IgnoreFailure) → OLE DB Destination, seeded with a valid value, a whitespace-padded
+valid value, invalid text, an empty string, and NULL
+(`synthetic-data-conversion-types2-tables.sql`). **Confirmed real, not guessed:** all three follow
+the exact same "NULL on any failure" convention as DT_I4/DT_DBDATE/DT_R8/DT_BOOL — none of them
+reproduces DT_WSTR's own genuinely different truncation behavior.
+
+**Three new `SsisFn` helpers** (`ToNullableI2`, `ToNullableI8`, `ToNullableDateTime`), each
+following the identical `!string.IsNullOrEmpty(value) && T.TryParse(...) ? result : null` shape
+`ToNullableI4`/`ToNullableR8`/`ToNullableDate` already use — `ToNullableDateTime` returns
+`DateTime?` (date + time), a genuinely different .NET type from `ToNullableDate`'s own `DateOnly?`
+(date only), not a renamed copy. `TransformEmitter.WrapDataConversion`'s switch gained three new
+cases (`"i2"`/`"i8"`/`"dbtimestamp"`); `SsisPipelineTypeMap` needed NO new entries at all — all
+three pipeline type codes were already mapped from earlier, unrelated rounds (`i2`→`short`,
+`i8`→`long`, `dbtimestamp`→`DateTime`).
+
+**Verified end to end, same discipline as every prior Data Conversion round**: `ssisx generate`
+against the fixture (only the two unavoidable/non-blocking gaps), built against a copy of
+`Etl.Core` (0 warnings/0 errors), and actually RUN against `.\SQLFORPOC_2022` — all 5 rows an
+**exact match** against the real dtexec probe run above (rows 1-2 parse correctly including
+whitespace-padding; rows 3-5, invalid/empty/NULL, all null out). New tests: one
+`PackageGeneratorTests` case (mirroring the original DT_R8/WSTR/BOOL test exactly) and one
+`SsisFnEmitterTests` case (asserting all three emitted method signatures). Regression: 152/152 in
+`Ssis.Extract.Codegen.Tests` (was 150), same 3 pre-existing unrelated failures elsewhere. No
+`Etl.Core` changes this round (Data Conversion support lives entirely in per-package generated
+code), so `D:\PoC\SSIS_Rewrite` has nothing to commit.
+
+**Remaining known gaps, updated:** Data Conversion target types other than DT_I4/DT_DBDATE/DT_R8/
+DT_WSTR/DT_BOOL/DT_I2/DT_I8/DT_DBTIMESTAMP (e.g. DT_NUMERIC, DT_DBTIMESTAMPOFFSET — neither
+evidenced nor measured), and the numeric-passthrough-coercion gap for every pairing beyond the
+five already closed. Both of this session's "build both" speculative rounds are now done.
 
 ## Traps already hit once — don't re-derive these
 

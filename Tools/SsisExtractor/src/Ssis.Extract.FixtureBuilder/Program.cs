@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2]");
             return 2;
         }
 
@@ -156,6 +156,10 @@ internal static class Program
         {
             return BuildIntNumericCoercionFixture(args[0]);
         }
+        if (fixtureName == "data-conversion-types2")
+        {
+            return BuildDataConversionTypes2Fixture(args[0]);
+        }
         if (fixtureName == "excel-source")
         {
             return BuildExcelSourceFixture(args[0]);
@@ -186,7 +190,7 @@ internal static class Program
         }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', or 'int-numeric-coercion'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', or 'data-conversion-types2'.");
             return 2;
         }
 
@@ -2995,6 +2999,68 @@ internal static class Program
 
         var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
             accessMode: 3, openRowset: "[dbo].[SyntheticDataConversionTypesTarget]");
+        AttachPath(pipe, dconvOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A PROBE, built speculatively 2026-08-30: OLE DB Source (SqlCommand: ID, three raw text
+    /// columns) -> Data Conversion (I2Text -> Val_i2 DT_I2; I8Text -> Val_i8 DT_I8; TimestampText
+    /// -> Val_dt DT_DBTIMESTAMP, all dispositions IgnoreFailure) -> OLE DB Destination. Three
+    /// Data Conversion target types this tool has never measured -- named as candidates in
+    /// CLAUDE.md's own "remaining known gaps" list, no real evidenced instance in the tracked
+    /// portfolio. Same seed shape (valid/padded-valid/invalid/empty/NULL) as the original
+    /// data-conversion-types probe, to confirm IgnoreFailure nulls out on failure the same way.
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-data-conversion-types2-tables.sql</c>
+    /// already created on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildDataConversionTypes2Fixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticDataConversionTypes2" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Coerce";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, I2Text, I8Text, TimestampText FROM dbo.SyntheticDataConversionTypes2Input");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        var dconvMeta = pipe.ComponentMetaDataCollection.New();
+        dconvMeta.ComponentClassID = "Microsoft.DataConvert";
+        var dconvInst = dconvMeta.Instantiate();
+        dconvInst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        dconvMeta.Name = "DCONV_Types2";
+
+        AttachPath(pipe, srcOutput, dconvMeta.InputCollection[0]);
+        dconvInst.AcquireConnections(null);
+        dconvInst.ReinitializeMetaData();
+        dconvInst.ReleaseConnections();
+
+        var dconvInput = dconvMeta.InputCollection[0];
+        var dconvVirtualInput = dconvInput.GetVirtualInput();
+        var dconvOutput = dconvMeta.OutputCollection[0];
+
+        AddConvertedColumn(dconvMeta, dconvInst, dconvInput, dconvVirtualInput, dconvOutput, 0, "I2Text", "Val_i2", DataType.DT_I2, 0, 0, 0, 0);
+        AddConvertedColumn(dconvMeta, dconvInst, dconvInput, dconvVirtualInput, dconvOutput, 1, "I8Text", "Val_i8", DataType.DT_I8, 0, 0, 0, 0);
+        AddConvertedColumn(dconvMeta, dconvInst, dconvInput, dconvVirtualInput, dconvOutput, 2, "TimestampText", "Val_dt", DataType.DT_DBTIMESTAMP, 0, 0, 0, 0);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticDataConversionTypes2Target]");
         AttachPath(pipe, dconvOutput, destMeta.InputCollection[0]);
         ResolveOleDbMetadata(destMeta, isDestination: true);
 

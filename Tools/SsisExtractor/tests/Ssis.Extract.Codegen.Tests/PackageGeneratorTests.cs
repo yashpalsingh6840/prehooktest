@@ -175,6 +175,45 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_TranslatesThreeMoreSpeculativeDataConversionTargets_I2I8DbTimestamp()
+    {
+        // SyntheticDataConversionTypes2.dtsx: OLE DB Source (SqlCommand: ID, I2Text, I8Text,
+        // TimestampText, all strings) -> Data Conversion (DCONV_Types2: I2Text -> Val_i2 DT_I2,
+        // I8Text -> Val_i8 DT_I8, TimestampText -> Val_dt DT_DBTIMESTAMP, all dispositions
+        // IgnoreFailure) -> OLE DB Destination. Built speculatively 2026-08-30 -- no real
+        // package needs any of these three target types. Confirmed beyond this test by actually
+        // running the generated exe against .\SQLFORPOC_2022 and reading
+        // dbo.SyntheticDataConversionTypes2Target back afterward, matching a real dtexec run of
+        // this same fixture row for row.
+        var package = LoadSyntheticFixture("SyntheticDataConversionTypes2.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var entityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticDataConversionTypes2Target.cs");
+        Assert.Contains("public short? Val_i2 { get; set; }", entityFile.Content);
+        Assert.Contains("public long? Val_i8 { get; set; }", entityFile.Content);
+        Assert.Contains("public DateTime? Val_dt { get; set; }", entityFile.Content);
+
+        var transformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticDataConversionTypes2TargetTransform.cs");
+        Assert.Contains("Val_i2 = SsisFn.ToNullableI2(row.I2Text),", transformFile.Content);
+        Assert.Contains("Val_i8 = SsisFn.ToNullableI8(row.I8Text),", transformFile.Content);
+        Assert.Contains("Val_dt = SsisFn.ToNullableDateTime(row.TimestampText),", transformFile.Content);
+
+        var ssisFnFile = Assert.Single(result.Files, f => f.RelativePath == "Ssis/SsisFn.cs");
+        Assert.Contains("public static short? ToNullableI2(string? value) =>", ssisFnFile.Content);
+        Assert.Contains("public static long? ToNullableI8(string? value) =>", ssisFnFile.Content);
+        Assert.Contains("public static DateTime? ToNullableDateTime(string? value) =>", ssisFnFile.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(entityFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(transformFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(ssisFnFile.Content);
+
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("assumes each result-set column is named/aliased"));
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticDataConversionTypes2.Notification");
+    }
+
+    [Fact]
     public void Generate_ResolvesADataConversionColumn_ReferencedByAConditionalSplitConditionAndAPostSplitDerivedColumn()
     {
         // SyntheticDataConversionSplit.dtsx: OLE DB Source -> Data Conversion (CustomerIdText ->

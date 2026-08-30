@@ -91,6 +91,25 @@ public class SsisFnEmitterTests
     }
 
     [Fact]
+    public void Emit_ProducesThreeMoreSpeculativeDataConversionTargets_I2I8DbTimestamp()
+    {
+        // Built speculatively 2026-08-30 -- no real package needs any of these yet. Each body's
+        // exact behavior is measured against a real dtexec run
+        // (synthetic-data-conversion-types2-tables.sql), not guessed: all three follow the same
+        // "NULL on any failure" convention as ToNullableI4/ToNullableDate/ToNullableR8/
+        // ToNullableBool, not DT_WSTR's own different truncation behavior.
+        var result = SsisFnEmitter.Emit("Package.Ssis", new HashSet<string> { "ToNullableI2", "ToNullableI8", "ToNullableDateTime" });
+
+        var file = Assert.Single(result.Files);
+        Assert.Contains("using System.Globalization;", file.Content);
+        Assert.Contains("public static short? ToNullableI2(string? value) =>", file.Content);
+        Assert.Contains("public static long? ToNullableI8(string? value) =>", file.Content);
+        Assert.Contains("public static DateTime? ToNullableDateTime(string? value) =>", file.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+    [Fact]
     public void Emit_ProducesParseWstrToI4_ForTheStringToIntPassthroughPairing()
     {
         // Measured 2026-08-30 against a real dtexec run
