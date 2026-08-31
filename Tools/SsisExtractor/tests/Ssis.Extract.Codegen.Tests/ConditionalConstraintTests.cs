@@ -6,15 +6,23 @@ using Ssis.Extract.Model.Package;
 namespace Ssis.Extract.Codegen.Tests;
 
 /// <summary>
-/// Conditional precedence constraints. Exactly one of the seven forms SSIS supports is generated --
-/// <c>DTSPrecedenceEvalOp.ExpressionAndConstraint</c> with the constraint half at Success -- and
-/// that choice is a measured conclusion, not a convenience: a real dtexec run of
-/// <c>SyntheticCondConstraint.dtsx</c> showed every other form running its successor on the FAILURE
-/// path, which a single whole-package transaction cannot express at all.
+/// Conditional precedence constraints. Two of the seven forms SSIS supports are generated, and which
+/// two is a measured conclusion rather than a convenience -- a real dtexec run of
+/// <c>SyntheticCondConstraint.dtsx</c> measured all seven:
 ///
-/// The negative cases matter as much as the positive one here. A guard that silently fails to
-/// apply, or a form charitably read as unconditional, would run work SSIS would have skipped while
-/// reporting nothing -- the same failure class as the disabled-executable and
+/// <list type="bullet">
+/// <item><c>ExpressionAndConstraint</c> with the constraint half at Success becomes a guard on the
+///   step it gates (an <c>Etl.Core</c> ConditionalStep).</item>
+/// <item>A pure <c>Value=Failure</c> constraint becomes a FAILURE HANDLER -- run after the package
+///   transaction is rolled back, committing on its own, with the package still failing.</item>
+/// </list>
+///
+/// The remaining forms all fire on BOTH the success and the failure path, which would need the same
+/// task in two positions at once; they stay gaps.
+///
+/// The negative cases matter as much as the positive ones here. A guard that silently fails to
+/// apply, a form charitably read as unconditional, or a handler that ALSO stays an ordinary step,
+/// would each run work SSIS would have skipped while reporting nothing -- the same failure class as the disabled-executable and
 /// Script-Component-passthrough bugs.
 /// </summary>
 public class ConditionalConstraintTests
@@ -111,7 +119,6 @@ public class ConditionalConstraintTests
     /// <c>DTSPrecedenceEvalOp.ExpressionAndConstraint</c> on EvalOp.
     /// </summary>
     [Theory]
-    [InlineData("1", null, "only when the preceding executable FAILS")]
     [InlineData("2", null, "on completion, pass or fail")]
     [InlineData(null, "1", "the outcome constraint being IGNORED entirely")]
     [InlineData(null, "4", "OR its expression is true")]
@@ -178,4 +185,114 @@ public class ConditionalConstraintTests
                 },
             ],
         };
+
+    // ---- Failure precedence constraints (DTS:Value="1") ------------------------------------
+
+    [Fact]
+    public void Plan_ResolvesAFailureConstraint_IntoAHandlerAndExcludesItFromTheSteps()
+    {
+        // SQL_Truncate -> DFT_Load -> SQL_Body -(Failure)-> SQL_Handler.
+        var package = LoadSyntheticFixture("SyntheticFailureHandler.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        var handler = Assert.Single(plan.FailureHandlers);
+        Assert.Equal("SQL_Handler", handler.TaskName);
+        Assert.Contains("VALUES (N'handled')", handler.Sql);
+
+        // The whole point: the handler task must NOT also be an ordinary step or a pre-load
+        // statement. Generating it in both places is exactly the bug this closes -- it would run on
+        // every successful run.
+        Assert.DoesNotContain(plan.Steps.OfType<SqlStep>(), s => s.TaskName == "SQL_Handler");
+        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Contains("handled"));
+
+        // ...while the genuinely unconditional post-flow task still is one.
+        Assert.Contains(plan.Steps.OfType<SqlStep>(), s => s.TaskName == "SQL_Body");
+        Assert.DoesNotContain(plan.Gaps, g => g.Location.EndsWith(".Constraint"));
+    }
+
+    [Fact]
+    public void Generate_EmitsTheHandlerAsAFailureHandlerAction_NotAsAStep()
+    {
+        var package = LoadSyntheticFixture("SyntheticFailureHandler.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var program = Assert.Single(result.Files, f => f.RelativePath.EndsWith("Program.cs"));
+        Assert.Contains("FailureHandlers: [new FailureHandlerAction(\"SQL_Handler\",", program.Content);
+        Assert.Contains("Steps: [syntheticFailureHandlerTargetFlow, sQL_BodyStep],", program.Content);
+        Assert.DoesNotContain("sQL_HandlerStep", program.Content);
+        CodeAssertions.AssertNoSyntaxErrors(program.Content);
+    }
+
+    /// <summary>
+    /// The shapes a Failure constraint is NOT taken as a handler. Each would otherwise generate
+    /// something wrong rather than merely incomplete: a task also reachable on the success path
+    /// would be silently DROPPED from the steps, and a non-terminal one would lose its successors.
+    /// </summary>
+    [Theory]
+    [InlineData("dataflow", "rather than an Execute SQL Task")]
+    [InlineData("extra-incoming", "incoming precedence constraints")]
+    [InlineData("non-terminal", "has its own successors")]
+    [InlineData("disabled", "is disabled")]
+    public void Plan_ReportsAGap_ForAFailureConstraintShapeItWillNotTake(string shape, string expectedFragment)
+    {
+        var plan = PackagePlanner.Plan(FailureConstraintPackage(shape));
+
+        var gap = Assert.Single(plan.Gaps, g => g.Location.EndsWith(".Constraint"));
+        Assert.Contains("only when the preceding executable FAILS", gap.Reason);
+        Assert.Contains(expectedFragment, gap.Reason);
+        Assert.True(gap.IsBlocking);
+        Assert.Equal(GapKind.ConditionalConstraint, gap.Kind);
+        Assert.Empty(plan.FailureHandlers);
+    }
+
+    private static PackageSpec FailureConstraintPackage(string shape)
+    {
+        ExecutableSpec Sql(string name, string sql, bool disabled = false) => new()
+        {
+            RefId = $@"Package\{name}",
+            ExecutableType = "Microsoft.ExecuteSQLTask",
+            ObjectName = name,
+            Disabled = disabled ? true : null,
+            ExecuteSqlTask = new ExecuteSqlTaskPayload { SqlStatementSource = sql },
+        };
+
+        var body = Sql("SQL_Body", "SELECT 1;");
+        var handler = shape == "dataflow"
+            ? new ExecutableSpec
+            {
+                RefId = @"Package\SQL_Handler",
+                ExecutableType = "Microsoft.Pipeline",
+                ObjectName = "SQL_Handler",
+            }
+            : Sql("SQL_Handler", "INSERT dbo.L (M) VALUES (N'handled');", disabled: shape == "disabled");
+
+        List<PrecedenceConstraintSpec> constraints =
+        [
+            new() { From = @"Package\SQL_Body", To = @"Package\SQL_Handler", Value = "1" },
+        ];
+
+        if (shape == "extra-incoming")
+            constraints.Add(new PrecedenceConstraintSpec { From = @"Package\SQL_Other", To = @"Package\SQL_Handler" });
+        if (shape == "non-terminal")
+            constraints.Add(new PrecedenceConstraintSpec { From = @"Package\SQL_Handler", To = @"Package\SQL_After" });
+
+        return new PackageSpec
+        {
+            ObjectName = "P",
+            SourceDtsxPath = "P.dtsx",
+            Sha256 = "",
+            FileSizeBytes = 0,
+            LastWriteTimeUtc = default,
+            ProtectionLevelRaw = 0,
+            ProtectionLevelName = "DontSaveSensitive",
+            Coverage = new CoverageStats
+            {
+                TotalElements = 0, UnmappedElements = 0, ExcludedElements = 0, CoveragePercent = 100,
+            },
+            Executables = [body, handler, Sql("SQL_Other", "SELECT 2;"), Sql("SQL_After", "SELECT 3;")],
+            PrecedenceConstraints = constraints,
+        };
+    }
 }

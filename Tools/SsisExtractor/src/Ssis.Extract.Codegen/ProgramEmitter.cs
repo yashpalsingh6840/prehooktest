@@ -212,6 +212,10 @@ public sealed record ProgramRequest(
     /// explicit Set calls so the value a guard starts from is visible in the generated file rather
     /// than being whatever <c>Get&lt;T&gt;</c> happens to fall back to.</summary>
     public IReadOnlyList<PackageVariableSeed> VariableSeeds { get; init; } = [];
+
+    /// <summary>Failure-precedence-constraint successors, emitted as EtlPackage.FailureHandlers --
+    /// a position PackageRunner reaches only after rolling the package transaction back.</summary>
+    public IReadOnlyList<FailureHandlerPlan> FailureHandlers { get; init; } = [];
 }
 
 /// <summary>
@@ -546,7 +550,19 @@ public static class ProgramEmitter
         lines.Add("        Name: PackageName,");
         lines.Add($"        PreLoadStatements: [{string.Join(", ", request.PreLoadStatements.Select(CSharpStringLiteral))}],");
         lines.Add($"        Steps: [{string.Join(", ", orderedLocalNames)}],");
-        lines.Add($"        PreLoadFileActions: [{string.Join(", ", request.PreLoadFileActions.Select(FileSystemActionExpr))}]);");
+        // FailureHandlers is emitted only when there IS one -- it is an optional EtlPackage
+        // parameter defaulting to empty, so adding "FailureHandlers: []" to every package would
+        // change the generated text of every existing package for no behavioural difference.
+        var fileActions = $"        PreLoadFileActions: [{string.Join(", ", request.PreLoadFileActions.Select(FileSystemActionExpr))}]";
+        if (request.FailureHandlers.Count == 0)
+        {
+            lines.Add(fileActions + ");");
+        }
+        else
+        {
+            lines.Add(fileActions + ",");
+            lines.Add($"        FailureHandlers: [{string.Join(", ", request.FailureHandlers.Select(FailureHandlerExpr))}]);");
+        }
         lines.Add("});");
         lines.Add("");
 
@@ -587,6 +603,11 @@ public static class ProgramEmitter
         char.ToLowerInvariant(taskName[0]) + taskName[1..] + "Step";
 
     /// <summary>e.g. <c>new FileSystemPreLoadAction(FileSystemOperation.Copy, "C:\...", "D:\...", true)</c> -- shared by pre-load emission and the post-flow ProgramFileSystemStep case, since both need the exact same literal expression.</summary>
+    /// <summary>One Etl.Core FailureHandlerAction literal. Sibling of <see cref="FileSystemActionExpr"/>
+    /// -- same "plain data record, emitted inline in the EtlPackage construction" shape.</summary>
+    private static string FailureHandlerExpr(FailureHandlerPlan handler) =>
+        $"new FailureHandlerAction({CSharpStringLiteral(handler.TaskName)}, {CSharpStringLiteral(handler.Sql)})";
+
     private static string FileSystemActionExpr(FileSystemActionPlan action) =>
         $"new FileSystemPreLoadAction(FileSystemOperation.{action.Operation}, {CSharpStringLiteral(action.SourcePath)}, {(action.DestinationPath is null ? "null" : CSharpStringLiteral(action.DestinationPath))}, {(action.Overwrite ? "true" : "false")})";
 

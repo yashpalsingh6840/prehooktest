@@ -238,6 +238,18 @@ public sealed record StepGuard(
 /// declared in the .dtsx.</summary>
 public sealed record PackageVariableSeed(string SsisName, string ClrTypeName, string CSharpLiteral);
 
+/// <summary>What ResolveConditionalConstraints found: per-step guards, and Failure-constraint
+/// successors resolved into failure handlers. Both keyed by the target executable-s refId.</summary>
+internal sealed record ConditionalConstraints(
+    Dictionary<string, StepGuard> Guards,
+    Dictionary<string, FailureHandlerPlan> FailureHandlers);
+
+/// <summary>One resolved Failure precedence constraint: the SQL that runs after the package
+/// transaction is rolled back. <paramref name="RefId"/> is carried so the walk can EXCLUDE this
+/// executable from the ordinary step list -- generating it in both places would run it on every
+/// successful run too.</summary>
+public sealed record FailureHandlerPlan(string TaskName, string Sql, string RefId);
+
 public sealed record FlowStep(DataFlowPlan Flow) : PackageStep;
 public sealed record SqlStep(string TaskName, string Sql) : PackageStep;
 public sealed record FileSystemStep(string TaskName, FileSystemActionPlan Action) : PackageStep;
@@ -260,6 +272,11 @@ public sealed record PackagePlan(
     /// code starts from the same value SSIS would have before anything assigns it. Deduplicated
     /// and ordinal-sorted, so repeated builds emit identical text.</summary>
     public IReadOnlyList<PackageVariableSeed> VariableSeeds { get; init; } = [];
+
+    /// <summary>Failure-precedence-constraint successors, ordinal-sorted by refId so repeated
+    /// builds emit identical text. These are deliberately NOT in <see cref="Steps"/>: they run only
+    /// after the package transaction is rolled back.</summary>
+    public IReadOnlyList<FailureHandlerPlan> FailureHandlers { get; init; } = [];
 }
 
 /// <summary>
@@ -336,12 +353,14 @@ public static class PackagePlanner
         // Resolved BEFORE the walk so each step can be created already carrying its guard --
         // attaching one afterwards would mean matching steps back to executables, which only
         // FlowStep/ScriptTaskStep even retain enough identity to do.
-        var guards = ResolveConditionalConstraints(package, gaps);
+        var resolved = ResolveConditionalConstraints(package, gaps);
+        var guards = resolved.Guards;
         var guardsApplied = new HashSet<string>();
 
         WalkContainer(package.Executables, package.Dag, package.PrecedenceConstraints, package.ConnectionManagers,
             preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: false, emitSeams: emitSeams,
-            guards: guards, guardsApplied: guardsApplied);
+            guards: guards, guardsApplied: guardsApplied,
+            failureHandlerRefIds: resolved.FailureHandlers.Keys.ToHashSet());
 
         ReportParallelismFlattening(package, gaps);
         ReportUnappliedGuards(package, guards, guardsApplied, gaps);
@@ -353,7 +372,13 @@ public static class PackagePlanner
             .OrderBy(seed => seed.SsisName, StringComparer.Ordinal)
             .ToList();
 
-        return new PackagePlan(preLoadStatements, preLoadFileActions, flows, steps, gaps) { VariableSeeds = seeds };
+        return new PackagePlan(preLoadStatements, preLoadFileActions, flows, steps, gaps)
+        {
+            VariableSeeds = seeds,
+            FailureHandlers = resolved.FailureHandlers.Values
+                .OrderBy(h => h.RefId, StringComparer.Ordinal)
+                .ToList(),
+        };
     }
 
     /// <summary>
@@ -422,19 +447,21 @@ public static class PackagePlanner
     /// <c>DTS:Value</c> at all (Success = 0 being the omitted schema default), confirmed from both
     /// the real package and the probe's own saved XML.</para>
     /// </summary>
-    /// <returns>Guards keyed by the refId of the executable each one gates.</returns>
-    internal static Dictionary<string, StepGuard> ResolveConditionalConstraints(
+    /// <returns>Guards keyed by the refId of the executable each one gates, and failure handlers
+    /// keyed the same way -- a handler's refId must be excluded from the ordinary step walk.</returns>
+    internal static ConditionalConstraints ResolveConditionalConstraints(
         PackageSpec package, List<GenerationGap> gaps)
     {
         var packageName = package.ObjectName ?? "package";
         var guards = new Dictionary<string, StepGuard>();
+        var failureHandlers = new Dictionary<string, FailureHandlerPlan>();
         var variables = BuildGuardVariableTable(package);
 
         Resolve(package.PrecedenceConstraints);
         foreach (var container in EnumerateContainers(package.Executables))
             Resolve(container.PrecedenceConstraints);
 
-        return guards;
+        return new ConditionalConstraints(guards, failureHandlers);
 
         void Resolve(List<PrecedenceConstraintSpec> constraints)
         {
@@ -448,6 +475,17 @@ public static class PackagePlanner
                 var from = LeafName(constraint.From);
                 var to = LeafName(constraint.To);
                 var location = $"{packageName}.{from}-{to}.Constraint";
+
+                // Value=Failure with no expression half: the ONE outcome-based form that is
+                // generated, as a failure handler run after the rollback. ResolveFailureHandler
+                // reports its own gap for any shape it will not take.
+                if (constraint.Value == "1" && constraint.EvalOp is null or "2")
+                {
+                    var handler = ResolveFailureHandler(
+                        package, constraint, from, to, location, failureHandlers, gaps);
+                    if (handler is not null) failureHandlers[constraint.To] = handler;
+                    continue;
+                }
 
                 if (constraint.EvalOp != "3" || !outcomeIsSuccess)
                 {
@@ -483,6 +521,96 @@ public static class PackagePlanner
         }
     }
 
+    /// <summary>
+    /// A Failure precedence constraint (<c>DTS:Value="1"</c>) resolved into a handler that
+    /// <c>PackageRunner</c> runs after the rollback -- see <c>Etl.Core</c>'s
+    /// <c>FailureHandlerAction</c>. Keyed out of the ordinary step walk entirely: the same task must
+    /// NOT also become a step, or it would run on every successful run too, which is the bug this
+    /// whole round exists to fix.
+    /// </summary>
+    private static FailureHandlerPlan? ResolveFailureHandler(
+        PackageSpec package, PrecedenceConstraintSpec constraint, string from, string to, string location,
+        Dictionary<string, FailureHandlerPlan> alreadyResolved, List<GenerationGap> gaps)
+    {
+        void Reject(string why)
+        {
+            gaps.Add(new GenerationGap(location,
+                $"the precedence constraint '{from}' to '{to}' fires only when the preceding executable FAILS " +
+                $"(DTSExecResult.Failure), which is generated as a failure handler -- but {why}. Not guessed at.",
+                Kind: GapKind.ConditionalConstraint));
+        }
+
+        if (alreadyResolved.ContainsKey(constraint.To))
+        {
+            Reject($"'{to}' is already the target of another Failure constraint");
+            return null;
+        }
+
+        var executable = EnumerateAllExecutables(package.Executables)
+            .FirstOrDefault(e => e.RefId == constraint.To);
+
+        if (executable is null)
+        {
+            Reject($"'{to}' could not be resolved to an executable in this package");
+            return null;
+        }
+
+        if (executable.Disabled == true)
+        {
+            Reject($"'{to}' is disabled, so it would never have run at all");
+            return null;
+        }
+
+        // The one evidenced handler shape: a single Execute SQL Task (RBC_Demo_ETL's own
+        // SQL_LogLoadFailure, whose author even documented it as "Runs only when DFT_LoadCustomers
+        // fails"). A Data Flow Task or container here would need a whole second execution position
+        // with its own connection and sinks, which nothing real asks for.
+        if (executable.ExecuteSqlTask is not { SqlStatementSource: { Length: > 0 } sql })
+        {
+            Reject($"'{to}' is a {executable.ExecutableType ?? "container"} rather than an Execute SQL Task with " +
+                   "a statement; only a single SQL statement is generated in the failure-handler position");
+            return null;
+        }
+
+        // Every incoming edge must be THIS one. A task also reachable on the success path is not a
+        // handler at all -- excluding it from the step walk would silently drop work SSIS runs.
+        var allConstraints = AllPrecedenceConstraints(package).ToList();
+        var incoming = allConstraints.Where(c => c.To == constraint.To).ToList();
+        if (incoming.Count != 1)
+        {
+            Reject($"'{to}' has {incoming.Count} incoming precedence constraints, so it is also reachable other " +
+                   "than on failure");
+            return null;
+        }
+
+        // And it must be terminal. A successor of a handler would itself only ever run on the
+        // failure path, and chaining is not modelled.
+        if (allConstraints.Any(c => c.From == constraint.To))
+        {
+            Reject($"'{to}' has its own successors, and a chain of failure-path work is not modelled");
+            return null;
+        }
+
+        return new FailureHandlerPlan(executable.ObjectName ?? to, sql, constraint.To);
+    }
+
+    /// <summary>Every precedence constraint in the package, at any container depth.</summary>
+    private static IEnumerable<PrecedenceConstraintSpec> AllPrecedenceConstraints(PackageSpec package) =>
+        package.PrecedenceConstraints.Concat(
+            EnumerateContainers(package.Executables).SelectMany(c => c.PrecedenceConstraints));
+
+    /// <summary>Every executable in the tree, at any depth -- a Failure constraint's target may sit
+    /// inside a Sequence Container while the constraint itself is declared there too.</summary>
+    private static IEnumerable<ExecutableSpec> EnumerateAllExecutables(List<ExecutableSpec> children)
+    {
+        foreach (var child in children)
+        {
+            yield return child;
+            foreach (var descendant in EnumerateAllExecutables(child.Children))
+                yield return descendant;
+        }
+    }
+
     /// <summary>The measured reason a form other than "Success AND expression" is not generated.
     /// Deliberately specific per form: every one of these was observed running its successor on the
     /// FAILURE path, which is precisely what a single whole-package transaction cannot express.</summary>
@@ -490,16 +618,13 @@ public static class PackagePlanner
     {
         var head = $"the precedence constraint '{from}' to '{to}' fires ";
         const string Tail =
-            " Measured against real SSIS (dtexec, SyntheticCondConstraint.dtsx): the successor runs on the FAILURE " +
-            "path, the package still returns DTSER_FAILURE anyway (MaximumErrorCount is reached), and SSIS commits " +
-            "the successor's work. The generated PackageRunner wraps the whole package in ONE transaction and rolls " +
-            "it back on any failure, so it can neither run work after a failure nor commit it -- supporting this " +
-            "needs a failure-handler position outside that transaction. Not guessed at.";
+            " Measured against real SSIS (dtexec, SyntheticCondConstraint.dtsx): the successor runs on BOTH the " +
+            "success and the failure path. A pure Failure constraint IS generated (as a failure handler run after " +
+            "the rollback), but a form that fires on both paths would need the same task in two positions at once " +
+            "-- an ordinary step AND a handler -- which is a separate feature and is not guessed at.";
 
         return constraint switch
         {
-            { Value: "1", EvalOp: null or "2" } =>
-                head + "only when the preceding executable FAILS (DTSExecResult.Failure)." + Tail,
             { Value: "2", EvalOp: null or "2" } =>
                 head + "on completion, pass or fail (DTSExecResult.Completion)." + Tail,
             { EvalOp: "1" } =>
@@ -786,7 +911,8 @@ public static class PackagePlanner
         List<string> preLoadStatements, List<FileSystemActionPlan> preLoadFileActions,
         List<DataFlowPlan> flows, List<PackageStep> steps,
         List<GenerationGap> gaps, bool containerIsPostFlow, bool emitSeams,
-        Dictionary<string, StepGuard> guards, HashSet<string> guardsApplied)
+        Dictionary<string, StepGuard> guards, HashSet<string> guardsApplied,
+        HashSet<string> failureHandlerRefIds)
     {
         var byRefId = children.ToDictionary(e => e.RefId);
 
@@ -866,6 +992,14 @@ public static class PackagePlanner
             // Deliberately NOT added to flowOrAfter: a disabled Data Flow Task never ran, so
             // nothing ordered after it is "after a flow", and a following Execute SQL Task
             // correctly stays a pre-load statement.
+            // A Failure-constraint successor is generated in the failure-handler position instead
+            // (PackagePlan.FailureHandlers), so it must NOT also become a step or a pre-load
+            // statement -- doing both would run it on every successful run, which is the exact bug
+            // this handling exists to fix. Like the disabled skip below, this is deliberately not
+            // added to flowOrAfter: it never runs on the success path, so it cannot make anything
+            // ordered after it "post-flow".
+            if (failureHandlerRefIds.Contains(refId)) continue;
+
             if (executable.Disabled == true)
             {
                 ReportDisabledSkip(executable, gaps);
@@ -880,7 +1014,7 @@ public static class PackagePlanner
             {
                 var childRanAfterFlow = WalkContainer(executable.Children, executable.Dag, executable.PrecedenceConstraints, connectionManagers,
                     preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: isPostFlow, emitSeams: emitSeams,
-                    guards: guards, guardsApplied: guardsApplied);
+                    guards: guards, guardsApplied: guardsApplied, failureHandlerRefIds: failureHandlerRefIds);
                 if (childRanAfterFlow)
                 {
                     flowOrAfter.Add(refId);

@@ -366,6 +366,7 @@ public static partial class PackageGenerator
                 Steps: programSteps)
             {
                 VariableSeeds = plan.VariableSeeds,
+                FailureHandlers = plan.FailureHandlers,
             }));
 
             if (authMode is null)

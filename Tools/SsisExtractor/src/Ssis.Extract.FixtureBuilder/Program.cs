@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler]");
             return 2;
         }
 
@@ -216,9 +216,13 @@ internal static class Program
         {
             return BuildCondGuardFixture(args[0]);
         }
+        if (fixtureName == "failure-handler")
+        {
+            return BuildFailureHandlerFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', or 'cond-guard'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', or 'failure-handler'.");
             return 2;
         }
 
@@ -3906,6 +3910,71 @@ internal static class Program
         Gate("SQL_GateTrue", "gate-true", "@[User::Threshold] == 0");
         Gate("SQL_GateFalse", "gate-false", "@[User::Threshold] > 0");
         Gate("SQL_GateFromScript", "gate-from-script", "@[User::RowsLoaded] > 0");
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// SQL_Truncate -> DFT_Load -> SQL_Body -> (Failure) -> SQL_Handler: the shape that exercises a
+    /// Failure precedence constraint end to end, under BOTH real SSIS and generated code.
+    ///
+    ///  - SQL_Body raises an error only when dbo.SyntheticFailureHandlerControl.ShouldFail = 1, so
+    ///    the SUCCESS and FAILURE runs are the same fixture with one row flipped. The success run is
+    ///    what proves the handler does NOT run when nothing failed -- a fixture that only ever fails
+    ///    would pass just as well with the handler wired unconditionally, which is the original bug.
+    ///  - SQL_Handler is terminal and has exactly one incoming constraint, matching the one real
+    ///    evidenced handler (RBC_Demo_ETL's SQL_LogLoadFailure).
+    ///  - DFT_Load loads real rows BEFORE the failure, which is what makes the deliberate divergence
+    ///    visible: SSIS auto-commits per task so those rows survive, while the generated package
+    ///    rolls its single transaction back and only the handler's own row remains.
+    ///
+    /// Nothing in the package resets dbo.SyntheticFailureHandlerLog: a pre-load statement runs INSIDE
+    /// the transaction, so on the failure run it would be rolled back and the log read-back would mix
+    /// old rows with the handler's. The harness clears it externally before each run instead.
+    /// Backing tables: tests/Ssis.Extract.Tests/Fixtures/synthetic-failure-handler-tables.sql.
+    /// </summary>
+    private static int BuildFailureHandlerFixture(string outputPath)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-failure-handler-csv", "SyntheticFailureHandler.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticFailureHandler" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_FailureHandlerCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 50, 0, 0));
+
+        var truncate = AddExecuteSql(pkg, "SQL_Truncate", sqlCm,
+            "TRUNCATE TABLE dbo.SyntheticFailureHandlerTarget;");
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        BuildFlatFileToOleDbLoad((MainPipe)dftHost.InnerObject, csvCm, sqlCm, "[dbo].[SyntheticFailureHandlerTarget]");
+
+        var body = AddExecuteSql(pkg, "SQL_Body", sqlCm,
+            "IF (SELECT ShouldFail FROM dbo.SyntheticFailureHandlerControl) = 1\n" +
+            "    RAISERROR ('forced-failure-after-load', 16, 1);");
+
+        var handler = AddExecuteSql(pkg, "SQL_Handler", sqlCm,
+            "INSERT dbo.SyntheticFailureHandlerLog (Marker) VALUES (N'handled');");
+
+        pkg.PrecedenceConstraints.Add((Executable)truncate, dftHost);
+        pkg.PrecedenceConstraints.Add(dftHost, (Executable)body);
+
+        var onFailure = pkg.PrecedenceConstraints.Add((Executable)body, (Executable)handler);
+        onFailure.Value = Microsoft.SqlServer.Dts.Runtime.DTSExecResult.Failure;
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));

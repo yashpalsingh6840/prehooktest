@@ -917,7 +917,11 @@ showed every outcome-based form running its successor on the FAILURE path while 
 anyway, so only `EvalOp=3` (Success AND expression) is reproducible under the single whole-package
 transaction and is now generated as an Etl.Core ConditionalStep decorator, the rest reduced to one
 named emitter feature (a failure-handler position outside that transaction) and the portfolio still
-honestly 3/5
+honestly 3/5; that failure-handler position BUILT 2026-08-31 -- an EF probe measured that a
+unit of work autocommits after its own rollback, so a Failure constraint's successor becomes an
+Etl.Core FailureHandlerAction run post-rollback (and is EXCLUDED from the step list, which was the
+actual bug) with the package still failing, matching dtexec exactly bar the deliberate whole-package
+rollback, leaving `Package` with 8 blocking gaps that are ALL Script seams and no tool gap at all
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -5318,6 +5322,118 @@ failure-handler position outside the package transaction, sized by the measureme
 what `DFT_LookupAndAggregate` needs; and the pre-existing per-pairing coercion and Data Conversion
 target-type gaps. The expression form of conditional execution, named as the blocker by the Script
 Task round, is now closed.
+
+### Failure handlers -- the outcome half of conditional constraints (2026-08-31)
+
+The round the conditional-constraint measurement specified: a `DTS:Value="1"` (Failure) precedence
+constraint. This was the last remaining TOOL gap on `Package` -- generated code ran its
+failure-log task on every SUCCESSFUL run, because the task was an ordinary step.
+
+**The load-bearing design question was answered by measurement, and it collapsed the work.** A
+failure handler must run after the package transaction is rolled back AND commit its own work, so
+the obvious reading is "it needs its own connection" -- a scope factory, or a connection string
+`PackageRunner` does not have (and cannot reliably recover: SqlClient strips the password from
+`SqlConnection.ConnectionString` once opened, unless `Persist Security Info=true`). A throwaway EF
+probe against `.\SQLFORPOC_2022` measured the actual behaviour instead:
+
+```
+after rollback: CurrentTransaction is null = True
+after-rollback INSERT: succeeded
+rows persisted: [after-rollback]          <- the in-transaction row did NOT persist
+```
+
+So after EF Core's own `RollbackAsync` the DbContext has no ambient transaction and a subsequent
+raw command autocommits. **No second connection, no scope factory, no connection-string handling.**
+That is also exactly SSIS's own shape -- each task auto-committed separately.
+
+**The contract is made explicit anyway, and that is deliberate.** New
+`IUnitOfWork.ExecuteSqlWithoutTransactionAsync` THROWS if a transaction is still active, rather
+than quietly executing. Relying on implicit post-rollback behaviour is the kind of dependency that
+breaks silently on a framework upgrade; here a future EF that stopped clearing the transaction
+fails loudly instead of enlisting the handler in a transaction about to be discarded -- which would
+write nothing, the one outcome this position exists to prevent.
+
+**`Etl.Core`:** `FailureHandlerAction(TaskName, Sql)` -- plain data, matching
+`FileSystemPreLoadAction`, because the one evidenced handler is a single terminal Execute SQL Task
+(RBC_Demo_ETL's `SQL_LogLoadFailure`, whose author even documented it as *"Runs only when
+DFT_LoadCustomers fails (Failure constraint)"*). `IEtlPackage.FailureHandlers` defaults to empty, so
+every existing implementer is unchanged. `PackageRunner.RunFailureHandlersAsync` runs them in the
+catch block AFTER the rollback, each isolated in its own try/catch so a failing handler cannot
+replace the original exception -- the thing anyone diagnosing the run actually needs, and SSIS would
+not have erased it either -- and with `CancellationToken.None` throughout, the same choice the
+rollback above already makes. `PackageResult.FailureHandlersRun` is additive, so a notifier can say
+"it failed AND the failure was logged", which is the entire point of a handler.
+
+**Codegen: the critical part is the EXCLUSION, not the emission.** `ResolveConditionalConstraints`
+now returns handlers alongside guards, keyed by refId, and `WalkContainer` skips those refIds
+outright -- placed right beside the disabled-executable skip, and for the same reason. Generating
+the task in both positions would have kept the original bug while adding a handler. Five shapes are
+REFUSED rather than taken, each because it would generate something wrong rather than merely
+incomplete: a target that is not an Execute SQL Task with a statement; one with more than one
+incoming constraint (also reachable on the success path -- excluding it would silently DROP work
+SSIS runs); one with its own successors (a failure-path chain is not modelled); a disabled one; and
+a second Failure edge into the same task. `FailureHandlers` is emitted in the generated
+`EtlPackage` only when there IS one, since it is an optional parameter defaulting to empty --
+adding `FailureHandlers: []` everywhere would have changed every existing package's text for no
+behavioural difference (caught by 7 golden/exact-string tests failing, then fixed properly rather
+than by regenerating goldens).
+
+**The stale reason text was rewritten, not left.** `UnsupportedFormReason`'s shared tail used to say
+these forms need "a failure-handler position outside that transaction" -- true before this round,
+misleading after it, since that position now exists. Completion / Expression-only /
+ExpressionOrConstraint were all measured to fire on BOTH paths, so what they actually need is the
+same task in two positions at once (an ordinary step AND a handler) -- a separate feature, and now
+the reason says so. The unreachable `Value="1"` arm was deleted rather than left as dead code.
+
+**Verified four ways:**
+1. **Real SSIS ground truth, both directions.** New fixture `SyntheticFailureHandler.dtsx`
+   (`failure-handler` mode): `SQL_Truncate -> DFT_Load -> SQL_Body -(Failure)-> SQL_Handler`, where
+   `SQL_Body` raises an error only when a control row says so -- so the success and failure runs are
+   the same fixture with one bit flipped. `DFT_Load` loads real rows BEFORE the failure, which is
+   what makes the deliberate divergence visible. dtexec: success -> `DTSER_SUCCESS`, 2 target rows,
+   log `(none)`; failure -> `DTSER_FAILURE`, **2 target rows still committed**, log `[handled]`.
+2. **The generated code, run both ways, matching.** Generated, built against a copy of `Etl.Core`
+   (0 warnings/0 errors), run against `.\SQLFORPOC_2022`, rows read back: success -> exit 0, 2 rows,
+   log `(none)`; failure -> exit 1, **0 rows**, log `[handled]`. Identical to SSIS on every
+   dimension except the target row count on the failure run -- SSIS auto-commits per task so its
+   rows survive, while this rewrite rolls the whole load back. That is the trade `PackageRunner`
+   already makes for any failure, stated rather than hidden.
+3. **A byte-level baseline diff via a `git worktree` at HEAD.** Generating the 5 real packages both
+   with and without `--seams`: the ONLY difference in either mode is `Package/Program.cs`, and it is
+   exactly the intended move -- the `ExecuteSqlStep` local gone, the task out of `Steps`, and into
+   `FailureHandlers`. All four other packages byte-identical.
+4. **A corpus sweep that confirmed itself on a fixture built for something else.** The
+   conditional-constraint PROBE fixture's own `SQL_Body -> SQL_OnFailure` gap disappeared, resolving
+   as a handler -- independent confirmation on a package not built for this round. Corpus constraint
+   gaps 7 -> 6; this PoC's own 4 packages still zero.
+
+**Result: `Package` drops from 9 blocking gaps to 8, and every one of the 8 is now a Script seam --
+Tier-2 human work, with no tool gap left in that package at all.** The portfolio still reads 3/5,
+because seams are genuinely unfilled work and the readiness metric correctly counts them; filling
+them (as the worked example in `D:\PoC\SSIS_From_Sandeep_Generated\fills\Package\` does) is what
+makes it generatable, and the whole 5-package deliverable regenerated with `--seams` and those
+fills applied builds **0 warnings / 0 errors**.
+
+**Test coverage:** 4 new cases in `ConditionalConstraintTests` (the handler resolved AND excluded
+from `Steps`, the `Program.cs` emission, and a 4-case `[Theory]` over the refused shapes). 3 new in
+`PackageRunnerTests` (handlers run after rollback and the package still fails; handlers do NOT run
+on success -- the case that makes the feature correct rather than merely present; a throwing handler
+keeps the original error and does not stop the rest). `FakeUnitOfWork` mirrors the real
+no-active-transaction precondition rather than just recording the call, which is what lets the
+AFTER-rollback ordering be pinned with no database at all. One `[InlineData]` row was removed from
+the unsupported-forms `[Theory]` (`Value="1"` is no longer an unsupported form) and that file's own
+doc comment updated from "exactly one of the seven forms" to two. Regression: 205/205 in
+`Ssis.Extract.Codegen.Tests` (was 200), 53/53 in `Etl.Core.Tests` (was 50), 149/149 in
+`Ssis.Runtime.Expressions.Tests`, same 3 pre-existing unrelated failures in `Ssis.Extract.Tests`.
+
+**Remaining known gaps, updated:** the conditional forms that fire on BOTH paths (Completion,
+Expression-only, ExpressionOrConstraint) -- now precisely characterised as needing one task in two
+positions, and unevidenced in the tracked portfolio; chunk 4 (provenance + staleness);
+Aggregate-inside-a-Multicast-branch plus a two-output Lookup, together what
+`DFT_LookupAndAggregate` needs and the only remaining tool gap in the whole portfolio; and the
+pre-existing per-pairing coercion and Data Conversion target-type gaps. Failure handlers, named as
+the next round by the conditional-constraint measurement, are now closed for the one evidenced
+shape.
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
