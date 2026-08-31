@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task]");
             return 2;
         }
 
@@ -196,9 +196,13 @@ internal static class Program
         {
             return BuildExcelSourceSqlCommandFixture(args[0]);
         }
+        if (fixtureName == "disabled-task")
+        {
+            return BuildDisabledTaskFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', or 'script-component-seams'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', or 'disabled-task'.");
             return 2;
         }
 
@@ -3521,5 +3525,84 @@ internal static class Program
         var prop = meta.CustomPropertyCollection.Cast<IDTSCustomProperty100>().FirstOrDefault(p => p.Name == name)
             ?? throw new InvalidOperationException($"fixture build error: component '{meta.Name}' has no custom property named '{name}' -- ProvideComponentProperties() may not have run, or the property name is wrong.");
         prop.Value = value;
+    }
+
+    /// <summary>
+    /// A single fully-ordered chain whose second link is DISABLED, plus a DISABLED Sequence
+    /// Container at the end holding one enabled child:
+    ///
+    ///   SQL_MarkPre -> SQL_Disabled_MarkNever -> DFT_Load -> SQL_MarkPost -> SEQ_Disabled
+    ///                  (Disabled=True)                                      (Disabled=True)
+    ///                                                                        +- SQL_InsideDisabledSeq
+    ///
+    /// Built to answer, against the real SSIS runtime, the one question ssisx's own
+    /// disabled-skip depends on: whether a disabled task's SUCCESSORS still run. If they do
+    /// not, skipping just the disabled node in codegen would be wrong -- the whole downstream
+    /// chain would have to go with it.
+    ///
+    /// Deliberately with NO parallelism (every root node ordered), so the only thing this
+    /// fixture varies is disabled-ness -- nothing here should produce a Parallelism advisory.
+    /// The disabled task sits in PRE-LOAD position and the disabled container in POST-FLOW
+    /// position, so one fixture covers both of PackagePlanner's own placement paths.
+    /// Backing tables: tests/Ssis.Extract.Tests/Fixtures/synthetic-disabled-task-tables.sql.
+    /// </summary>
+    private static int BuildDisabledTaskFixture(string outputPath)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-disabled-task-csv", "SyntheticDisabledTask.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticDisabledTask" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_DisabledTaskCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 50, 0, 0));
+
+        var markPre = AddExecuteSql(pkg, "SQL_MarkPre", sqlCm,
+            "DELETE FROM dbo.SyntheticDisabledTaskLog; INSERT dbo.SyntheticDisabledTaskLog (Marker) VALUES (N'pre');");
+
+        // The whole point of the fixture. Its statement must never execute -- under SSIS
+        // because the task is disabled, and in generated code because PackagePlanner skips it.
+        var disabled = AddExecuteSql(pkg, "SQL_Disabled_MarkNever", sqlCm,
+            "INSERT dbo.SyntheticDisabledTaskLog (Marker) VALUES (N'disabled-ran');");
+        disabled.Disable = true;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        BuildFlatFileToOleDbLoad((MainPipe)dftHost.InnerObject, csvCm, sqlCm, "[dbo].[SyntheticDisabledTaskTarget]");
+
+        var markPost = AddExecuteSql(pkg, "SQL_MarkPost", sqlCm,
+            "INSERT dbo.SyntheticDisabledTaskLog (Marker) VALUES (N'post');");
+
+        // A disabled CONTAINER: its children are skipped too, which is a separate code path
+        // from a disabled leaf task (the walk must not descend at all).
+        var seqExec = pkg.Executables.Add("STOCK:SEQUENCE");
+        var seq = (Microsoft.SqlServer.Dts.Runtime.Sequence)seqExec;
+        seq.Name = "SEQ_Disabled";
+        seq.Disable = true;
+
+        var insideSeq = (RtTaskHost)seq.Executables.Add("Microsoft.ExecuteSQLTask");
+        insideSeq.Name = "SQL_InsideDisabledSeq";
+        insideSeq.Properties["Connection"].SetValue(insideSeq, sqlCm.Name);
+        insideSeq.Properties["SqlStatementSource"].SetValue(insideSeq,
+            "INSERT dbo.SyntheticDisabledTaskLog (Marker) VALUES (N'inside-disabled-seq');");
+
+        pkg.PrecedenceConstraints.Add(markPre, (Executable)disabled);
+        pkg.PrecedenceConstraints.Add((Executable)disabled, dftHost);
+        pkg.PrecedenceConstraints.Add(dftHost, (Executable)markPost);
+        pkg.PrecedenceConstraints.Add((Executable)markPost, (Executable)seqExec);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
     }
 }

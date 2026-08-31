@@ -340,18 +340,35 @@ public static class PackagePlanner
             var n => $"MaxConcurrentExecutables={n}",
         };
 
-        Report(package.Dag, packageName, isRoot: true);
+        Report(package.Dag, package.Executables, packageName, isRoot: true);
         foreach (var container in EnumerateContainers(package.Executables))
-            Report(container.Dag, container.ObjectName ?? container.RefId, isRoot: false);
+            Report(container.Dag, container.Children, container.ObjectName ?? container.RefId, isRoot: false);
 
-        void Report(ControlFlowDagSpec dag, string containerName, bool isRoot)
+        void Report(ControlFlowDagSpec dag, List<ExecutableSpec> children, string containerName, bool isRoot)
         {
             if (dag.HasCycle || dag.ParallelLevels.Count == 0) return;
 
-            var widest = dag.ParallelLevels.Max(level => level.Count);
+            // Count only the executables that actually RAN. A wave of {enabled, disabled} is not
+            // concurrency, and reporting it as such is a live false positive on a real package
+            // (RBC_Demo_ETL's Package_Legacy: SQL_AtomicSwap fans out to DFT_FixedWidthImport and
+            // to SQL_LegacyStep_DISABLED, so SSIS never ran two things at once there).
+            //
+            // Filtering the precomputed levels is safe -- disabling a node does not change the
+            // ordering it imposes, so nobody else's depth moves -- but it does give up the
+            // completeness argument this method's own comment below relies on: with a disabled
+            // node as the sole bridge of a diamond, two enabled siblings can now both fall in
+            // singleton levels and go unreported. That trade is deliberate. An advisory that
+            // fires when nothing ran concurrently is the kind of noise that teaches people to
+            // ignore the gap list; a missed report in that one contrived shape does not.
+            var disabled = children.Where(e => e.Disabled == true).Select(e => e.RefId).ToHashSet();
+            var levels = dag.ParallelLevels
+                .Select(level => level.Count(refId => !disabled.Contains(refId)))
+                .ToList();
+
+            var widest = levels.Max();
             if (widest < 2) return;
 
-            var affectedWaves = dag.ParallelLevels.Count(level => level.Count > 1);
+            var affectedWaves = levels.Count(count => count > 1);
             var location = isRoot ? $"{packageName}.Parallelism" : $"{packageName}.{containerName}.Parallelism";
             var where = isRoot ? "at the root of" : $"inside container '{containerName}' of";
 
@@ -372,10 +389,35 @@ public static class PackagePlanner
         foreach (var executable in executables)
         {
             if (executable.Children.Count == 0) continue;
+            // A disabled container ran nothing at all, so neither it nor anything nested inside
+            // it describes an ordering problem the generated code has to answer for.
+            if (executable.Disabled == true) continue;
             yield return executable;
             foreach (var nested in EnumerateContainers(executable.Children))
                 yield return nested;
         }
+    }
+
+    /// <summary>
+    /// One non-blocking advisory per skipped executable. Skipping is CORRECT -- it is what SSIS
+    /// itself did -- so this is not a gap in the "we could not translate this" sense and gets no
+    /// work packet. It exists because silence about a real difference between the .dtsx and the
+    /// generated output is this tool's own recurring failure mode: a reader comparing the two
+    /// would otherwise find a task in the package with no counterpart anywhere in the code and
+    /// have no way to tell whether it was handled deliberately or dropped by a bug.
+    /// </summary>
+    private static void ReportDisabledSkip(ExecutableSpec executable, List<GenerationGap> gaps)
+    {
+        var name = executable.ObjectName ?? executable.RefId;
+        var children = executable.Children.Count > 0
+            ? $" and its {executable.Children.Count} child executable(s)"
+            : "";
+        gaps.Add(new GenerationGap($"{name}.Disabled",
+            $"'{name}' ({executable.ExecutableType}) is disabled in the package, so it{children} " +
+            "generated nothing -- matching SSIS, which skips a disabled executable while still " +
+            "running everything ordered after it. Nothing to do; re-enable it in the .dtsx and " +
+            "regenerate if it was disabled by accident.",
+            IsBlocking: false));
     }
 
     /// <summary>Returns true if, by the time this container finishes (from its parent's point
@@ -416,6 +458,24 @@ public static class PackagePlanner
             if (!byRefId.TryGetValue(refId, out var executable))
             {
                 gaps.Add(new GenerationGap(refId, "topological order references an executable not found in its own container"));
+                continue;
+            }
+
+            // A disabled executable is skipped outright -- and skipping exactly this node, and
+            // NOTHING else, is the faithful translation. That was measured against the real SSIS
+            // runtime rather than reasoned about (SyntheticDisabledTask.dtsx under dtexec): the
+            // disabled task did not run; a disabled CONTAINER's children did not run either
+            // (this one `continue` covers that too, by never reaching the STOCK:SEQUENCE branch
+            // below); and its SUCCESSORS DID run -- SSIS treats a disabled node as satisfied for
+            // precedence purposes, so the ordering it imposes on everything else is unchanged,
+            // which is exactly why nothing downstream needs skipping with it.
+            //
+            // Deliberately NOT added to flowOrAfter: a disabled Data Flow Task never ran, so
+            // nothing ordered after it is "after a flow", and a following Execute SQL Task
+            // correctly stays a pre-load statement.
+            if (executable.Disabled == true)
+            {
+                ReportDisabledSkip(executable, gaps);
                 continue;
             }
 
@@ -554,6 +614,15 @@ public static class PackagePlanner
         }
 
         var inner = loop.Children[0];
+
+        // The loop would iterate real files and do nothing on each. Not evidenced in any real
+        // package, but it costs one check to be right rather than emit a loop whose body runs a
+        // statement SSIS never ran.
+        if (inner.Disabled == true)
+        {
+            ReportDisabledSkip(inner, gaps);
+            return null;
+        }
 
         if (inner.DataFlowTask is { } dataFlowTask)
         {

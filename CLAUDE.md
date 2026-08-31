@@ -905,7 +905,10 @@ and what the package declared, closing an honesty hole rather than adding a capa
 and `ssisx apply-fills` (chunk 3) added 2026-08-31 -- a Script-Component-produced column becomes a
 `private partial` Fill_ method so an unfilled gap is a COMPILE ERROR (CS8795) instead of a silently
 dropped column, taking RBC_Demo_ETL's own Package from "builds clean while missing 6 columns" to
-"builds clean with all 6 genuinely ported"
+"builds clean with all 6 genuinely ported"; a disabled executable is now SKIPPED rather than
+generated as if live (2026-08-31) -- a real correctness bug whose fix also removed a live
+false-positive parallelism advisory, both measured against a real dtexec run rather than reasoned
+about
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -4870,6 +4873,142 @@ gaps; chunk 4 (provenance stamping and staleness reporting -- the hash check exi
 tested, but nothing writes `EvidenceSha256` into a fill yet); and Aggregate-inside-a-Multicast-
 branch + a two-output Lookup, which together are what `DFT_LookupAndAggregate` needs to take the
 portfolio to 4/5.
+
+
+### A disabled executable is now skipped, not generated as if live (2026-08-31)
+
+The correctness bug found (and deliberately left) during the parallelism-advisory round.
+`ExecutableSpec.Disabled` was extracted, `RulesEngine` reported it as a `disabled-task` finding,
+and `PackageDiffer`/`ConformanceRulesBuilder` both used it -- but **`Ssis.Extract.Codegen` had
+zero references to it anywhere** (grep-confirmed before doing anything else). A task the package
+author had switched off was therefore generated as though it were live.
+
+**This was not hypothetical -- it was live in shipped output.** RBC_Demo_ETL's own
+`Package_Legacy.dtsx` carries `SQL_LegacyStep_DISABLED` (`DTS:Disabled="True"`, described by its
+own author as *"Deliberately disabled - mirrors the disabled UTF-8 converter in N600ToSalesForce"*
+-- i.e. a real client pattern the third party put in on purpose as a KT case), and the persisted
+deliverable's own `generate/Package_Legacy/Program.cs` really did contain:
+
+```csharp
+PreLoadStatements: ["...TRUNCATE TABLE dbo.CustomerFixedImport;...",
+    "INSERT INTO dbo.EtlRunLog (PackageName, EventType, MessageText) VALUES (N'Package_Legacy', N'Legacy', N'this step is disabled');"],
+```
+
+The generated job wrote a row SSIS never wrote, and the row's own message text said *"this step is
+disabled"*. Unlike the parallelism advisory (same data, longer wall clock), this is a genuine
+correctness difference. `Package_Legacy` was one of the 3/5 packages counted as **fully
+generatable**, so nothing anywhere flagged it.
+
+**What "skip" has to mean was MEASURED, not reasoned about** -- the one question the fix depends
+on is whether a disabled task's own SUCCESSORS still run, because if they do not then skipping
+just that node would be wrong and the whole downstream chain would have to go with it. A real
+`dtexec` run against `.\SQLFORPOC_2022` settled it (fixture below):
+
+| Measured | Result |
+|---|---|
+| the disabled task's own statement | **never ran** (`disabled-ran` marker absent) |
+| an ENABLED child of a DISABLED Sequence Container | **never ran** (`inside-disabled-seq` absent) |
+| the Data Flow Task ordered AFTER the disabled task | **ran** -- all 3 rows loaded |
+| the Execute SQL Task after that | **ran** (`post` marker present) |
+
+So SSIS treats a disabled node as satisfied for precedence purposes: the ordering it imposes on
+everything else is unchanged, and skipping exactly that node and nothing else is the faithful
+translation.
+
+**The fix is one `continue` in `PackagePlanner.WalkContainer`**, placed before every payload
+branch -- which is why it covers a disabled CONTAINER too, by never reaching the `STOCK:SEQUENCE`
+branch that would have descended into its children. Two deliberate details:
+- The skipped node is **not** added to `flowOrAfter`. A disabled Data Flow Task never ran, so
+  nothing ordered after it is "after a flow", and a following Execute SQL Task correctly stays a
+  pre-load statement rather than becoming a post-flow `SqlStep`.
+- `PackagePlanner` is the only codegen consumer of the executable tree (confirmed by grepping
+  every `.Executables`/`.Children` reference in that project), so there was no second place to
+  fix and no risk of a half-applied skip.
+
+Also added, for completeness rather than from evidence: a ForEach Loop whose single body task is
+disabled now skips the whole loop instead of emitting a loop that runs a statement SSIS never ran.
+Not evidenced in any real package -- one check, stated as such.
+
+**A SECOND real bug fell out of the same root cause and was fixed in the same round, because it
+is the same fact being ignored.** The parallelism advisory added earlier the same day counted
+`ParallelLevels` membership without regard to whether a node ran -- and `Package_Legacy`'s only
+concurrent wave is `SQL_AtomicSwap -> {DFT_FixedWidthImport, SQL_LegacyStep_DISABLED}`. SSIS never
+ran two things at once in that package, yet the advisory said it did: **a live false positive on a
+real package**, exactly the noise that (by that round's own stated reasoning) trains people to
+ignore the gap list. `ReportParallelismFlattening` now counts only non-disabled nodes per level,
+and `EnumerateContainers` no longer descends into a disabled container at all.
+
+**That filter gives something up, and the trade is stated rather than glossed over.** The previous
+round established that `ParallelLevels.Any(l => l.Count > 1)` is sound AND complete for the
+existence question, even though `ControlFlowDagSpec`'s own doc comment warns the levels are
+sound-but-incomplete for enumerating which pairs are concurrent. Filtering is safe in the sense
+that disabling a node does not change the ordering it imposes, so nobody else's depth moves -- but
+it does give the completeness back up: with a disabled node as the sole bridge of a diamond, two
+enabled siblings can both land in singleton levels and go unreported. Accepted deliberately: an
+advisory that fires when nothing ran concurrently is worse than a missed report in that one
+contrived shape. Recorded in the method's own doc comment too, not just here.
+
+**The advisory design, which is deliberately unlike every other gap in this tool:** a skip is
+reported as one **non-blocking** `GenerationGap` per skipped executable (`{Name}.Disabled`), and
+skipping is *correct* -- it is what SSIS itself did -- so it does not block generation, is
+`GapTier.Advisory`, and produces **no AI work packet** (asserted directly by a test, not left
+implicit: there is nothing for anyone to fill in). It is reported at all because silence about a
+real difference between the `.dtsx` and the generated output is this tool's own recurring failure
+mode: a reader diffing the two would otherwise find a task in the package with no counterpart in
+the code and no way to tell deliberate handling from a bug. The container's advisory also says how
+many children went with it, so "one task skipped" is never confused with "a whole branch skipped".
+
+**Verified four ways:**
+1. **The real motivating package.** Regenerating `Package_Legacy.dtsx`: the diff against the
+   persisted baseline is **exactly one line** -- the disabled task's `INSERT` removed from
+   `PreLoadStatements`, nothing else. Diffing the whole portfolio's `gaps.json` GapId sets showed
+   **exactly one swap**: the false-positive `Package_Legacy.Parallelism` advisory replaced by the
+   accurate `SQL_LegacyStep_DISABLED.Disabled` one, count unchanged at 23, nothing else moved.
+2. **A new dedicated fixture, run twice -- once under real SSIS, once as generated code.**
+   `tests/Ssis.Extract.Tests/Fixtures/SyntheticDisabledTask.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `disabled-task` mode): a single fully-ordered chain
+   `SQL_MarkPre -> SQL_Disabled_MarkNever -> DFT_Load -> SQL_MarkPost -> SEQ_Disabled`, with the
+   second link disabled and `SEQ_Disabled` a disabled container holding one enabled child.
+   Deliberately with **no** parallelism at all (every root node ordered), so the only thing the
+   fixture varies is disabled-ness -- and deliberately putting the disabled task in PRE-LOAD
+   position and the disabled container in POST-FLOW position, so one fixture covers both of
+   `PackagePlanner`'s placement paths. **Generated, built against a copy of `Etl.Core` (0
+   warnings/0 errors), and actually RUN against `.\SQLFORPOC_2022`** -- rows read back, not
+   trusted from the exit code: markers `pre`, `post`, and 3 target rows; `disabled-ran` and
+   `inside-disabled-seq` both absent. An **exact row-for-row match against the real dtexec probe
+   run of the same fixture**, which is the strongest evidence tier this tool's own philosophy asks
+   for. Backing tables:
+   `tests/Ssis.Extract.Tests/Fixtures/synthetic-disabled-task-tables.sql`.
+3. **A derived fixture for the parallelism half**, since the fixture above has no parallelism by
+   design: `SyntheticFlatFileDestinationDisabled.dtsx` is `SyntheticFlatFileDestination.dtsx`
+   (three precedence-independent root flows) with `DTS:Disabled="True"` added to one of them via a
+   byte-preserving PowerShell read/replace/write -- 27 bytes longer, exactly the one attribute
+   (trap 18's discipline; never a text-replace on a `.dtsx`). Its advisory correctly reads "up to
+   2 executables" where the original reads "up to 3", and the disabled flow is gone from
+   `plan.Flows` entirely rather than merely uncounted.
+4. **No collateral effect anywhere else.** Regenerating the whole 35-package fixture corpus shows
+   exactly the two new `.Disabled` advisories and no others; this PoC's own 4 packages are
+   unchanged; the refreshed deliverable at `D:\PoC\SSIS_From_Sandeep_Generated` (regenerated with
+   `--seams`, fills re-applied) builds **0 warnings/0 errors** with the bogus statement gone.
+   186/186 in `Ssis.Extract.Codegen.Tests` (was 182 -- 4 new in
+   `tests/Ssis.Extract.Codegen.Tests/DisabledExecutableTests.cs`), 149/149 in
+   `Ssis.Runtime.Expressions.Tests`, same 3 pre-existing unrelated failures elsewhere. **No
+   existing test needed changing**, which is itself the point: nothing had ever asserted the buggy
+   behaviour, because nothing had ever looked.
+
+**One object-model fact worth not re-deriving:** the runtime property is `DtsContainer.Disable`
+(no "d"), while the persisted attribute is `DTS:Disabled` on every executable in the tree and
+`DTS:Disable` on the package root -- so the runtime name matches the ROOT's attribute spelling,
+not the one it actually writes for the node you set it on. `ExecutableSpec`'s own doc comment
+already recorded the root-vs-child attribute difference; the runtime-property spelling is the new
+half.
+
+**Remaining known gaps, unchanged by this round:** the Script Task half of Tier 2
+(`ProgramScriptTaskStep`), chunk 4 (provenance + staleness), Aggregate-inside-a-Multicast-branch +
+a two-output Lookup (together what `DFT_LookupAndAggregate` needs to reach 4/5), Data Conversion
+target types beyond the eight closed, and the numeric-passthrough-coercion gap for every pairing
+beyond the five closed. Codegen ignoring `ExecutableSpec.Disabled`, named as a real open bug by
+the parallelism round, is now closed.
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
