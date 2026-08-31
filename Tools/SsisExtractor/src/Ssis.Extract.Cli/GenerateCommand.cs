@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Ssis.Extract.Codegen;
 using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Package;
@@ -29,6 +30,7 @@ internal static class GenerateCommand
         string? outDir = null;
         var recursive = false;
         string? namespacePrefix = null;
+        string? fillsDir = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -40,6 +42,7 @@ internal static class GenerateCommand
                     case "--out": outDir = RequireValue(args, ref i, "--out"); break;
                     case "--recursive": recursive = true; break;
                     case "--namespace-prefix": namespacePrefix = RequireValue(args, ref i, "--namespace-prefix"); break;
+                    case "--fills": fillsDir = RequireValue(args, ref i, "--fills"); break;
                     default:
                         Console.Error.WriteLine($"error: unknown generate option '{args[i]}'");
                         return 2;
@@ -78,13 +81,22 @@ internal static class GenerateCommand
 
         var generateDir = Path.Combine(outDir, "generate");
         var gapsDir = Path.Combine(outDir, "gaps");
+        // Fills default to a sibling of generate/, NOT a subdirectory of it: generate/ is
+        // regenerated freely (this command's own report says so), while a decisions file is
+        // hand-maintained work product that must survive that. Same reasoning, and the same
+        // never-overwrite rule, as ConformanceCommand's claims directory.
+        fillsDir = Path.GetFullPath(fillsDir ?? Path.Combine(outDir, "fills"));
         var results = new List<PackageGenerateResult>();
         var allGaps = new List<GapSpec>();
+        var decisionOutcomes = new List<(string Package, GapDecisionOutcome Outcome)>();
 
         foreach (var package in loaded.Packages)
         {
-            var result = PackageGenerator.Generate(package, namespacePrefix);
+            var decisions = LoadDecisions(fillsDir, package.ObjectName);
+            var result = PackageGenerator.Generate(package, namespacePrefix, decisions);
             results.Add(result);
+            decisionOutcomes.AddRange(decisions.Outcomes.Concat(decisions.Orphans())
+                .Select(o => (package.ObjectName, o)));
 
             foreach (var file in result.Files)
             {
@@ -112,16 +124,50 @@ internal static class GenerateCommand
         StableJsonWriter.WriteToFile(allGaps, gapsPath);
 
         var reportPath = Path.Combine(outDir, "generate-report.md");
-        WriteReport(reportPath, results, loaded.Failures, fixedFileGaps, allGaps);
+        WriteReport(reportPath, results, loaded.Failures, fixedFileGaps, allGaps, decisionOutcomes);
 
         var totalFiles = results.Sum(r => r.Files.Count);
         var totalGaps = results.Sum(r => r.Gaps.Count) + fixedFileGaps.Count;
         var packets = allGaps.Count(g => g.PacketPath is not null);
         Console.WriteLine($"generate: {totalFiles} file(s) written across {results.Count} package(s), {totalGaps} gap(s) -- see {reportPath}");
         Console.WriteLine($"  {packets} work packet(s) written to {gapsDir}  (paste one into a chat window; see gaps.json for the index)");
+        if (decisionOutcomes.Count > 0)
+        {
+            var applied = decisionOutcomes.Count(o => o.Outcome.Status == GapDecisionStatus.Applied);
+            var refused = decisionOutcomes.Count - applied;
+            Console.WriteLine($"  {applied} confirmed decision(s) applied from {fillsDir}" +
+                              $"{(refused > 0 ? $", {refused} NOT used -- see the report" : "")}");
+        }
 
         return totalGaps > 0 ? 3 : 0;
     }
+
+    /// <summary>
+    /// Reads <c>fills/&lt;Package&gt;.decisions.json</c> if it exists. Deliberately does NOT write
+    /// a stub when it doesn't -- unlike a conformance claims file, where a stub of all-Pending
+    /// rules is a useful starting point, a decisions file is only worth creating once there is an
+    /// answered work packet to record, and an empty one on disk would just be noise in every
+    /// output directory.
+    ///
+    /// A malformed file is a hard error rather than a silent "no decisions": someone recorded a
+    /// decision and it is not taking effect, which must not look like never having made one.
+    /// </summary>
+    private static GapDecisions LoadDecisions(string fillsDir, string packageName)
+    {
+        var path = Path.Combine(fillsDir, $"{packageName}.decisions.json");
+        if (!File.Exists(path)) return GapDecisions.None;
+
+        var parsed = JsonSerializer.Deserialize<Dictionary<string, GapDecisionSpec>>(File.ReadAllText(path), DecisionReadOptions)
+            ?? throw new InvalidOperationException($"'{path}' parsed as null -- expected a JSON object keyed by GapId.");
+        return new GapDecisions(parsed);
+    }
+
+    private static readonly JsonSerializerOptions DecisionReadOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
 
     /// <summary>
     /// Files written once per --out directory, not per package: Directory.Build.props /
@@ -237,7 +283,7 @@ internal static class GenerateCommand
         return gaps;
     }
 
-    private static void WriteReport(string path, List<PackageGenerateResult> results, List<PackageLoader.LoadFailure> loadFailures, List<GenerationGap> fixedFileGaps, List<GapSpec> allGaps)
+    private static void WriteReport(string path, List<PackageGenerateResult> results, List<PackageLoader.LoadFailure> loadFailures, List<GenerationGap> fixedFileGaps, List<GapSpec> allGaps, List<(string Package, GapDecisionOutcome Outcome)> decisionOutcomes)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# ssisx generate -- report");
@@ -278,6 +324,23 @@ internal static class GenerateCommand
                 sb.AppendLine($"| _(shared)_ | advisory | `{gap.Location}` | {gap.Reason} |");
         }
         sb.AppendLine();
+
+        if (decisionOutcomes.Count > 0)
+        {
+            sb.AppendLine("## Tier-1 decisions -- what was applied, and what was refused");
+            sb.AppendLine();
+            sb.AppendLine("Confirmed answers read from `fills/<Package>.decisions.json`, which `ssisx` never writes.");
+            sb.AppendLine("A decision is applied only when a human confirmed it, it is complete for its gap kind, and it");
+            sb.AppendLine("still matches the evidence it was made against. Anything else is listed here and NOT used --");
+            sb.AppendLine("an unconfirmed proposal quietly taking effect is the one outcome this whole mechanism exists");
+            sb.AppendLine("to prevent.");
+            sb.AppendLine();
+            sb.AppendLine("| Package | Status | GapId | Detail |");
+            sb.AppendLine("|---|---|---|---|");
+            foreach (var (pkg, outcome) in decisionOutcomes)
+                sb.AppendLine($"| {pkg} | {outcome.Status} | `{outcome.GapId}` | {outcome.Detail} |");
+            sb.AppendLine();
+        }
 
         sb.AppendLine("## Packages that failed to load -- not generated at all");
         sb.AppendLine();

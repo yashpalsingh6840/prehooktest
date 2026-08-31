@@ -347,7 +347,13 @@ public class PackageGeneratorTests
         // it was correctly never wired.
         Assert.DoesNotContain(result.Files, f => f.RelativePath == "Program.cs");
 
-        Assert.Contains(result.Gaps, g => g.Reason.Contains("SSIS does not persist a Lookup's join key")
+        // The reason changed 2026-08-31 and the correction matters: SSIS DOES persist a Lookup's
+        // join key (on the input column's own JoinToReferenceColumn property). THIS fixture has
+        // none only because it was built through the object model without ever mapping its
+        // Lookup's input columns -- which is precisely what was previously mistaken for the format
+        // never carrying one. The test's own intent is unchanged: a Lookup with no resolvable join
+        // key still gets its cache scaffold and still is not wired.
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("declares no join key")
             && g.Reason.Contains("Mapping/LookupCache.cs"));
     }
 

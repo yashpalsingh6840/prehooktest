@@ -77,7 +77,25 @@ public sealed record ProgramFlowSpec(
     string RowTypeName,
     string EntityName,
     string TransformClassName,
-    FlowSinkSpec Sink);
+    FlowSinkSpec Sink,
+    LookupPreload? Lookup = null);
+
+/// <summary>
+/// A full-cache Lookup's reference table, loaded ONCE at Program.cs top level and captured by the
+/// transform that consults it.
+///
+/// <b>Why at top level rather than inside a DI factory or an Etl.Core step:</b>
+/// <c>IRowTransform.Map</c> is synchronous, so the cache has to be fully materialized before any
+/// row is read -- which is exactly what full-cache semantics mean anyway. Program.cs is top-level
+/// statements, so it can simply <c>await</c> the load before registering anything. That needs no
+/// new Etl.Core abstraction and no sync-over-async, and it keeps the load visible in the generated
+/// file rather than buried in a lambda that happens to run once.
+/// </summary>
+public sealed record LookupPreload(
+    string VariableName,
+    string CacheClassName,
+    string KeyClrType,
+    string ReferenceKeyColumn);
 
 /// <summary>One branch of a generated Conditional Split step -- its own (RowType, EntityName)
 /// transform pair, same naming convention EntityEmitter/TransformEmitter use for a
@@ -216,6 +234,10 @@ public static class ProgramEmitter
         // Merge Join flow needs these usings even when BOTH its sides happen to be CSV-sourced
         // (the real evidenced case).
         var usesSql = allSources.Any(s => s is SqlFlowSource or MergeJoinFlowSource or AggregateFlowSource);
+        // A Lookup preload needs DatabaseOptions/SqlConnectionStringFactory (Etl.Core.Data, which
+        // usesSql already covers when the SOURCE is SQL -- but a Lookup flow can be CSV-sourced)
+        // plus IConfiguration.Get<T>() for the binder extension method.
+        var usesLookupPreload = flows.Any(f => f.Lookup is not null);
         var usesFlatFileSink = flows.Any(f => f.Sink is FlatFileFlowSink) || multicasts.Any(m => m.Branches.Any(b => b.Sink is FlatFileFlowSink));
         // An OLE DB Command flow is the one flow shape with no IRowTransform/TransformEmitter
         // output at all -- a package whose ONLY flow is an OLE DB Command has no Mapping/
@@ -227,7 +249,7 @@ public static class ProgramEmitter
 
         var lines = new List<string> { "using Etl.Core.Abstractions;" };
         if (usesCsv) lines.Add("using Etl.Core.Csv;");
-        if (usesSql || usesFlatFileSink) lines.Add("using Etl.Core.Data;");
+        if (usesSql || usesFlatFileSink || usesLookupPreload) lines.Add("using Etl.Core.Data;");
         if (usesExcel) lines.Add("using Etl.Core.Excel;");
         lines.Add("using Etl.Core.Hosting;");
         lines.Add("using Etl.Core.Notifications;");
@@ -237,6 +259,7 @@ public static class ProgramEmitter
         if (usesExcel) lines.Add($"using {request.RootNamespace}.Excel;");
         if (usesMapping) lines.Add($"using {request.RootNamespace}.Mapping;");
         lines.Add($"using {request.RootNamespace}.Model;");
+        if (usesLookupPreload) lines.Add("using Microsoft.Extensions.Configuration;");
         lines.Add("using Microsoft.Extensions.DependencyInjection;");
         lines.Add("using Microsoft.Extensions.Logging;");
         lines.Add("using Microsoft.Extensions.Options;");
@@ -272,10 +295,37 @@ public static class ProgramEmitter
         lines.Add("builder.Services.AddEmailNotifications(builder.Configuration);");
         lines.Add("");
 
+        // Every Lookup's reference table is loaded here, before any registration -- see
+        // LookupPreload's own doc comment for why top level and not a DI factory. The connection
+        // string is rebuilt from configuration directly rather than resolved from DI, because no
+        // ServiceProvider exists yet at this point in Program.cs.
+        var lookups = flows.Where(f => f.Lookup is not null).Select(f => f.Lookup!).ToList();
+        if (lookups.Count > 0)
+        {
+            lines.Add("var lookupDbOptions = builder.Configuration.GetSection(\"TargetDatabase\").Get<DatabaseOptions>()");
+            lines.Add("    ?? throw new InvalidOperationException(\"The TargetDatabase configuration section is missing -- a Lookup's reference table cannot be loaded without it.\");");
+            lines.Add("var lookupConnectionString = SqlConnectionStringFactory.Build(lookupDbOptions);");
+            foreach (var lookup in lookups)
+            {
+                lines.Add($"var {lookup.VariableName} = await {lookup.CacheClassName}.LoadAsync<{lookup.KeyClrType}>(");
+                lines.Add($"    lookupConnectionString, r => r.{lookup.ReferenceKeyColumn}, CancellationToken.None);");
+            }
+            lines.Add("");
+        }
+
         foreach (var flow in flows)
         {
             EmitRowSourceRegistration(lines, flow.RowTypeName, flow.Source);
-            lines.Add($"builder.Services.AddScoped<IRowTransform<{flow.RowTypeName}, {flow.EntityName}>, {flow.TransformClassName}>();");
+            if (flow.Lookup is { } flowLookup)
+            {
+                // Constructed directly rather than registered by type: the transform takes the
+                // preloaded cache, which is a local, not a DI service.
+                lines.Add($"builder.Services.AddScoped<IRowTransform<{flow.RowTypeName}, {flow.EntityName}>>(sp => new {flow.TransformClassName}({flowLookup.VariableName}));");
+            }
+            else
+            {
+                lines.Add($"builder.Services.AddScoped<IRowTransform<{flow.RowTypeName}, {flow.EntityName}>, {flow.TransformClassName}>();");
+            }
             lines.Add("");
         }
 

@@ -30,8 +30,14 @@ public sealed record PackageGenerateResult(
 /// </summary>
 public static partial class PackageGenerator
 {
-    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix)
+    /// <param name="decisions">
+    /// Confirmed Tier-1 answers (see <see cref="GapDecisions"/>) -- today just Lookup join keys.
+    /// Optional so every existing caller and test is unaffected; absent or unconfirmed, the gaps
+    /// they would have closed are reported exactly as before.
+    /// </param>
+    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix, GapDecisions? decisions = null)
     {
+        decisions ??= GapDecisions.None;
         var ns = namespacePrefix is null ? package.ObjectName : $"{namespacePrefix}.{package.ObjectName}";
         var files = new List<GeneratedFile>();
         var gaps = new List<GenerationGap>();
@@ -79,8 +85,32 @@ public static partial class PackageGenerator
             {
                 var cacheClassName = SanitizeIdentifier(lookup.Name) + "Cache";
                 Merge(files, gaps, LookupCacheEmitter.Emit($"{ns}.Mapping", cacheClassName, lookup));
+
+                // The join key IS persisted after all -- on the Lookup's own input column, as a
+                // JoinToReferenceColumn custom property (see TryDeriveLookupJoinKey). A confirmed
+                // decision is only the FALLBACK, for a Lookup that genuinely lacks it.
+                var lookupGapId = GapIdentity.ComputeId(package.ObjectName, GapKind.LookupJoinKey, flow.TaskName);
+                var joinKey = TryDeriveLookupJoinKey(lookup)
+                              ?? decisions.ResolveLookupJoinKey(lookupGapId, currentEvidenceSha256: null);
+                if (joinKey is { } resolvedJoinKey)
+                {
+                    var lookupFlow = GenerateLookupFlow(
+                        package, ns, flow, lookup, cacheClassName, resolvedJoinKey, fileSourceEntries, files, tables,
+                        functionsUsed, primaryKeysByDestination, gaps,
+                        ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                    if (lookupFlow is not null)
+                    {
+                        wiredFlows[flow] = lookupFlow;
+                        continue;
+                    }
+                    // Fell through: GenerateLookupFlow recorded exactly which part of the shape it
+                    // could not handle. Deliberately does NOT re-report the generic
+                    // "no join key" gap below -- the key WAS supplied; something else is missing.
+                    continue;
+                }
+
                 gaps.Add(new GenerationGap(flow.TaskName,
-                    $"Data Flow Task '{flow.TaskName}' contains a Microsoft.Lookup component ('{lookup.Name}') -- SSIS does not persist a Lookup's join key anywhere in the saved .dtsx, so this tool cannot safely generate a join condition without guessing. A best-effort reference-table cache scaffold was generated at Mapping/{cacheClassName}.cs, but this flow's transform/Program.cs wiring were NOT generated. To finish by hand: pick the join key, write a Map() that calls {cacheClassName}.LoadAsync at startup and looks up by that key, and add a new DataFlowStep to Program.cs following the pattern of this package's other flows.",
+                    $"Lookup '{lookup.Name}' declares no join key: none of its input columns carries a JoinToReferenceColumn property, which is where SSIS records it (an SSDT-authored Lookup always has one -- a Lookup built through the object model without mapping its input columns does not). This tool will not guess a join key: a wrong one compiles, runs, and silently produces wrong joined data on every row. A reference-table cache scaffold was generated at Mapping/{cacheClassName}.cs, but this flow's transform/Program.cs wiring were NOT. To close it: answer this flow's own work packet under gaps/ and record the confirmed key in fills/{package.ObjectName}.decisions.json -- the whole flow is then generated deterministically, with no hand-written code at all.",
                     // Tier 1: the ONE thing missing here is a datum (which reference column the
                     // input joins against), not code -- LookupCacheEmitter already emits a cache with
                     // a generic LoadAsync<TKey> designed to defer exactly this. Once the key is
@@ -980,6 +1010,164 @@ public static partial class PackageGenerator
     /// flow (OLE DB/ADO NET Source) is supported -- a Flat File/Excel-sourced Aggregate is
     /// unevidenced and out of scope for this already-speculative round.
     /// </summary>
+    /// <summary>
+    /// Derives a Lookup's join key from the package itself: SSIS records it on the joining INPUT
+    /// column, as a <c>JoinToReferenceColumn</c> custom property naming the reference-table column
+    /// it matches against.
+    ///
+    /// <b>This corrects a long-standing wrong conclusion in this project</b> -- that "SSIS does not
+    /// persist a Lookup's join key anywhere in the saved .dtsx". That was concluded from
+    /// <c>SyntheticLookupSplit.dtsx</c>, a fixture built through the object model whose Lookup
+    /// input columns were never mapped at all, so it genuinely had no join key to persist; absence
+    /// in that one fixture was read as absence in the format. A real SSDT-authored Lookup
+    /// (RBC_Demo_ETL's own <c>LKP_Country</c>: input <c>Country</c> -> reference
+    /// <c>CountryName</c>) persists it, and the extractor was already capturing it generically via
+    /// <c>PipelineInputColumnSpec.Properties</c> -- no reader change was needed to read it back.
+    ///
+    /// Returns null when no input column declares one, which is a real reachable case (that same
+    /// synthetic fixture) -- the caller then falls back to a human-confirmed decision rather than
+    /// guessing.
+    /// </summary>
+    private static (string InputColumn, string ReferenceColumn)? TryDeriveLookupJoinKey(PipelineComponentSpec lookup)
+    {
+        foreach (var column in lookup.Inputs.SelectMany(i => i.Columns))
+        {
+            var joinTo = column.Properties.FirstOrDefault(p => p.Name == "JoinToReferenceColumn")?.Value;
+            if (!string.IsNullOrWhiteSpace(joinTo)) return (column.CachedName, joinTo);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Generates a full-cache Lookup flow from a resolved join key -- derived from the package by
+    /// <see cref="TryDeriveLookupJoinKey"/>, or (only when the package genuinely declares none)
+    /// human-confirmed via <see cref="GapDecisionSpec"/>. Everything else about a Lookup is in the
+    /// saved .dtsx -- the reference query, the reference columns, and each output column's own
+    /// <c>CopyFromReferenceColumn</c> -- so no part of the generated output is guessed.
+    ///
+    /// Deliberately narrow, matching the one shape that can be verified end to end today: a
+    /// single-destination SQL flow whose Lookup routes exactly one output onward. A Lookup that
+    /// also routes its no-match rows somewhere (RBC_Demo_ETL's own DFT_LookupAndAggregate does,
+    /// into a Multicast feeding an Aggregate) is a genuinely different, composed shape and is
+    /// gapped rather than half-generated.
+    /// </summary>
+    private static ProgramFlowSpec? GenerateLookupFlow(
+        PackageSpec package, string ns, DataFlowPlan flow, PipelineComponentSpec lookup, string cacheClassName,
+        (string InputColumn, string ReferenceColumn) joinKey,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
+        HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+    {
+        if (flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination")
+        {
+            gaps.Add(new GenerationGap(flow.TaskName, $"Lookup '{lookup.Name}' feeds a Flat File Destination -- only a SQL destination is supported for a Lookup flow yet"));
+            return null;
+        }
+
+        if (!DestinationInfo.IsFastLoadConfigured(flow.DestinationComponent))
+        {
+            gaps.Add(new GenerationGap(flow.TaskName, $"destination '{flow.DestinationComponent.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
+            return null;
+        }
+
+        // Exactly one non-error output may carry rows onward. Two means the no-match rows go
+        // somewhere too, which needs a second wired branch this shape does not generate.
+        var routedOutputs = lookup.Outputs
+            .Where(o => o.IsErrorOut != true && flow.Pipeline.Paths.Any(p => p.StartId == o.RefId))
+            .ToList();
+        if (routedOutputs.Count != 1)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Lookup '{lookup.Name}' routes {routedOutputs.Count} outputs onward ({string.Join(", ", routedOutputs.Select(o => $"'{o.Name}'"))}) -- only a single routed output (match rows straight to one destination) is supported yet; a wired no-match branch is a composed shape this tool does not generate"));
+            return null;
+        }
+
+        var matchOutput = routedOutputs[0];
+
+        // The join key column has to exist on the Lookup's own input, or the confirmed decision
+        // does not describe this package -- a stale decision reaching generation is exactly what
+        // must fail loudly rather than produce code referencing a column that isn't there.
+        var inputColumn = lookup.Inputs.SelectMany(i => i.Columns)
+            .FirstOrDefault(c => c.CachedName == joinKey.InputColumn);
+        if (inputColumn is null)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"the confirmed join key names input column '{joinKey.InputColumn}', which Lookup '{lookup.Name}' does not have (its input columns are: {string.Join(", ", lookup.Inputs.SelectMany(i => i.Columns).Select(c => $"'{c.CachedName}'"))}) -- re-review the decision against the current package"));
+            return null;
+        }
+
+        var keyType = SsisPipelineTypeMap.Resolve(inputColumn.CachedDataType);
+        if (keyType is null)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"join key column '{joinKey.InputColumn}' has unmapped pipeline data type '{inputColumn.CachedDataType}'"));
+            return null;
+        }
+
+        if (lookup.Lookup?.ReferenceColumns.Any(c => c.Name == joinKey.ReferenceColumn) != true)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"the confirmed join key names reference column '{joinKey.ReferenceColumn}', which is not in Lookup '{lookup.Name}''s own reference query result set -- re-review the decision against the current package"));
+            return null;
+        }
+
+        // Each added column's source reference column IS persisted, on the output column's own
+        // CopyFromReferenceColumn custom property -- so only the join key ever needed a human.
+        var outputToReference = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var column in matchOutput.Columns)
+        {
+            var copyFrom = column.Properties.FirstOrDefault(p => p.Name == "CopyFromReferenceColumn")?.Value;
+            if (!string.IsNullOrWhiteSpace(copyFrom)) outputToReference[column.Name] = copyFrom;
+        }
+
+        var entityName = TryResolveEntityName(flow.TaskName, flow.DestinationComponent, gaps);
+        if (entityName is null) return null;
+
+        var nullableColumnNames = ResolveNullableColumnNames(flow);
+        var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames);
+        if (sourceResult is null) return null; // ResolveFlowSource already added the reason
+        var (rowTypeName, programSource) = sourceResult.Value;
+
+        Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, nullableColumnNames));
+
+        var transformClassName = entityName + "Transform";
+        var transformResult = TransformEmitter.Emit(new TransformRequest(
+            MappingNamespace: $"{ns}.Mapping",
+            TransformClassName: transformClassName,
+            RowTypeNamespace: rowTypeName.EndsWith("CsvRow", StringComparison.Ordinal) ? $"{ns}.Csv" : $"{ns}.Sql",
+            RowTypeName: rowTypeName,
+            EntityNamespace: $"{ns}.Model",
+            EntityName: entityName,
+            SsisFnNamespace: $"{ns}.Ssis",
+            Pipeline: flow.Pipeline,
+            DerivedColumns: flow.DerivedColumn is null ? [] : [flow.DerivedColumn],
+            DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+            DestinationComponent: flow.DestinationComponent,
+            NullableColumnNames: nullableColumnNames,
+            LookupJoin: new LookupJoinSpec(cacheClassName, "lookup", joinKey.InputColumn, keyType.ClrTypeName, outputToReference)));
+        Merge(files, gaps, transformResult.Result);
+        foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
+
+        if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
+
+        primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
+        tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
+
+        if (authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
+            (authMode, userId, targetServer, targetDatabase) = auth;
+
+        var preload = new LookupPreload(
+            VariableName: LowerFirst(cacheClassName),
+            CacheClassName: cacheClassName,
+            KeyClrType: keyType.ClrTypeName,
+            ReferenceKeyColumn: joinKey.ReferenceColumn);
+
+        return new ProgramFlowSpec(flow.TaskName, programSource, rowTypeName, entityName, transformClassName, new SqlFlowSink(), preload);
+    }
+
+    private static string LowerFirst(string value) =>
+        value.Length == 0 ? value : char.ToLowerInvariant(value[0]) + value[1..];
+
     private static ProgramFlowSpec? GenerateAggregateFlow(
         PackageSpec package, string ns, DataFlowPlan flow, AggregatePlan aggregate,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,

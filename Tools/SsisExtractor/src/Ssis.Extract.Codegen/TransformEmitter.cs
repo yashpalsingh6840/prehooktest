@@ -31,7 +31,22 @@ public sealed record TransformRequest(
     // be skipped entirely for this one caller rather than misidentifying an already-resolved
     // Data Conversion column as unsupported (found real 2026-08-30 testing the gate against
     // RBC_Demo_ETL's own DFT_SortAndMergeJoin).
-    bool TrustAllPassthroughColumns = false);
+    bool TrustAllPassthroughColumns = false,
+    LookupJoinSpec? LookupJoin = null);
+
+/// <summary>
+/// How a full-cache Lookup's added columns are resolved, once a human has confirmed the join key
+/// SSIS does not persist (see <c>GapDecisionSpec</c>). <see cref="OutputToReferenceColumn"/> maps
+/// each of the Lookup's own output column names to the reference-table column it copies from --
+/// read from the output column's own <c>CopyFromReferenceColumn</c> custom property, which IS
+/// persisted (unlike the join key), so only the key itself ever needed deciding.
+/// </summary>
+public sealed record LookupJoinSpec(
+    string CacheClassName,
+    string CacheParameterName,
+    string InputColumnName,
+    string KeyClrTypeName,
+    IReadOnlyDictionary<string, string> OutputToReferenceColumn);
 
 /// <summary>
 /// Emits one Data Flow Task's Derived Column transform, e.g.
@@ -246,6 +261,16 @@ public static class TransformEmitter
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
+            else if (request.LookupJoin is { } join
+                     && join.OutputToReferenceColumn.TryGetValue(column.PipelineColumnName, out var referenceColumn))
+            {
+                // Indexer, not TryGetValue: a full-cache Lookup whose no-match output is not
+                // routed anywhere FAILS the component on a miss (SSIS's own default), so throwing
+                // KeyNotFoundException is the faithful translation. A Lookup that redirects
+                // no-match rows is a different, unsupported shape -- PackageGenerator gaps it
+                // rather than reaching here.
+                assignments.Add($"        {column.ExternalColumnName} = {join.CacheParameterName}[row.{join.InputColumnName}].{referenceColumn},");
+            }
             else if (flatFileStringConversionColumns.Contains(column.PipelineColumnName))
             {
                 // A nullable-inferred source column needs a null-conditional ToString() (empty
@@ -333,7 +358,13 @@ public static class TransformEmitter
         lines.Add("");
         lines.Add($"namespace {request.MappingNamespace};");
         lines.Add("");
-        lines.Add($"public sealed class {request.TransformClassName} : IRowTransform<{request.RowTypeName}, {request.EntityName}>");
+        // A Lookup flow's transform takes its preloaded reference cache as a primary-constructor
+        // parameter -- Program.cs awaits the load at top level and constructs this directly (see
+        // ProgramEmitter's LookupPreload), so there is nothing for DI to resolve here.
+        var declaration = request.LookupJoin is { } join
+            ? $"public sealed class {request.TransformClassName}(Dictionary<{join.KeyClrTypeName}, {join.CacheClassName}.ReferenceRow> {join.CacheParameterName}) : IRowTransform<{request.RowTypeName}, {request.EntityName}>"
+            : $"public sealed class {request.TransformClassName} : IRowTransform<{request.RowTypeName}, {request.EntityName}>";
+        lines.Add(declaration);
         lines.Add("{");
         lines.Add($"    public {request.EntityName} Map({request.RowTypeName} row, in RowContext ctx) => new()");
         lines.Add("    {");

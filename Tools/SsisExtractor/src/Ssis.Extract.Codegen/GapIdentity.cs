@@ -56,9 +56,15 @@ public static class GapIdentity
     /// </summary>
     public static string ComputeId(string packageName, GenerationGap gap, bool disambiguate = false)
     {
-        var id = $"{KindToken(gap.Kind)}:{packageName}:{gap.Location}";
+        var id = ComputeId(packageName, gap.Kind, gap.Location);
         return disambiguate ? $"{id}~{ShortHash(gap.Reason)}" : id;
     }
+
+    /// <summary>The same id, computed from its parts -- for a caller that needs to look a decision
+    /// up BEFORE it knows whether it will end up reporting a gap at all (see PackageGenerator's
+    /// own Lookup gate, which asks "is this one already decided?" first).</summary>
+    public static string ComputeId(string packageName, GapKind kind, string location) =>
+        $"{KindToken(kind)}:{packageName}:{location}";
 
     /// <summary>
     /// Assigns every gap in one package its final id, disambiguating only the ids that actually

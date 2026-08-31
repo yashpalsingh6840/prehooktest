@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single]");
             return 2;
         }
 
@@ -87,6 +87,10 @@ internal static class Program
         if (fixtureName == "post-flow-sql")
         {
             return BuildPostFlowSqlFixture(args[0]);
+        }
+        if (fixtureName == "lookup-single")
+        {
+            return BuildLookupSingleFixture(args[0]);
         }
         if (fixtureName == "oledb-source-transform")
         {
@@ -373,6 +377,91 @@ internal static class Program
     /// synthetic-oledb-source-tables.sql -- so a real end-to-end run actually reads rows.
     /// Lives under tests/Ssis.Extract.Tests/Fixtures/ (test-tier, not SSDT-registered).
     /// </summary>
+    /// <summary>
+    /// OLE DB Source -> Lookup (full cache, fail on no match) -> OLE DB Destination.
+    ///
+    /// The point of this fixture is the one thing <c>SyntheticLookupSplit.dtsx</c> never had: a
+    /// Lookup whose input column is actually MAPPED, so it carries the
+    /// <c>JoinToReferenceColumn</c> property SSIS really does persist. That fixture's absence of
+    /// one is what led this project to conclude for months that SSIS "does not persist a Lookup's
+    /// join key" -- see <c>PackageGenerator.TryDeriveLookupJoinKey</c>'s own doc comment.
+    ///
+    /// Also deliberately single-routed: NoMatchBehavior is left at fail-on-no-match and only the
+    /// match output is attached, which is the one Lookup shape the generator wires today (a
+    /// redirected no-match branch is a composed shape it gaps instead).
+    /// </summary>
+    private static int BuildLookupSingleFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticLookupSingle" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_LookupLoad";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, Country FROM dbo.SyntheticLookupSingleInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        // --- the Lookup itself ---
+        var lookupMeta = pipe.ComponentMetaDataCollection.New();
+        lookupMeta.ComponentClassID = "Microsoft.Lookup";
+        var lookupInst = lookupMeta.Instantiate();
+        lookupInst.ProvideComponentProperties();
+        lookupMeta.Name = "LKP_Country";
+
+        var lookupConn = lookupMeta.RuntimeConnectionCollection[0];
+        lookupConn.ConnectionManagerID = sqlCm.ID;
+        lookupConn.ConnectionManager = DtsConvert.GetExtendedInterface(sqlCm);
+
+        lookupInst.SetComponentProperty("CacheType", 0);        // full cache
+        lookupInst.SetComponentProperty("NoMatchBehavior", 0);  // fail on no match -> one routed output
+        lookupInst.SetComponentProperty("SqlCommand",
+            "SELECT CountryName, CountryCode, Region FROM dbo.SyntheticLookupSingleReference");
+
+        AttachPath(pipe, srcOutput, lookupMeta.InputCollection[0]);
+        lookupInst.AcquireConnections(null);
+        lookupInst.ReinitializeMetaData();
+
+        // Map the joining input column. This is what writes JoinToReferenceColumn -- the whole
+        // reason this fixture exists.
+        var lookupInput = lookupMeta.InputCollection[0];
+        var virtualInput = lookupInput.GetVirtualInput();
+        var virtualCountry = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>()
+            .First(c => c.Name == "Country");
+        var mappedCountry = lookupInst.SetUsageType(
+            lookupInput.ID, virtualInput, virtualCountry.LineageID, DTSUsageType.UT_READONLY);
+        lookupInst.SetInputColumnProperty(lookupInput.ID, mappedCountry.ID, "JoinToReferenceColumn", "CountryName");
+
+        // Copy two reference columns onto matched rows.
+        var matchOutput = lookupMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        // NOTE: do NOT call SetOutputColumnDataTypeProperties here -- it throws COMException
+        // 0xC020401A for a Lookup, exactly as it does for a Microsoft.Aggregate output column. The
+        // component derives a copied column's type from the reference column itself, so setting
+        // CopyFromReferenceColumn is both necessary and sufficient.
+        foreach (var (colName, refCol) in new[] { ("CountryCode", "CountryCode"), ("Region", "Region") })
+        {
+            var outCol = lookupInst.InsertOutputColumnAt(matchOutput.ID, matchOutput.OutputColumnCollection.Count, colName, "");
+            lookupInst.SetOutputColumnProperty(matchOutput.ID, outCol.ID, "CopyFromReferenceColumn", refCol);
+        }
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticLookupSingleTarget]");
+        AttachPath(pipe, matchOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
     private static int BuildOleDbSourceTransformFixture(string outputPath)
     {
         var pkg = new RtPackage { Name = "SyntheticOleDbSourceTransform" };

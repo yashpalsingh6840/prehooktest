@@ -5,14 +5,21 @@ namespace Ssis.Extract.Codegen;
 
 /// <summary>
 /// Emits a full-cache reference-table preload scaffold for a Lookup component, e.g.
-/// LoadX.Mapping.LookupCustomerCache. Deliberately NOT wired into Program.cs by
-/// <see cref="PackageGenerator"/> -- SSIS does not persist a Lookup's join key anywhere in the
-/// saved .dtsx (confirmed via a real object-model round-trip; see
-/// docs/report-schema.md's "Still not attempted" note under the synthetic component-coverage
-/// fixtures), so there is no safe way to generate a join condition without guessing one. A
-/// guessed join key would compile, run, and silently produce wrong joined data on every row --
-/// exactly the failure category "gaps not guesses" exists to prevent, and strictly worse than
-/// not generating the flow at all.
+/// LoadX.Mapping.LookupCustomerCache.
+///
+/// <b>Correction (2026-08-31):</b> this type's doc comment previously stated that "SSIS does not
+/// persist a Lookup's join key anywhere in the saved .dtsx". That is wrong. SSIS records it on the
+/// joining INPUT column, as a <c>JoinToReferenceColumn</c> custom property -- see
+/// <c>PackageGenerator.TryDeriveLookupJoinKey</c>. The earlier conclusion came from
+/// <c>SyntheticLookupSplit.dtsx</c>, an object-model-built fixture whose Lookup input columns were
+/// never mapped and which therefore genuinely had no join key to persist; absence in that one
+/// fixture was read as absence in the format. <see cref="PackageGenerator"/> now DOES wire a
+/// Lookup flow into Program.cs whenever the key is resolvable.
+///
+/// This scaffold is still emitted unconditionally, and is still all that gets generated when the
+/// key is NOT resolvable (a Lookup that declares none, or a shape this generator does not wire --
+/// e.g. one routing both its match and no-match outputs onward). A guessed join key would compile,
+/// run, and silently produce wrong joined data on every row, so it stays a gap rather than a guess.
 ///
 /// What IS 100% derivable from the spec, and so IS generated: the reference row shape (from
 /// <see cref="LookupPayload.ReferenceColumns"/>) and a generic

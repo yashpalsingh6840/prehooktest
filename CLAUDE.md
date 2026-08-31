@@ -893,7 +893,13 @@ emitter feature, the last deliberately NOT AI-fillable), stable conformance-styl
 self-contained markdown work packet per Tier-1/2 gap under <out>/gaps/, and gaps.json -- changing
 nothing about generated C# (verified byte-identical), and correcting a documented assumption along
 the way: a Script Component's SourceCode array is (name, encoding, content) TRIPLES, not opaque
-blobs, with main.cs (not ScriptMain.*) as its entry point
+blobs, with main.cs (not ScriptMain.*) as its entry point; chunk 2 (2026-08-31) added the Tier-1
+decisions mechanism (fills/<Package>.decisions.json, never written by ssisx, applied only when a
+human confirmed it and the evidence still matches) -- and, investigating its first consumer,
+CORRECTED this file's own long-standing claim that SSIS never persists a Lookup's join key: it does,
+on the joining input column as a JoinToReferenceColumn property (already extracted all along), so a
+Lookup flow now generates with NO human in the loop and the decisions path is only a fallback for a
+Lookup that genuinely declares none
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -4556,6 +4562,115 @@ same discipline that caught `portfolio-digest.json`'s silently-empty tuple seria
 `GapSpec.EvidenceSha256`, which is recorded from this chunk onward specifically so chunk 4 has a
 baseline to compare against.
 
+
+### AI-assisted gap filling, chunk 2 — and a Lookup join key correction that redirected it (2026-08-31)
+
+Chunk 2 was planned as "Tier-1 decisions mechanism + consume a human-confirmed Lookup join key,
+taking the portfolio to 4/5". Two things changed that, both found by reading real evidence before
+building rather than after.
+
+**First, the plan's own premise about `DFT_LookupAndAggregate` was wrong.** Its real shape is
+`FF_SRC_Customers2 → LKP_Country →(Match)→ MCAST_Matched → {Output 1 → AGG_ByRegion → dest,
+Output 2 → dest}` plus a routed No-Match branch — **three** composed features (Lookup wiring,
+Aggregate inside a Multicast branch, a two-output Lookup), not the one the plan assumed. Surfaced to
+the user before starting; chunk 2 was rescoped to the mechanism plus a simple Lookup shape, with the
+other two left as their own round. The portfolio stays 3/5.
+
+**Second, and much more consequential: SSIS DOES persist a Lookup's join key.** This file and
+`LookupCacheEmitter`'s own doc comment have asserted the opposite for months — "SSIS does not
+persist a Lookup's join key anywhere in the saved .dtsx (confirmed via a real object-model
+round-trip)". Reading RBC_Demo_ETL's own `LKP_Country` directly:
+
+```
+<inputColumn cachedName="Country" ...>
+  <property name="JoinToReferenceColumn">CountryName</property>
+```
+
+The join key is recorded on the joining INPUT column, and each copied column's source is on its own
+output column's `CopyFromReferenceColumn` (`CountryCode`, `Region`) — with the reference query
+(`SELECT CountryName, CountryCode, Region FROM dbo.CountryLookup`) and reference columns already
+extracted too. **The extractor was capturing all of it the whole time** via the generic
+`PipelineInputColumnSpec.Properties`/`PipelineOutputColumnSpec.Properties` — zero reader changes
+were needed to read it back.
+
+**Why the wrong conclusion survived so long, and why it is the same mistake as chunk 1's:** it was
+drawn from `SyntheticLookupSplit.dtsx`, a fixture built through the object model whose Lookup input
+columns were never mapped, so it genuinely had no join key to persist. Absence in one synthetic
+fixture was read as absence in the format. That is exactly the error chunk 1 hit hours earlier with
+Script Component `SourceCodeItems` ("opaque blobs", concluded when no real SSDT-authored Script
+Component was available). **Two instances in one session of the same failure mode: a fixture that
+never exercised the real path, treated as evidence about the format.** Worth naming as a pattern —
+when a fixture is the ONLY evidence for a negative claim ("SSIS doesn't store X"), that claim is
+worth far less than it looks, because the fixture may simply never have set X.
+
+**What this means for the taxonomy:** the Lookup join key is NOT a Tier-1 missing datum. It is a
+deterministic feature that was never built. So a Lookup flow now generates with **no human in the
+loop at all** — strictly better than the plan. The Tier-1 machinery still ships, because it has a
+real reachable consumer: a Lookup that genuinely declares no `JoinToReferenceColumn` (that same
+synthetic fixture, and plausibly a programmatically-generated client package). Kept as a documented
+FALLBACK on the user's explicit call, after being told it no longer has an evidenced primary use.
+
+**What was built:**
+- `GapDecisionSpec`/`GapDecisionStatus` (`Ssis.Extract.Model/Analysis/`) + `GapDecisions`
+  (`Ssis.Extract.Codegen/`): confirmed Tier-1 answers read from
+  `fills/<Package>.decisions.json`, keyed by `GapSpec.GapId`, **never written by `ssisx`** — the
+  same lifecycle, and the same reasoning, as `ConformanceCommand`'s claims files. `--fills`
+  overrides the default location (a sibling of `generate/`, not inside it, so it survives the
+  "regenerate `generate/` freely" instruction the tool itself gives).
+- **Refusing is the important half.** A decision applies only when a human confirmed it
+  (`ConfirmedBy`), it is complete for its gap kind, and it still matches the evidence hash it was
+  made against. `Unconfirmed`/`Incomplete`/`Stale`/`Orphaned` are each reported in the generate
+  report and NOT used. `Confidence` is recorded for the audit trail and deliberately is NOT a gate —
+  an AI's own confidence is not sign-off.
+- `PackageGenerator.TryDeriveLookupJoinKey` (the primary, deterministic path) +
+  `GenerateLookupFlow`, deliberately narrow: single routed output, SQL destination, fast load. A
+  Lookup routing BOTH its match and no-match outputs onward (as `DFT_LookupAndAggregate` and
+  `SyntheticLookupSplit` both do) is a named gap, not half-generated output.
+- `TransformEmitter.LookupJoinSpec`: a Lookup-added column resolves to
+  `lookup[row.{input}].{referenceColumn}`, and the transform gains a primary-constructor parameter
+  for the cache. Indexer rather than `TryGetValue` on purpose — a full-cache Lookup with no routed
+  no-match output fails the component on a miss, so throwing is the faithful translation.
+- `ProgramEmitter.LookupPreload`: the reference table is loaded **once at Program.cs top level**
+  (`await {Cache}.LoadAsync<TKey>(...)`) before any registration. `IRowTransform.Map` is
+  synchronous, so a full cache must be materialized up front anyway; top-level statements can just
+  `await`, which needs **no new Etl.Core abstraction and no sync-over-async**, and keeps the load
+  visible in the generated file instead of buried in a lambda that happens to run once.
+
+**Verified, per this project's usual bar:**
+- **New fixture, `SyntheticLookupSingle.dtsx`** (`Ssis.Extract.FixtureBuilder`'s new
+  `lookup-single` mode): OLE DB Source → Lookup (full cache, fail-on-no-match, ONE routed output) →
+  OLE DB Destination. Its reference key column is deliberately named **differently** from the input
+  column (`CountryName` vs `Country`) so the fixture fails if the key is ever guessed by
+  name-matching — which a naive heuristic would have gotten right by accident.
+  **Generated, built against a copy of `Etl.Core` (0 warnings/0 errors), and actually RUN against
+  `.\SQLFORPOC_2022`** — rows read back, not trusted from the exit code: `Canada→CA/North America`,
+  `India→IN/Asia`, and a second `Canada` row resolving identically. Backing tables:
+  `tests/Ssis.Extract.Tests/Fixtures/synthetic-lookup-single-tables.sql`.
+- **One real object-model fact nailed down:** `SetOutputColumnDataTypeProperties` throws
+  `COMException 0xC020401A` on a Lookup output column — the component derives a copied column's type
+  from its reference column, so setting `CopyFromReferenceColumn` is both necessary and sufficient.
+  Same HRESULT and same cause as the `Microsoft.Aggregate` round.
+- **The fallback path proven end to end too**, on `SyntheticLookupSplit.dtsx`: with no decision it
+  gaps; with a confirmed one it applies and generation advances to that flow's NEXT real limitation
+  ("routes 2 outputs onward") rather than repeating a reason that no longer applies; an unconfirmed
+  entry reports `Unconfirmed` and is refused; an entry naming a nonexistent gap reports `Orphaned`.
+- **Zero portfolio regression**: all 5 `SSIS_From_Sandeep` package trees regenerate
+  **byte-identical** to the chunk-1 baseline. `Package_Transforms` still reports the same 2 gaps —
+  its Lookup gate is never even reached, because `PackagePlanner` gaps that flow earlier on the
+  Multicast→Aggregate path.
+- 175/175 in `Ssis.Extract.Codegen.Tests` (was 167), 149/149 in
+  `Ssis.Runtime.Expressions.Tests`, same 3 pre-existing unrelated failures elsewhere. One
+  pre-existing test was updated rather than deleted: it asserted the OLD gap wording; its intent (a
+  Lookup with no resolvable key still gets a cache scaffold and still is not wired) is unchanged.
+
+**Corrected in place, so the wrong claim does not outlive this round:** `LookupCacheEmitter`'s doc
+comment, the Lookup gap message, and `AiPacketEmitter`'s own Tier-1 contract text (which now
+explains that seeing this packet at all means the package lacks the property SSIS normally writes).
+
+**Still not built** (chunks 3-4 plus the newly-named round): Aggregate inside a Multicast branch and
+a two-output Lookup, which together are what `DFT_LookupAndAggregate` actually needs; `--seams` +
+`ssisx apply-fills` for Tier 2; provenance/staleness reporting built out (the hash check exists and
+is tested, but nothing records `EvidenceSha256` into a decisions file automatically yet).
 ## Traps already hit once — don't re-derive these
 
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**

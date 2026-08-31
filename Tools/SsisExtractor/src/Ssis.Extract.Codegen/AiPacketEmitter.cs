@@ -108,9 +108,11 @@ public static class AiPacketEmitter
     };
 
     private const string LookupContract = """
-        The join key this Lookup uses. SSIS does not persist it anywhere in the saved `.dtsx`, which is
-        why this tool refuses to guess -- a wrong key compiles, runs, and silently produces wrong joined
-        data on every row. Identify:
+        The join key this Lookup uses. SSIS normally records it on the joining input column (a
+        `JoinToReferenceColumn` property) and this tool reads it automatically -- you are seeing this
+        packet because THIS Lookup carries no such property, which happens when a package was built
+        programmatically rather than in SSDT. So it has to be supplied, and it will not be guessed: a
+        wrong key compiles, runs, and silently produces wrong joined data on every row. Identify:
 
         1. the INPUT column the Lookup joins on (see the Lookup's own input columns below -- SSIS only
            keeps a column on a Lookup's input if the component actually references it, so this list is
