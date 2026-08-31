@@ -901,7 +901,11 @@ on the joining input column as a JoinToReferenceColumn property (already extract
 Lookup flow now generates with NO human in the loop and the decisions path is only a fallback for a
 Lookup that genuinely declares none; control-flow parallelism is now REPORTED rather than silently
 flattened (2026-08-31) -- a non-blocking advisory naming how many executables SSIS ran concurrently
-and what the package declared, closing an honesty hole rather than adding a capability
+and what the package declared, closing an honesty hole rather than adding a capability; Tier-2 seams
+and `ssisx apply-fills` (chunk 3) added 2026-08-31 -- a Script-Component-produced column becomes a
+`private partial` Fill_ method so an unfilled gap is a COMPILE ERROR (CS8795) instead of a silently
+dropped column, taking RBC_Demo_ETL's own Package from "builds clean while missing 6 columns" to
+"builds clean with all 6 genuinely ported"
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -4763,6 +4767,109 @@ SSIS itself did, auto-committing per task) or escalate to MSDTC. `PreLoadStateme
 global list is a third real restructure. Sized but not started: the honest next step is to time a
 sequential generated run against a hand-parallelized copy before committing to that change, since
 four branches hitting the same database may just move the bottleneck to SQL Server I/O.
+
+
+### AI-assisted gap filling, chunk 3 — Tier-2 seams + `ssisx apply-fills` (2026-08-31)
+
+Chunk 3 of the plan at `C:\Users\yashpal.singh01\.claude\plans\peaceful-percolating-pebble.md`.
+Closes the gap between "it builds" and "it works": before this round `Package` built **clean**
+while silently missing 6 columns two Script Components synthesize. A build succeeding said almost
+nothing. Now it refuses to build until those columns are genuinely accounted for.
+
+**Verified the compiler's own behaviour with a throwaway probe BEFORE designing against it** --
+same "ask the runtime, don't guess" discipline, applied to Roslyn rather than the SSIS object
+model. Both halves confirmed, neither assumed:
+- An unimplemented `private partial` method with a return type is `error CS8795`, **one per
+  seam**, naming the exact method. That is the whole mechanism: a clear, per-column, compile-time
+  refusal instead of a silently dropped column.
+- A second `partial` part supplying the implementation compiles clean under
+  `<Nullable>enable</Nullable>` + `TreatWarningsAsErrors=true`, **including a
+  `static readonly Regex` field** and matching `in RowContext ctx` exactly.
+
+**That second probe is what settles chunk 1's design correction**, and it turned out to be
+load-bearing rather than pedantic: the real `SCR_CleanseCustomerRow` port needs a compiled `Regex`
+field, which a bare method body cannot declare. So the Tier-2 contract is **a partial class
+PART**, not "a method body to paste in" as the original plan assumed.
+
+**What was built:**
+- `TransformRequest.EmitSeams` (optional, default false -- all 7 `TransformEmitter.Emit` call
+  sites keep compiling) plus `--seams` on `ssisx generate`. Opt-in specifically because it
+  deliberately BREAKS the build; nobody's existing pipeline should start failing on an upgrade.
+- `TransformEmitter`: a `ScriptComponentColumn` column becomes
+  `{Col} = Fill_{Col}(row, ctx),` plus `private partial {Type} Fill_{Col}({Row} row, in RowContext ctx);`,
+  and the class gains `partial`. The seam's return type is resolved by **exactly** the rule
+  `EntityEmitter` uses for the property it feeds (nullable-set included) -- a disagreement there
+  would turn a clear CS8795 into a confusing CS0029.
+- `partial` is added **only when a seam actually exists**, so every flow without a Script
+  Component stays byte-identical to before this round.
+- **The gap stays, and stays BLOCKING.** A seam is outstanding work, not a resolution -- its
+  reason changes to name the exact signature and point at `apply-fills`, but
+  `generation-readiness.md` must keep saying the package is not generatable, which is now
+  literally true: it will not compile.
+- New `ssisx apply-fills --out <dir> [--fills <dir>]`, copying `fills/<Package>/*.cs` into
+  `generate/<Package>/Fills/` -- its own folder, so a reviewer can see at a glance which files
+  are not machine-generated. Reads `fills/` and never writes to it, same lifecycle as conformance
+  claims. Exits 3 while any seam is unfilled, 1 on an orphan.
+
+**Refusing is the important half of `apply-fills`, exactly as it was for chunk 2's decisions.** A
+fill implementing a `Fill_*` no gap asked for is reported as ORPHANED and **not copied** --
+verified for real, not just designed: copying it produces a confusing "no defining declaration"
+error two steps later, whereas skipping it keeps the message where the problem is. Unfilled seams
+are listed with their GapIds as "the next build will report one CS8795 each".
+
+**Scope rule, and it is the same one the whole taxonomy rests on: seams are offered ONLY for a
+Script Component.** Its source IS in the `.dtsx`, so porting it is Tier-2 work a human can do.
+Any other unrecognized producer keeps its plain gap, because that is missing TOOL support, and a
+per-package hand-patch there would hide one systemic emitter gap behind N patches. Pinned by its
+own test rather than left as a comment.
+
+**Verified four ways:**
+1. **The real motivating package.** `Package.dtsx` with `--seams`: all 6 real columns become
+   seams with correct CLR types (`string`/`bool`/`DateTime`), and the project fails with **exactly
+   6 CS8795 errors**, one per seam. Ported both Script Components from their own work packets,
+   ran `apply-fills`, rebuilt: **0 warnings / 0 errors**, with the 6 columns genuinely populated.
+   This also **exercised the chunk-1 packet format for real** -- each packet carried the complete
+   authored `main.cs` (not buried among the 9 VSTA-generated files, thanks to chunk 1's triple-
+   parsing correction), which is what made the port unambiguous.
+2. **The whole 5-package deliverable**, `D:\PoC\SSIS_From_Sandeep_Generated`, regenerated with
+   `--seams` + fills applied: `Generated.slnx` builds **0 warnings / 0 errors**. The fills live at
+   `fills/Package/` there as a worked example.
+3. **A new dedicated fixture, run for real.** `SyntheticScriptComponentSeams.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `script-component-seams` mode): OLE DB Source -> Script
+   Component synthesizing `FullName`/`IsValid` -> OLE DB Destination. **Generated, built against a
+   copy of `Etl.Core` (0/0), and actually RUN against `.\SQLFORPOC_2022`** -- rows read back, not
+   trusted from the exit code: `Alice/Smith -> 'Alice Smith'/1`, `'  Bob  '/'  Jones  ' -> 'Bob
+   Jones'/1` (9 chars, no doubled space), `Carol/'   ' -> 'Carol'/0` (LEN=5, **no trailing
+   space**). Both boundaries the ported logic turns on, confirmed by real row content.
+4. **Byte-identical without `--seams`**: all 5 portfolio package trees `diff -r` clean against the
+   pre-round baseline. 182/182 in `Ssis.Extract.Codegen.Tests` (was 179), 149/149 in
+   `Ssis.Runtime.Expressions.Tests`, same 3 pre-existing unrelated failures.
+
+**A new fixture was genuinely necessary, and the reason is this session's own recurring lesson.**
+`SyntheticScriptComponent.dtsx` already exists -- and is useless here: its Script Component is a
+pure PASSTHROUGH that declares no output columns of its own, so it cannot exercise the seam path
+at all. Reusing it and concluding "seams work" would have repeated exactly the mistake that
+produced both of today's format corrections (a fixture that never sets X, treated as evidence
+about X). Checked before building, not after.
+
+**Two real facts worth not re-deriving:**
+- A fixture's OLE DB **Destination** `ReinitializeMetaData()` throws `COMException 0xC0202009` if
+  the target table does not exist yet -- external metadata is resolved against the live database
+  at build time. Create the backing tables BEFORE running the fixture builder. (Every earlier
+  fixture's tables already existed, which is why this had not been hit.)
+- `ssis-fixture-builder`'s argument order is `<output-path> <fixture-name>`, not the reverse.
+
+**Also corrected, since it directly contradicted chunk 2:** `ssisx --help`'s generate section
+still claimed "nothing here reads or writes hand-maintained files the way 'conformance' claims
+do". That stopped being true when `fills/<Package>.decisions.json` landed. Now states plainly
+that `generate/` is disposable while `fills/` is hand-maintained and only ever read.
+
+**Still not built:** the Script Task half of Tier 2 (`ProgramScriptTaskStep` -- a whole
+`ILoadTask`, a different shape from a method seam), so `Package`'s own 2 Script Tasks remain
+gaps; chunk 4 (provenance stamping and staleness reporting -- the hash check exists and is
+tested, but nothing writes `EvidenceSha256` into a fill yet); and Aggregate-inside-a-Multicast-
+branch + a two-output Lookup, which together are what `DFT_LookupAndAggregate` needs to take the
+portfolio to 4/5.
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**

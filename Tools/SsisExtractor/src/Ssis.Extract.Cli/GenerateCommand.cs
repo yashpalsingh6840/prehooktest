@@ -30,6 +30,7 @@ internal static class GenerateCommand
         string? outDir = null;
         var recursive = false;
         string? namespacePrefix = null;
+        var seams = false;
         string? fillsDir = null;
 
         for (var i = 0; i < args.Length; i++)
@@ -42,6 +43,7 @@ internal static class GenerateCommand
                     case "--out": outDir = RequireValue(args, ref i, "--out"); break;
                     case "--recursive": recursive = true; break;
                     case "--namespace-prefix": namespacePrefix = RequireValue(args, ref i, "--namespace-prefix"); break;
+                    case "--seams": seams = true; break;
                     case "--fills": fillsDir = RequireValue(args, ref i, "--fills"); break;
                     default:
                         Console.Error.WriteLine($"error: unknown generate option '{args[i]}'");
@@ -93,7 +95,7 @@ internal static class GenerateCommand
         foreach (var package in loaded.Packages)
         {
             var decisions = LoadDecisions(fillsDir, package.ObjectName);
-            var result = PackageGenerator.Generate(package, namespacePrefix, decisions);
+            var result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams);
             results.Add(result);
             decisionOutcomes.AddRange(decisions.Outcomes.Concat(decisions.Orphans())
                 .Select(o => (package.ObjectName, o)));

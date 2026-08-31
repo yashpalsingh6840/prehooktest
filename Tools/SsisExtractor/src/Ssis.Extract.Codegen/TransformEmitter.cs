@@ -32,7 +32,16 @@ public sealed record TransformRequest(
     // Data Conversion column as unsupported (found real 2026-08-30 testing the gate against
     // RBC_Demo_ETL's own DFT_SortAndMergeJoin).
     bool TrustAllPassthroughColumns = false,
-    LookupJoinSpec? LookupJoin = null);
+    LookupJoinSpec? LookupJoin = null,
+    // --seams. When true, a column produced by a Script Component becomes a `private partial`
+    // Fill_{Column} seam a human implements in a second part of this partial class, instead of
+    // being silently omitted. Opt-in because it deliberately makes the generated project FAIL to
+    // build (CS8795) until every seam is filled -- which is the point: today a package missing
+    // six Script-Component columns still builds clean, so "it compiles" means less than it looks.
+    // Scoped to Script Components only (Tier 2, source present in the .dtsx). Any OTHER
+    // unrecognized producer keeps its plain gap: that is missing TOOL support, and offering a
+    // per-package hand-patch there would hide one systemic emitter gap behind N patches.
+    bool EmitSeams = false);
 
 /// <summary>
 /// How a full-cache Lookup's added columns are resolved, once a human has confirmed the join key
@@ -233,6 +242,9 @@ public static class TransformEmitter
         }
 
         var assignments = new List<string>();
+        // Tier-2 Fill_* declarations (--seams). Empty unless EmitSeams and a Script Component
+        // genuinely produces one of this destination's columns.
+        var seams = new List<string>();
         foreach (var column in resolved.Columns)
         {
             if (computedByName.TryGetValue(column.PipelineColumnName, out var derivedColumn))
@@ -317,6 +329,33 @@ public static class TransformEmitter
             }
             else if (unrecognizedComponentColumns.TryGetValue(column.PipelineColumnName, out var producer))
             {
+                // The destination entity's own property type, resolved by EXACTLY the rule
+                // EntityEmitter uses -- a seam whose return type disagreed with the property it
+                // feeds would turn a clear CS8795 ("fill this in") into a confusing CS0029.
+                var seamIsNullable = request.NullableColumnNames?.Contains(column.PipelineColumnName) ?? false;
+                var seamType = column.Type is null
+                    ? null
+                    : seamIsNullable ? column.Type.ClrTypeName + "?" : column.Type.ClrTypeName;
+
+                if (request.EmitSeams && producer.ScriptComponent is not null && seamType is not null)
+                {
+                    var methodName = $"Fill_{column.ExternalColumnName}";
+                    if (seams.Count > 0) seams.Add("");
+                    seams.Add($"    /// <summary>Buffer column '{column.PipelineColumnName}', produced by Script Component");
+                    seams.Add($"    /// '{producer.Name}'. Work packet: SCRIPT-COLUMN {request.EntityName}.{column.ExternalColumnName}.</summary>");
+                    seams.Add($"    private partial {seamType} {methodName}({request.RowTypeName} row, in RowContext ctx);");
+                    assignments.Add($"        {column.ExternalColumnName} = {methodName}(row, ctx),");
+
+                    // Still a BLOCKING gap, and still reported: a seam is outstanding work, not a
+                    // resolution. generation-readiness.md must keep saying this package is not
+                    // generatable until the fill exists -- which is literally true, it won't build.
+                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                        $"column '{column.PipelineColumnName}' is produced by Script Component '{producer.Name}' -- emitted as a `private partial {seamType} {methodName}({request.RowTypeName} row, in RowContext ctx)` seam. The project will not compile (CS8795) until a second part of '{request.TransformClassName}' implements it; apply one with `ssisx apply-fills`.",
+                        Kind: GapKind.ScriptComponentColumn,
+                        EvidenceRefId: producer.RefId));
+                    continue;
+                }
+
                 gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
                     $"column '{column.PipelineColumnName}' is produced by '{producer.Name}' ({producer.ComponentClassId}), a component type this tool does not translate -- cannot safely generate a passthrough reference. If this is a Script Component, its transform logic must be ported by hand, the same limitation as a Script Task.",
                     // Classified only when the producer really IS a Script Component: its source is
@@ -338,12 +377,12 @@ public static class TransformEmitter
             return new TransformEmitResult(new EmitResult([], gaps), functionsUsed);
         }
 
-        var lines = BuildFile(request, assignments, functionsUsed);
+        var lines = BuildFile(request, assignments, functionsUsed, seams);
         var file = new GeneratedFile($"Mapping/{request.TransformClassName}.cs", Rendering.JoinLines(lines));
         return new TransformEmitResult(new EmitResult([file], gaps), functionsUsed);
     }
 
-    private static List<string> BuildFile(TransformRequest request, List<string> assignments, HashSet<string> functionsUsed)
+    private static List<string> BuildFile(TransformRequest request, List<string> assignments, HashSet<string> functionsUsed, List<string> seams)
     {
         var usesWidthGuard = assignments.Any(a => a.Contains("WidthGuard.Wstr("));
 
@@ -361,15 +400,32 @@ public static class TransformEmitter
         // A Lookup flow's transform takes its preloaded reference cache as a primary-constructor
         // parameter -- Program.cs awaits the load at top level and constructs this directly (see
         // ProgramEmitter's LookupPreload), so there is nothing for DI to resolve here.
+        // `partial` only when there is actually a seam to implement -- so a flow with no Script
+        // Component keeps byte-identical output to before --seams existed.
+        var partial = seams.Count > 0 ? "partial " : "";
+        if (seams.Count > 0)
+        {
+            lines.Add($"/// <summary>Has {seams.Count(s => s.Contains("private partial "))} unimplemented Tier-2 seam(s): column(s) produced by a Script");
+            lines.Add("/// Component, whose logic this tool does not translate. Implement each one in a SECOND");
+            lines.Add("/// PART of this partial class -- a class part, not just a method body, so the port can");
+            lines.Add("/// declare its own fields (a compiled Regex, a lookup table). Until then this project");
+            lines.Add("/// deliberately does NOT compile: CS8795, one error per unfilled seam. Put the part in");
+            lines.Add($"/// fills/&lt;Package&gt;/{request.TransformClassName}.Fills.cs and run `ssisx apply-fills`.</summary>");
+        }
         var declaration = request.LookupJoin is { } join
-            ? $"public sealed class {request.TransformClassName}(Dictionary<{join.KeyClrTypeName}, {join.CacheClassName}.ReferenceRow> {join.CacheParameterName}) : IRowTransform<{request.RowTypeName}, {request.EntityName}>"
-            : $"public sealed class {request.TransformClassName} : IRowTransform<{request.RowTypeName}, {request.EntityName}>";
+            ? $"public sealed {partial}class {request.TransformClassName}(Dictionary<{join.KeyClrTypeName}, {join.CacheClassName}.ReferenceRow> {join.CacheParameterName}) : IRowTransform<{request.RowTypeName}, {request.EntityName}>"
+            : $"public sealed {partial}class {request.TransformClassName} : IRowTransform<{request.RowTypeName}, {request.EntityName}>";
         lines.Add(declaration);
         lines.Add("{");
         lines.Add($"    public {request.EntityName} Map({request.RowTypeName} row, in RowContext ctx) => new()");
         lines.Add("    {");
         lines.AddRange(assignments);
         lines.Add("    };");
+        if (seams.Count > 0)
+        {
+            lines.Add("");
+            lines.AddRange(seams);
+        }
         lines.Add("}");
         return lines;
     }

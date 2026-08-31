@@ -35,7 +35,7 @@ public static partial class PackageGenerator
     /// Optional so every existing caller and test is unaffected; absent or unconfirmed, the gaps
     /// they would have closed are reported exactly as before.
     /// </param>
-    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix, GapDecisions? decisions = null)
+    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix, GapDecisions? decisions = null, bool emitSeams = false)
     {
         decisions ??= GapDecisions.None;
         var ns = namespacePrefix is null ? package.ObjectName : $"{namespacePrefix}.{package.ObjectName}";
@@ -97,7 +97,7 @@ public static partial class PackageGenerator
                     var lookupFlow = GenerateLookupFlow(
                         package, ns, flow, lookup, cacheClassName, resolvedJoinKey, fileSourceEntries, files, tables,
                         functionsUsed, primaryKeysByDestination, gaps,
-                        ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                        ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
                     if (lookupFlow is not null)
                     {
                         wiredFlows[flow] = lookupFlow;
@@ -129,7 +129,7 @@ public static partial class PackageGenerator
             {
                 var aggregateFlow = GenerateAggregateFlow(
                     package, ns, flow, aggregate, fileSourceEntries, files, tables, functionsUsed,
-                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
                 if (aggregateFlow is not null) wiredFlows[flow] = aggregateFlow;
                 continue;
             }
@@ -138,7 +138,7 @@ public static partial class PackageGenerator
             {
                 var splitStep = GenerateConditionalSplitFlow(
                     package, ns, flow, split, fileSourceEntries, files, tables, functionsUsed,
-                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
                 if (splitStep is not null) wiredSplits[flow] = splitStep;
                 continue;
             }
@@ -147,7 +147,7 @@ public static partial class PackageGenerator
             {
                 var mergeJoinFlow = GenerateMergeJoinFlow(
                     package, ns, flow, mergeJoin, fileSourceEntries, files, tables, functionsUsed,
-                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
                 if (mergeJoinFlow is not null) wiredFlows[flow] = mergeJoinFlow;
                 continue;
             }
@@ -156,7 +156,7 @@ public static partial class PackageGenerator
             {
                 var multicastStep = GenerateMulticastFlow(
                     package, ns, flow, multicast, fileSourceEntries, files, tables, functionsUsed,
-                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
                 if (multicastStep is not null) wiredMulticasts[flow] = multicastStep;
                 continue;
             }
@@ -169,7 +169,7 @@ public static partial class PackageGenerator
             {
                 var oleDbCommandStep = GenerateOleDbCommandFlow(
                     package, ns, flow, oleDbCommandPlan, fileSourceEntries, files, gaps,
-                    ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                    ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
                 if (oleDbCommandStep is not null) wiredOleDbCommands[flow] = oleDbCommandStep;
                 continue;
             }
@@ -235,6 +235,7 @@ public static partial class PackageGenerator
             }
 
             var transformResult = TransformEmitter.Emit(new TransformRequest(
+                EmitSeams: emitSeams,
                 MappingNamespace: $"{ns}.Mapping",
                 TransformClassName: transformClassName,
                 RowTypeNamespace: programSource is CsvFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql",
@@ -272,7 +273,7 @@ public static partial class PackageGenerator
         {
             var programLoop = GenerateForEachDataFlowLoop(
                 package, ns, dataFlowLoopStep.Loop, files, tables, functionsUsed,
-                primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase);
+                primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
             if (programLoop is not null) wiredDataFlowLoops[dataFlowLoopStep.Loop] = programLoop;
         }
 
@@ -560,7 +561,8 @@ public static partial class PackageGenerator
         PackageSpec package, string ns, DataFlowPlan flow, MergeJoinPlan mergeJoin,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files,
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination,
-        List<GenerationGap> gaps, ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+        List<GenerationGap> gaps, ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
+        bool emitSeams)
     {
         var entityName = TryResolveEntityName(flow.TaskName, flow.DestinationComponent, gaps);
         if (entityName is null) return null;
@@ -594,6 +596,7 @@ public static partial class PackageGenerator
 
         var transformClassName = entityName + "Transform";
         var transformResult = TransformEmitter.Emit(new TransformRequest(
+            EmitSeams: emitSeams,
             MappingNamespace: $"{ns}.Mapping",
             TransformClassName: transformClassName,
             RowTypeNamespace: $"{ns}.Sql",
@@ -651,7 +654,8 @@ public static partial class PackageGenerator
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files,
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
-        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
+        bool emitSeams)
     {
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
         var defaultDestination = split.Branches[^1].Destination;
@@ -749,6 +753,7 @@ public static partial class PackageGenerator
             derivedColumns.AddRange(branch.DerivedColumns);
 
             var transformResult = TransformEmitter.Emit(new TransformRequest(
+                EmitSeams: emitSeams,
                 MappingNamespace: $"{ns}.Mapping",
                 TransformClassName: branchTransformClassName,
                 RowTypeNamespace: rowTypeNamespace,
@@ -798,7 +803,8 @@ public static partial class PackageGenerator
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files,
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
-        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
+        bool emitSeams)
     {
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
         var defaultDestination = multicast.Branches[^1].Destination;
@@ -886,6 +892,7 @@ public static partial class PackageGenerator
             derivedColumns.AddRange(branch.DerivedColumns);
 
             var transformResult = TransformEmitter.Emit(new TransformRequest(
+                EmitSeams: emitSeams,
                 MappingNamespace: $"{ns}.Mapping",
                 TransformClassName: branchTransformClassName,
                 RowTypeNamespace: rowTypeNamespace,
@@ -940,7 +947,8 @@ public static partial class PackageGenerator
     private static ProgramOleDbCommandStep? GenerateOleDbCommandFlow(
         PackageSpec package, string ns, DataFlowPlan flow, OleDbCommandPlan commandPlan,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GenerationGap> gaps,
-        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
+        bool emitSeams)
     {
         var sourceComponent = flow.OleDbSource ?? flow.ExcelSource ?? flow.FlatFileSource;
         if (sourceComponent is null)
@@ -1056,7 +1064,8 @@ public static partial class PackageGenerator
         (string InputColumn, string ReferenceColumn) joinKey,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
         HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
-        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
+        bool emitSeams)
     {
         if (flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination")
         {
@@ -1132,6 +1141,7 @@ public static partial class PackageGenerator
 
         var transformClassName = entityName + "Transform";
         var transformResult = TransformEmitter.Emit(new TransformRequest(
+            EmitSeams: emitSeams,
             MappingNamespace: $"{ns}.Mapping",
             TransformClassName: transformClassName,
             RowTypeNamespace: rowTypeName.EndsWith("CsvRow", StringComparison.Ordinal) ? $"{ns}.Csv" : $"{ns}.Sql",
@@ -1172,7 +1182,8 @@ public static partial class PackageGenerator
         PackageSpec package, string ns, DataFlowPlan flow, AggregatePlan aggregate,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
         HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
-        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
+        bool emitSeams)
     {
         if (flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination")
         {
@@ -1229,6 +1240,7 @@ public static partial class PackageGenerator
 
         var transformClassName = entityName + "Transform";
         var transformResult = TransformEmitter.Emit(new TransformRequest(
+            EmitSeams: emitSeams,
             MappingNamespace: $"{ns}.Mapping",
             TransformClassName: transformClassName,
             RowTypeNamespace: $"{ns}.Sql",
@@ -1626,7 +1638,8 @@ public static partial class PackageGenerator
         PackageSpec package, string ns, ForEachFileDataFlowPlan loop,
         List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
-        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase)
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
+        bool emitSeams)
     {
         var flow = loop.Flow;
 
@@ -1680,6 +1693,7 @@ public static partial class PackageGenerator
 
         var transformClassName = entityName + "Transform";
         var transformResult = TransformEmitter.Emit(new TransformRequest(
+            EmitSeams: emitSeams,
             MappingNamespace: $"{ns}.Mapping",
             TransformClassName: transformClassName,
             RowTypeNamespace: $"{ns}.Csv",

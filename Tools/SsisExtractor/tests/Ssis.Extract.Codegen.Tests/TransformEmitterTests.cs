@@ -1,3 +1,4 @@
+using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Pipeline;
 
 namespace Ssis.Extract.Codegen.Tests;
@@ -444,7 +445,101 @@ public class TransformEmitterTests
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }
 
-    private static (PipelineComponentSpec ScriptComponent, PipelineComponentSpec Destination) BuildScriptComponentPassthroughShape()
+
+    [Fact]
+    public void Emit_EmitsASeam_ForAScriptComponentColumn_WhenSeamsAreEnabled()
+    {
+        // The same real shape as the test above -- but with --seams, the column stops being
+        // silently omitted and becomes a Fill_* a human implements. The class turns partial and
+        // the project stops compiling until they do, which is the whole point.
+        var (scriptComponent, destination) = BuildScriptComponentPassthroughShape(withScriptComponentPayload: true);
+        var pipeline = new PipelineSpec { Components = [scriptComponent, destination] };
+
+        var request = new TransformRequest(
+            "Generated.Mapping", "StagingCustomersTransform",
+            "Generated.Csv", "StagingCustomersCsvRow",
+            "Generated.Model", "StagingCustomers",
+            "Generated.Ssis",
+            pipeline, [], destination,
+            EmitSeams: true);
+
+        var result = TransformEmitter.Emit(request);
+        var file = Assert.Single(result.Result.Files);
+
+        Assert.Contains("public sealed partial class StagingCustomersTransform", file.Content);
+        Assert.Contains("FullName = Fill_FullName(row, ctx),", file.Content);
+        Assert.Contains("private partial string Fill_FullName(StagingCustomersCsvRow row, in RowContext ctx);", file.Content);
+        // The genuinely-passthrough column is unaffected.
+        Assert.Contains("CustomerID = row.CustomerID,", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+
+        // A seam is outstanding work, not a resolution: the gap stays, stays BLOCKING, and keeps
+        // its Tier-2 classification so the work packet is still produced.
+        var gap = Assert.Single(result.Result.Gaps);
+        Assert.Equal("StagingCustomers.FullName", gap.Location);
+        Assert.True(gap.IsBlocking);
+        Assert.Equal(GapKind.ScriptComponentColumn, gap.Kind);
+        Assert.Contains("CS8795", gap.Reason);
+    }
+
+    [Fact]
+    public void Emit_DoesNotEmitASeam_ForAnUnrecognizedProducerThatIsNotAScriptComponent()
+    {
+        // The load-bearing scope rule. A Script Component's own source IS in the .dtsx, so
+        // porting it is Tier-2 work a human can do. Any OTHER unrecognized producer is missing
+        // TOOL support -- offering a per-package seam there would invite hand-patching one
+        // systemic emitter gap N times over, which is exactly what GapTier.MissingToolSupport
+        // exists to keep visible as a single fix.
+        var (producer, destination) = BuildScriptComponentPassthroughShape(withScriptComponentPayload: false);
+        var pipeline = new PipelineSpec { Components = [producer, destination] };
+
+        var request = new TransformRequest(
+            "Generated.Mapping", "StagingCustomersTransform",
+            "Generated.Csv", "StagingCustomersCsvRow",
+            "Generated.Model", "StagingCustomers",
+            "Generated.Ssis",
+            pipeline, [], destination,
+            EmitSeams: true);
+
+        var result = TransformEmitter.Emit(request);
+        var file = Assert.Single(result.Result.Files);
+
+        Assert.DoesNotContain("partial", file.Content);
+        Assert.DoesNotContain("Fill_", file.Content);
+        Assert.DoesNotContain("FullName", file.Content);
+
+        var gap = Assert.Single(result.Result.Gaps);
+        Assert.Equal(GapKind.Unclassified, gap.Kind);
+        Assert.DoesNotContain("CS8795", gap.Reason);
+    }
+
+    [Fact]
+    public void Emit_LeavesTheClassNonPartial_WhenSeamsAreEnabledButNothingNeedsOne()
+    {
+        // --seams must be inert for a flow with no Script Component at all: no `partial`, no
+        // behaviour change, byte-identical to running without the flag.
+        var package = TestFixtures.LoadPackage("LoadEmployees.dtsx");
+        var request = new TransformRequest(
+            MappingNamespace: "LoadEmployees.Mapping",
+            TransformClassName: "EmployeeTransform",
+            RowTypeNamespace: "LoadEmployees.Csv",
+            RowTypeName: "EmployeeCsvRow",
+            EntityNamespace: "LoadEmployees.Model",
+            EntityName: "Employee",
+            SsisFnNamespace: "LoadEmployees.Ssis",
+            Pipeline: TestFixtures.FindPipeline(package, "DFT_LoadEmployees"),
+            DerivedColumns: [TestFixtures.FindComponent(package, "Microsoft.DerivedColumn", "DER_MergeColumns")],
+            DestinationComponent: TestFixtures.FindComponent(package, "Microsoft.OLEDBDestination", "OLEDST_Employee"));
+
+        var withoutSeams = TransformEmitter.Emit(request);
+        var withSeams = TransformEmitter.Emit(request with { EmitSeams = true });
+
+        Assert.Equal(
+            Assert.Single(withoutSeams.Result.Files).Content,
+            Assert.Single(withSeams.Result.Files).Content);
+        Assert.DoesNotContain("partial", Assert.Single(withSeams.Result.Files).Content);
+    }
+    private static (PipelineComponentSpec ScriptComponent, PipelineComponentSpec Destination) BuildScriptComponentPassthroughShape(bool withScriptComponentPayload = false)
     {
         // Mirrors the real shape RBC_Demo_ETL's own Package.dtsx/DFT_LoadCustomers has: a
         // Script Component (Microsoft.ManagedComponentHost -- the same generic discriminator
@@ -456,6 +551,9 @@ public class TransformEmitterTests
             RefId = "SCR_Test",
             Name = "SCR_CleanseCustomerRow",
             ComponentClassId = "Microsoft.ManagedComponentHost",
+            // A real Script Component carries this payload; an unrecognized producer that is NOT
+            // one leaves it null, which is what keeps a Tier-3 gap out of the seam path.
+            ScriptComponent = withScriptComponentPayload ? new ScriptComponentPayload { Language = "CSharp" } : null,
             Outputs =
             [
                 new PipelineOutputSpec

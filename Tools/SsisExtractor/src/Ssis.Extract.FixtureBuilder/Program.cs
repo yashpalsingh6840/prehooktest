@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams]");
             return 2;
         }
 
@@ -111,6 +111,10 @@ internal static class Program
         if (fixtureName == "findstring-trim")
         {
             return BuildFindStringTrimFixture(args[0]);
+        }
+        if (fixtureName == "script-component-seams")
+        {
+            return BuildScriptComponentSeamsFixture(args[0]);
         }
         if (fixtureName == "ternary")
         {
@@ -160,7 +164,7 @@ internal static class Program
         {
             return BuildIntNumericCoercionFixture(args[0]);
         }
-        if (fixtureName == "data-conversion-types2")
+        if (fixtureName == "lookup-single")
         {
             return BuildDataConversionTypes2Fixture(args[0]);
         }
@@ -194,7 +198,7 @@ internal static class Program
         }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', or 'data-conversion-types2'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', or 'script-component-seams'.");
             return 2;
         }
 
@@ -3107,7 +3111,7 @@ internal static class Program
     /// data-conversion-types probe, to confirm IgnoreFailure nulls out on failure the same way.
     ///
     /// Requires the backing tables from
-    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-data-conversion-types2-tables.sql</c>
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-lookup-single-tables.sql</c>
     /// already created on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
     /// </summary>
     private static int BuildDataConversionTypes2Fixture(string outputPath)
@@ -3395,6 +3399,119 @@ internal static class Program
         {
             inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
         }
+
+        return meta;
+    }
+
+    /// <summary>
+    /// OLE DB Source -> Script Component -> OLE DB Destination, where the Script Component
+    /// genuinely SYNTHESIZES two new output columns (FullName, IsValid) that exist nowhere on
+    /// its input -- the shape RBC_Demo_ETL's own SCR_CleanseCustomerRow has, and the one
+    /// `ssisx generate --seams` exists for.
+    ///
+    /// Deliberately NOT reusing SyntheticScriptComponent.dtsx: that fixture's Script Component is
+    /// a pure PASSTHROUGH and declares no output columns of its own, so it cannot exercise the
+    /// seam path at all. Assuming otherwise would repeat this project's own twice-made mistake of
+    /// treating a fixture that never sets X as evidence about X (see CLAUDE.md 2026-08-31).
+    /// </summary>
+    private static int BuildScriptComponentSeamsFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticScriptComponentSeams" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, FirstName, LastName FROM dbo.SyntheticScriptSeamsInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var scriptMeta = BuildSynthesizingScriptComponent(pipe, "SCR_Cleanse", mainOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticScriptSeamsTarget]");
+        AttachPath(pipe, scriptMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Like <see cref="BuildPassthroughScriptComponent"/> (same UserComponentTypeName-before-
+    /// Instantiate() ordering rule, same bypass of the VSTA editor), but additionally declares
+    /// two output columns of its own so downstream components reference values no upstream
+    /// component produces.
+    ///
+    /// <c>SourceCode</c> is written as a real (file name, encoding, content) TRIPLE, matching the
+    /// layout confirmed 2026-08-31 from a genuine SSDT-authored Script Component -- so
+    /// AiPacketEmitter's own triple parser sees a realistic array here rather than one it has to
+    /// reject as misaligned.
+    /// </summary>
+    private static IDTSComponentMetaData100 BuildSynthesizingScriptComponent(MainPipe pipe, string name, IDTSOutput100 upstreamOutput)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.ManagedComponentHost";
+
+        var seedProp = meta.CustomPropertyCollection.New();
+        seedProp.Name = "UserComponentTypeName";
+        seedProp.Value = "Microsoft.ScriptComponentHost";
+
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties();
+        meta.Name = name;
+
+        SetCustomProperty(meta, "SourceCode", new[]
+        {
+            "main.cs",
+            "UTF8",
+            string.Join("\r\n",
+                "using System;",
+                "using Microsoft.SqlServer.Dts.Pipeline;",
+                "",
+                "[SSISScriptComponentEntryPoint]",
+                "public class ScriptMain : UserComponent",
+                "{",
+                "    public override void Input0_ProcessInputRow(Input0Buffer Row)",
+                "    {",
+                "        // Trim both parts, join with a single space, and drop a trailing space",
+                "        // when LastName is empty -- the same shape as the real",
+                "        // SCR_CleanseCustomerRow this fixture stands in for.",
+                "        Row.FullName = ((Row.FirstName ?? \"\").Trim() + \" \" + (Row.LastName ?? \"\").Trim()).Trim();",
+                "",
+                "        // A row is valid only when BOTH name parts are non-empty after trimming.",
+                "        Row.IsValid = (Row.FirstName ?? \"\").Trim().Length > 0",
+                "                   && (Row.LastName ?? \"\").Trim().Length > 0;",
+                "    }",
+                "}"),
+        });
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        // The synthesized columns. DT_WSTR's codepage argument must be 0, not 1252 -- 1252 is
+        // DT_STR's non-Unicode convention and throws 0xC0204025 here (already documented in
+        // CLAUDE.md for the Union All round; reconfirmed on this component type).
+        var output = meta.OutputCollection[0];
+        var fullName = inst.InsertOutputColumnAt(output.ID, output.OutputColumnCollection.Count, "FullName", "");
+        inst.SetOutputColumnDataTypeProperties(output.ID, fullName.ID, DataType.DT_WSTR, 100, 0, 0, 0);
+        var isValid = inst.InsertOutputColumnAt(output.ID, output.OutputColumnCollection.Count, "IsValid", "");
+        inst.SetOutputColumnDataTypeProperties(output.ID, isValid.ID, DataType.DT_BOOL, 0, 0, 0, 0);
 
         return meta;
     }
