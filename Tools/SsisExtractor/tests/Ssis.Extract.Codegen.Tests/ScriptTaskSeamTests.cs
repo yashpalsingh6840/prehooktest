@@ -108,49 +108,9 @@ public class ScriptTaskSeamTests
         // wrong order, not merely more slowly or not at all.
         Assert.True(gap.IsBlocking);
     }
-
-    [Fact]
-    public void Plan_ReportsAConditionalPrecedenceConstraint_RatherThanRunningItUnconditionally()
-    {
-        // Both attributes have always been extracted and read by nothing -- the same shape as the
-        // disabled-executable bug. Values are the real GAC enums, read by reflection rather than
-        // guessed: DTSExecResult.Failure = 1, DTSPrecedenceEvalOp.ExpressionAndConstraint = 3
-        // (note the two enums do not share a numbering base, hence not assuming).
-        var package = new PackageSpec
-        {
-            ObjectName = "P",
-            SourceDtsxPath = "P.dtsx",
-            Sha256 = "",
-            FileSizeBytes = 0,
-            LastWriteTimeUtc = default,
-            ProtectionLevelRaw = 0,
-            ProtectionLevelName = "DontSaveSensitive",
-            Coverage = new CoverageStats { TotalElements = 0, UnmappedElements = 0, ExcludedElements = 0, CoveragePercent = 100 },
-            PrecedenceConstraints =
-            [
-                new PrecedenceConstraintSpec { From = @"Package\A", To = @"Package\B", Value = "1" },
-                new PrecedenceConstraintSpec
-                {
-                    From = @"Package\B", To = @"Package\C",
-                    EvalOp = "3", Expression = "@[User::Rows] > 0",
-                },
-                // The unconditional default: absent Value/EvalOp must stay silent, or every
-                // ordinary package in a portfolio picks up noise.
-                new PrecedenceConstraintSpec { From = @"Package\C", To = @"Package\D" },
-            ],
-        };
-
-        var plan = PackagePlanner.Plan(package);
-        var constraintGaps = plan.Gaps.Where(g => g.Location.EndsWith(".Constraint")).ToList();
-
-        Assert.Equal(2, constraintGaps.Count);
-
-        var failure = Assert.Single(constraintGaps, g => g.Location == "P.A-B.Constraint");
-        Assert.Contains("only when the preceding executable FAILS", failure.Reason);
-        Assert.True(failure.IsBlocking);
-
-        var expression = Assert.Single(constraintGaps, g => g.Location == "P.B-C.Constraint");
-        Assert.Contains("@[User::Rows] > 0", expression.Reason);
-        Assert.Contains("ALSO true", expression.Reason);
-    }
+    // Plan_ReportsAConditionalPrecedenceConstraint_... used to live here, because conditional
+    // precedence constraints were DISCOVERED while building Script Task seams. They now have their
+    // own feature and their own file: ConditionalConstraintTests covers all five unsupported forms
+    // (this covered two), the unconditional defaults, the translated form, and the guard that never
+    // reaches a step -- so keeping a narrower copy here would only be a second thing to update.
 }

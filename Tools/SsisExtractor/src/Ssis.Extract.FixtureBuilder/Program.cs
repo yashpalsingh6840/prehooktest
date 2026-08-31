@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard]");
             return 2;
         }
 
@@ -164,7 +164,7 @@ internal static class Program
         {
             return BuildIntNumericCoercionFixture(args[0]);
         }
-        if (fixtureName == "lookup-single")
+        if (fixtureName == "data-conversion-types2")
         {
             return BuildDataConversionTypes2Fixture(args[0]);
         }
@@ -208,9 +208,17 @@ internal static class Program
         {
             return BuildScriptTaskHoistInversionFixture(args[0]);
         }
+        if (fixtureName == "cond-constraint")
+        {
+            return BuildCondConstraintProbeFixture(args[0]);
+        }
+        if (fixtureName == "cond-guard")
+        {
+            return BuildCondGuardFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', or 'script-task-hoist-inversion'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', or 'cond-guard'.");
             return 2;
         }
 
@@ -3734,5 +3742,174 @@ internal static class Program
         // reason SyntheticParallelShapes' own Script Component needs it (see report-schema.md).
         host.DelayValidation = true;
         return host;
+    }
+
+    /// <summary>
+    /// The conditional-precedence-constraint PROBE. Its only job is to let a real dtexec run
+    /// answer questions no documentation this project trusts answers precisely, before any
+    /// generator code is written against them -- the same probe-first discipline as the
+    /// numeric-coercion and Data Conversion rounds.
+    ///
+    /// One chain, seven successors, all hanging off the SAME node so ONE run measures every edge
+    /// kind at once:
+    ///
+    ///   SQL_Reset -> SQL_Body -> { Success | Failure | Completion
+    ///                            | Expression(true) | Expression(false)
+    ///                            | ExpressionAndConstraint(Success, true)
+    ///                            | ExpressionOrConstraint(Failure, false) }
+    ///
+    /// Each successor writes its own marker row, so what ran is read back from the table rather
+    /// than inferred from console output. Every successor has exactly ONE incoming constraint,
+    /// which keeps DTS:LogicalAnd (the AND/OR combination of MULTIPLE incoming constraints)
+    /// entirely out of the measurement -- as does RBC_Demo_ETL's own real package.
+    ///
+    /// SQL_Body raises an error only when dbo.SyntheticCondConstraintControl.ShouldFail = 1, so
+    /// the SUCCESS and FAILURE runs are the same fixture with one row flipped between them --
+    /// no rebuild, and nothing else varying.
+    ///
+    /// User::ProbeRows is a literal 0, so "== 0" is always true and "&gt; 0" always false. That
+    /// deliberately needs no mechanism to POPULATE a variable at run time (a result-set mapping
+    /// would be a second unmeasured thing in the same probe), while still exercising both
+    /// outcomes of expression evaluation in a single run.
+    /// Backing tables: tests/Ssis.Extract.Tests/Fixtures/synthetic-cond-constraint-tables.sql.
+    /// </summary>
+    private static int BuildCondConstraintProbeFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticCondConstraint" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        pkg.Variables.Add("ProbeRows", false, "User", 0);
+
+        var reset = AddExecuteSql(pkg, "SQL_Reset", sqlCm,
+            "DELETE FROM dbo.SyntheticCondConstraintLog;");
+
+        var body = AddExecuteSql(pkg, "SQL_Body", sqlCm,
+            "INSERT dbo.SyntheticCondConstraintLog (Marker) VALUES (N'body');\n" +
+            "IF (SELECT ShouldFail FROM dbo.SyntheticCondConstraintControl) = 1\n" +
+            "    RAISERROR ('probe-forced-failure', 16, 1);");
+
+        pkg.PrecedenceConstraints.Add((Executable)reset, (Executable)body);
+
+        void Successor(string name, string marker, Action<Microsoft.SqlServer.Dts.Runtime.PrecedenceConstraint> configure)
+        {
+            var task = AddExecuteSql(pkg, name, sqlCm,
+                $"INSERT dbo.SyntheticCondConstraintLog (Marker) VALUES (N'{marker}');");
+            configure(pkg.PrecedenceConstraints.Add((Executable)body, (Executable)task));
+        }
+
+        Successor("SQL_OnSuccess", "on-success", pc => pc.Value = Microsoft.SqlServer.Dts.Runtime.DTSExecResult.Success);
+        Successor("SQL_OnFailure", "on-failure", pc => pc.Value = Microsoft.SqlServer.Dts.Runtime.DTSExecResult.Failure);
+        Successor("SQL_OnCompletion", "on-completion", pc => pc.Value = Microsoft.SqlServer.Dts.Runtime.DTSExecResult.Completion);
+
+        Successor("SQL_ExprTrue", "expr-true", pc =>
+        {
+            pc.EvalOp = Microsoft.SqlServer.Dts.Runtime.DTSPrecedenceEvalOp.Expression;
+            pc.Expression = "@[User::ProbeRows] == 0";
+        });
+        Successor("SQL_ExprFalse", "expr-false", pc =>
+        {
+            pc.EvalOp = Microsoft.SqlServer.Dts.Runtime.DTSPrecedenceEvalOp.Expression;
+            pc.Expression = "@[User::ProbeRows] > 0";
+        });
+        Successor("SQL_ExprAndSuccess", "expr-and-success", pc =>
+        {
+            pc.EvalOp = Microsoft.SqlServer.Dts.Runtime.DTSPrecedenceEvalOp.ExpressionAndConstraint;
+            pc.Value = Microsoft.SqlServer.Dts.Runtime.DTSExecResult.Success;
+            pc.Expression = "@[User::ProbeRows] == 0";
+        });
+        Successor("SQL_ExprOrFailure", "expr-or-failure", pc =>
+        {
+            pc.EvalOp = Microsoft.SqlServer.Dts.Runtime.DTSPrecedenceEvalOp.ExpressionOrConstraint;
+            pc.Value = Microsoft.SqlServer.Dts.Runtime.DTSExecResult.Failure;
+            pc.Expression = "@[User::ProbeRows] > 0";
+        });
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// SQL_Reset -> SCR_SetRows -> DFT_Load -> three CONDITIONALLY gated Execute SQL Tasks, the
+    /// shape that exercises a translated conditional precedence constraint end to end:
+    ///
+    ///  - all three gates are <c>EvalOp=ExpressionAndConstraint</c> with the constraint half left at
+    ///    Success -- the one form the probe measured as reproducible under PackageRunner's single
+    ///    whole-package transaction, and the real evidenced form (RBC_Demo_ETL's own
+    ///    SCR_NotifyAndLogProgress -> DFT_BuildSalesSummary).
+    ///  - SQL_GateTrue's condition reads a variable at its DESIGN-TIME default, so it proves the
+    ///    generated seeding is what makes the default hold rather than Get&lt;T&gt;'s fallback
+    ///    silently agreeing by luck.
+    ///  - SQL_GateFalse must NOT run. A fixture where every gate fires would pass just as well with
+    ///    the condition ignored entirely, which is the bug being guarded against.
+    ///  - SQL_GateFromScript's condition reads User::RowsLoaded, which the Script Task WRITES.
+    ///    That is the real package's own composition, and the reason PackageVariables had to exist
+    ///    before this round was possible: a guard reading what a ported Script Task set.
+    ///
+    /// Deliberately gates Execute SQL Tasks rather than a second Data Flow Task: the gated-flow case
+    /// is already proven directly on the real Package.dtsx (its DFT_BuildSalesSummary is wrapped),
+    /// and a second flow here would need another source/destination pair for nothing this fixture
+    /// does not already show.
+    /// Backing tables: tests/Ssis.Extract.Tests/Fixtures/synthetic-cond-guard-tables.sql.
+    /// </summary>
+    private static int BuildCondGuardFixture(string outputPath)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-cond-guard-csv", "SyntheticCondGuard.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticCondGuard" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_CondGuardCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 50, 0, 0));
+
+        // Declared for real, so the extracted design-time default (and the generated seed) is
+        // genuine rather than a value this builder asserted.
+        pkg.Variables.Add("Threshold", false, "User", 0);
+        var rowsLoaded = pkg.Variables.Add("RowsLoaded", false, "User", 0);
+
+        var reset = AddExecuteSql(pkg, "SQL_Reset", sqlCm,
+            "TRUNCATE TABLE dbo.SyntheticCondGuardTarget; DELETE FROM dbo.SyntheticCondGuardLog;");
+
+        var setRows = AddScriptTask(pkg, "SCR_SetRows", readWriteVariables: rowsLoaded.QualifiedName);
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        BuildFlatFileToOleDbLoad((MainPipe)dftHost.InnerObject, csvCm, sqlCm, "[dbo].[SyntheticCondGuardTarget]");
+
+        pkg.PrecedenceConstraints.Add((Executable)reset, (Executable)setRows);
+        pkg.PrecedenceConstraints.Add((Executable)setRows, dftHost);
+
+        void Gate(string name, string marker, string expression)
+        {
+            var task = AddExecuteSql(pkg, name, sqlCm,
+                $"INSERT dbo.SyntheticCondGuardLog (Marker) VALUES (N'{marker}');");
+            var pc = pkg.PrecedenceConstraints.Add(dftHost, (Executable)task);
+            pc.EvalOp = Microsoft.SqlServer.Dts.Runtime.DTSPrecedenceEvalOp.ExpressionAndConstraint;
+            pc.Expression = expression;
+        }
+
+        Gate("SQL_GateTrue", "gate-true", "@[User::Threshold] == 0");
+        Gate("SQL_GateFalse", "gate-false", "@[User::Threshold] > 0");
+        Gate("SQL_GateFromScript", "gate-from-script", "@[User::RowsLoaded] > 0");
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
     }
 }

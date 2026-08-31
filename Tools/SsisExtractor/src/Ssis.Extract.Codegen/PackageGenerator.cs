@@ -300,6 +300,7 @@ public static partial class PackageGenerator
         var programSteps = new List<ProgramStep>();
         foreach (var step in plan.Steps)
         {
+            var programStepsBefore = programSteps.Count;
             switch (step)
             {
                 case FlowStep { Flow: var flow } when wiredFlows.TryGetValue(flow, out var programFlow):
@@ -342,6 +343,16 @@ public static partial class PackageGenerator
                     programSteps.Add(programDataFlowLoop);
                     break;
             }
+
+            // Carried across rather than re-derived, and applied here rather than in each case
+            // above so no per-kind branch needs to know guards exist. A step whose own gate failed
+            // contributes no program step at all, in which case there is nothing to gate -- the
+            // guard is not silently lost either, since that flow already reported its own gap.
+            if (step.Guard is { } guard && programSteps.Count == programStepsBefore + 1)
+                programSteps[^1] = programSteps[^1] with
+                {
+                    Guard = new ProgramStepGuard(guard.SsisExpression, guard.CSharpPredicate),
+                };
         }
 
         if (wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0 || wiredDataFlowLoops.Count > 0)
@@ -352,7 +363,10 @@ public static partial class PackageGenerator
                 DbContextTypeName: $"{package.ObjectName}DbContext",
                 PreLoadStatements: plan.PreLoadStatements,
                 PreLoadFileActions: plan.PreLoadFileActions,
-                Steps: programSteps)));
+                Steps: programSteps)
+            {
+                VariableSeeds = plan.VariableSeeds,
+            }));
 
             if (authMode is null)
             {

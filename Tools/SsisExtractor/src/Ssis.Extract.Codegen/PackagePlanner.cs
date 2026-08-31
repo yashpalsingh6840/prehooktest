@@ -1,3 +1,4 @@
+using Ssis.Runtime.Expressions;
 using Ssis.Extract.Dtsx;
 using Ssis.Extract.Model.Package;
 using Ssis.Extract.Model.Pipeline;
@@ -213,7 +214,30 @@ public sealed record ForEachFileDataFlowPlan(
 /// Flow Task -- unlike a one-shot SQL/File System task, a repeating loop has no one-shot
 /// "pre-load" equivalent list to be hoisted into, the same reasoning <see cref="FlowStep"/>
 /// itself is never hoisted either.</summary>
-public abstract record PackageStep;
+public abstract record PackageStep
+{
+    /// <summary>Non-null when a conditional precedence constraint gates this step -- see
+    /// <see cref="PackagePlanner.ResolveConditionalConstraints"/>. An init property on the base
+    /// record rather than a wrapper record or a per-kind field: a guard is orthogonal to what the
+    /// step does (SSIS puts the condition on the EDGE, not the task), and every existing
+    /// construction site stays unchanged because it defaults to null.</summary>
+    public StepGuard? Guard { get; init; }
+}
+
+/// <summary>
+/// A translated conditional precedence constraint: the raw SSIS expression (carried so generated
+/// code can log what it evaluated) and the C# predicate body over a <c>PackageVariables</c>
+/// parameter named <c>v</c>, plus the design-time defaults of every variable it reads.
+/// </summary>
+public sealed record StepGuard(
+    string SsisExpression, string CSharpPredicate, IReadOnlyList<PackageVariableSeed> Seeds);
+
+/// <summary>One package variable's design-time default, so generated code starts from the same
+/// value SSIS would have before anything assigns it. Without this a guard reading a variable no
+/// ported Script Task has set yet would silently get <c>default(T)</c> instead of the value
+/// declared in the .dtsx.</summary>
+public sealed record PackageVariableSeed(string SsisName, string ClrTypeName, string CSharpLiteral);
+
 public sealed record FlowStep(DataFlowPlan Flow) : PackageStep;
 public sealed record SqlStep(string TaskName, string Sql) : PackageStep;
 public sealed record FileSystemStep(string TaskName, FileSystemActionPlan Action) : PackageStep;
@@ -230,7 +254,13 @@ public sealed record PackagePlan(
     List<FileSystemActionPlan> PreLoadFileActions,
     List<DataFlowPlan> Flows,
     List<PackageStep> Steps,
-    List<GenerationGap> Gaps);
+    List<GenerationGap> Gaps)
+{
+    /// <summary>Design-time defaults of every package variable a step guard reads, so generated
+    /// code starts from the same value SSIS would have before anything assigns it. Deduplicated
+    /// and ordinal-sorted, so repeated builds emit identical text.</summary>
+    public IReadOnlyList<PackageVariableSeed> VariableSeeds { get; init; } = [];
+}
 
 /// <summary>
 /// Walks one package's whole control-flow tree (<c>package.Executables</c>/<c>package.Dag</c>,
@@ -303,86 +333,297 @@ public static class PackagePlanner
         var flows = new List<DataFlowPlan>();
         var steps = new List<PackageStep>();
 
+        // Resolved BEFORE the walk so each step can be created already carrying its guard --
+        // attaching one afterwards would mean matching steps back to executables, which only
+        // FlowStep/ScriptTaskStep even retain enough identity to do.
+        var guards = ResolveConditionalConstraints(package, gaps);
+        var guardsApplied = new HashSet<string>();
+
         WalkContainer(package.Executables, package.Dag, package.PrecedenceConstraints, package.ConnectionManagers,
-            preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: false, emitSeams: emitSeams);
+            preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: false, emitSeams: emitSeams,
+            guards: guards, guardsApplied: guardsApplied);
 
         ReportParallelismFlattening(package, gaps);
-        ReportConditionalConstraints(package, gaps);
+        ReportUnappliedGuards(package, guards, guardsApplied, gaps);
 
-        return new PackagePlan(preLoadStatements, preLoadFileActions, flows, steps, gaps);
+        var seeds = steps
+            .Where(step => step.Guard is not null)
+            .SelectMany(step => step.Guard!.Seeds)
+            .DistinctBy(seed => seed.SsisName)
+            .OrderBy(seed => seed.SsisName, StringComparer.Ordinal)
+            .ToList();
+
+        return new PackagePlan(preLoadStatements, preLoadFileActions, flows, steps, gaps) { VariableSeeds = seeds };
+    }
+
+    /// <summary>
+    /// A guard that was translated successfully but never reached a step is a silent correctness
+    /// hole, so it is reported rather than dropped. The realistic cause is position, not
+    /// translation: an Execute SQL or File System Task in PRE-LOAD position is hoisted into a flat
+    /// <c>IReadOnlyList&lt;string&gt;</c>/action list that has nowhere to carry a condition, and a
+    /// gated executable inside a ForEach loop body or a disabled subtree never becomes a step at
+    /// all. Without this check such a package would generate code that runs the gated work
+    /// unconditionally while reporting no gap -- exactly the failure class the disabled-executable
+    /// and Script-Component-passthrough bugs both belonged to.
+    /// </summary>
+    private static void ReportUnappliedGuards(
+        PackageSpec package, Dictionary<string, StepGuard> guards, HashSet<string> guardsApplied,
+        List<GenerationGap> gaps)
+    {
+        var packageName = package.ObjectName ?? "package";
+        foreach (var (refId, guard) in guards.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            if (guardsApplied.Contains(refId)) continue;
+            var to = LeafName(refId);
+            gaps.Add(new GenerationGap($"{packageName}.{to}.Constraint",
+                $"'{to}' is gated by a conditional precedence constraint (`{guard.SsisExpression}`) that was " +
+                "translated successfully, but it does not become a step the condition can be attached to -- it is " +
+                "either hoisted into the flat pre-load list (which carries no condition), or inside a loop body or " +
+                "skipped subtree. The condition is NOT applied, so this is reported rather than generated.",
+                Kind: GapKind.ConditionalConstraint));
+        }
     }
 
     /// <summary>
     /// A precedence constraint can be conditional: it fires only on a specific outcome
     /// (<c>DTS:Value</c> -- Success/Failure/Completion) and/or only when an expression is true
-    /// (<c>DTS:EvalOp</c> + <c>DTS:Expression</c>). The generated <c>PackageRunner</c> runs every
-    /// step unconditionally, so a conditional edge means generated code runs work SSIS would have
-    /// skipped -- or, for a Failure edge, work SSIS runs ONLY when something has already gone
-    /// wrong.
+    /// (<c>DTS:EvalOp</c> + <c>DTS:Expression</c>). Found the same way the disabled-executable bug
+    /// was: both attributes have always been extracted and read by nothing in this project.
     ///
-    /// Found the same way the disabled-executable bug was: both attributes have always been
-    /// extracted (<see cref="PrecedenceConstraintSpec.Value"/>/<see cref="PrecedenceConstraintSpec.EvalOp"/>)
-    /// and read by nothing in this project. RBC_Demo_ETL's own Package has one of each --
-    /// <c>DFT_LoadCustomers -&gt; SQL_LogLoadFailure</c> on Failure, and
-    /// <c>SCR_NotifyAndLogProgress -&gt; DFT_BuildSalesSummary</c> gated on
-    /// <c>@[User::RowsLoaded] &gt; 0</c> -- so generated code would write a failure-log row on
-    /// every SUCCESSFUL run and build the sales summary regardless of whether anything loaded.
+    /// <para><b>Exactly one of the seven forms is translated, and which one is a measured
+    /// conclusion, not a convenience.</b> A real dtexec run of the extractor's own
+    /// <c>SyntheticCondConstraint.dtsx</c> probe (one node carrying all seven successor edge kinds,
+    /// run twice with the predecessor forced to succeed and then to fail) measured:</para>
+    /// <list type="bullet">
+    /// <item><c>Value=Success</c> -- ran on success, skipped on failure. The unconditional default.</item>
+    /// <item><c>Value=Failure</c> (1) -- skipped on success, RAN on failure.</item>
+    /// <item><c>Value=Completion</c> (2) -- ran on both.</item>
+    /// <item><c>EvalOp=Expression</c> (1) -- ran whenever the expression was true, on BOTH paths:
+    ///   the outcome constraint really is ignored entirely.</item>
+    /// <item><c>EvalOp=ExpressionAndConstraint</c> (3), constraint half Success -- ran only when the
+    ///   predecessor succeeded AND the expression was true.</item>
+    /// <item><c>EvalOp=ExpressionOrConstraint</c> (4) -- ran when either half held.</item>
+    /// <item>and, critically: with the predecessor failing, the package still returned
+    ///   <c>DTSER_FAILURE</c> (MaximumErrorCount reached) even though its Failure successor ran,
+    ///   and the failing task's own committed work persisted.</item>
+    /// </list>
     ///
-    /// BLOCKING, unlike the parallelism and disabled advisories. Those two produce code that does
-    /// the right work (just sequentially, or minus something SSIS also skipped); this one produces
-    /// code that does the WRONG work. Reported rather than implemented because conditional
-    /// execution is a real feature -- <c>IEtlPackage.Steps</c> is a flat unconditional list, and
-    /// the expression form additionally needs a variable the generated code can only have if the
-    /// Script Task that sets it has been ported.
+    /// <para>Only <c>EvalOp=3</c> with the constraint half at Success never asks for work after a
+    /// failure, so it is the only form <c>PackageRunner</c>'s single whole-package transaction can
+    /// reproduce faithfully -- and it is the real evidenced case (RBC_Demo_ETL's
+    /// <c>SCR_NotifyAndLogProgress</c> to <c>DFT_BuildSalesSummary</c>, gated on
+    /// <c>@[User::RowsLoaded] &gt; 0</c>). Every other form stays a BLOCKING gap whose reason now
+    /// names the measured behaviour rather than a general "not supported".</para>
     ///
-    /// Raw enum values are interpreted from the real GAC enums (<c>DTSExecResult</c>,
-    /// <c>DTSPrecedenceEvalOp</c>), read by reflection rather than guessed -- the two enums use
-    /// different numbering bases, which is exactly the kind of thing this project does not assume.
+    /// <para>Raw enum values are read from the real GAC enums (<c>DTSExecResult</c>,
+    /// <c>DTSPrecedenceEvalOp</c>) by reflection rather than guessed -- they use different numbering
+    /// bases, so "3" means different things depending on which attribute carries it. Note that
+    /// <c>EvalOp=3</c> with the constraint half at Success persists as <c>DTS:EvalOp="3"</c> with NO
+    /// <c>DTS:Value</c> at all (Success = 0 being the omitted schema default), confirmed from both
+    /// the real package and the probe's own saved XML.</para>
     /// </summary>
-    private static void ReportConditionalConstraints(PackageSpec package, List<GenerationGap> gaps)
+    /// <returns>Guards keyed by the refId of the executable each one gates.</returns>
+    internal static Dictionary<string, StepGuard> ResolveConditionalConstraints(
+        PackageSpec package, List<GenerationGap> gaps)
     {
         var packageName = package.ObjectName ?? "package";
+        var guards = new Dictionary<string, StepGuard>();
+        var variables = BuildGuardVariableTable(package);
 
-        Report(package.PrecedenceConstraints);
+        Resolve(package.PrecedenceConstraints);
         foreach (var container in EnumerateContainers(package.Executables))
-            Report(container.PrecedenceConstraints);
+            Resolve(container.PrecedenceConstraints);
 
-        void Report(List<PrecedenceConstraintSpec> constraints)
+        return guards;
+
+        void Resolve(List<PrecedenceConstraintSpec> constraints)
         {
             foreach (var constraint in constraints)
             {
                 // Absent means the schema default, which is the unconditional case for both:
                 // DTSExecResult.Success = 0, DTSPrecedenceEvalOp.Constraint = 2.
-                var outcome = constraint.Value switch
-                {
-                    null or "0" => null,
-                    "1" => "only when the preceding executable FAILS (DTSExecResult.Failure)",
-                    "2" => "on completion, pass or fail (DTSExecResult.Completion)",
-                    var raw => $"only on outcome DTS:Value=\"{raw}\"",
-                };
+                var outcomeIsSuccess = constraint.Value is null or "0";
+                if (outcomeIsSuccess && constraint.EvalOp is null or "2") continue;
 
-                var expression = constraint.EvalOp switch
-                {
-                    null or "2" => null,
-                    "1" => $"only when its expression is true (`{constraint.Expression}`), the constraint itself being ignored",
-                    "3" => $"only when its expression is ALSO true (`{constraint.Expression}`)",
-                    "4" => $"when the constraint holds OR its expression is true (`{constraint.Expression}`)",
-                    var raw => $"conditionally on DTS:EvalOp=\"{raw}\" with expression `{constraint.Expression}`",
-                };
-
-                if (outcome is null && expression is null) continue;
-
-                var conditions = string.Join(", and ", new[] { outcome, expression }.Where(c => c is not null));
                 var from = LeafName(constraint.From);
                 var to = LeafName(constraint.To);
-                gaps.Add(new GenerationGap($"{packageName}.{from}-{to}.Constraint",
-                    $"the precedence constraint '{from}' -> '{to}' fires {conditions}; the generated PackageRunner " +
-                    $"runs every step unconditionally, so '{to}' would run when SSIS would not have run it. " +
-                    "IEtlPackage.Steps is a flat unconditional list -- conditional execution is not generated, and " +
-                    "is not guessed at either."));
+                var location = $"{packageName}.{from}-{to}.Constraint";
+
+                if (constraint.EvalOp != "3" || !outcomeIsSuccess)
+                {
+                    gaps.Add(new GenerationGap(location, UnsupportedFormReason(from, to, constraint),
+                        Kind: GapKind.ConditionalConstraint));
+                    continue;
+                }
+
+                // Two conditional edges into one executable would need DTS:LogicalAnd's own AND/OR
+                // combination semantics, which nothing evidenced exercises and which is not guessed at.
+                if (guards.ContainsKey(constraint.To))
+                {
+                    gaps.Add(new GenerationGap(location,
+                        $"'{to}' is gated by more than one conditional precedence constraint; combining them needs " +
+                        "DTS:LogicalAnd's own AND/OR semantics, which is not evidenced anywhere and is not guessed at.",
+                        Kind: GapKind.ConditionalConstraint));
+                    continue;
+                }
+
+                var translated = TranslateGuardExpression(constraint.Expression, variables);
+                if (translated is GuardOk ok)
+                {
+                    guards[constraint.To] = new StepGuard(constraint.Expression ?? "", ok.CSharpPredicate, ok.Seeds);
+                    continue;
+                }
+
+                gaps.Add(new GenerationGap(location,
+                    $"the precedence constraint '{from}' to '{to}' fires only when the preceding executable succeeds " +
+                    $"AND its expression is true (`{constraint.Expression}`), but that expression " +
+                    $"{((GuardNotTranslatable)translated).Reason}.",
+                    Kind: GapKind.ConditionalConstraint));
             }
         }
     }
+
+    /// <summary>The measured reason a form other than "Success AND expression" is not generated.
+    /// Deliberately specific per form: every one of these was observed running its successor on the
+    /// FAILURE path, which is precisely what a single whole-package transaction cannot express.</summary>
+    private static string UnsupportedFormReason(string from, string to, PrecedenceConstraintSpec constraint)
+    {
+        var head = $"the precedence constraint '{from}' to '{to}' fires ";
+        const string Tail =
+            " Measured against real SSIS (dtexec, SyntheticCondConstraint.dtsx): the successor runs on the FAILURE " +
+            "path, the package still returns DTSER_FAILURE anyway (MaximumErrorCount is reached), and SSIS commits " +
+            "the successor's work. The generated PackageRunner wraps the whole package in ONE transaction and rolls " +
+            "it back on any failure, so it can neither run work after a failure nor commit it -- supporting this " +
+            "needs a failure-handler position outside that transaction. Not guessed at.";
+
+        return constraint switch
+        {
+            { Value: "1", EvalOp: null or "2" } =>
+                head + "only when the preceding executable FAILS (DTSExecResult.Failure)." + Tail,
+            { Value: "2", EvalOp: null or "2" } =>
+                head + "on completion, pass or fail (DTSExecResult.Completion)." + Tail,
+            { EvalOp: "1" } =>
+                head + $"only when its expression is true (`{constraint.Expression}`), the outcome constraint being " +
+                "IGNORED entirely -- so it fires even when the preceding executable failed." + Tail,
+            { EvalOp: "4" } =>
+                head + $"when the outcome constraint holds OR its expression is true (`{constraint.Expression}`)." + Tail,
+            _ =>
+                head + $"conditionally on DTS:Value={constraint.Value ?? "(absent)"}/DTS:EvalOp=" +
+                $"{constraint.EvalOp ?? "(absent)"} with expression `{constraint.Expression}`." + Tail,
+        };
+    }
+
+    private abstract record GuardTranslation;
+    private sealed record GuardOk(string CSharpPredicate, IReadOnlyList<PackageVariableSeed> Seeds) : GuardTranslation;
+    private sealed record GuardNotTranslatable(string Reason) : GuardTranslation;
+
+    /// <summary>
+    /// Translates a constraint expression into a C# predicate over a <c>PackageVariables</c>
+    /// parameter named <c>v</c>.
+    ///
+    /// <para><b>Reuses <see cref="ExpressionTranslator.TranslateCondition"/> rather than adding a
+    /// third translator</b> -- unlike <see cref="ForEachLoopEmitter"/>, which genuinely could not
+    /// (its expression is a STRING-building one with no boolean surface at all). The whole
+    /// comparison surface needed here (ordinal <c>==</c>/<c>!=</c> versus culture-aware
+    /// <c>&lt;</c>/<c>&gt;</c>, numeric-versus-string operand dispatch, and
+    /// <c>&amp;&amp;</c>/<c>||</c>/<c>!</c>) is already oracle-verified against measured SSIS
+    /// behaviour, and re-deriving it for variables would be a second copy of semantics that must
+    /// not drift. The only difference is what a <c>Reference</c> resolves to: a package VARIABLE
+    /// lookup instead of a pipeline buffer column.</para>
+    ///
+    /// <para>A translation that reaches for an <c>SsisFn.*</c> helper or a null test is refused
+    /// rather than emitted. Neither is evidenced in any real constraint expression, and emitting
+    /// either would need wiring this round does not do: an <c>SsisFn</c> call needs
+    /// <c>SsisFnEmitter</c> to emit that helper and <c>Program.cs</c> to carry the using -- exactly
+    /// the latent half-wired hazard that bit <c>RouterEmitter</c> once already -- and a null test
+    /// cannot compile against a non-nullable <c>Get&lt;T&gt;</c> result.</para>
+    /// </summary>
+    private static GuardTranslation TranslateGuardExpression(
+        string? expression, IReadOnlyDictionary<string, GuardVariable> variables)
+    {
+        if (string.IsNullOrWhiteSpace(expression)) return new GuardNotTranslatable("is empty");
+
+        ExprNode root;
+        try
+        {
+            root = Parser.Parse(expression);
+        }
+        catch (Exception ex)
+        {
+            return new GuardNotTranslatable($"could not be parsed ({ex.Message})");
+        }
+
+        var references = variables.ToDictionary(
+            kv => kv.Key,
+            kv => new ColumnReference(GuardVariableAccess(kv.Key, kv.Value), kv.Value.Type));
+
+        var translated = ExpressionTranslator.TranslateCondition(root, references);
+        if (translated is not TranslatedOk ok)
+            return new GuardNotTranslatable(((NotTranslatable)translated).Reason);
+
+        if (ok.CSharpExpression.Contains("SsisFn.") || ok.CSharpExpression.Contains(" is null"))
+            return new GuardNotTranslatable(
+                "needs an SsisFn helper or a null test, neither of which is wired up for a constraint expression");
+
+        var used = variables
+            .Where(kv => ok.CSharpExpression.Contains(GuardVariableAccess(kv.Key, kv.Value), StringComparison.Ordinal))
+            .Select(kv => new PackageVariableSeed(kv.Key, kv.Value.ClrTypeName, kv.Value.CSharpLiteral))
+            .OrderBy(s => s.SsisName, StringComparer.Ordinal)
+            .ToList();
+
+        return new GuardOk(ok.CSharpExpression, used);
+    }
+
+    /// <summary>How a guard reads one variable. <c>v</c> is the predicate lambda's own parameter,
+    /// named in exactly one place so the emitted lambda and this access can never disagree.</summary>
+    private static string GuardVariableAccess(string ssisName, GuardVariable variable) =>
+        $"v.Get<{variable.ClrTypeName}>(\"{ssisName}\")";
+
+    private sealed record GuardVariable(SsisType Type, string ClrTypeName, string CSharpLiteral);
+
+    /// <summary>
+    /// Every package-scoped <c>User::</c> variable a guard could reference, keyed by the qualified
+    /// name the expression parser produces for <c>@[User::X]</c>. A variable whose declared variant
+    /// type has no unambiguous mapping is simply absent, so a guard referencing it degrades to a
+    /// named gap through the ordinary unresolved-reference path rather than a guessed type.
+    /// </summary>
+    private static Dictionary<string, GuardVariable> BuildGuardVariableTable(PackageSpec package)
+    {
+        var table = new Dictionary<string, GuardVariable>(StringComparer.Ordinal);
+        foreach (var variable in package.Variables)
+        {
+            if (variable.Namespace != "User") continue;
+            var mapped = MapVariantType(variable.DeclaredDataTypeName, variable.Value);
+            if (mapped is not null) table[$"{variable.Namespace}::{variable.ObjectName}"] = mapped;
+        }
+        return table;
+    }
+
+    /// <summary>
+    /// A variable's declared variant type (<c>DTS:VariableValue/@DataType</c>, already resolved to a
+    /// name by <c>SsisTypeCodeMaps.VariantDeclaredTypeName</c>) mapped to the CLR type
+    /// <c>PackageVariables.Get&lt;T&gt;</c> is called with, the expression type the shared condition
+    /// translator dispatches on, and a C# literal for the design-time default. Deliberately only
+    /// the types whose literal form is unambiguous: a DateTime default would need a parse and a
+    /// round-trip format decision that nothing evidenced asks for.
+    /// </summary>
+    private static GuardVariable? MapVariantType(string? declaredTypeName, string? designTimeValue) =>
+        declaredTypeName switch
+        {
+            "Int16" => IntegralGuard(SsisType.I2, "short", designTimeValue),
+            "Int32" => IntegralGuard(SsisType.I4, "int", designTimeValue),
+            "Int64" => IntegralGuard(SsisType.I8, "long", designTimeValue),
+            "String" => new GuardVariable(SsisType.WStr, "string",
+                ProgramEmitter.CSharpStringLiteral(designTimeValue ?? "")),
+            "Boolean" => new GuardVariable(SsisType.Bool, "bool",
+                string.Equals(designTimeValue, "True", StringComparison.OrdinalIgnoreCase) ? "true" : "false"),
+            _ => null,
+        };
+
+    private static GuardVariable? IntegralGuard(SsisType type, string clrTypeName, string? designTimeValue) =>
+        long.TryParse(designTimeValue, out var parsed)
+            ? new GuardVariable(type, clrTypeName, clrTypeName == "long" ? $"{parsed}L" : $"{parsed}")
+            : null;
 
     /// <summary>"Package\DFT_LoadCustomers" -> "DFT_LoadCustomers". A constraint's From/To are
     /// package-qualified refId paths; only the leaf reads usefully in a gap message.</summary>
@@ -544,9 +785,20 @@ public static class PackagePlanner
         List<ConnectionManagerSpec> connectionManagers,
         List<string> preLoadStatements, List<FileSystemActionPlan> preLoadFileActions,
         List<DataFlowPlan> flows, List<PackageStep> steps,
-        List<GenerationGap> gaps, bool containerIsPostFlow, bool emitSeams)
+        List<GenerationGap> gaps, bool containerIsPostFlow, bool emitSeams,
+        Dictionary<string, StepGuard> guards, HashSet<string> guardsApplied)
     {
         var byRefId = children.ToDictionary(e => e.RefId);
+
+        // Attaches the conditional-constraint guard gating this executable, if any, and records
+        // that the guard actually reached a step -- ReportUnappliedGuards turns one that never did
+        // into a gap rather than letting the gated work run unconditionally in silence.
+        PackageStep Gated(string refId, PackageStep step)
+        {
+            if (!guards.TryGetValue(refId, out var guard)) return step;
+            guardsApplied.Add(refId);
+            return step with { Guard = guard };
+        }
 
         // dag.TopologicalOrder is empty by design for 0-1 children (that type's own doc
         // comment) -- fall back to declaration order in that case.
@@ -627,7 +879,8 @@ public static class PackagePlanner
             if (executable.ExecutableType == "STOCK:SEQUENCE")
             {
                 var childRanAfterFlow = WalkContainer(executable.Children, executable.Dag, executable.PrecedenceConstraints, connectionManagers,
-                    preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: isPostFlow, emitSeams: emitSeams);
+                    preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: isPostFlow, emitSeams: emitSeams,
+                    guards: guards, guardsApplied: guardsApplied);
                 if (childRanAfterFlow)
                 {
                     flowOrAfter.Add(refId);
@@ -641,7 +894,7 @@ public static class PackagePlanner
                 var loopStep = PlanForEachFileLoop(executable, connectionManagers, gaps);
                 if (loopStep is not null)
                 {
-                    steps.Add(loopStep);
+                    steps.Add(Gated(refId, loopStep));
                     flowOrAfter.Add(refId);
                 }
                 continue;
@@ -657,7 +910,7 @@ public static class PackagePlanner
 
                 if (isPostFlow)
                 {
-                    steps.Add(new SqlStep(executable.ObjectName ?? refId, sqlTask.SqlStatementSource));
+                    steps.Add(Gated(refId, new SqlStep(executable.ObjectName ?? refId, sqlTask.SqlStatementSource)));
                     flowOrAfter.Add(refId);
                 }
                 else
@@ -675,7 +928,7 @@ public static class PackagePlanner
 
                 if (isPostFlow)
                 {
-                    steps.Add(new FileSystemStep(executable.ObjectName ?? refId, action));
+                    steps.Add(Gated(refId, new FileSystemStep(executable.ObjectName ?? refId, action)));
                     flowOrAfter.Add(refId);
                 }
                 else
@@ -692,7 +945,7 @@ public static class PackagePlanner
                 if (flow is not null)
                 {
                     flows.Add(flow);
-                    steps.Add(new FlowStep(flow));
+                    steps.Add(Gated(refId, new FlowStep(flow)));
                     flowOrAfter.Add(refId);
                     sawDataFlowInThisContainer = true;
                 }
@@ -707,7 +960,7 @@ public static class PackagePlanner
             // is what actually matters.
             if (emitSeams && executable.ScriptTask is not null)
             {
-                steps.Add(new ScriptTaskStep(executable));
+                steps.Add(Gated(refId, new ScriptTaskStep(executable)));
 
                 // A ported Script Task's own SQL runs inside the package transaction, so it is
                 // never a "flow" -- but it CAN follow one, and anything after it must still see

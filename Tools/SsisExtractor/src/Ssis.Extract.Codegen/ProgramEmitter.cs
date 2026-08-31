@@ -105,7 +105,19 @@ public sealed record ProgramConditionalSplitBranch(string OutputName, string Ent
 /// <summary>One entry in a package's post-pre-load step sequence, in execution order --
 /// a data flow, an Execute SQL Task or File System Task that runs after at least one data flow,
 /// or a Conditional Split (one source routed to N branches, each its own destination).</summary>
-public abstract record ProgramStep;
+public abstract record ProgramStep
+{
+    /// <summary>Non-null when a conditional precedence constraint gates this step -- carried from
+    /// <c>PackageStep.Guard</c>. Emission wraps the step's own local in an <c>Etl.Core</c>
+    /// <c>ConditionalStep</c>; every per-kind case below is untouched, since which step is gated is
+    /// orthogonal to how that step is constructed.</summary>
+    public ProgramStepGuard? Guard { get; init; }
+}
+
+/// <summary>The raw SSIS constraint expression (emitted so the generated code can log what it
+/// evaluated) and the C# predicate body over the lambda parameter <c>v</c>.</summary>
+public sealed record ProgramStepGuard(string SsisExpression, string CSharpPredicate);
+
 public sealed record ProgramFlowStep(ProgramFlowSpec Flow) : ProgramStep;
 public sealed record ProgramSqlStep(string StepName, string Sql) : ProgramStep;
 
@@ -194,7 +206,13 @@ public sealed record ProgramRequest(
     string DbContextTypeName,
     List<string> PreLoadStatements,
     List<FileSystemActionPlan> PreLoadFileActions,
-    List<ProgramStep> Steps);
+    List<ProgramStep> Steps)
+{
+    /// <summary>Design-time defaults of every package variable a step guard reads, emitted as
+    /// explicit Set calls so the value a guard starts from is visible in the generated file rather
+    /// than being whatever <c>Get&lt;T&gt;</c> happens to fall back to.</summary>
+    public IReadOnlyList<PackageVariableSeed> VariableSeeds { get; init; } = [];
+}
 
 /// <summary>
 /// Emits one package's Program.cs. Always uses the "locals inside the IEtlPackage factory"
@@ -369,13 +387,19 @@ public static class ProgramEmitter
         // User::BatchStartTime and another reading it back). Declared here rather than
         // registered in DI so the sharing is visible in the generated file instead of implied
         // by a lifetime.
-        if (request.Steps.Any(step => step is ProgramScriptTaskStep))
+        // Also emitted when any step is GATED, not just when a Script Task exists: a conditional
+        // precedence constraint's own condition reads variables from this same bag, and a package
+        // can have a gated step with no Script Task at all.
+        if (request.Steps.Any(step => step is ProgramScriptTaskStep || step.Guard is not null))
         {
             lines.Add("    var packageVariables = new PackageVariables();");
+            foreach (var seed in request.VariableSeeds)
+                lines.Add($"    packageVariables.Set(\"{seed.SsisName}\", {seed.CSharpLiteral}); // design-time default from the .dtsx");
             lines.Add("");
         }
         foreach (var step in request.Steps)
         {
+            var localsBefore = orderedLocalNames.Count;
             switch (step)
             {
                 case ProgramFlowStep { Flow: var flow }:
@@ -498,6 +522,24 @@ public static class ProgramEmitter
                     lines.Add($"        sp.GetRequiredService<ILogger<OleDbCommandStep<{cmdStep.RowTypeName}>>>());");
                     lines.Add("");
                     break;
+            }
+
+            // A gated step is wrapped in its own second local rather than inline in the Steps list:
+            // it keeps the wrapper readable, and it works uniformly for every step kind above
+            // without any of them knowing about guards. Every case adds exactly one local, so the
+            // one just added is the step to wrap -- checked rather than assumed.
+            if (step.Guard is { } guard && orderedLocalNames.Count == localsBefore + 1)
+            {
+                var inner = orderedLocalNames[^1];
+                var gatedLocal = $"{inner}Gated";
+                orderedLocalNames[^1] = gatedLocal;
+                lines.Add($"    var {gatedLocal} = new ConditionalStep(");
+                lines.Add($"        {inner},");
+                lines.Add($"        {CSharpStringLiteral(guard.SsisExpression)},");
+                lines.Add($"        v => {guard.CSharpPredicate},");
+                lines.Add("        packageVariables,");
+                lines.Add("        sp.GetRequiredService<ILogger<ConditionalStep>>());");
+                lines.Add("");
             }
         }
         lines.Add("    return new EtlPackage(");

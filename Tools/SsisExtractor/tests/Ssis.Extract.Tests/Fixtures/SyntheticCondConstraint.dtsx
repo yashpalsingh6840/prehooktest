@@ -1,0 +1,256 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:refId="Package"
+  DTS:CreationDate="8/31/2026 3:44:12 PM"
+  DTS:CreationName="Microsoft.Package"
+  DTS:CreatorComputerName="IRIS-CSG-8214"
+  DTS:CreatorName="IRISSOFTWARE\yashpal.singh01"
+  DTS:DTSID="{8CCD662E-73F5-49A5-AFA3-19E6E4157F5E}"
+  DTS:ExecutableType="Microsoft.Package"
+  DTS:LastModifiedProductVersion="16.0.1000.6"
+  DTS:LocaleID="1033"
+  DTS:ObjectName="SyntheticCondConstraint"
+  DTS:ProtectionLevel="0"
+  DTS:VersionGUID="{F56C615A-D5CA-4C27-92E4-629D21E1E34A}">
+  <DTS:Property
+    DTS:Name="PackageFormatVersion">8</DTS:Property>
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_Sql]"
+      DTS:CreationName="OLEDB"
+      DTS:DTSID="{2BB3D033-426C-44DC-BC43-6D2256605265}"
+      DTS:ObjectName="CM_Sql">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectRetryCount="1"
+          DTS:ConnectRetryInterval="5"
+          DTS:ConnectionString="Data Source=.\SQLFORPOC_2022;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Variables>
+    <DTS:Variable
+      DTS:CreationName=""
+      DTS:DTSID="{0CD0C911-C6B9-4243-94C6-3AE7A9B06D4F}"
+      DTS:IncludeInDebugDump="6789"
+      DTS:Namespace="User"
+      DTS:ObjectName="ProbeRows">
+      <DTS:VariableValue
+        DTS:DataType="3">0</DTS:VariableValue>
+    </DTS:Variable>
+  </DTS:Variables>
+  <DTS:Executables>
+    <DTS:Executable
+      DTS:refId="Package\SQL_Body"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:DTSID="{51AA367A-EABA-4F2D-BDC4-8F2C0DF1BEFE}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="SQL_Body"
+      DTS:ThreadHint="0">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{2BB3D033-426C-44DC-BC43-6D2256605265}"
+          SQLTask:SqlStatementSource="INSERT dbo.SyntheticCondConstraintLog (Marker) VALUES (N'body');&#xA;IF (SELECT ShouldFail FROM dbo.SyntheticCondConstraintControl) = 1&#xA;    RAISERROR ('probe-forced-failure', 16, 1);" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\SQL_ExprAndSuccess"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:DTSID="{D5F107AF-A250-4AA0-AA2F-830BE062BDEB}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="SQL_ExprAndSuccess"
+      DTS:ThreadHint="5">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{2BB3D033-426C-44DC-BC43-6D2256605265}"
+          SQLTask:SqlStatementSource="INSERT dbo.SyntheticCondConstraintLog (Marker) VALUES (N'expr-and-success');" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\SQL_ExprFalse"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:DTSID="{83161F5A-A502-4779-9ED7-458C9B67AFA3}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="SQL_ExprFalse"
+      DTS:ThreadHint="4">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{2BB3D033-426C-44DC-BC43-6D2256605265}"
+          SQLTask:SqlStatementSource="INSERT dbo.SyntheticCondConstraintLog (Marker) VALUES (N'expr-false');" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\SQL_ExprOrFailure"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:DTSID="{69E7FC24-5307-4C40-BD69-4335D8E82248}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="SQL_ExprOrFailure"
+      DTS:ThreadHint="6">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{2BB3D033-426C-44DC-BC43-6D2256605265}"
+          SQLTask:SqlStatementSource="INSERT dbo.SyntheticCondConstraintLog (Marker) VALUES (N'expr-or-failure');" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\SQL_ExprTrue"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:DTSID="{2F53F290-ECF6-4643-8B26-BE2589C09222}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="SQL_ExprTrue"
+      DTS:ThreadHint="3">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{2BB3D033-426C-44DC-BC43-6D2256605265}"
+          SQLTask:SqlStatementSource="INSERT dbo.SyntheticCondConstraintLog (Marker) VALUES (N'expr-true');" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\SQL_OnCompletion"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:DTSID="{FE823AFC-B40C-4159-A902-35701B01AE54}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="SQL_OnCompletion"
+      DTS:ThreadHint="2">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{2BB3D033-426C-44DC-BC43-6D2256605265}"
+          SQLTask:SqlStatementSource="INSERT dbo.SyntheticCondConstraintLog (Marker) VALUES (N'on-completion');" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\SQL_OnFailure"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:DTSID="{0CBBD035-0F69-4B39-AE19-D8F57FBE0736}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="SQL_OnFailure"
+      DTS:ThreadHint="1">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{2BB3D033-426C-44DC-BC43-6D2256605265}"
+          SQLTask:SqlStatementSource="INSERT dbo.SyntheticCondConstraintLog (Marker) VALUES (N'on-failure');" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\SQL_OnSuccess"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:DTSID="{BCFC033A-C803-4A0B-8AEB-7505DB36DB38}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="SQL_OnSuccess"
+      DTS:ThreadHint="0">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{2BB3D033-426C-44DC-BC43-6D2256605265}"
+          SQLTask:SqlStatementSource="INSERT dbo.SyntheticCondConstraintLog (Marker) VALUES (N'on-success');" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\SQL_Reset"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:DTSID="{6E1F05D1-0659-4279-B0CA-611ECA18FB21}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="SQL_Reset"
+      DTS:ThreadHint="0">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{2BB3D033-426C-44DC-BC43-6D2256605265}"
+          SQLTask:SqlStatementSource="DELETE FROM dbo.SyntheticCondConstraintLog;" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[{05B7121A-B4E2-4B09-93AB-95EC621F55A4\}]"
+      DTS:CreationName=""
+      DTS:DTSID="{05B7121A-B4E2-4B09-93AB-95EC621F55A4}"
+      DTS:From="Package\SQL_Reset"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="{05B7121A-B4E2-4B09-93AB-95EC621F55A4}"
+      DTS:To="Package\SQL_Body" />
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[{3093A729-244C-47CA-9658-249D5E47D0B8\}]"
+      DTS:CreationName=""
+      DTS:DTSID="{3093A729-244C-47CA-9658-249D5E47D0B8}"
+      DTS:From="Package\SQL_Body"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="{3093A729-244C-47CA-9658-249D5E47D0B8}"
+      DTS:To="Package\SQL_OnSuccess" />
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[{3A3E4CF4-0305-4775-9CE2-009CB0603615\}]"
+      DTS:CreationName=""
+      DTS:DTSID="{3A3E4CF4-0305-4775-9CE2-009CB0603615}"
+      DTS:EvalOp="1"
+      DTS:Expression="@[User::ProbeRows] == 0"
+      DTS:From="Package\SQL_Body"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="{3A3E4CF4-0305-4775-9CE2-009CB0603615}"
+      DTS:To="Package\SQL_ExprTrue" />
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[{53CB18B4-3709-4898-AE24-239494FC90C2\}]"
+      DTS:CreationName=""
+      DTS:DTSID="{53CB18B4-3709-4898-AE24-239494FC90C2}"
+      DTS:From="Package\SQL_Body"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="{53CB18B4-3709-4898-AE24-239494FC90C2}"
+      DTS:To="Package\SQL_OnFailure"
+      DTS:Value="1" />
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[{58D4ABB1-EFE5-4457-9D96-46ACF73686E7\}]"
+      DTS:CreationName=""
+      DTS:DTSID="{58D4ABB1-EFE5-4457-9D96-46ACF73686E7}"
+      DTS:From="Package\SQL_Body"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="{58D4ABB1-EFE5-4457-9D96-46ACF73686E7}"
+      DTS:To="Package\SQL_OnCompletion"
+      DTS:Value="2" />
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[{B6775808-6E0C-4C69-8766-B535CD87B074\}]"
+      DTS:CreationName=""
+      DTS:DTSID="{B6775808-6E0C-4C69-8766-B535CD87B074}"
+      DTS:EvalOp="4"
+      DTS:Expression="@[User::ProbeRows] &gt; 0"
+      DTS:From="Package\SQL_Body"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="{B6775808-6E0C-4C69-8766-B535CD87B074}"
+      DTS:To="Package\SQL_ExprOrFailure"
+      DTS:Value="1" />
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[{E93C8A2A-A888-4306-A820-A5530AEB291A\}]"
+      DTS:CreationName=""
+      DTS:DTSID="{E93C8A2A-A888-4306-A820-A5530AEB291A}"
+      DTS:EvalOp="3"
+      DTS:Expression="@[User::ProbeRows] == 0"
+      DTS:From="Package\SQL_Body"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="{E93C8A2A-A888-4306-A820-A5530AEB291A}"
+      DTS:To="Package\SQL_ExprAndSuccess" />
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[{ED24DCD4-635C-4AE1-9BB5-EB5D644A5C54\}]"
+      DTS:CreationName=""
+      DTS:DTSID="{ED24DCD4-635C-4AE1-9BB5-EB5D644A5C54}"
+      DTS:EvalOp="1"
+      DTS:Expression="@[User::ProbeRows] &gt; 0"
+      DTS:From="Package\SQL_Body"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="{ED24DCD4-635C-4AE1-9BB5-EB5D644A5C54}"
+      DTS:To="Package\SQL_ExprFalse" />
+  </DTS:PrecedenceConstraints>
+</DTS:Executable>

@@ -32,6 +32,12 @@ public enum GapKind
 
     /// <summary>A <c>Microsoft.Lookup</c>'s join key, which SSIS genuinely does not persist anywhere in the saved .dtsx. One missing DATUM; every line of code around it is derivable once it is supplied.</summary>
     LookupJoinKey,
+
+    /// <summary>A conditional precedence constraint (<c>DTS:Value</c> and/or <c>DTS:EvalOp</c>) in a form
+    /// this tool does not generate. Tier 3 by derivation, deliberately: the outcome-based forms need a
+    /// failure-handler position OUTSIDE the generated package transaction, which is one emitter feature
+    /// -- not something a human should hand-patch per package.</summary>
+    ConditionalConstraint,
 }
 
 /// <summary>

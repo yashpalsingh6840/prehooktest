@@ -28,6 +28,7 @@ public static class GapIdentity
         GapKind.ScriptTask => "SCRIPT-TASK",
         GapKind.ScriptComponentColumn => "SCRIPT-COLUMN",
         GapKind.LookupJoinKey => "LOOKUP-JOIN-KEY",
+        GapKind.ConditionalConstraint => "CONSTRAINT",
         _ => "GAP",
     };
 

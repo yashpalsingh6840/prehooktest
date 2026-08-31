@@ -911,7 +911,13 @@ false-positive parallelism advisory, both measured against a real dtexec run rat
 about; the Script Task half of Tier 2 added 2026-08-31 -- a Script Task
 becomes a whole ILoadTask with a RunScriptAsync seam plus a shared PackageVariables, and
 investigating it surfaced TWO more silently-ignored attributes (conditional precedence
-constraints), which keeps the portfolio honestly at 3/5 rather than a wrong 4/5
+constraints), which keeps the portfolio honestly at 3/5 rather than a wrong 4/5; the EXPRESSION half of those
+conditional constraints closed 2026-08-31 -- a real dtexec probe measured all seven edge kinds and
+showed every outcome-based form running its successor on the FAILURE path while the package failed
+anyway, so only `EvalOp=3` (Success AND expression) is reproducible under the single whole-package
+transaction and is now generated as an Etl.Core ConditionalStep decorator, the rest reduced to one
+named emitter feature (a failure-handler position outside that transaction) and the portfolio still
+honestly 3/5
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -5147,6 +5153,171 @@ tested, but nothing writes it into a fill yet); conditional precedence constrain
 above and now what actually blocks `Package`; and Aggregate-inside-a-Multicast-branch + a two-output
 Lookup, which together are what `DFT_LookupAndAggregate` needs. The Script Task half of Tier 2,
 named as open since chunk 3, is now closed.
+
+### Conditional precedence constraints -- one of seven forms, chosen by measurement (2026-08-31)
+
+The gap the Script Task round newly surfaced, and the thing that then actually blocked `Package`.
+`DTS:Value` (outcome) and `DTS:EvalOp`+`DTS:Expression` (guard expression) had always been
+extracted and read by nothing in `Ssis.Extract.Codegen`, so generated code would write
+`Package`'s failure-log row on every SUCCESSFUL run and build its sales summary regardless of
+whether anything loaded.
+
+**A real dtexec probe came first, before any generator code -- and it is the whole reason the
+scope is what it is.** New fixture `tests/Ssis.Extract.Tests/Fixtures/SyntheticCondConstraint.dtsx`
+(`Ssis.Extract.FixtureBuilder`'s new `cond-constraint` mode): ONE node, `SQL_Body`, with SEVEN
+successors hanging off it -- one per edge kind -- each writing its own marker row so what ran is
+read back from a table rather than inferred from console output. Every successor has exactly one
+incoming constraint, which keeps `DTS:LogicalAnd` (the AND/OR combination of MULTIPLE incoming
+constraints) entirely out of the measurement, as does the real package. `SQL_Body` raises an error
+only when a control row says so, so the two runs are the same fixture with one bit flipped and
+nothing else varying. `User::ProbeRows` is a literal `0`, so `== 0` is always true and `> 0`
+always false -- both expression outcomes measured in one run with no mechanism needed to POPULATE
+a variable (which would have been a second unmeasured thing in the same probe).
+
+| Edge | predecessor succeeded | predecessor FAILED |
+|---|---|---|
+| `Value=Success` / absent | ran | skipped |
+| `Value=Failure` (1) | skipped | **ran** |
+| `Value=Completion` (2) | ran | ran |
+| `EvalOp=1` Expression-only, true | ran | **ran** -- the outcome constraint really is ignored |
+| `EvalOp=1` Expression-only, false | skipped | skipped |
+| `EvalOp=3` Success AND true | ran | skipped |
+| `EvalOp=4` Failure OR false | skipped | ran |
+| **package result** | `DTSER_SUCCESS` | **`DTSER_FAILURE`** |
+
+**Two findings drove the design.** A Failure handler running does NOT rescue the package --
+`MaximumErrorCount` was still reached and dtexec returned failure -- and the failing task's own
+`INSERT` PERSISTED, i.e. SSIS committed it. So faithfully translating any outcome-based form needs
+work to run AFTER a failure AND be committed, while `PackageRunner` wraps the whole package in ONE
+transaction and rolls it back on any failure. That is not a small gap to close; it is a
+failure-handler position outside the transaction, and it would trade away the whole-package
+rollback this rewrite deliberately chose over SSIS's per-task auto-commit.
+
+**So exactly one form is generated: `EvalOp=3` (ExpressionAndConstraint) with the constraint half
+at Success** -- "run only if the predecessor succeeded AND this expression is true". It is the only
+form that never asks for work after a failure, and it is the real evidenced case
+(`SCR_NotifyAndLogProgress -> DFT_BuildSalesSummary`, gated on `@[User::RowsLoaded] > 0`). Every
+other form stays a BLOCKING gap whose reason now names the measured behaviour rather than a
+general "not supported" -- including, per-form, that the successor was observed running on the
+failure path. Worth recording: `EvalOp=3` with the constraint half at Success persists as
+`DTS:EvalOp="3"` with NO `DTS:Value` at all (Success = 0 is the omitted schema default), confirmed
+from both the real package and the probe's own saved XML -- so the absence of `DTS:Value` is not
+evidence of an unconditional edge.
+
+**`Etl.Core`:** one new `Pipeline/ConditionalStep.cs`, a DECORATOR rather than a new step kind --
+SSIS puts the condition on the EDGE, not the task, so wrapping keeps every existing `ILoadTask`
+(data flow, Execute SQL, Script Task, ForEach loop, Conditional Split, ...) gateable with no change
+to any of them. `StepResult` gained `bool Skipped { get; init; }` (additive; every existing
+construction site unchanged): a skipped step and a step that ran and moved zero rows are different
+facts, and `(0, 0)` alone cannot tell them apart. It reads the variables LIVE on each run, which is
+what lets a guard see what an earlier ported Script Task wrote.
+
+**Codegen.** `PackageStep`/`ProgramStep` each gained a `Guard` init property on the ABSTRACT record
+-- not a wrapper record, not a per-kind field -- so all ~15 existing construction sites and every
+per-kind emission case stay untouched. Guards are resolved BEFORE the walk (attaching one
+afterwards would mean matching steps back to executables, which only `FlowStep`/`ScriptTaskStep`
+retain enough identity to do) and applied through one `Gated(refId, step)` local in
+`WalkContainer`. Emission wraps the step's own local in a second local
+(`salesSummaryFlowGated`) rather than inline in the `Steps` list, which keeps the generated file
+readable and works uniformly for every step kind.
+
+**The expression translator is REUSED, not rewritten.** `ExpressionTranslator.TranslateCondition`
+already carries the whole comparison surface a constraint needs, oracle-verified against measured
+SSIS behaviour (ordinal `==`/`!=` versus culture-aware `<`/`>`, numeric-vs-string operand dispatch,
+`&&`/`||`/`!`); the only difference is what a `Reference` resolves to -- a package VARIABLE lookup
+(`v.Get<int>("User::RowsLoaded")`) instead of a pipeline buffer column. This is the opposite call
+from `ForEachLoopEmitter`, which genuinely needed its own tiny translator because its expression is
+a STRING-building one with no boolean surface at all. A translation that reaches for an `SsisFn.*`
+helper or a null test is REFUSED rather than emitted: neither is evidenced in any real constraint
+expression, and emitting either would need wiring this round does not do -- an `SsisFn` call needs
+`SsisFnEmitter` to emit that helper and `Program.cs` to carry the using, which is exactly the
+latent half-wired hazard that bit `RouterEmitter` once already.
+
+**Variable seeding is not cosmetic.** `Program.cs` now emits
+`packageVariables.Set("User::RowsLoaded", 0); // design-time default from the .dtsx` for every
+variable a guard reads. Without it a guard reading a variable nothing has assigned yet would get
+`Get<T>`'s fallback instead of the declared default -- identical by luck for a `0` default, wrong
+for any other. Only the variant types whose literal form is unambiguous are mapped
+(Int16/Int32/Int64/String/Boolean); a DateTime default would need a parse and a round-trip format
+decision nothing evidenced asks for, so such a variable is simply absent from the table and a guard
+referencing it degrades to a named gap through the ordinary unresolved-reference path.
+
+**A safety net was built for a hazard this round introduces, and it immediately caught a real
+case I had not constructed for it.** A guard that translates successfully but never reaches a step
+would silently run the gated work unconditionally while reporting nothing -- the same failure class
+as the disabled-executable and Script-Component-passthrough bugs. `ReportUnappliedGuards` turns
+that into a blocking gap. Running the whole fixture corpus afterwards showed the probe fixture
+itself tripping it: `SyntheticCondConstraint` has no Data Flow Task at all, so its own
+`SQL_ExprAndSuccess` is an Execute SQL Task in PRE-LOAD position, hoisted into a flat
+`IReadOnlyList<string>` that has nowhere to carry a condition. Correctly reported rather than
+silently dropped.
+
+**Verified four ways:**
+1. **The real motivating package.** `Package.dtsx` regenerated: the expression-constraint gap is
+   GONE, only the Failure one remains, and the emitted `Program.cs` carries
+   `v => (v.Get<int>("User::RowsLoaded") > 0)` wrapping `DFT_BuildSalesSummary`. The whole
+   5-package deliverable at `D:\PoC\SSIS_From_Sandeep_Generated`, regenerated with `--seams` and
+   all four fills re-applied, builds **0 warnings / 0 errors**.
+2. **A byte-level baseline diff, not an argument.** Built the CLI from a `git worktree` at HEAD,
+   generated the 5 real packages both with and without `--seams`, and diffed the trees: the ONLY
+   difference in either mode is `Package/Program.cs`, exactly the three intended edits (the seed
+   line, the `ConditionalStep` local, the `Steps` entry). All four other packages byte-identical.
+3. **A new dedicated fixture, run under BOTH real SSIS and as generated code, matching exactly.**
+   `SyntheticCondGuard.dtsx` (`cond-guard` mode): `SQL_Reset -> SCR_SetRows -> DFT_Load` with
+   THREE gated Execute SQL Tasks -- one whose condition is true at the design-time default, one
+   that must NOT run (a fixture where every gate fires would pass just as well with the condition
+   ignored), and one reading `User::RowsLoaded`, which the Script Task WRITES. That last one is the
+   real package's own composition and the reason `PackageVariables` had to land first. Generated,
+   built against a copy of `Etl.Core` (0/0), and RUN against `.\SQLFORPOC_2022` -- markers read back
+   from the table, not trusted from the exit code: `gate-true` ran, `gate-false` skipped,
+   `gate-from-script` ran (the fill set 7), 2 target rows, package succeeded despite a skipped step.
+   Then `dtexec` on the same fixture: `DTSER_SUCCESS`, `gate-true` only, 2 rows -- correct, because
+   under real SSIS the stub Script Task leaves `RowsLoaded` at 0. Setting the fill to 0 to match the
+   stub and re-running the generated exe produced an **exact match: `gate-true` only, 2 rows**, all
+   three gates agreeing with real SSIS.
+4. **A second derived fixture for the safety net.** `SyntheticCondGuardUnapplied.dtsx` is
+   `SyntheticScriptTaskHoistInversion.dtsx` with `EvalOp="3"` plus an expression added to its
+   `SCR_First -> SQL_Truncate` edge, via a byte-preserving read/replace/write (trap 18; never a
+   text-replace on a `.dtsx`) -- +74 bytes, exactly the one attribute pair plus the package rename.
+   `SQL_Truncate` is pre-flow, so it hoists and the guard cannot apply: reported.
+
+**A pre-existing, unrelated bug found and fixed in passing:** `Ssis.Extract.FixtureBuilder`'s
+dispatcher had the `data-conversion-types2` arm copy-pasted with `lookup-single`'s condition, so
+that arm was dead code and `data-conversion-types2` fell through to "unknown fixture" -- that
+fixture had been unbuildable since the round that added it. One-line fix.
+
+**One object-model sharp edge worth not re-deriving:** `DTSExecResult` and `DTSPrecedenceEvalOp`
+each exist in BOTH `Microsoft.SqlServer.Dts.Runtime` and `...Runtime.Wrapper`, so an unqualified
+reference is `CS0104: ambiguous` in any project importing both (as every object-model project here
+does). Fully qualify. The settable surface on `PrecedenceConstraint` is
+`Value`/`EvalOp`/`Expression`/`LogicalAnd`, all plain properties -- no `Set*Property` indirection,
+unlike the pipeline components.
+
+**Test coverage:** new `tests/Ssis.Extract.Codegen.Tests/ConditionalConstraintTests.cs` (10 cases:
+the translated form plus its seeds and the untouched unconditional steps, the `Program.cs` wiring,
+the unapplied guard, a 5-case `[Theory]` over every unsupported form asserting its measured reason,
+the four unconditional-default spellings staying SILENT, and a supported-form expression that
+cannot be translated). New `D:\PoC\SSIS_Rewrite\tests\Etl.Core.Tests\Pipeline\ConditionalStepTests.cs`
+(3 cases, including that the predicate reads variables live rather than as they were at
+construction). One test was RELOCATED, not deleted: `ScriptTaskSeamTests`'
+`Plan_ReportsAConditionalPrecedenceConstraint_...` lived there because constraints were DISCOVERED
+while building Script Task seams; it covered two forms where the new file covers all five, so a
+narrower copy would only be a second thing to update -- a comment in its place says so.
+Regression: 200/200 in `Ssis.Extract.Codegen.Tests` (was 191), 149/149 in
+`Ssis.Runtime.Expressions.Tests`, 50/50 in `Etl.Core.Tests` (was 47), same 3 pre-existing unrelated
+failures in `Ssis.Extract.Tests`.
+
+**The portfolio stays at 3/5, and `Package`'s blocking-gap count drops 10 -> 9.** Closing the
+expression form does not make `Package` generatable, because its Failure edge is still there and
+still real. That is the honest number.
+
+**Remaining known gaps, updated:** the outcome-based conditional forms (Failure/Completion,
+Expression-only, ExpressionOrConstraint) -- which now all reduce to ONE emitter feature, a
+failure-handler position outside the package transaction, sized by the measurements above; chunk 4
+(provenance + staleness); Aggregate-inside-a-Multicast-branch plus a two-output Lookup, together
+what `DFT_LookupAndAggregate` needs; and the pre-existing per-pairing coercion and Data Conversion
+target-type gaps. The expression form of conditional execution, named as the blocker by the Script
+Task round, is now closed.
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
