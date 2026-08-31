@@ -219,6 +219,7 @@ public sealed record SqlStep(string TaskName, string Sql) : PackageStep;
 public sealed record FileSystemStep(string TaskName, FileSystemActionPlan Action) : PackageStep;
 public sealed record ForEachFileLoopStep(ForEachFileLoopPlan Loop) : PackageStep;
 public sealed record ForEachDataFlowLoopStep(ForEachFileDataFlowPlan Loop) : PackageStep;
+public sealed record ScriptTaskStep(ExecutableSpec Task) : PackageStep;
 
 /// <summary><see cref="Flows"/> is kept alongside <see cref="Steps"/>, duplicating every
 /// FlowStep's own DataFlowPlan, purely so callers that only ever cared about "all the flows,
@@ -290,7 +291,11 @@ public sealed record PackagePlan(
 /// </summary>
 public static class PackagePlanner
 {
-    public static PackagePlan Plan(PackageSpec package)
+    /// <param name="emitSeams">When true a Script Task becomes a <see cref="ScriptTaskStep"/>
+    /// whose logic a human supplies through a compile-enforced seam, instead of the plain
+    /// "unsupported executable type" gap. Opt-in for the same reason the flag exists at all:
+    /// an unfilled seam deliberately BREAKS the build.</param>
+    public static PackagePlan Plan(PackageSpec package, bool emitSeams = false)
     {
         var gaps = new List<GenerationGap>();
         var preLoadStatements = new List<string>();
@@ -299,11 +304,92 @@ public static class PackagePlanner
         var steps = new List<PackageStep>();
 
         WalkContainer(package.Executables, package.Dag, package.PrecedenceConstraints, package.ConnectionManagers,
-            preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: false);
+            preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: false, emitSeams: emitSeams);
 
         ReportParallelismFlattening(package, gaps);
+        ReportConditionalConstraints(package, gaps);
 
         return new PackagePlan(preLoadStatements, preLoadFileActions, flows, steps, gaps);
+    }
+
+    /// <summary>
+    /// A precedence constraint can be conditional: it fires only on a specific outcome
+    /// (<c>DTS:Value</c> -- Success/Failure/Completion) and/or only when an expression is true
+    /// (<c>DTS:EvalOp</c> + <c>DTS:Expression</c>). The generated <c>PackageRunner</c> runs every
+    /// step unconditionally, so a conditional edge means generated code runs work SSIS would have
+    /// skipped -- or, for a Failure edge, work SSIS runs ONLY when something has already gone
+    /// wrong.
+    ///
+    /// Found the same way the disabled-executable bug was: both attributes have always been
+    /// extracted (<see cref="PrecedenceConstraintSpec.Value"/>/<see cref="PrecedenceConstraintSpec.EvalOp"/>)
+    /// and read by nothing in this project. RBC_Demo_ETL's own Package has one of each --
+    /// <c>DFT_LoadCustomers -&gt; SQL_LogLoadFailure</c> on Failure, and
+    /// <c>SCR_NotifyAndLogProgress -&gt; DFT_BuildSalesSummary</c> gated on
+    /// <c>@[User::RowsLoaded] &gt; 0</c> -- so generated code would write a failure-log row on
+    /// every SUCCESSFUL run and build the sales summary regardless of whether anything loaded.
+    ///
+    /// BLOCKING, unlike the parallelism and disabled advisories. Those two produce code that does
+    /// the right work (just sequentially, or minus something SSIS also skipped); this one produces
+    /// code that does the WRONG work. Reported rather than implemented because conditional
+    /// execution is a real feature -- <c>IEtlPackage.Steps</c> is a flat unconditional list, and
+    /// the expression form additionally needs a variable the generated code can only have if the
+    /// Script Task that sets it has been ported.
+    ///
+    /// Raw enum values are interpreted from the real GAC enums (<c>DTSExecResult</c>,
+    /// <c>DTSPrecedenceEvalOp</c>), read by reflection rather than guessed -- the two enums use
+    /// different numbering bases, which is exactly the kind of thing this project does not assume.
+    /// </summary>
+    private static void ReportConditionalConstraints(PackageSpec package, List<GenerationGap> gaps)
+    {
+        var packageName = package.ObjectName ?? "package";
+
+        Report(package.PrecedenceConstraints);
+        foreach (var container in EnumerateContainers(package.Executables))
+            Report(container.PrecedenceConstraints);
+
+        void Report(List<PrecedenceConstraintSpec> constraints)
+        {
+            foreach (var constraint in constraints)
+            {
+                // Absent means the schema default, which is the unconditional case for both:
+                // DTSExecResult.Success = 0, DTSPrecedenceEvalOp.Constraint = 2.
+                var outcome = constraint.Value switch
+                {
+                    null or "0" => null,
+                    "1" => "only when the preceding executable FAILS (DTSExecResult.Failure)",
+                    "2" => "on completion, pass or fail (DTSExecResult.Completion)",
+                    var raw => $"only on outcome DTS:Value=\"{raw}\"",
+                };
+
+                var expression = constraint.EvalOp switch
+                {
+                    null or "2" => null,
+                    "1" => $"only when its expression is true (`{constraint.Expression}`), the constraint itself being ignored",
+                    "3" => $"only when its expression is ALSO true (`{constraint.Expression}`)",
+                    "4" => $"when the constraint holds OR its expression is true (`{constraint.Expression}`)",
+                    var raw => $"conditionally on DTS:EvalOp=\"{raw}\" with expression `{constraint.Expression}`",
+                };
+
+                if (outcome is null && expression is null) continue;
+
+                var conditions = string.Join(", and ", new[] { outcome, expression }.Where(c => c is not null));
+                var from = LeafName(constraint.From);
+                var to = LeafName(constraint.To);
+                gaps.Add(new GenerationGap($"{packageName}.{from}-{to}.Constraint",
+                    $"the precedence constraint '{from}' -> '{to}' fires {conditions}; the generated PackageRunner " +
+                    $"runs every step unconditionally, so '{to}' would run when SSIS would not have run it. " +
+                    "IEtlPackage.Steps is a flat unconditional list -- conditional execution is not generated, and " +
+                    "is not guessed at either."));
+            }
+        }
+    }
+
+    /// <summary>"Package\DFT_LoadCustomers" -> "DFT_LoadCustomers". A constraint's From/To are
+    /// package-qualified refId paths; only the leaf reads usefully in a gap message.</summary>
+    private static string LeafName(string refIdPath)
+    {
+        var slash = refIdPath.LastIndexOf('\\');
+        return slash >= 0 && slash < refIdPath.Length - 1 ? refIdPath[(slash + 1)..] : refIdPath;
     }
 
     /// <summary>
@@ -399,6 +485,36 @@ public static class PackagePlanner
     }
 
     /// <summary>
+    /// Reports the one ordering hazard Script Task steps introduce. PreLoadStatements and
+    /// PreLoadFileActions are HOISTED: IEtlPackage runs all of them before any step, whatever
+    /// their real position was. That is harmless while everything pre-flow is itself hoisted --
+    /// which was true until a Script Task became a step -- but the moment a step sits in the
+    /// pre-flow region, a hoisted statement that the package actually ordered AFTER it silently
+    /// runs BEFORE it instead.
+    ///
+    /// Ordered-after is tested against transitive ancestors, not direct predecessors, so a chain
+    /// of any length is caught; and testing ancestry rather than walk position matters, because
+    /// two UNORDERED pre-flow tasks may legitimately run in either order (SSIS would have run them
+    /// concurrently) and must not be reported. Blocking, unlike this file's other advisories: the
+    /// generated code would genuinely do the wrong thing in the wrong order.
+    /// </summary>
+    private static void ReportHoistingInversion(
+        ExecutableSpec hoisted, HashSet<string> hoistedAncestors,
+        List<ExecutableSpec> preFlowScriptTasks, string kind, List<GenerationGap> gaps)
+    {
+        var inverted = preFlowScriptTasks.Where(t => hoistedAncestors.Contains(t.RefId)).ToList();
+        if (inverted.Count == 0) return;
+
+        var names = string.Join(", ", inverted.Select(t => $"'{t.ObjectName ?? t.RefId}'"));
+        gaps.Add(new GenerationGap($"{hoisted.ObjectName ?? hoisted.RefId}.Hoisting",
+            $"{kind} '{hoisted.ObjectName ?? hoisted.RefId}' is ordered AFTER Script Task(s) {names} " +
+            "in the package, but pre-load statements/actions are hoisted ahead of every step and a " +
+            "Script Task is a step -- so the generated code would run them in the opposite order. " +
+            "Move the work into the Script Task's own fill, or put an intervening Data Flow Task " +
+            "between them so this becomes an ordinary post-flow step."));
+    }
+
+    /// <summary>
     /// One non-blocking advisory per skipped executable. Skipping is CORRECT -- it is what SSIS
     /// itself did -- so this is not a gap in the "we could not translate this" sense and gets no
     /// work packet. It exists because silence about a real difference between the .dtsx and the
@@ -428,7 +544,7 @@ public static class PackagePlanner
         List<ConnectionManagerSpec> connectionManagers,
         List<string> preLoadStatements, List<FileSystemActionPlan> preLoadFileActions,
         List<DataFlowPlan> flows, List<PackageStep> steps,
-        List<GenerationGap> gaps, bool containerIsPostFlow)
+        List<GenerationGap> gaps, bool containerIsPostFlow, bool emitSeams)
     {
         var byRefId = children.ToDictionary(e => e.RefId);
 
@@ -453,6 +569,17 @@ public static class PackagePlanner
         var flowOrAfter = new HashSet<string>();
         var sawDataFlowInThisContainer = false;
 
+        // Transitive ancestors per refId, accumulated in topological order so every
+        // predecessor's own set is complete before it is read. Used only by the hoisting guard
+        // below -- direct predecessors are not enough there, since the inversion it looks for
+        // can be several edges away.
+        var ancestors = new Dictionary<string, HashSet<string>>();
+
+        // Script Tasks planned in PRE-FLOW position. A pre-load statement or file action is
+        // hoisted ahead of every step, so one of these ordered BEFORE such a statement in the
+        // package would have its real order silently inverted -- see ReportHoistingInversion.
+        var preFlowScriptTasks = new List<ExecutableSpec>();
+
         foreach (var refId in order)
         {
             if (!byRefId.TryGetValue(refId, out var executable))
@@ -460,6 +587,20 @@ public static class PackagePlanner
                 gaps.Add(new GenerationGap(refId, "topological order references an executable not found in its own container"));
                 continue;
             }
+
+            // Computed before the disabled check on purpose: a disabled node still ORDERS its
+            // neighbours (measured -- successors run), so it has to stay a vertex here even
+            // though nothing is generated for it.
+            var ownAncestors = new HashSet<string>();
+            if (predecessorsByRefId.TryGetValue(refId, out var ancestorPreds))
+            {
+                foreach (var pred in ancestorPreds)
+                {
+                    ownAncestors.Add(pred);
+                    if (ancestors.TryGetValue(pred, out var inherited)) ownAncestors.UnionWith(inherited);
+                }
+            }
+            ancestors[refId] = ownAncestors;
 
             // A disabled executable is skipped outright -- and skipping exactly this node, and
             // NOTHING else, is the faithful translation. That was measured against the real SSIS
@@ -486,7 +627,7 @@ public static class PackagePlanner
             if (executable.ExecutableType == "STOCK:SEQUENCE")
             {
                 var childRanAfterFlow = WalkContainer(executable.Children, executable.Dag, executable.PrecedenceConstraints, connectionManagers,
-                    preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: isPostFlow);
+                    preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: isPostFlow, emitSeams: emitSeams);
                 if (childRanAfterFlow)
                 {
                     flowOrAfter.Add(refId);
@@ -521,6 +662,7 @@ public static class PackagePlanner
                 }
                 else
                 {
+                    ReportHoistingInversion(executable, ownAncestors, preFlowScriptTasks, "Execute SQL Task", gaps);
                     preLoadStatements.Add(sqlTask.SqlStatementSource);
                 }
                 continue;
@@ -538,6 +680,7 @@ public static class PackagePlanner
                 }
                 else
                 {
+                    ReportHoistingInversion(executable, ownAncestors, preFlowScriptTasks, "File System Task", gaps);
                     preLoadFileActions.Add(action);
                 }
                 continue;
@@ -553,6 +696,25 @@ public static class PackagePlanner
                     flowOrAfter.Add(refId);
                     sawDataFlowInThisContainer = true;
                 }
+                continue;
+            }
+
+            // A Script Task always becomes a step at its own TRUE position, with no pre-load/
+            // post-flow branching of the kind an Execute SQL Task gets. There is no third
+            // "pre-load script" list on IEtlPackage to hoist it into, and inventing one would
+            // compound the ordering problem the two existing hoisted lists already have (see the
+            // guard right below). Steps preserve order relative to flows and to each other, which
+            // is what actually matters.
+            if (emitSeams && executable.ScriptTask is not null)
+            {
+                steps.Add(new ScriptTaskStep(executable));
+
+                // A ported Script Task's own SQL runs inside the package transaction, so it is
+                // never a "flow" -- but it CAN follow one, and anything after it must still see
+                // itself as post-flow. Propagate whatever position it inherited rather than
+                // resetting it.
+                if (isPostFlow) flowOrAfter.Add(refId);
+                else preFlowScriptTasks.Add(executable);
                 continue;
             }
 

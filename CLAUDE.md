@@ -908,7 +908,10 @@ dropped column, taking RBC_Demo_ETL's own Package from "builds clean while missi
 "builds clean with all 6 genuinely ported"; a disabled executable is now SKIPPED rather than
 generated as if live (2026-08-31) -- a real correctness bug whose fix also removed a live
 false-positive parallelism advisory, both measured against a real dtexec run rather than reasoned
-about
+about; the Script Task half of Tier 2 added 2026-08-31 -- a Script Task
+becomes a whole ILoadTask with a RunScriptAsync seam plus a shared PackageVariables, and
+investigating it surfaced TWO more silently-ignored attributes (conditional precedence
+constraints), which keeps the portfolio honestly at 3/5 rather than a wrong 4/5
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -5009,6 +5012,141 @@ a two-output Lookup (together what `DFT_LookupAndAggregate` needs to reach 4/5),
 target types beyond the eight closed, and the numeric-passthrough-coercion gap for every pairing
 beyond the five closed. Codegen ignoring `ExecutableSpec.Disabled`, named as a real open bug by
 the parallelism round, is now closed.
+
+
+### AI-assisted gap filling — the Script Task half of Tier 2, and two more silently-ignored attributes (2026-08-31)
+
+Chunk 3 closed Script Component COLUMNS. This closes the other half: a Script Task, which is a
+whole `ILoadTask` rather than one method on a transform, so it needed its own emitter, its own
+place in the step order, and — this was the genuinely new part — a way for two ported tasks to
+share a variable.
+
+**The plan's own open question is answered, and the answer made it moot.** It flagged "whether a
+`partial` method may implement an interface member under net10" as something to resolve rather
+than assume. Probed against Roslyn first (same discipline as chunk 3's own probe): the question
+never needs answering, because the better shape avoids it. The generated part implements
+`ILoadTask` FULLY — `Name`, `RunAsync`, the `StepResult`, the timing — and delegates to one
+`private partial Task RunScriptAsync(ScriptTaskContext ctx, CancellationToken ct)`. Confirmed both
+halves: unimplemented, that is exactly one `CS8795` naming the method; a second part supplying
+`private partial async Task RunScriptAsync(...)` compiles clean under `Nullable` +
+`TreatWarningsAsErrors`, static fields included. Keeping the plumbing generated also means a fill
+cannot get the row counts or timing subtly wrong, and there is only one seam signature to learn.
+
+**PackageVariables is required by real evidence, not added for symmetry.** `Package`'s two Script
+Tasks are `SCR_ValidateAndLogStart` (C#) stamping `User::BatchStartTime` and
+`SCR_NotifyAndLogProgress` (**VB.NET** — the first VB script this tool has had to port) reading it
+back to compute elapsed time. Nothing in `Etl.Core` carried state between steps: `LoadContext` is
+immutable run identity and `IUnitOfWork` is a database connection. So without a shared bag one of
+those two tasks could not be ported faithfully at all. New `Etl.Core.Abstractions.PackageVariables`
+(a deliberately plain string→object? dictionary — no scoping, no expression evaluation, no declared
+types; anything richer would be inventing semantics no `.dtsx` asked for) plus
+`ScriptTaskContext(Uow, Load, Variables, Services)`.
+
+**One parameter, not four, and the reason is the lifecycle:** fills are hand-written,
+human-reviewed files with provenance. Adding a capability later must not force every already-signed-off
+Script Task fill to be edited. `ScriptTaskContext` absorbs that.
+
+**`Services` is the loose one, and deliberately so.** A Script Task can reach any connection
+manager in the package, and which ones it touches is decided inside script text this tool reads but
+does not parse. Rather than guess a narrower shape, the port gets the app's own `IServiceProvider`
+and resolves what it needs (`IOptions<FileSourceOptions>` for a CSV path, `ILoggerFactory` for
+`FireInformation`). Defensible for a hand-written reviewed fill; it would not be defensible for
+generated code.
+
+**Placement: a Script Task is always a step at its true position, never hoisted.** No pre-load/
+post-flow branching of the kind an Execute SQL Task gets — there is no third "pre-load script" list
+on `IEtlPackage`, and inventing one would compound the ordering problem the two existing hoisted
+lists already have. Which surfaced a real hazard worth naming:
+
+**`ReportHoistingInversion` — a new BLOCKING gap for a hazard this round itself introduces.**
+`PreLoadStatements`/`PreLoadFileActions` are hoisted ahead of every step. Harmless while everything
+pre-flow was itself hoisted — true until a Script Task became a step. Now a hoisted statement the
+package ordered AFTER a Script Task would silently run BEFORE it (imagine "validate, then
+TRUNCATE, then load" quietly becoming "TRUNCATE, then validate"). Tested against transitive
+ancestors, not direct predecessors (a chain of any length counts) and not walk position (two
+UNORDERED pre-flow tasks may legitimately run either way — SSIS would have run them concurrently —
+and must not be reported). `Package`'s own `SQL_TruncateTargets -> SCR_ValidateAndLogStart` is
+correctly ordered and correctly silent.
+
+**Two MORE silently-ignored attributes found, and they are the same bug shape as `Disabled`.**
+Reading `Package`'s control flow closely: `DTS:Value="1"` on `DFT_LoadCustomers -> SQL_LogLoadFailure`
+and `DTS:EvalOp="3"` + `DTS:Expression="@[User::RowsLoaded] > 0"` on
+`SCR_NotifyAndLogProgress -> DFT_BuildSalesSummary`. Both have ALWAYS been extracted
+(`PrecedenceConstraintSpec.Value`/`.EvalOp`/`.Expression`) and read by **nothing** in
+`Ssis.Extract.Codegen` — grep-confirmed, exactly as `Disabled` was. Meaning generated code would,
+on a SUCCESSFUL run, write a failure-log row SSIS only writes on failure, and build the sales
+summary regardless of whether anything loaded.
+
+The raw enum values were read from the real GAC enums by reflection rather than guessed, which
+mattered: **the two enums do not share a numbering base** (`DTSExecResult`: Success=0, Failure=1,
+Completion=2; `DTSPrecedenceEvalOp`: Expression=1, Constraint=2, ExpressionAndConstraint=3,
+ExpressionOrConstraint=4), so "3" means completely different things depending on which attribute
+it is on. New `ReportConditionalConstraints` reports each one, **blocking** — unlike the parallelism
+and disabled advisories, which produce code that does the right work (just sequentially, or minus
+something SSIS also skipped), this one produces code that does the WRONG work. Only `Package` has
+any conditional constraint anywhere in the tracked portfolio or the fixture corpus (measured, 1 of
+each), so nothing else moved.
+
+**So the honest outcome is that the portfolio stays 3/5, not 4/5.** Closing the Script Task gaps
+was supposed to take `Package` to fully-generatable; investigating it turned up a further real
+correctness problem in the same package. Reporting that instead of letting `Package` read as
+generatable is the whole point of the tool — a wrong 4/5 would have been worse than an honest 3/5.
+Conditional execution is a real feature for its own round (`IEtlPackage.Steps` is a flat
+unconditional list, and the expression form additionally needs a variable that only exists once the
+Script Task setting it has been ported — which, as of this round, it now can be).
+
+**Verified four ways:**
+1. **The real motivating package.** `Package.dtsx --seams`: 8 seams (6 columns + 2 Script Tasks),
+   build fails with exactly those 8 `CS8795`. Ported BOTH Script Tasks from their own work packets
+   — including the VB one — ran `apply-fills`, rebuilt: **0 warnings / 0 errors**. The whole
+   5-package deliverable at `D:\PoC\SSIS_From_Sandeep_Generated` likewise builds 0/0 with all four
+   fills applied; they are checked in there at `fills/Package/` as the worked example.
+2. **A new dedicated fixture, actually run.** `SyntheticScriptTaskSeams.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s `script-task-seams`): `SQL_Truncate -> SCR_Start -> DFT_Load ->
+   SCR_Finish`, deliberately putting one Script Task pre-flow and one post-flow so one fixture
+   covers both placements, with the Execute SQL Task ordered first so the hoisting guard's NEGATIVE
+   case is covered too. **Generated, built against a copy of `Etl.Core` (0/0), and actually RUN
+   against `.\SQLFORPOC_2022`** — read back, not trusted from the exit code:
+   `Marker='started-by-SyntheticScriptTaskSeams', RowsSeen=2`. Both halves matter. The marker
+   proves the shared `PackageVariables` genuinely carried a value between two independently-written
+   fills; `RowsSeen=2` proves a Script Task's own SQL sees rows the flow inserted but has NOT
+   committed — i.e. that it really does run inside the package's single transaction.
+3. **The hoisting guard's positive case**, via a second fixture
+   (`SyntheticScriptTaskHoistInversion.dtsx`, `SCR_First -> SQL_Truncate -> DFT_Load`): fires with
+   the right message. A guard nothing else in the corpus can trigger is worth a fixture of its own.
+4. **No collateral effect.** Default (non-`--seams`) generation is byte-identical across all 5
+   real packages; the portfolio's gap set gains exactly the 2 new constraint gaps and nothing else.
+   191/191 in `Ssis.Extract.Codegen.Tests` (was 186), 149/149 in `Ssis.Runtime.Expressions.Tests`,
+   47/47 in `Etl.Core.Tests` (was 41), same 3 pre-existing unrelated failures elsewhere.
+
+**A real bug in this round's own tooling, caught by the mechanism built to catch exactly this.**
+`apply-fills` recognized neither Script Task fill: its seam regex allowed exactly one token between
+`partial` and the method name, and the very first real fill written was
+`private partial async Task RunScriptAsync(...)`. It surfaced not as a wrong build but as
+`apply-fills` reporting both files ORPHANED and refusing to copy them — the refusal path from
+chunk 3 doing its job on its author. Both regexes now allow an optional `async`.
+
+**Two facts worth not re-deriving:**
+- **A Script Task fill is matched by its CLASS name, not its method name.** Every Script Task seam
+  is `RunScriptAsync`, so keying on the method would let one fill silently appear to answer both of
+  `Package`'s two gaps, and one task's logic would go missing with nothing reported.
+- **`TaskHost.ScriptLanguage` does not take the value that gets persisted.** Setting it to
+  `"CSharp"` — exactly what the saved XML's own `Language` attribute contains, read straight out of
+  the real `Package.dtsx` — throws `UnrecognizedVSTAScriptLanguageException`, because the setter
+  wants a VSTA DISPLAY name ("Microsoft Visual C# 2022"). Same runtime-name-vs-XML-attribute
+  divergence as the ForEach File Enumerator's own `Directory`/`FileNameRetrieval`. The fixture
+  leaves it unset; nothing under test needs it.
+
+Also updated so the contract cannot drift: `AiPacketEmitter`'s Tier-2 Script Task section, which
+still told a porter to write a whole `ILoadTask` class. It now describes the partial-part contract,
+the `ctx` mapping table, and the `using Microsoft.Extensions.DependencyInjection;` a porter needs
+to resolve anything from `ctx.Services` — a papercut hit while writing the first real fill.
+
+**Still not built:** chunk 4 (provenance + staleness — the `EvidenceSha256` check exists and is
+tested, but nothing writes it into a fill yet); conditional precedence constraints, newly named
+above and now what actually blocks `Package`; and Aggregate-inside-a-Multicast-branch + a two-output
+Lookup, which together are what `DFT_LookupAndAggregate` needs. The Script Task half of Tier 2,
+named as open since chunk 3, is now closed.
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**

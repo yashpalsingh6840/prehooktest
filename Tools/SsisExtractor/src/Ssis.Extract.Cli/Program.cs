@@ -140,12 +140,15 @@ internal static class Program
             --namespace-prefix roots every generated namespace under a prefix (e.g.
             "Contoso.Etl") instead of just the package name. Generated code under
             <out>/generate/ has no hand-editing expectation -- rerun freely.
-            --seams turns a column produced by a Script Component (whose logic this tool
-            cannot translate, but whose source IS in the .dtsx) into a `private partial`
-            Fill_<Column> method for a human to implement, instead of omitting it. This
+            --seams turns the two things whose logic this tool cannot translate, but whose
+            source IS in the .dtsx, into `private partial` methods for a human to implement
+            instead of omitting them: a column produced by a Script Component becomes a
+            Fill_<Column> on its transform class, and a Script Task becomes a whole
+            ILoadTask class with a RunScriptAsync seam (so it keeps its real position in the
+            step order, and its port gets the package's shared variables). This
             deliberately makes the generated project FAIL to build (CS8795) until every
             seam is filled -- the point being that today such a package builds clean while
-            silently missing those columns. Fills live outside <out>/generate/ and ARE
+            silently missing those columns and skipping those tasks entirely. Fills live outside <out>/generate/ and ARE
             hand-maintained, the same way 'conformance' claims are: --fills points at that
             directory (default <out>/fills/), which ssisx only ever READS -- both the
             Fill_* parts applied by 'apply-fills' and <Package>.decisions.json.
@@ -153,14 +156,17 @@ internal static class Program
               ssisx apply-fills --out <dir> [--fills <dir>]
 
             apply-fills options: copies hand-maintained Tier-2 fills -- the second part of a
-            generated partial transform class, implementing the Fill_<Column> seams
+            generated partial class, implementing the Fill_<Column> or RunScriptAsync seams
             'generate --seams' emitted -- from <out>/fills/<Package>/*.cs into
             <out>/generate/<Package>/Fills/. Reads fills/ and never writes to it. Validation
-            is the real point: a fill implementing a Fill_* no gap asked for is reported as
+            is the real point: a fill implementing a seam no gap asked for is reported as
             ORPHANED and deliberately not copied (it usually means the package changed and
             that seam is gone, and copying it would only turn a clear message here into a
             confusing compile error), and every seam with no fill is listed as the CS8795
-            the next build will report. Exits 1 on an orphan, 3 while any seam is unfilled.
+            the next build will report. A Script Task fill is matched by its CLASS name, not
+            its method name -- every one of those seams is called RunScriptAsync, so a
+            package with two Script Tasks needs two distinctly-named class parts.
+            Exits 1 on an orphan, 3 while any seam is unfilled.
 
             Exit codes: 0 success, 1 diff found (diff) / gate 1 failed (conformance
             --check), 2 usage/extraction error, 3 a package's coverage was below

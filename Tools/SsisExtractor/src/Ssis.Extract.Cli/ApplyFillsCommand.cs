@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Ssis.Extract.Codegen;
 using Ssis.Extract.Model.Analysis;
 
 namespace Ssis.Extract.Cli;
@@ -31,7 +32,24 @@ internal static class ApplyFillsCommand
     /// modifier order -- the compiler is the authority on whether the part actually matches its
     /// declaration; all this needs is the method NAME, to tell a real fill from an orphan.</summary>
     private static readonly Regex FillMethodPattern =
-        new(@"partial\s+[^\s(]+\s+(Fill_\w+)\s*\(", RegexOptions.Compiled);
+        new(@"partial\s+(?:async\s+)?[^\s(]+\s+(Fill_\w+)\s*\(", RegexOptions.Compiled);
+
+    /// <summary>
+    /// A Script Task fill is matched by the CLASS it is a part of, not by its method name -- every
+    /// Script Task seam is called <c>RunScriptAsync</c>, so a package with two of them
+    /// (RBC_Demo_ETL's own Package has exactly two) would otherwise have a single fill silently
+    /// appear to answer both gaps, and one task's logic would go missing with nothing reported.
+    /// </summary>
+    private static readonly Regex ScriptTaskFillClassPattern =
+        new(@"partial\s+class\s+(\w+)", RegexOptions.Compiled);
+
+    /// <summary><c>async</c> is optional in both patterns, and it is not a hypothetical: the very
+    /// first real Script Task fill written against this seam was
+    /// <c>private partial async Task RunScriptAsync(...)</c>, which a pattern expecting exactly one
+    /// token between <c>partial</c> and the method name silently failed to recognize -- reported
+    /// (correctly) as an orphan, which is how the omission surfaced at all.</summary>
+    private static readonly Regex ScriptTaskSeamPattern =
+        new(@"partial\s+(?:async\s+)?[^\s(]+\s+RunScriptAsync\s*\(", RegexOptions.Compiled);
 
     public static int Run(string[] args)
     {
@@ -96,6 +114,20 @@ internal static class ApplyFillsCommand
             byMethod[$"Fill_{column}"] = gap;
         }
 
+        // Expected Script Task seams, per package, keyed by the generated partial CLASS name.
+        // GapSpec.Location is "{TaskName}.ScriptTask" and ScriptTaskEmitter derives its class name
+        // from that same task name, so both sides agree without parsing the gap's own prose.
+        var expectedScriptTasks = new Dictionary<string, Dictionary<string, GapSpec>>(StringComparer.Ordinal);
+        foreach (var gap in gaps.Where(g => g.Kind == GapKind.ScriptTask
+                                         && g.Location.EndsWith(".ScriptTask", StringComparison.Ordinal)))
+        {
+            var taskName = gap.Location[..^".ScriptTask".Length];
+            if (taskName.Length == 0) continue;
+            if (!expectedScriptTasks.TryGetValue(gap.Package, out var byClass))
+                expectedScriptTasks[gap.Package] = byClass = new Dictionary<string, GapSpec>(StringComparer.Ordinal);
+            byClass[ScriptTaskEmitter.ClassName(taskName)] = gap;
+        }
+
         fillsDir = Path.GetFullPath(fillsDir ?? Path.Combine(outDir, "fills"));
         var generateDir = Path.Combine(outDir, "generate");
 
@@ -123,6 +155,20 @@ internal static class ApplyFillsCommand
                     var known = expected.TryGetValue(packageName, out var byMethod) ? byMethod : [];
                     var recognized = methods.Where(known.ContainsKey).ToList();
                     var unrecognized = methods.Where(m => !known.ContainsKey(m)).ToList();
+
+                    // The Script Task half: recognized by class name, and only when the file
+                    // genuinely supplies the seam -- a partial part that declares the class but no
+                    // RunScriptAsync answers nothing and should not count as a fill.
+                    var knownClasses = expectedScriptTasks.TryGetValue(packageName, out var byClass) ? byClass : [];
+                    if (ScriptTaskSeamPattern.IsMatch(content))
+                    {
+                        foreach (var cls in ScriptTaskFillClassPattern.Matches(content)
+                                     .Select(m => m.Groups[1].Value).Distinct(StringComparer.Ordinal))
+                        {
+                            if (knownClasses.ContainsKey(cls)) recognized.Add($"{cls}.RunScriptAsync");
+                            else unrecognized.Add($"{cls}.RunScriptAsync");
+                        }
+                    }
 
                     foreach (var method in unrecognized)
                         orphanedMethods.Add($"{packageName}/{Path.GetFileName(fillFile)}: {method}");
@@ -155,6 +201,16 @@ internal static class ApplyFillsCommand
             {
                 if (filled?.Contains(method) == true) continue;
                 stillUnfilled.Add($"{gap.GapId}  ->  {method}");
+            }
+        }
+
+        foreach (var (packageName, byClass) in expectedScriptTasks.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            filledMethods.TryGetValue(packageName, out var filled);
+            foreach (var (cls, gap) in byClass.OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                if (filled?.Contains($"{cls}.RunScriptAsync") == true) continue;
+                stillUnfilled.Add($"{gap.GapId}  ->  {cls}.RunScriptAsync");
             }
         }
 

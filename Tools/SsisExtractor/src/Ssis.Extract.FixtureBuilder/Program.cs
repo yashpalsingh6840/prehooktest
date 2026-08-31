@@ -75,7 +75,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion]");
             return 2;
         }
 
@@ -200,9 +200,17 @@ internal static class Program
         {
             return BuildDisabledTaskFixture(args[0]);
         }
+        if (fixtureName == "script-task-seams")
+        {
+            return BuildScriptTaskSeamsFixture(args[0]);
+        }
+        if (fixtureName == "script-task-hoist-inversion")
+        {
+            return BuildScriptTaskHoistInversionFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', or 'disabled-task'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', or 'script-task-hoist-inversion'.");
             return 2;
         }
 
@@ -3604,5 +3612,127 @@ internal static class Program
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         Console.WriteLine($"wrote {outputPath}");
         return 0;
+    }
+
+    /// <summary>
+    /// SQL_Truncate -> SCR_Start -> DFT_Load -> SCR_Finish, the shape that actually exercises
+    /// Script Task seams end to end:
+    ///
+    ///  - SCR_Start is in PRE-FLOW position (before any Data Flow Task) and SCR_Finish in
+    ///    POST-FLOW, so one fixture covers both, and the generated Steps list must interleave them
+    ///    with the flow in exactly that order.
+    ///  - SQL_Truncate is ordered FIRST, so it is legitimately hoistable and must NOT trip the
+    ///    hoisting-inversion guard -- the negative case for it. (BuildScriptTaskHoistInversionFixture
+    ///    is the positive one.)
+    ///  - SCR_Start writes User::Marker and SCR_Finish reads it, so a real run proves the shared
+    ///    PackageVariables carries a value from one ported Script Task to the other. That sharing
+    ///    is the whole reason PackageVariables exists (RBC_Demo_ETL's own Package does exactly this
+    ///    with User::BatchStartTime), and nothing else in Etl.Core passes state between steps.
+    ///
+    /// The Script Tasks carry no VSTA source of their own -- setting one through the object model
+    /// is not something this builder can do (see CLAUDE.md's Script Task note). That does not
+    /// weaken the fixture: what is under test is the SEAM and its wiring, and the logic arrives as
+    /// a hand-written fill either way.
+    /// Backing tables: tests/Ssis.Extract.Tests/Fixtures/synthetic-script-task-tables.sql.
+    /// </summary>
+    private static int BuildScriptTaskSeamsFixture(string outputPath) =>
+        BuildScriptTaskFixture(outputPath, "SyntheticScriptTaskSeams", invertHoisting: false);
+
+    /// <summary>
+    /// SCR_First -> SQL_Truncate -> DFT_Load: the same parts, with the Execute SQL Task ordered
+    /// AFTER the Script Task. PreLoadStatements are hoisted ahead of every step and a Script Task
+    /// IS a step, so generating this as-is would run the TRUNCATE first and invert the package's
+    /// real order. Exists purely to prove PackagePlanner.ReportHoistingInversion fires -- a guard
+    /// nothing else in the corpus can trigger.
+    /// </summary>
+    private static int BuildScriptTaskHoistInversionFixture(string outputPath) =>
+        BuildScriptTaskFixture(outputPath, "SyntheticScriptTaskHoistInversion", invertHoisting: true);
+
+    private static int BuildScriptTaskFixture(string outputPath, string packageName, bool invertHoisting)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-script-task-csv", "SyntheticScriptTask.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = packageName };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_ScriptTaskCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 50, 0, 0));
+
+        // The variable the two Script Tasks pass between themselves. Declared for real so the
+        // extracted ReadWriteVariables list is genuine rather than a name this builder invented.
+        var marker = pkg.Variables.Add("Marker", false, "User", "");
+
+        var truncateTask = AddExecuteSql(pkg, "SQL_Truncate", sqlCm,
+            "TRUNCATE TABLE dbo.SyntheticScriptTaskTarget; DELETE FROM dbo.SyntheticScriptTaskLog;");
+
+        var startTask = AddScriptTask(pkg, "SCR_Start", readWriteVariables: marker.QualifiedName);
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        BuildFlatFileToOleDbLoad((MainPipe)dftHost.InnerObject, csvCm, sqlCm, "[dbo].[SyntheticScriptTaskTarget]");
+
+        if (invertHoisting)
+        {
+            // SCR_First -> SQL_Truncate -> DFT_Load. Nothing after the flow: the point is only the
+            // pre-flow ordering.
+            startTask.Name = "SCR_First";
+            pkg.PrecedenceConstraints.Add((Executable)startTask, (Executable)truncateTask);
+            pkg.PrecedenceConstraints.Add((Executable)truncateTask, dftHost);
+        }
+        else
+        {
+            var finishTask = AddScriptTask(pkg, "SCR_Finish", readOnlyVariables: marker.QualifiedName);
+            pkg.PrecedenceConstraints.Add((Executable)truncateTask, (Executable)startTask);
+            pkg.PrecedenceConstraints.Add((Executable)startTask, dftHost);
+            pkg.PrecedenceConstraints.Add(dftHost, (Executable)finishTask);
+        }
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A Script Task with its declared variable surface set but no VSTA project and no declared
+    /// language.
+    ///
+    /// ScriptLanguage is deliberately NOT set, and the reason is worth recording: the runtime
+    /// property does not take the value that gets persisted. Setting it to "CSharp" -- exactly what
+    /// the saved XML's own <c>Language</c> attribute contains, as read straight out of
+    /// RBC_Demo_ETL's real Package.dtsx -- throws
+    /// <c>UnrecognizedVSTAScriptLanguageException: "CSharp" was not recognized as a valid script
+    /// language</c>, because the setter wants a VSTA DISPLAY name ("Microsoft Visual C# 2022" and
+    /// the like). Same runtime-name-vs-XML-attribute divergence as the ForEach File Enumerator's
+    /// own "Directory"/"FileNameRetrieval" properties. Left unset because nothing under test needs
+    /// it: PackagePlanner keys off ExecutableType, and the language only ever reaches a comment
+    /// line in the generated class.
+    ///
+    /// The script SOURCE is likewise not settable through the object model (see CLAUDE.md's Script
+    /// Task note), which also does not weaken the fixture -- the seam is what is under test, and
+    /// its logic arrives as a hand-written fill either way.
+    /// </summary>
+    private static RtTaskHost AddScriptTask(
+        RtPackage pkg, string name, string? readOnlyVariables = null, string? readWriteVariables = null)
+    {
+        var host = (RtTaskHost)pkg.Executables.Add("Microsoft.ScriptTask");
+        host.Name = name;
+        if (readOnlyVariables is not null) host.Properties["ReadOnlyVariables"].SetValue(host, readOnlyVariables);
+        if (readWriteVariables is not null) host.Properties["ReadWriteVariables"].SetValue(host, readWriteVariables);
+
+        // Without a compiled script the runtime would fail validation at design time; the same
+        // reason SyntheticParallelShapes' own Script Component needs it (see report-schema.md).
+        host.DelayValidation = true;
+        return host;
     }
 }

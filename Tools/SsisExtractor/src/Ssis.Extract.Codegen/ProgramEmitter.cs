@@ -109,6 +109,10 @@ public abstract record ProgramStep;
 public sealed record ProgramFlowStep(ProgramFlowSpec Flow) : ProgramStep;
 public sealed record ProgramSqlStep(string StepName, string Sql) : ProgramStep;
 
+/// <summary>A ported Script Task (--seams). <paramref name="ClassName"/> is the generated
+/// partial class ScriptTaskEmitter produced; its logic arrives as a hand-written second part.</summary>
+public sealed record ProgramScriptTaskStep(string StepName, string ClassName) : ProgramStep;
+
 /// <summary>Reuses PackagePlanner's own FileSystemActionPlan verbatim rather than a parallel
 /// Program*-namespaced DTO -- unlike ProgramFlowSpec/ProgramConditionalSplitBranch, there is no
 /// generator-owned NAMING decision to add on top (no entity/transform class name), just literal
@@ -258,6 +262,7 @@ public static class ProgramEmitter
         if (usesSql) lines.Add($"using {request.RootNamespace}.Sql;");
         if (usesExcel) lines.Add($"using {request.RootNamespace}.Excel;");
         if (usesMapping) lines.Add($"using {request.RootNamespace}.Mapping;");
+        if (request.Steps.Any(step => step is ProgramScriptTaskStep)) lines.Add($"using {request.RootNamespace}.ScriptTasks;");
         lines.Add($"using {request.RootNamespace}.Model;");
         if (usesLookupPreload) lines.Add("using Microsoft.Extensions.Configuration;");
         lines.Add("using Microsoft.Extensions.DependencyInjection;");
@@ -358,6 +363,17 @@ public static class ProgramEmitter
         lines.Add("builder.Services.AddScoped<IEtlPackage>(sp =>");
         lines.Add("{");
         var orderedLocalNames = new List<string>();
+
+        // ONE PackageVariables for the whole run, shared by every Script Task step -- that
+        // sharing IS the feature (RBC_Demo_ETL has one Script Task stamping
+        // User::BatchStartTime and another reading it back). Declared here rather than
+        // registered in DI so the sharing is visible in the generated file instead of implied
+        // by a lifetime.
+        if (request.Steps.Any(step => step is ProgramScriptTaskStep))
+        {
+            lines.Add("    var packageVariables = new PackageVariables();");
+            lines.Add("");
+        }
         foreach (var step in request.Steps)
         {
             switch (step)
@@ -377,6 +393,12 @@ public static class ProgramEmitter
                     var sqlLocal = SqlStepLocalName(sqlStep.StepName);
                     orderedLocalNames.Add(sqlLocal);
                     lines.Add($"    var {sqlLocal} = new ExecuteSqlStep(\"{sqlStep.StepName}\", {CSharpStringLiteral(sqlStep.Sql)}, sp.GetRequiredService<ILogger<ExecuteSqlStep>>());");
+                    lines.Add("");
+                    break;
+                case ProgramScriptTaskStep scriptStep:
+                    var scriptLocal = SqlStepLocalName(scriptStep.StepName); // same lowercase-first convention, generic enough to reuse
+                    orderedLocalNames.Add(scriptLocal);
+                    lines.Add($"    var {scriptLocal} = new {scriptStep.ClassName}(packageVariables, sp);");
                     lines.Add("");
                     break;
                 case ProgramFileSystemStep fsStep:

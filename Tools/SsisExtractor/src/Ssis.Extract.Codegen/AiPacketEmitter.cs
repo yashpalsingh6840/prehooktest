@@ -125,27 +125,48 @@ public static class AiPacketEmitter
         """;
 
     private const string ScriptTaskContract = """
-        A C# class implementing `Etl.Core.Abstractions.ILoadTask`, reproducing what this Script Task does:
+        A **second `partial` part** of the class `ssisx generate --seams` already emitted for this
+        task, implementing its one unimplemented seam. Do NOT write the `ILoadTask` implementation,
+        the `Name` property, or the `StepResult` -- all of that is generated already. Write only this:
 
         ```csharp
-        public sealed class <TaskName>Task : ILoadTask
-        {
-            public string Name => "<the SSIS task name>";
+        using Etl.Core.Abstractions;
 
-            public Task<StepResult> RunAsync(IUnitOfWork uow, LoadContext load, CancellationToken ct)
+        namespace <Package>.ScriptTasks;
+
+        public sealed partial class <TaskName>ScriptTask
+        {
+            // Fields are allowed here -- this is a class part, not a bare method body. A compiled
+            // Regex, a constant, a helper method: all fine.
+
+            private partial async Task RunScriptAsync(ScriptTaskContext ctx, CancellationToken ct)
             {
                 // ported logic here
             }
         }
         ```
 
-        `IUnitOfWork` exposes the package's single shared connection/transaction (`ExecuteSqlAsync`).
-        `LoadContext` carries `RunId`/`StartedAtUtc`/`PackageName`. Return a `StepResult(Name, rowsRead,
-        rowsWritten, elapsed)` -- use 0 for the row counts if this task moves no rows.
+        The exact namespace and class name are in the gap's own reason text; use them verbatim or the
+        part will not bind. `async` is optional -- return `Task.CompletedTask` if nothing awaits.
+        Add your own `using` lines: the generated part's usings do not carry over to yours, so
+        resolving anything from `ctx.Services` needs `using Microsoft.Extensions.DependencyInjection;`.
 
-        **If the task's real logic cannot be reproduced against these abstractions** (it writes to the
-        SSIS log, sets a package variable another task reads, calls something not available here), say
-        so explicitly instead of inventing a substitute. That answer is more useful than a plausible one.
+        What the original script's `Dts.*` calls map to, all reachable from `ctx`:
+
+        | SSIS | here |
+        |---|---|
+        | `Dts.Connections[...].AcquireConnection` for SQL | `ctx.Uow` -- the package's one shared connection/transaction (`ExecuteSqlAsync`) |
+        | `Dts.Variables["System::PackageName"]` | `ctx.Load.PackageName` (also `RunId`, `StartedAtUtc`) |
+        | `Dts.Variables["User::Whatever"]` | `ctx.Variables.Get<T>(name)` / `.Set(name, value)`, shared with every other ported Script Task in this package |
+        | `Dts.Connections[...].ConnectionString`, or any other configured value | resolve it from `ctx.Services` (e.g. `IOptions<FileSourceOptions>`) |
+        | `Dts.Events.FireError` + `Dts.TaskResult = Failure` | throw -- the run's transaction rolls back |
+        | `Dts.Events.FireInformation` | an `ILogger` resolved from `ctx.Services` |
+
+        Note the transaction difference and do not try to work around it: this task's SQL joins the
+        package's single all-or-nothing transaction, whereas SSIS auto-committed per task.
+
+        **If the task's real logic cannot be reproduced against these abstractions**, say so
+        explicitly instead of inventing a substitute. That answer is more useful than a plausible one.
 
         """;
 

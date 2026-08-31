@@ -42,7 +42,7 @@ public static partial class PackageGenerator
         var files = new List<GeneratedFile>();
         var gaps = new List<GenerationGap>();
 
-        var plan = PackagePlanner.Plan(package);
+        var plan = PackagePlanner.Plan(package, emitSeams);
         gaps.AddRange(plan.Gaps);
 
         // A ForEach-Data-Flow-Loop's own inner Data Flow Task is deliberately NOT duplicated
@@ -317,6 +317,18 @@ public static partial class PackageGenerator
                 case SqlStep sqlStep:
                     programSteps.Add(new ProgramSqlStep(sqlStep.TaskName, sqlStep.Sql));
                     break;
+                case ScriptTaskStep { Task: var scriptTask }:
+                {
+                    // The class is emitted whatever else happens in this package, and the step
+                    // is wired unconditionally -- unlike a flow, there is no gate it can fail.
+                    // Its own gap (naming the seam) rides along in the EmitResult.
+                    var scriptResult = ScriptTaskEmitter.Emit($"{ns}.ScriptTasks", scriptTask);
+                    files.AddRange(scriptResult.Files);
+                    gaps.AddRange(scriptResult.Gaps);
+                    programSteps.Add(new ProgramScriptTaskStep(
+                        scriptTask.ObjectName ?? scriptTask.RefId, ScriptTaskEmitter.ClassName(scriptTask)));
+                    break;
+                }
                 case FileSystemStep fileSystemStep:
                     programSteps.Add(new ProgramFileSystemStep(fileSystemStep.TaskName, fileSystemStep.Action));
                     break;
