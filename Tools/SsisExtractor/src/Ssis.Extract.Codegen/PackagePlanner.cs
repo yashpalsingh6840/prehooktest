@@ -301,7 +301,81 @@ public static class PackagePlanner
         WalkContainer(package.Executables, package.Dag, package.PrecedenceConstraints, package.ConnectionManagers,
             preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: false);
 
+        ReportParallelismFlattening(package, gaps);
+
         return new PackagePlan(preLoadStatements, preLoadFileActions, flows, steps, gaps);
+    }
+
+    /// <summary>
+    /// Reports the one behavioural difference between SSIS's Control Flow and the generated
+    /// <c>PackageRunner</c> that nothing else in this tool surfaces: SSIS runs executables with no
+    /// ordering constraint between them CONCURRENTLY (up to <c>MaxConcurrentExecutables</c>), while
+    /// <c>PackageRunner</c> runs every step strictly in sequence. The generated code produces the
+    /// same DATA -- a topological order always respects every precedence constraint -- so this is
+    /// non-blocking (an advisory gap, like the Notification one), not a correctness failure. It is
+    /// reported because staying silent about it is the actual defect: a package whose four branches
+    /// SSIS ran in parallel generates code that looks complete and takes four times as long.
+    ///
+    /// Detection is <c>ParallelLevels.Any(l => l.Count > 1)</c>. <see cref="ControlFlowDagSpec.ParallelLevels"/>
+    /// warns it is a sound-but-INCOMPLETE accounting of parallelism, which is true for enumerating
+    /// WHICH pairs run concurrently -- but not for the only question asked here, whether ANY pair
+    /// does. If every level were a singleton then level 0's single node is the unique root, and each
+    /// level n+1 node has a predecessor at level n, so the container is a strict chain with no
+    /// concurrency at all. So this check is both sound and complete for existence.
+    ///
+    /// Why it is not simply fixed: <c>Etl.Core</c>'s <c>IUnitOfWork</c> pins ONE SqlConnection open
+    /// for the whole run so a bulk insert can enlist in the same transaction as its TRUNCATE. A
+    /// SqlTransaction is bound to a single connection and one connection serializes commands, so
+    /// parallel branches would need one unit of work each -- giving up whole-package rollback (which
+    /// is closer to what SSIS itself did, auto-committing per task) or escalating to MSDTC.
+    /// </summary>
+    private static void ReportParallelismFlattening(PackageSpec package, List<GenerationGap> gaps)
+    {
+        var packageName = package.ObjectName ?? "package";
+        var concurrency = package.ExecutionSemantics.MaxConcurrentExecutables switch
+        {
+            null => "MaxConcurrentExecutables not declared, so SSIS's own default of -1 applies: number of logical processors + 2",
+            -1 => "MaxConcurrentExecutables=-1: number of logical processors + 2",
+            1 => "MaxConcurrentExecutables=1, so SSIS itself ran these one at a time -- sequential generated code matches it exactly",
+            var n => $"MaxConcurrentExecutables={n}",
+        };
+
+        Report(package.Dag, packageName, isRoot: true);
+        foreach (var container in EnumerateContainers(package.Executables))
+            Report(container.Dag, container.ObjectName ?? container.RefId, isRoot: false);
+
+        void Report(ControlFlowDagSpec dag, string containerName, bool isRoot)
+        {
+            if (dag.HasCycle || dag.ParallelLevels.Count == 0) return;
+
+            var widest = dag.ParallelLevels.Max(level => level.Count);
+            if (widest < 2) return;
+
+            var affectedWaves = dag.ParallelLevels.Count(level => level.Count > 1);
+            var location = isRoot ? $"{packageName}.Parallelism" : $"{packageName}.{containerName}.Parallelism";
+            var where = isRoot ? "at the root of" : $"inside container '{containerName}' of";
+
+            gaps.Add(new GenerationGap(location,
+                $"up to {widest} executables {where} '{packageName}' have no ordering constraint between them " +
+                $"({affectedWaves} such wave(s)) and ran concurrently under SSIS ({concurrency}); the generated " +
+                "PackageRunner runs every step strictly in sequence. Same data, longer wall clock -- Etl.Core's " +
+                "IUnitOfWork pins one SqlConnection for the whole run, so true parallelism needs one unit of work " +
+                "per branch and gives up whole-package rollback.",
+                IsBlocking: false));
+        }
+    }
+
+    /// <summary>Every executable that owns children, at any depth -- the containers whose own
+    /// <see cref="ExecutableSpec.Dag"/> describes a separate ordering problem from its parent's.</summary>
+    private static IEnumerable<ExecutableSpec> EnumerateContainers(List<ExecutableSpec> executables)
+    {
+        foreach (var executable in executables)
+        {
+            if (executable.Children.Count == 0) continue;
+            yield return executable;
+            foreach (var nested in EnumerateContainers(executable.Children))
+                yield return nested;
+        }
     }
 
     /// <summary>Returns true if, by the time this container finishes (from its parent's point

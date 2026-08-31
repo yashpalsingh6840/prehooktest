@@ -285,7 +285,12 @@ public class PackagePlannerTests
 
         var plan = PackagePlanner.Plan(package);
 
-        Assert.Empty(plan.Gaps);
+        // The only gap is the new non-blocking parallelism advisory: this fixture's three root
+        // flows carry no precedence constraint between them, so SSIS ran them concurrently while
+        // the generated PackageRunner runs them in sequence. Neither flat-file flow gaps.
+        var parallelism = Assert.Single(plan.Gaps);
+        Assert.False(parallelism.IsBlocking);
+        Assert.EndsWith(".Parallelism", parallelism.Location);
         Assert.Equal(3, plan.Flows.Count);
 
         var delimitedFlow = Assert.Single(plan.Flows, f => f.TaskName == "DFT_ExportDelimited");
@@ -338,7 +343,13 @@ public class PackagePlannerTests
 
         var plan = PackagePlanner.Plan(package);
 
-        Assert.Empty(plan.Gaps);
+        // The only gap is the new non-blocking parallelism advisory: this fixture's two root
+        // executables (DFT_Load and FEL_SampleFiles) carry no precedence constraint between
+        // them, so SSIS ran them concurrently while the generated PackageRunner runs them in
+        // sequence. No ForEach-Loop-specific gap.
+        var parallelism = Assert.Single(plan.Gaps);
+        Assert.False(parallelism.IsBlocking);
+        Assert.EndsWith(".Parallelism", parallelism.Location);
         var loopStep = Assert.Single(plan.Steps, s => s is ForEachFileLoopStep);
         var loop = ((ForEachFileLoopStep)loopStep).Loop;
 

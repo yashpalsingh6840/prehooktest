@@ -899,7 +899,9 @@ human confirmed it and the evidence still matches) -- and, investigating its fir
 CORRECTED this file's own long-standing claim that SSIS never persists a Lookup's join key: it does,
 on the joining input column as a JoinToReferenceColumn property (already extracted all along), so a
 Lookup flow now generates with NO human in the loop and the decisions path is only a fallback for a
-Lookup that genuinely declares none
+Lookup that genuinely declares none; control-flow parallelism is now REPORTED rather than silently
+flattened (2026-08-31) -- a non-blocking advisory naming how many executables SSIS ran concurrently
+and what the package declared, closing an honesty hole rather than adding a capability
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -4671,8 +4673,98 @@ explains that seeing this packet at all means the package lacks the property SSI
 a two-output Lookup, which together are what `DFT_LookupAndAggregate` actually needs; `--seams` +
 `ssisx apply-fills` for Tier 2; provenance/staleness reporting built out (the hash check exists and
 is tested, but nothing records `EvidenceSha256` into a decisions file automatically yet).
-## Traps already hit once — don't re-derive these
 
+### Control-flow parallelism is now reported, not silently flattened (2026-08-31)
+
+Prompted by a real client-shaped question rather than the gap list: a screenshot of an unfamiliar
+package (`MFDBUpdate.dtsx`) with **four independent top-level branches**, each
+`Execute SQL Task (create temp table) -> Data Flow (text file -> temp) -> Data Flow (temp -> main)
+-> Execute SQL Task (UpdateDates ...)`, and the question of whether this tool handles it. Checking
+rather than answering from memory turned up a real, previously-unnamed defect.
+
+**The control flow itself was already handled correctly**, and specifically so — this is the exact
+shape `PackagePlanner`'s precedence-constraint reachability was built for (see the "three new
+component types" section's own account of the naive global-flag bug it replaced). Each branch's own
+`create temp table` correctly stays a pre-load statement and its own `UpdateDates` correctly becomes
+a post-flow `SqlStep`, with no cross-branch contamination.
+
+**What was wrong is that nothing said the parallelism was being dropped.** SSIS runs executables
+with no ordering constraint between them concurrently (up to `MaxConcurrentExecutables`);
+`PackageRunner` runs every step strictly in sequence. The generated code produces the same DATA — a
+topological order always respects every precedence constraint — so this is not a correctness
+failure. But a package whose four branches SSIS ran in parallel generated code that looked complete,
+reported zero gaps about it, and took four times as long. That silence is the same failure class as
+`DFT_SortAndMergeJoin`'s own silent multi-source bug and the Script Component passthrough bug: the
+report said success and the difference was invisible.
+
+**Built:** `PackagePlanner.ReportParallelismFlattening`, one non-blocking `GenerationGap` per
+container that has any concurrency, located `{Package}.Parallelism` /
+`{Package}.{Container}.Parallelism`, with real evidence in the reason — how many executables were
+concurrent, how many waves, and what the package itself declared. Needed **zero** new extraction:
+`ControlFlowDagSpec.ParallelLevels` (built in slice 2, never consumed by codegen until now) and
+`PackageSpec.ExecutionSemantics.MaxConcurrentExecutables` were both already there. Nested containers
+are walked via a new `EnumerateContainers`, so a parallel Sequence Container reports at its own
+location rather than the package root's.
+
+**One genuinely nice result worth keeping, because `ControlFlowDagSpec`'s own doc comment warns
+against exactly the assumption this relies on.** That type states `ParallelLevels` is a SOUND BUT
+INCOMPLETE accounting of parallelism — two nodes in *different* levels can also be unordered, and it
+won't surface that pair. True for enumerating WHICH pairs run concurrently, but **not** for the only
+question asked here, whether ANY pair does: if every level were a singleton then level 0's single
+node is the unique root and each level n+1 node has a predecessor at level n, so the container is a
+strict chain with no concurrency at all. So `ParallelLevels.Any(l => l.Count > 1)` is sound AND
+complete for existence. Reasoned out and recorded in the method's doc comment rather than assumed
+either way, since the surrounding warning invites the opposite conclusion.
+
+**Deliberately non-blocking**, for the same reason as the `.Notification` and SqlCommand advisories:
+counting it as blocking would have knocked `Package_Advanced`/`Package_Exports`/`Package_Legacy` out
+of the "generatable" count for something that generates and runs correctly — exactly the miscount
+`PortfolioDigest.IsBlockingGap` exists to prevent. It also gets **no AI work packet**
+(`GapIdentity.HasWorkPacket` is false for Advisory), which is correct: this is a missing runtime
+capability, not a missing datum or a script to port. Asserted directly rather than left implicit.
+
+**Verified:**
+- **Generated C# is byte-identical** across all 5 real `SSIS_From_Sandeep` packages (`diff -r`
+  against the persisted `D:\PoC\SSIS_From_Sandeep_Generated\generate`, only `bin`/`obj` differ).
+  This round adds a gap and touches no emitter, so it cannot regress generation.
+- **The generatable count is unchanged at 3/5**, and the advisory still shows per-package in
+  `generation-readiness.md` tagged `_(non-blocking -- informational)_`.
+- **Exactly 4 new gaps on the real portfolio** (20 -> 24; `gaps.json` GapId sets diffed directly,
+  nothing else moved): `Package` (2 concurrent), `Package_Advanced` (3), `Package_Exports` (3),
+  `Package_Legacy` (2). **`Package_Transforms` correctly reports none** — it is fully constrained,
+  which is what proves the detector discriminates instead of firing on everything.
+- **The negative case is the one that actually matters**, and it was tested as a `[Theory]` over
+  three genuinely sequential packages (`SyntheticPostFlowSql`, `SyntheticNestedContainer` — chained
+  at BOTH levels, so it also covers the nested walk not false-positiving — and the real
+  `SSIS/LoadEmployees.dtsx`). A false positive here would attach a permanent advisory to every
+  sequential package in a client portfolio, which is the noise that trains people to ignore the gap
+  list.
+- New `tests/Ssis.Extract.Codegen.Tests/ParallelismAdvisoryTests.cs`. **Four pre-existing tests
+  legitimately changed**, all gap-COUNT assertions on two fixtures whose root executables carry
+  **zero** precedence constraints (`SyntheticForEachFileLoop` — CLAUDE.md already described its loop
+  as a "sibling, precedence-independent" task; `SyntheticFlatFileDestination` — three independent
+  root flows). Confirmed true positives by reading each fixture's constraint count before touching
+  any assertion, not by assuming the new code was right. 179/179 in `Ssis.Extract.Codegen.Tests`
+  (was 175), 149/149 in `Ssis.Runtime.Expressions.Tests`, same 3 pre-existing unrelated failures
+  elsewhere.
+
+**A second, real, still-open gap found by the same investigation and deliberately NOT fixed here:**
+`ExecutableSpec.Disabled` is extracted and `RulesEngine` reports it as a finding, but
+**`Ssis.Extract.Codegen` never reads it at all** (confirmed by grep — zero references anywhere in
+that project). A disabled task is therefore generated as if enabled. That is a genuine correctness
+bug, not an advisory like this round's, and it wants its own round with a fixture that actually
+proves a disabled task is skipped.
+
+**Not built, deliberately:** actual parallel execution. That needs `IEtlPackage.Steps` to become
+ordered GROUPS, `PackageRunner` to `Task.WhenAll` within a group, and `IUnitOfWork` to become a
+per-branch factory — because a `SqlTransaction` is bound to one `SqlConnection` and one connection
+serializes commands, so parallel branches must either give up whole-package rollback (closer to what
+SSIS itself did, auto-committing per task) or escalate to MSDTC. `PreLoadStatements` being one flat
+global list is a third real restructure. Sized but not started: the honest next step is to time a
+sequential generated run against a hand-parallelized copy before committing to that change, since
+four branches hitting the same database may just move the bottleneck to SQL Server I/O.
+
+## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,
    IncludeInDebugDump, Required, Sensitive, Value, DataType`),

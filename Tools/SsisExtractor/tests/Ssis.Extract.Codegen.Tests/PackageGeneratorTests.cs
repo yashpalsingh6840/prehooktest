@@ -531,10 +531,11 @@ public class PackageGeneratorTests
         CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(dbContextFile.Content);
 
-        // Four expected gaps: the SqlCommand-mode column-name assumption on all three OLE DB
-        // Sources, plus the unavoidable Notification one -- neither flat-file flow reports its
-        // own gap.
-        Assert.Equal(4, result.Gaps.Count);
+        // Five expected gaps: the SqlCommand-mode column-name assumption on all three OLE DB
+        // Sources, the unavoidable Notification one, and the parallelism advisory (all three root
+        // flows are precedence-independent) -- neither flat-file flow reports its own gap.
+        Assert.Equal(5, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticFlatFileDestination.Parallelism");
         Assert.Equal(3, result.Gaps.Count(g => g.Reason.Contains("assumes each result-set column is named/aliased")));
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticFlatFileDestination.Notification");
     }
@@ -609,9 +610,10 @@ public class PackageGeneratorTests
         Assert.Contains("fEL_SampleFilesStep", programFile.Content); // present in the final Steps: [...] wiring too
         CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
 
-        // Only the two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption
-        // on DFT_Load's own source, and Notification. No ForEach-Loop-specific gap at all.
-        Assert.Equal(2, result.Gaps.Count);
+        // Only three unavoidable/non-blocking gaps -- the SqlCommand column-name assumption on
+        // DFT_Load's own source, Notification, and the parallelism advisory (DFT_Load and
+        // FEL_SampleFiles are precedence-independent siblings). No ForEach-Loop-specific gap.
+        Assert.Equal(3, result.Gaps.Count);
         Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
     }
 
