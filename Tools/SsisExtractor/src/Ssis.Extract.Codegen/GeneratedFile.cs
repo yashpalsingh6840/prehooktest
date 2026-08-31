@@ -1,3 +1,5 @@
+using Ssis.Extract.Model.Analysis;
+
 namespace Ssis.Extract.Codegen;
 
 /// <summary>One file an emitter produced. RelativePath is relative to `ssisx generate`'s
@@ -20,7 +22,21 @@ public sealed record GeneratedFile(string RelativePath, string Content);
 /// <c>PackageGenerator.BuildSqlFlowSource</c>. Consumers should key off this flag rather than
 /// pattern-matching <see cref="Location"/>/<see cref="Reason"/> text.
 /// </summary>
-public sealed record GenerationGap(string Location, string Reason, bool IsBlocking = true);
+public sealed record GenerationGap(
+    string Location,
+    string Reason,
+    bool IsBlocking = true,
+    // Both trailing parameters are OPTIONAL specifically so all ~143 existing
+    // `new GenerationGap(...)` call sites in this assembly compile unchanged -- only the handful
+    // whose gaps map to a real AI-assisted workflow (Script Task, Script Component column,
+    // Lookup join key) set them. See GapKind's own doc comment for why classification is a
+    // separate axis from IsBlocking.
+    GapKind Kind = GapKind.Unclassified,
+    // The refId of the object carrying this gap's EVIDENCE (an ExecutableSpec for a Script
+    // Task, a PipelineComponentSpec for a Script Component/Lookup) -- carried structurally rather
+    // than parsed back out of Reason text, so AiPacketEmitter can resolve the real source/SQL/
+    // column list unambiguously even when two components share a display name.
+    string? EvidenceRefId = null);
 
 /// <summary>What one emitter call produced: zero or more files, plus every gap hit along the
 /// way. A gap and a file are not mutually exclusive -- an entity with 7 of 8 columns resolved

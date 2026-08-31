@@ -3,6 +3,8 @@ using Ssis.Extract.Model.Pipeline;
 using Ssis.Extract.Model.Shared;
 using Ssis.Runtime.Expressions;
 
+using Ssis.Extract.Model.Analysis;
+
 namespace Ssis.Extract.Codegen;
 
 /// <summary>Everything TransformEmitter needs to name and locate one Data Flow Task's pieces.
@@ -291,7 +293,13 @@ public static class TransformEmitter
             else if (unrecognizedComponentColumns.TryGetValue(column.PipelineColumnName, out var producer))
             {
                 gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
-                    $"column '{column.PipelineColumnName}' is produced by '{producer.Name}' ({producer.ComponentClassId}), a component type this tool does not translate -- cannot safely generate a passthrough reference. If this is a Script Component, its transform logic must be ported by hand, the same limitation as a Script Task."));
+                    $"column '{column.PipelineColumnName}' is produced by '{producer.Name}' ({producer.ComponentClassId}), a component type this tool does not translate -- cannot safely generate a passthrough reference. If this is a Script Component, its transform logic must be ported by hand, the same limitation as a Script Task.",
+                    // Classified only when the producer really IS a Script Component: its source is
+                    // present in the .dtsx, so this is a portable translation job (Tier 2). Any OTHER
+                    // unrecognized producer stays Unclassified -- that is missing tool support, and
+                    // hand-patching it per package would hide one systemic emitter gap behind N patches.
+                    Kind: producer.ScriptComponent is not null ? GapKind.ScriptComponentColumn : GapKind.Unclassified,
+                    EvidenceRefId: producer.ScriptComponent is not null ? producer.RefId : null));
             }
             else if (!mismatchedTypeColumns.Contains(column.PipelineColumnName))
             {

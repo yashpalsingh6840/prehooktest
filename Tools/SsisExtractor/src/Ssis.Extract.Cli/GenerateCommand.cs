@@ -1,6 +1,8 @@
 using System.Text;
 using Ssis.Extract.Codegen;
+using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Package;
+using Ssis.Extract.Model.Serialization;
 
 namespace Ssis.Extract.Cli;
 
@@ -75,7 +77,9 @@ internal static class GenerateCommand
         }
 
         var generateDir = Path.Combine(outDir, "generate");
+        var gapsDir = Path.Combine(outDir, "gaps");
         var results = new List<PackageGenerateResult>();
+        var allGaps = new List<GapSpec>();
 
         foreach (var package in loaded.Packages)
         {
@@ -88,16 +92,33 @@ internal static class GenerateCommand
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 File.WriteAllText(path, file.Content);
             }
+
+            // Work packets live under <out>/gaps/, deliberately NOT inside <out>/generate/ --
+            // that tree is "the buildable solution" and nothing else, so a stray .md never ends up
+            // in a project directory someone is about to `dotnet build`.
+            var packetResult = AiPacketEmitter.Emit(package, result.Gaps);
+            allGaps.AddRange(packetResult.Gaps);
+            foreach (var packet in packetResult.Packets)
+            {
+                var path = Path.Combine(gapsDir, package.ObjectName, packet.RelativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, packet.Content);
+            }
         }
 
         var fixedFileGaps = WriteFixedFiles(generateDir, loaded.Packages, results);
 
+        var gapsPath = Path.Combine(outDir, "gaps.json");
+        StableJsonWriter.WriteToFile(allGaps, gapsPath);
+
         var reportPath = Path.Combine(outDir, "generate-report.md");
-        WriteReport(reportPath, results, loaded.Failures, fixedFileGaps);
+        WriteReport(reportPath, results, loaded.Failures, fixedFileGaps, allGaps);
 
         var totalFiles = results.Sum(r => r.Files.Count);
         var totalGaps = results.Sum(r => r.Gaps.Count) + fixedFileGaps.Count;
+        var packets = allGaps.Count(g => g.PacketPath is not null);
         Console.WriteLine($"generate: {totalFiles} file(s) written across {results.Count} package(s), {totalGaps} gap(s) -- see {reportPath}");
+        Console.WriteLine($"  {packets} work packet(s) written to {gapsDir}  (paste one into a chat window; see gaps.json for the index)");
 
         return totalGaps > 0 ? 3 : 0;
     }
@@ -216,7 +237,7 @@ internal static class GenerateCommand
         return gaps;
     }
 
-    private static void WriteReport(string path, List<PackageGenerateResult> results, List<PackageLoader.LoadFailure> loadFailures, List<GenerationGap> fixedFileGaps)
+    private static void WriteReport(string path, List<PackageGenerateResult> results, List<PackageLoader.LoadFailure> loadFailures, List<GenerationGap> fixedFileGaps, List<GapSpec> allGaps)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# ssisx generate -- report");
@@ -244,13 +265,17 @@ internal static class GenerateCommand
         }
         else
         {
-            sb.AppendLine("| Package | Location | Reason |");
-            sb.AppendLine("|---|---|---|");
-            foreach (var r in results.OrderBy(r => r.PackageName, StringComparer.Ordinal))
-                foreach (var gap in r.Gaps)
-                    sb.AppendLine($"| {r.PackageName} | {gap.Location} | {gap.Reason} |");
+            sb.AppendLine("Each gap carries a stable `GapId` and a tier. **Tier 1/2 gaps have a work packet** under");
+            sb.AppendLine("`gaps/<Package>/` -- a self-contained brief you can paste into a chat window. **Tier 3 gaps");
+            sb.AppendLine("deliberately do not**: those are missing tool support, and closing them per-package by hand");
+            sb.AppendLine("would hide one systemic emitter gap behind N one-off patches. See `gaps.json` for the index.");
+            sb.AppendLine();
+            sb.AppendLine("| Package | Tier | GapId | Reason |");
+            sb.AppendLine("|---|---|---|---|");
+            foreach (var g in allGaps)
+                sb.AppendLine($"| {g.Package} | {TierLabel(g)} | `{g.GapId}` | {g.Reason} |");
             foreach (var gap in fixedFileGaps)
-                sb.AppendLine($"| _(shared)_ | {gap.Location} | {gap.Reason} |");
+                sb.AppendLine($"| _(shared)_ | advisory | `{gap.Location}` | {gap.Reason} |");
         }
         sb.AppendLine();
 
@@ -270,6 +295,15 @@ internal static class GenerateCommand
 
         File.WriteAllText(path, sb.ToString());
     }
+
+    /// <summary>Tier 1/2 read as actionable work items; tier 3 reads as an emitter feature request. The packet marker is what a reader scans for.</summary>
+    private static string TierLabel(GapSpec gap) => gap.Tier switch
+    {
+        GapTier.MissingDatum => "1 -- datum (packet)",
+        GapTier.MissingLogic => "2 -- logic (packet)",
+        GapTier.MissingToolSupport => "3 -- tool",
+        _ => "advisory",
+    };
 
     private static string RequireValue(string[] args, ref int i, string flag)
     {

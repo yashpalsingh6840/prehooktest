@@ -99,6 +99,7 @@ internal static class PipelineReader
                 ReadOnlyVariables = SplitCommaVariableList(GetProperty(properties, "ReadOnlyVariables")),
                 ReadWriteVariables = SplitCommaVariableList(GetProperty(properties, "ReadWriteVariables")),
                 SourceCodeItems = sourceCodeItems,
+                SourceFiles = ParseScriptComponentSourceFiles(sourceCodeItems),
                 HasBinaryCode = hasBinaryCode,
                 SourceStripped = sourceCodeItems.Count == 0 && hasBinaryCode,
             };
@@ -564,6 +565,39 @@ internal static class PipelineReader
     private static string? NullIfEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;
 
     /// <summary>Comma-delimited, unlike <c>DtsxPackageReader.SplitVariableList</c>'s semicolon split for Script Task's own ReadOnlyVariables/ReadWriteVariables -- confirmed a genuinely different, real convention by reading Script Component's own property description text from the object model ("Specifies a comma-separated list of read-only variables."), not assumed to match Script Task.</summary>
+    /// <summary>
+    /// A Script Component's <c>SourceCode</c> array is NOT a list of opaque source blobs, despite
+    /// how it reads: it is a flat sequence of repeating <b>(file name, encoding, content)</b>
+    /// triples -- one per VSTA project file. Confirmed 2026-08-31 against the first real
+    /// SSDT-authored Script Component available to this project (RBC_Demo_ETL's own
+    /// <c>SCR_CleanseCustomerRow</c>: 30 elements = 10 files, element 0 <c>ComponentWrapper.cs</c>,
+    /// element 1 <c>UTF8</c>, element 2 the actual C#), which is later than the original
+    /// Script Component work -- no real one existed on this machine then, so the array was
+    /// modelled as opaque and written out as <c>source-&lt;index&gt;.cs</c>, half of those files
+    /// being a bare file name or the literal string "UTF8".
+    ///
+    /// Returns empty when the count is not a clean multiple of 3 rather than guessing an
+    /// alignment -- a partial/misaligned parse would silently mislabel real source, and
+    /// <see cref="ScriptComponentPayload.SourceCodeItems"/> still carries the raw array for
+    /// anyone who needs it.
+    /// </summary>
+    private static List<ScriptComponentSourceFileSpec> ParseScriptComponentSourceFiles(List<string> sourceCodeItems)
+    {
+        if (sourceCodeItems.Count == 0 || sourceCodeItems.Count % 3 != 0) return [];
+
+        var files = new List<ScriptComponentSourceFileSpec>();
+        for (var i = 0; i + 2 < sourceCodeItems.Count; i += 3)
+        {
+            files.Add(new ScriptComponentSourceFileSpec
+            {
+                Name = sourceCodeItems[i],
+                Encoding = sourceCodeItems[i + 1],
+                Content = sourceCodeItems[i + 2],
+            });
+        }
+        return files;
+    }
+
     private static List<string> SplitCommaVariableList(string? raw) =>
         string.IsNullOrEmpty(raw) ? [] : raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 }

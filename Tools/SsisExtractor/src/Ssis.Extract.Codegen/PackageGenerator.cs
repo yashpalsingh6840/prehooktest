@@ -80,7 +80,13 @@ public static partial class PackageGenerator
                 var cacheClassName = SanitizeIdentifier(lookup.Name) + "Cache";
                 Merge(files, gaps, LookupCacheEmitter.Emit($"{ns}.Mapping", cacheClassName, lookup));
                 gaps.Add(new GenerationGap(flow.TaskName,
-                    $"Data Flow Task '{flow.TaskName}' contains a Microsoft.Lookup component ('{lookup.Name}') -- SSIS does not persist a Lookup's join key anywhere in the saved .dtsx, so this tool cannot safely generate a join condition without guessing. A best-effort reference-table cache scaffold was generated at Mapping/{cacheClassName}.cs, but this flow's transform/Program.cs wiring were NOT generated. To finish by hand: pick the join key, write a Map() that calls {cacheClassName}.LoadAsync at startup and looks up by that key, and add a new DataFlowStep to Program.cs following the pattern of this package's other flows."));
+                    $"Data Flow Task '{flow.TaskName}' contains a Microsoft.Lookup component ('{lookup.Name}') -- SSIS does not persist a Lookup's join key anywhere in the saved .dtsx, so this tool cannot safely generate a join condition without guessing. A best-effort reference-table cache scaffold was generated at Mapping/{cacheClassName}.cs, but this flow's transform/Program.cs wiring were NOT generated. To finish by hand: pick the join key, write a Map() that calls {cacheClassName}.LoadAsync at startup and looks up by that key, and add a new DataFlowStep to Program.cs following the pattern of this package's other flows.",
+                    // Tier 1: the ONE thing missing here is a datum (which reference column the
+                    // input joins against), not code -- LookupCacheEmitter already emits a cache with
+                    // a generic LoadAsync<TKey> designed to defer exactly this. Once the key is
+                    // confirmed, the deterministic emitter can generate the whole flow itself.
+                    Kind: GapKind.LookupJoinKey,
+                    EvidenceRefId: lookup.RefId));
                 continue;
             }
 

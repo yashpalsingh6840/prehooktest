@@ -3,6 +3,8 @@ using Ssis.Extract.Model.Package;
 using Ssis.Extract.Model.Pipeline;
 using Ssis.Extract.Model.Shared;
 
+using Ssis.Extract.Model.Analysis;
+
 namespace Ssis.Extract.Codegen;
 
 /// <summary>One Data Flow Task, in execution order, with the components the other emitters
@@ -420,8 +422,15 @@ public static class PackagePlanner
                 continue;
             }
 
+            // A Script Task is classified rather than left Unclassified: its real source IS present
+            // in the .dtsx (ScriptTaskPayload.ProjectItems), so it is a translation job a human
+            // working with AI can close, not missing tool support. Every OTHER unsupported
+            // executable type stays Unclassified and therefore lands in GapTier.MissingToolSupport.
+            var isScriptTask = executable.ScriptTask is not null;
             gaps.Add(new GenerationGap(executable.ObjectName ?? refId,
-                $"executable type '{executable.ExecutableType}' is not supported by this planner yet -- only Data Flow Task, Execute SQL Task, and File System Task are"));
+                $"executable type '{executable.ExecutableType}' is not supported by this planner yet -- only Data Flow Task, Execute SQL Task, and File System Task are",
+                Kind: isScriptTask ? GapKind.ScriptTask : GapKind.Unclassified,
+                EvidenceRefId: isScriptTask ? executable.RefId : null));
         }
 
         return containerIsPostFlow || sawDataFlowInThisContainer;

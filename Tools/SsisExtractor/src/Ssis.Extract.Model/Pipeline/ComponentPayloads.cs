@@ -414,10 +414,35 @@ public sealed class ScriptComponentPayload
     public List<string> ReadWriteVariables { get; init; } = [];
 
     public List<string> SourceCodeItems { get; init; } = [];
+
+    /// <summary>
+    /// <see cref="SourceCodeItems"/> parsed into real files. The raw array is a flat sequence of
+    /// repeating <b>(name, encoding, content)</b> triples -- see
+    /// <c>PipelineReader.ParseScriptComponentSourceFiles</c> for how that was established and why
+    /// a non-multiple-of-3 count yields an empty list rather than a guessed alignment.
+    ///
+    /// Note the entry point is <c>main.cs</c>/<c>main.vb</c> here, NOT the <c>ScriptMain.*</c> a
+    /// Script *Task* uses -- one more place these two features diverge despite looking identical
+    /// in the SSIS UI (see <see cref="ScriptTaskPayload"/> for the others). Everything else in the
+    /// list is VSTA-generated scaffolding (ComponentWrapper.cs, BufferWrapper.cs, Properties\*,
+    /// the .csproj, and an internal "Project" descriptor), not authored logic.
+    /// </summary>
+    public List<ScriptComponentSourceFileSpec> SourceFiles { get; init; } = [];
+
     public bool HasBinaryCode { get; init; }
 
     /// <summary>True when <c>BinaryCode</c> is non-empty but <see cref="SourceCodeItems"/> is empty -- same "source genuinely gone" signal as <c>ScriptTaskPayload.SourceStripped</c>, not yet observed on any real package.</summary>
     public bool SourceStripped { get; init; }
+}
+
+/// <summary>One VSTA project file inside a Script Component's own <c>SourceCode</c> array -- see <see cref="ScriptComponentPayload.SourceFiles"/>.</summary>
+public sealed class ScriptComponentSourceFileSpec
+{
+    /// <summary>e.g. "main.cs" (the entry point) or "Properties\Settings.Designer.cs" -- a backslash-separated relative path, same convention as <see cref="ScriptProjectItemSpec.Name"/>.</summary>
+    public required string Name { get; init; }
+
+    public string? Encoding { get; init; }
+    public required string Content { get; init; }
 }
 
 /// <summary>

@@ -886,7 +886,14 @@ end-to-end with an exact row-for-row match across all 9 seeded rows, midpoints i
 more Data Conversion target types (DT_I2/DT_I8/DT_DBTIMESTAMP) built speculatively the same
 session, closing this session's second "build both" round -- a real dtexec probe confirmed all
 three follow the same "NULL on any failure" convention as the already-closed DT_I4/DT_DBDATE/
-DT_R8/DT_BOOL, verified end-to-end with an exact match across all 5 seeded rows
+DT_R8/DT_BOOL, verified end-to-end with an exact match across all 5 seeded rows; AI-assisted gap
+filling started 2026-08-31 -- chunk 1 of 4 (gap identity + work packets) adds a GapKind/GapTier
+taxonomy routing each gap to who can actually close it (Tier 1 datum / Tier 2 script port / Tier 3
+emitter feature, the last deliberately NOT AI-fillable), stable conformance-style GapIds, one
+self-contained markdown work packet per Tier-1/2 gap under <out>/gaps/, and gaps.json -- changing
+nothing about generated C# (verified byte-identical), and correcting a documented assumption along
+the way: a Script Component's SourceCode array is (name, encoding, content) TRIPLES, not opaque
+blobs, with main.cs (not ScriptMain.*) as its entry point
 
 ### Portfolio survey now reports generation readiness (2026-08-26)
 
@@ -4453,6 +4460,101 @@ code), so `D:\PoC\SSIS_Rewrite` has nothing to commit.
 DT_WSTR/DT_BOOL/DT_I2/DT_I8/DT_DBTIMESTAMP (e.g. DT_NUMERIC, DT_DBTIMESTAMPOFFSET — neither
 evidenced nor measured), and the numeric-passthrough-coercion gap for every pairing beyond the
 five already closed. Both of this session's "build both" speculative rounds are now done.
+
+### AI-assisted gap filling, chunk 1 — gap identity + work packets (2026-08-31)
+
+The first chunk of a planned 4-chunk feature (plan preserved at
+`C:\Users\yashpal.singh01\.claude\plans\peaceful-percolating-pebble.md`) letting a human working
+with AI close the gaps `ssisx generate` refuses to guess at, **without weakening the property that
+makes this tool worth anything** — that a gap is loud and visible and nothing which looks complete
+is silently wrong. Motivated by the real portfolio: `SSIS_From_Sandeep` sits at 3/5 generatable,
+blocked by `Package`'s 2 Script Tasks + 6 Script-Component-synthesized columns, and
+`Package_Transforms`' own `DFT_LookupAndAggregate`.
+
+**The load-bearing idea is a TIER TAXONOMY, not "let AI fill gaps".** Reading the real blocked
+flows showed they are three genuinely different problems that must be routed differently:
+
+| Tier | Nature | Real example | Closed by | Enters the build as |
+|---|---|---|---|---|
+| 1 `MissingDatum` | Info absent from the `.dtsx`; code fully derivable once supplied | Lookup join key | AI proposes value + rationale + confidence, **human confirms** | **Nothing AI-authored** — a datum; the deterministic emitter still writes every line |
+| 2 `MissingLogic` | Real code IS in the `.dtsx`, just not mechanically translatable | Script Task, Script Component | AI translates into a defined seam, human reviews, gate 3 verifies | Provenance-stamped C# in a `fills/` file |
+| 3 `MissingToolSupport` | This tool cannot model the shape at all | Multicast→Aggregate routing | **Nobody, via AI** | Nothing — it becomes an emitter feature with a fixture and a test |
+
+**The Tier-3 refusal is the most important rule, not a footnote.** Patching a Tier-3 gap
+per-package with AI would hide ONE systemic emitter gap behind N one-off hand-written patches —
+precisely inverting what `generation-readiness.md` exists to surface. Tier 3 gets no work packet
+at all, deliberately.
+
+**What chunk 1 built** (nothing about generated C# changed — verified byte-identical, see below):
+`GapKind`/`GapTier`/`GapSpec` (`Ssis.Extract.Model/Analysis/GapSpec.cs`), `GapIdentity`
+(stable ids), `AiPacketEmitter` (one self-contained markdown packet per Tier-1/2 gap), and
+`GenerateCommand` writing `<out>/gaps/<Package>/<GapId>.md` + `<out>/gaps.json`.
+`GenerationGap` gained two **optional** trailing parameters (`Kind`, `EvidenceRefId`) specifically
+so all ~143 existing `new GenerationGap(...)` call sites compile untouched — only **3** are
+classified (Script Task in `PackagePlanner`, Script Component column in `TransformEmitter`, Lookup
+in `PackageGenerator`), and tier is DERIVED (`Unclassified` + blocking = Tier 3, + non-blocking =
+Advisory) rather than stored twice.
+
+**Gap ids deliberately mirror `ConformanceRuleSpec.RuleId`'s `<CATEGORY>:<location>` shape and its
+stability contract** (`SCRIPT-COLUMN:Package:StagingCustomers.FullName`) rather than inventing a
+second convention — fill files will be keyed by these and hand-maintained across a migration, so
+an id that moved when someone nudged a package in the designer would silently orphan the work
+behind it. Ids derive only from meaning-bearing identifiers; a genuine collision disambiguates by
+a hash of the REASON, never list position. `EvidenceRefId` is carried structurally rather than
+parsed back out of `Reason` text, so evidence resolves unambiguously even when two components
+share a display name (RBC_Demo_ETL genuinely has two Data Conversions both producing
+`CustomerID_i4`).
+
+**A real, previously-unknown fact about the SSIS format was discovered building this, and it
+CORRECTS an earlier documented assumption.** `ScriptComponentPayload.SourceCodeItems` was modelled
+as "an ordered list of opaque text blobs" with `ssisx report` writing them as
+`source-<index>.cs`, because — as this file's own Script Component section states — no real
+SSDT-authored Script Component existed on this machine to read for ground truth. `SSIS_From_Sandeep`
+provides one, and the array is nothing of the sort: it is a flat sequence of repeating
+**(file name, encoding, content)** triples, one per VSTA project file (30 elements = 10 files;
+element 0 `ComponentWrapper.cs`, element 1 `UTF8`, element 2 the actual C#). Confirmed against the
+raw XML, not inferred from the parsed output. Two consequences: the entry point is **`main.cs`**,
+NOT the `ScriptMain.*` a Script *Task* uses (one more place these two features diverge despite
+looking identical in the SSIS UI), and half of what `ssisx report` currently writes as "source"
+files is a bare file name or the literal string `UTF8`. Now parsed into
+`ScriptComponentPayload.SourceFiles`; a count that is not a clean multiple of 3 yields an empty
+list rather than a guessed alignment, with the raw array still carried. **Without this the packets
+would have been near-useless** — dumping 30 blobs of mostly VSTA-generated plumbing with the one
+authored file buried among them.
+
+**Two more real defects were caught by reading the generated output rather than trusting it**, the
+same discipline that caught `portfolio-digest.json`'s silently-empty tuple serialization:
+- A Lookup's reference columns carry the `DT_`-prefixed type spelling (`DT_WSTR`) while
+  `SsisPipelineTypeMap` is keyed by the buffer short form (`wstr`), so every reference column
+  rendered as `(unmapped)`. Normalized at the call site rather than widening the shared map's
+  accepted vocabulary, which every other consumer relies on.
+- `GapKind`/`GapTier` serialized to `gaps.json` as bare integers (`"Kind": 1`). Unreadable in a
+  file whose whole purpose is being a human-and-tool-readable index, and fragile: renumbering the
+  enum would silently change what a stored value means. Fixed with
+  `[JsonConverter(typeof(JsonStringEnumConverter))]` on both enums.
+
+**Verified, per this project's usual bar:**
+- **Generated C# is byte-identical to before this change** — `diff -r` across all 5
+  `SSIS_From_Sandeep` package trees plus every shared file, zero differences. This chunk cannot
+  regress generation because it does not touch it.
+- Run against the real portfolio: **8 work packets** (2 Script Tasks + 6 Script Component
+  columns), and the whole gap picture now classifies as 8 `MissingLogic` / 1
+  `MissingToolSupport` (the Multicast→Aggregate one) / 10 `Advisory` — the taxonomy landing
+  correctly on real data, not a fixture.
+- A real packet was read cold and answered to confirm it is self-sufficient. It is — and that
+  exercise produced **a concrete design correction for chunk 3**: `IsValidRow`'s port needs a
+  static `Regex` field, not just a method body, so the Tier-2 seam contract must be *a partial
+  class part*, not a bare method body as the plan assumed.
+- 167/167 in `Ssis.Extract.Codegen.Tests` (was 152 — 15 new across `GapIdentityTests`/
+  `AiPacketEmitterTests`), 149/149 in `Ssis.Runtime.Expressions.Tests`, same 3 pre-existing
+  unrelated failures elsewhere (someone else's in-progress SSDT edits to
+  `SSIS/LoadReferenceData.dtsx`/`SSIS/SSIS.dtproj`).
+
+**Not built yet, by design** (chunks 2-4): `fills/` consumption + the Lookup `decisions.json`
+(Tier 1) and the Multicast→Aggregate planner fix that actually unblocks `DFT_LookupAndAggregate`;
+`--seams` + `ssisx apply-fills` (Tier 2); provenance/staleness checking against
+`GapSpec.EvidenceSha256`, which is recorded from this chunk onward specifically so chunk 4 has a
+baseline to compare against.
 
 ## Traps already hit once — don't re-derive these
 
