@@ -163,6 +163,25 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ResolvesConnectionManagerName_ForAnExecuteSqlTask()
+    {
+        // SyntheticSecondConnectionSql.dtsx: SQL_PreLoad -> DFT_Load -> SQL_CacheSet_SecondDb,
+        // the latter targeting a SECOND connection manager (CM_SqlSecondDb) -- real bug found
+        // running RBC_Demo_ETL's own Package_Legacy.dtsx end to end. PackagePlanner itself
+        // doesn't decide primary-vs-secondary (it doesn't know the package's resolved target
+        // database yet -- see SqlStep's own doc comment) -- it just needs to carry the raw
+        // resolved connection manager name through, always, for PackageGenerator to act on
+        // once flows have resolved a primary.
+        var package = LoadSyntheticFixture("SyntheticSecondConnectionSql.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var sqlStep = Assert.IsType<SqlStep>(plan.Steps.Single(s => s is SqlStep sql && sql.TaskName == "SQL_CacheSet_SecondDb"));
+        Assert.Equal("CM_SqlSecondDb", sqlStep.ConnectionManagerName);
+    }
+
+    [Fact]
     public void Plan_ResolvesAConditionalSplitsBranches_InEvaluationOrder_DefaultLast()
     {
         // SyntheticConditionalSplit.dtsx: OLE DB Source -> Derived Column (LoadedAtUtc) ->

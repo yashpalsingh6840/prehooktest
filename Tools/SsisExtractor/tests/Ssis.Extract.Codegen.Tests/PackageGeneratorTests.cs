@@ -47,6 +47,49 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_RoutesAPostFlowExecuteSqlTask_ToItsOwnSecondaryConnection_WhenItTargetsADifferentDatabase()
+    {
+        // SyntheticSecondConnectionSql.dtsx: SQL_PreLoad -> DFT_Load (primary CM_Sql) ->
+        // SQL_CacheSet_SecondDb (CM_SqlSecondDb, a DIFFERENT database on the same instance).
+        // Reproduces the real bug found running RBC_Demo_ETL's own Package_Legacy.dtsx end to
+        // end: before this, every Execute SQL Task ran through the package's ONE shared
+        // connection regardless of its own connection manager, so this step's own statement
+        // would have silently run against the wrong database. Confirmed beyond this test by
+        // actually running the generated exe against .\SQLFORPOC_2022 (both SsisPoC and the
+        // second database, SsisPoC_Secondary) and reading dbo.SyntheticSecondConnectionLog
+        // back afterward -- see Tools/SsisExtractor/CLAUDE.md.
+        var package = LoadSyntheticFixture("SyntheticSecondConnectionSql.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains(
+            "var cM_SqlSecondDbConnectionString = SqlConnectionStringFactory.Build(builder.Configuration.GetSection(\"SecondaryConnections:CM_SqlSecondDb\").Get<DatabaseOptions>()",
+            programFile.Content);
+        Assert.Contains(
+            "var sQL_CacheSet_SecondDbStep = new SecondaryConnectionSqlStep(\"SQL_CacheSet_SecondDb\", \"CM_SqlSecondDb\", cM_SqlSecondDbConnectionString, "
+            + "\"INSERT INTO dbo.SyntheticSecondConnectionLog (LogKey, LogValue) VALUES (N'LegacyImport', N'fixed-width import completed');\", "
+            + "sp.GetRequiredService<ILogger<SecondaryConnectionSqlStep>>());",
+            programFile.Content);
+        // Never an ordinary ExecuteSqlStep for this task -- that would run it on the wrong connection.
+        Assert.DoesNotContain("new ExecuteSqlStep(\"SQL_CacheSet_SecondDb\"", programFile.Content);
+        Assert.Contains("Steps: [syntheticSecondConnectionTargetFlow, sQL_CacheSet_SecondDbStep],", programFile.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        var appSettingsFile = Assert.Single(result.Files, f => f.RelativePath == "appsettings.json");
+        Assert.Contains("\"SecondaryConnections\"", appSettingsFile.Content);
+        Assert.Contains("\"CM_SqlSecondDb\"", appSettingsFile.Content);
+        Assert.Contains("\"Database\": \"SsisPoC_Secondary\"", appSettingsFile.Content);
+        // Never the password -- same rule as TargetDatabase.
+        Assert.DoesNotContain("Password", appSettingsFile.Content);
+
+        // The only real gap is the unavoidable, non-blocking Notification one.
+        var gap = Assert.Single(result.Gaps);
+        Assert.Equal("SyntheticSecondConnectionSql.Notification", gap.Location);
+    }
+
+    [Fact]
     public void Generate_WiresAnOleDbSourcedFlow_IntoProgramCsViaSqlRowSource()
     {
         // SyntheticOleDbSourceTransform.dtsx: OLE DB Source (SqlCommand, AccessMode=2) ->
@@ -66,7 +109,7 @@ public class PackageGeneratorTests
         Assert.Contains(
             "CommandText = \"SELECT ID, Amount FROM dbo.SyntheticOleDbSourceInput\" };",
             programFile.Content);
-        Assert.Contains("return new SqlRowSource<SyntheticOleDbSourceTargetSqlRow>(\"OLE DB Source\", sqlOptions, SyntheticOleDbSourceTargetSqlRowReader.Read);", programFile.Content);
+        Assert.Contains("return new SqlRowSource<SyntheticOleDbSourceTargetSqlRow>(\"OLE DB Source\", sqlOptions, SyntheticOleDbSourceTargetSqlRowReader.Read, sp.GetRequiredService<IUnitOfWork>());", programFile.Content);
 
         CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
 

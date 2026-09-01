@@ -16,7 +16,8 @@ using Microsoft.SqlServer.Dts.Runtime;
 //   2. Package.Errors / Package.Warnings      -- post-execute safety net;
 //      normally redundant with #1 but catches anything raised outside the
 //      event pump (e.g. some validation-time failures).
-//   3. Native log provider (DTS.LogProviderTextFile.3), cascaded to every
+//   3. Native text-file log provider (its ProgID's version suffix is resolved
+//      from the runtime -- see TextFileLogProviderCreationName), cascaded to every
 //      container -- the ONLY channel that carries pipeline-level events
 //      (OnPipelineRowsSent, Diagnostic), i.e. per-component row counts.
 // A 4th channel (custom IDTSLogging, for a structured JSON/stdout sink) is
@@ -277,14 +278,47 @@ public static class PkgRun
         logCm.Name = "CM_PkgRunLog_" + pkg.Name;
         logCm.ConnectionString = logFile;
 
-        // ".9" is this SSIS version's (17.0) log-provider suffix -- confirmed
-        // via Application.LogProviderInfos, NOT the ".3"/".4" seen in older
-        // docs/blog posts; using the wrong suffix fails at runtime with
-        // "not recognized as a valid log provider type", not at compile time.
-        LogProvider lp = pkg.LogProviders.Add("DTS.LogProviderTextFile.9");
+        LogProvider lp = pkg.LogProviders.Add(TextFileLogProviderCreationName());
         lp.ConfigString = logCm.Name;
 
         ApplyLogging(pkg, lp);
+    }
+
+    // The text-file log provider's ProgID carries a VERSION-SPECIFIC numeric
+    // suffix -- ".9" on SSIS 17.0 (SQL 2025), ".8" on 16.0 (SQL 2022), and the
+    // ".3"/".4" most blog posts and older docs still show. Getting it wrong
+    // fails at RUN time ("not recognized as a valid log provider type"), never
+    // at compile time, and that failure counts toward MaximumErrorCount -- so a
+    // hardcoded suffix turns a machine change into a silently-failing run
+    // rather than a build error. Ask the runtime for the name it actually
+    // supports instead of pinning one; Application.LogProviderInfos is the same
+    // ground-truth source that identified ".9" in the first place.
+    private static string cachedTextFileLogProvider;
+
+    private static string TextFileLogProviderCreationName()
+    {
+        if (cachedTextFileLogProvider != null) return cachedTextFileLogProvider;
+
+        const string prefix = "DTS.LogProviderTextFile";
+        var app = new Application();
+        foreach (LogProviderInfo info in app.LogProviderInfos)
+        {
+            if (info.CreationName != null &&
+                info.CreationName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                cachedTextFileLogProvider = info.CreationName;
+                return cachedTextFileLogProvider;
+            }
+        }
+
+        // Nothing matched: name what WAS available, since the alternative is a
+        // bare "invalid log provider type" with no clue which names are valid.
+        var available = new List<string>();
+        foreach (LogProviderInfo info in app.LogProviderInfos) available.Add(info.CreationName);
+        throw new Exception(
+            "No text-file log provider found on this machine (looked for a CreationName " +
+            "starting with '" + prefix + "'). Available providers: " +
+            (available.Count == 0 ? "(none)" : string.Join(", ", available.ToArray())));
     }
 
     private static void ApplyLogging(DtsContainer container, LogProvider lp)

@@ -14,7 +14,37 @@ public sealed class PackageConfig
     /// <summary>The DDL script that creates this package's target schema, applied fresh before every gate-3 run (plan §5 step 1). Path is relative to the repo root.</summary>
     public required string SchemaScript { get; init; }
 
+    /// <summary>Extra setup scripts run, in order, against the real target connection string right after <see cref="SchemaScript"/> -- for state <see cref="SchemaScript"/> itself can't own, such as a job's SQL-auth login/grants (LoadEmployees' ssis_loader). Needed because a script that DROPs/recreates a table (as SchemaScript does) wipes any GRANTs a prior run of a credential script made on that same object, so the credential script must be re-applied every time, after the table exists again -- not folded into SchemaScript itself, which stays a pure schema DDL script shared with the rest of this repo (Sql/01_CreateTarget.sql). Empty for packages with no such setup (e.g. LoadReferenceData, Windows-auth only).</summary>
+    public List<string> AdditionalSchemaScripts { get; init; } = [];
+
     public List<TargetTableConfig> TargetTables { get; init; } = [];
+
+    /// <summary>
+    /// Every real-world effect `ssisx report`'s effects.json named for this package that is
+    /// NOT one of <see cref="TargetTables"/> -- a file drop, a stored procedure whose own
+    /// writes aren't enumerated here, or a task type the extractor couldn't characterize at
+    /// all. Snapshotted at config-generation time, the same pattern as
+    /// <see cref="TargetTableConfig.ExcludedColumns"/>.
+    ///
+    /// <para><b>This is the field that stops a false PASS.</b> Without it, a package whose
+    /// real output is (say) an email would have zero TargetTables, nothing to diff, and
+    /// GateRunner would report success on an empty comparison. Every entry here whose
+    /// <see cref="DeclaredEffectConfig.Verifiability"/> is not <c>"Verifiable"</c> forces the
+    /// run's outcome to <c>Incomplete</c> instead of <c>Pass</c> -- see GateRunner.Run.</para>
+    /// </summary>
+    public List<DeclaredEffectConfig> DeclaredEffects { get; init; } = [];
+}
+
+/// <summary>One row of `ssisx report`'s effects.json, kept for a package after its SqlTable effects are folded into <see cref="PackageConfig.TargetTables"/> instead.</summary>
+public sealed class DeclaredEffectConfig
+{
+    public required string Kind { get; init; }
+    public required string Target { get; init; }
+
+    /// <summary>"Verifiable" | "NeedsChecker" | "NeedsHumanReview" -- copied verbatim from effects.json at generation time. Anything other than "Verifiable" blocks a Pass outcome.</summary>
+    public required string Verifiability { get; init; }
+
+    public required string Note { get; init; }
 }
 
 public sealed class TargetTableConfig

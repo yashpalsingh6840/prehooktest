@@ -2,7 +2,7 @@
     SSIS PoC - target database and tables
     -------------------------------------
     Run once before executing the packages:
-        sqlcmd -S ".\SQLFORPOC" -E -i Sql\01_CreateTarget.sql
+        sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\01_CreateTarget.sql
 
     LoadEmployees.dtsx writes to dbo.Employee. Four of its columns are produced
     by the Derived Column transform rather than read from the CSV:

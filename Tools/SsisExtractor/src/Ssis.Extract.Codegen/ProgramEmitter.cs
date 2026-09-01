@@ -5,7 +5,15 @@ namespace Ssis.Extract.Codegen;
 /// concrete case per flow; ProgramEmitter switches on it to emit the matching IRowSource
 /// registration.</summary>
 public abstract record FlowSourceSpec(string ComponentName);
-public sealed record CsvFlowSource(string ComponentName, string FileSourceKey) : FlowSourceSpec(ComponentName);
+public sealed record CsvFlowSource(string ComponentName, string FileSourceKey, int SkipRows = 0) : FlowSourceSpec(ComponentName);
+
+/// <summary>A Flat File Source whose connection manager has no column-NAME header at all --
+/// SSIS's own "FixedWidth"/"RaggedRight" formats, read purely by character position (see
+/// <c>FlatFileRuntimeShape.IsFixedWidthWithoutHeader</c> for exactly which connection managers
+/// take this path instead of <see cref="CsvFlowSource"/>). <see cref="Columns"/> is the
+/// file's own physical layout, in the connection manager's own column order.</summary>
+public sealed record FixedWidthFlowSource(
+    string ComponentName, string FileSourceKey, IReadOnlyList<FixedWidthColumnPlan> Columns, int SkipRows) : FlowSourceSpec(ComponentName);
 public sealed record SqlFlowSource(string ComponentName, string CommandText) : FlowSourceSpec(ComponentName);
 
 /// <summary>An Excel Source, added 2026-08-28 testing this tool against a real third-party
@@ -120,6 +128,15 @@ public sealed record ProgramStepGuard(string SsisExpression, string CSharpPredic
 
 public sealed record ProgramFlowStep(ProgramFlowSpec Flow) : ProgramStep;
 public sealed record ProgramSqlStep(string StepName, string Sql) : ProgramStep;
+
+/// <summary>An Execute SQL Task whose own connection manager resolves to a DIFFERENT server/
+/// database than this package's primary one (see <c>PackageGenerator.ResolveSqlStep</c>'s own
+/// doc comment for the real motivating case and why this needs its own step kind rather than
+/// an ordinary <see cref="ProgramSqlStep"/>). <see cref="ConnectionManagerName"/> names both the
+/// generated <c>SecondaryConnections:&lt;name&gt;</c> appsettings.json section this reads its
+/// connection info from and the top-level connection-string local this emitter builds once per
+/// distinct name referenced.</summary>
+public sealed record ProgramSecondaryConnectionSqlStep(string StepName, string ConnectionManagerName, string Sql) : ProgramStep;
 
 /// <summary>A ported Script Task (--seams). <paramref name="ClassName"/> is the generated
 /// partial class ScriptTaskEmitter produced; its logic arrives as a hand-written second part.</summary>
@@ -252,7 +269,7 @@ public static class ProgramEmitter
         // is constructed fresh, inline, per iteration -- see ProgramForEachDataFlowLoopStep's
         // own doc comment), but it is always CSV-sourced this round (PlanForEachDataFlowLoop's
         // own gate requires a Flat File Source), so it still needs the same usings/namespace.
-        var usesCsv = allSources.Any(s => s is CsvFlowSource) || dataFlowLoops.Count > 0;
+        var usesCsv = allSources.Any(s => s is CsvFlowSource or FixedWidthFlowSource) || dataFlowLoops.Count > 0;
         var usesExcel = allSources.Any(s => s is ExcelFlowSource);
         // A Merge Join's own combined row type always lands in the .Sql namespace/folder
         // (MergeJoinEmitter's own choice, independent of what its two SIDES are sourced from),
@@ -264,6 +281,12 @@ public static class ProgramEmitter
         // usesSql already covers when the SOURCE is SQL -- but a Lookup flow can be CSV-sourced)
         // plus IConfiguration.Get<T>() for the binder extension method.
         var usesLookupPreload = flows.Any(f => f.Lookup is not null);
+        // Same reasoning as usesLookupPreload -- IConfiguration.Get<T>() is needed to read each
+        // distinct secondary connection's own SecondaryConnections:<name> section. DatabaseOptions/
+        // SqlConnectionStringFactory (Etl.Core.Hosting) and SecondaryConnectionSqlStep (Etl.Core.
+        // Pipeline) need no conditional using -- both namespaces are already added unconditionally.
+        var secondaryConnectionNames = request.Steps.OfType<ProgramSecondaryConnectionSqlStep>()
+            .Select(s => s.ConnectionManagerName).Distinct().ToList();
         var usesFlatFileSink = flows.Any(f => f.Sink is FlatFileFlowSink) || multicasts.Any(m => m.Branches.Any(b => b.Sink is FlatFileFlowSink));
         // An OLE DB Command flow is the one flow shape with no IRowTransform/TransformEmitter
         // output at all -- a package whose ONLY flow is an OLE DB Command has no Mapping/
@@ -286,7 +309,7 @@ public static class ProgramEmitter
         if (usesMapping) lines.Add($"using {request.RootNamespace}.Mapping;");
         if (request.Steps.Any(step => step is ProgramScriptTaskStep)) lines.Add($"using {request.RootNamespace}.ScriptTasks;");
         lines.Add($"using {request.RootNamespace}.Model;");
-        if (usesLookupPreload) lines.Add("using Microsoft.Extensions.Configuration;");
+        if (usesLookupPreload || secondaryConnectionNames.Count > 0) lines.Add("using Microsoft.Extensions.Configuration;");
         lines.Add("using Microsoft.Extensions.DependencyInjection;");
         lines.Add("using Microsoft.Extensions.Logging;");
         lines.Add("using Microsoft.Extensions.Options;");
@@ -321,6 +344,18 @@ public static class ProgramEmitter
             EmitFlatFileSinkRegistration(lines, branch.EntityName, (FlatFileFlowSink)branch.Sink);
         lines.Add("builder.Services.AddEmailNotifications(builder.Configuration);");
         lines.Add("");
+
+        // One connection string per DISTINCT secondary connection manager, built here at top
+        // level (same reason as the Lookup preload's own lookupConnectionString right below --
+        // no ServiceProvider exists yet) and captured by the later per-step factory lambda,
+        // which only ever runs once per package execution.
+        foreach (var cmName in secondaryConnectionNames)
+        {
+            var local = SecondaryConnectionLocalName(cmName);
+            lines.Add($"var {local} = SqlConnectionStringFactory.Build(builder.Configuration.GetSection(\"SecondaryConnections:{cmName}\").Get<DatabaseOptions>()");
+            lines.Add($"    ?? throw new InvalidOperationException(\"The SecondaryConnections:{cmName} configuration section is missing.\"));");
+        }
+        if (secondaryConnectionNames.Count > 0) lines.Add("");
 
         // Every Lookup's reference table is loaded here, before any registration -- see
         // LookupPreload's own doc comment for why top level and not a DI factory. The connection
@@ -421,6 +456,12 @@ public static class ProgramEmitter
                     var sqlLocal = SqlStepLocalName(sqlStep.StepName);
                     orderedLocalNames.Add(sqlLocal);
                     lines.Add($"    var {sqlLocal} = new ExecuteSqlStep(\"{sqlStep.StepName}\", {CSharpStringLiteral(sqlStep.Sql)}, sp.GetRequiredService<ILogger<ExecuteSqlStep>>());");
+                    lines.Add("");
+                    break;
+                case ProgramSecondaryConnectionSqlStep secondaryStep:
+                    var secondaryLocal = SqlStepLocalName(secondaryStep.StepName); // same lowercase-first convention, generic enough to reuse
+                    orderedLocalNames.Add(secondaryLocal);
+                    lines.Add($"    var {secondaryLocal} = new SecondaryConnectionSqlStep(\"{secondaryStep.StepName}\", \"{secondaryStep.ConnectionManagerName}\", {SecondaryConnectionLocalName(secondaryStep.ConnectionManagerName)}, {CSharpStringLiteral(secondaryStep.Sql)}, sp.GetRequiredService<ILogger<SecondaryConnectionSqlStep>>());");
                     lines.Add("");
                     break;
                 case ProgramScriptTaskStep scriptStep:
@@ -602,6 +643,11 @@ public static class ProgramEmitter
     private static string SqlStepLocalName(string taskName) =>
         char.ToLowerInvariant(taskName[0]) + taskName[1..] + "Step";
 
+    /// <summary>Same convention as SqlStepLocalName -- "CM_SQL_SSISDemoCache" ->
+    /// "cM_SQL_SSISDemoCacheConnectionString".</summary>
+    private static string SecondaryConnectionLocalName(string connectionManagerName) =>
+        char.ToLowerInvariant(connectionManagerName[0]) + connectionManagerName[1..] + "ConnectionString";
+
     /// <summary>e.g. <c>new FileSystemPreLoadAction(FileSystemOperation.Copy, "C:\...", "D:\...", true)</c> -- shared by pre-load emission and the post-flow ProgramFileSystemStep case, since both need the exact same literal expression.</summary>
     /// <summary>One Etl.Core FailureHandlerAction literal. Sibling of <see cref="FileSystemActionExpr"/>
     /// -- same "plain data record, emitted inline in the EtlPackage construction" shape.</summary>
@@ -650,6 +696,9 @@ public static class ProgramEmitter
             case CsvFlowSource csv:
                 EmitSourceConstruction(lines, "    ", rowTypeName, csv);
                 break;
+            case FixedWidthFlowSource fw:
+                EmitSourceConstruction(lines, "    ", rowTypeName, fw);
+                break;
             case SqlFlowSource sql:
                 EmitSourceConstruction(lines, "    ", rowTypeName, sql);
                 break;
@@ -673,13 +722,32 @@ public static class ProgramEmitter
         {
             case CsvFlowSource csv:
                 lines.Add($"{indent}var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;");
-                lines.Add($"{indent}var csvOptions = new CsvSourceOptions {{ FilePath = fileOptions[\"{csv.FileSourceKey}\"].ResolvedPath }};");
+                lines.Add(csv.SkipRows == 0
+                    ? $"{indent}var csvOptions = new CsvSourceOptions {{ FilePath = fileOptions[\"{csv.FileSourceKey}\"].ResolvedPath }};"
+                    : $"{indent}var csvOptions = new CsvSourceOptions {{ FilePath = fileOptions[\"{csv.FileSourceKey}\"].ResolvedPath, SkipRows = {csv.SkipRows} }};");
                 lines.Add($"{indent}return new CsvRowSource<{rowTypeName}>(\"{csv.ComponentName}\", csvOptions, new {rowTypeName}Map());");
+                break;
+            case FixedWidthFlowSource fw:
+                lines.Add($"{indent}var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;");
+                lines.Add($"{indent}var fixedWidthOptions = new FixedWidthSourceOptions {{ FilePath = fileOptions[\"{fw.FileSourceKey}\"].ResolvedPath, SkipRows = {fw.SkipRows} }};");
+                lines.Add($"{indent}var fixedWidthColumns = new FixedWidthColumnFormat[]");
+                lines.Add($"{indent}{{");
+                foreach (var col in fw.Columns)
+                {
+                    var widthArg = col.FixedWidth is int w ? w.ToString() : "null";
+                    lines.Add($"{indent}    new FixedWidthColumnFormat({CSharpStringLiteral(col.PropertyName)}, {widthArg}),");
+                }
+                lines.Add($"{indent}}};");
+                lines.Add($"{indent}return new FixedWidthRowSource<{rowTypeName}>(\"{fw.ComponentName}\", fixedWidthOptions, fixedWidthColumns, {rowTypeName}Reader.Read);");
                 break;
             case SqlFlowSource sql:
                 lines.Add($"{indent}var dbOptions = sp.GetRequiredService<IOptions<DatabaseOptions>>().Value;");
                 lines.Add($"{indent}var sqlOptions = new SqlSourceOptions {{ ConnectionString = SqlConnectionStringFactory.Build(dbOptions), CommandText = {CSharpStringLiteral(sql.CommandText)} }};");
-                lines.Add($"{indent}return new SqlRowSource<{rowTypeName}>(\"{sql.ComponentName}\", sqlOptions, {rowTypeName}Reader.Read);");
+                // The IUnitOfWork is passed through so this source can bind its own connection
+                // to the package's active transaction (see SqlRowSource's own doc comment) --
+                // without it, a later flow reading a table an earlier flow in the same run just
+                // wrote (still uncommitted) deadlocks, confirmed by a real generated run.
+                lines.Add($"{indent}return new SqlRowSource<{rowTypeName}>(\"{sql.ComponentName}\", sqlOptions, {rowTypeName}Reader.Read, sp.GetRequiredService<IUnitOfWork>());");
                 break;
             case ExcelFlowSource excel:
                 lines.Add($"{indent}var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;");

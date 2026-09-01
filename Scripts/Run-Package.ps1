@@ -56,7 +56,7 @@
 .EXAMPLE
     # redirect destination database for this run only, both packages
     .\Run-Package.ps1 -Override @(
-        'TargetConnectionString=Data Source=.\SQLFORPOC;Initial Catalog=SsisPoC;Integrated Security=SSPI;Provider=MSOLEDBSQL.1;'
+        'TargetConnectionString=Data Source=.\SQLFORPOC_2022;Initial Catalog=SsisPoC;Integrated Security=SSPI;Provider=MSOLEDBSQL.1;'
     )
 #>
 param(

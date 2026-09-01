@@ -59,6 +59,11 @@ internal static class Program
     private const string SqlConnectionString =
         "Provider=MSOLEDBSQL.1;Data Source=.\\SQLFORPOC_2022;Initial Catalog=SsisPoC;Integrated Security=SSPI;Auto Translate=False;";
 
+    /// <summary>A SECOND database on the same instance -- see BuildSecondConnectionSqlFixture's
+    /// own doc comment.</summary>
+    private const string SecondarySqlConnectionString =
+        "Provider=MSOLEDBSQL.1;Data Source=.\\SQLFORPOC_2022;Initial Catalog=SsisPoC_Secondary;Integrated Security=SSPI;Auto Translate=False;";
+
     private static string ThisFilePath([CallerFilePath] string path = "") => path;
 
     /// <summary>
@@ -75,7 +80,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql]");
             return 2;
         }
 
@@ -219,6 +224,10 @@ internal static class Program
         if (fixtureName == "failure-handler")
         {
             return BuildFailureHandlerFixture(args[0]);
+        }
+        if (fixtureName == "second-connection-sql")
+        {
+            return BuildSecondConnectionSqlFixture(args[0]);
         }
         if (fixtureName != "parallel-shapes")
         {
@@ -387,6 +396,59 @@ internal static class Program
 
         pkg.PrecedenceConstraints.Add(preLoadTask, dftHost);
         pkg.PrecedenceConstraints.Add(dftHost, postLoadTask);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// SQL_PreLoad (TRUNCATE, primary CM) -> DFT_Load (CSV -> Derived Column LoadedAtUtc ->
+    /// OLE DB Destination, primary CM) -> SQL_CacheSet_SecondDb (INSERT, SECOND connection
+    /// manager -- a genuinely different database on the same instance). Reproduces, minimally,
+    /// the real bug found running RBC_Demo_ETL's own Package_Legacy.dtsx end to end:
+    /// SQL_CacheSet_SecondDb's own connection manager (CM_SQL_SSISDemoCache) is not the
+    /// package's primary one (CM_SQL_SSISDemo) -- before the fix this proves, every Execute
+    /// SQL Task ran through the package's ONE shared connection regardless, so this task's own
+    /// statement silently ran against the wrong database. See
+    /// synthetic-second-connection-sql-tables.sql for the two backing databases.
+    /// </summary>
+    private static int BuildSecondConnectionSqlFixture(string outputPath)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-second-connection-sql-csv", "SyntheticSecondConnectionSql.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticSecondConnectionSql" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var secondSqlCm = pkg.Connections.Add("OLEDB");
+        secondSqlCm.Name = "CM_SqlSecondDb";
+        secondSqlCm.ConnectionString = SecondarySqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_SecondConnectionCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 50, 0, 0));
+
+        var preLoadTask = AddExecuteSql(pkg, "SQL_PreLoad", sqlCm, "TRUNCATE TABLE dbo.SyntheticSecondConnectionTarget;");
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        BuildFlatFileToOleDbLoad((MainPipe)dftHost.InnerObject, csvCm, sqlCm, "[dbo].[SyntheticSecondConnectionTarget]");
+
+        var secondDbTask = AddExecuteSql(pkg, "SQL_CacheSet_SecondDb", secondSqlCm,
+            "INSERT INTO dbo.SyntheticSecondConnectionLog (LogKey, LogValue) VALUES (N'LegacyImport', N'fixed-width import completed');");
+
+        pkg.PrecedenceConstraints.Add(preLoadTask, dftHost);
+        pkg.PrecedenceConstraints.Add(dftHost, secondDbTask);
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));

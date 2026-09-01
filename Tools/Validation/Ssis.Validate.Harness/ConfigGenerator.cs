@@ -20,6 +20,16 @@ internal sealed class PrimaryKeyCandidateRow
     public string? Confidence { get; set; }
 }
 
+/// <summary>One row of `ssisx report`'s effects.json -- mirrors <c>Ssis.Extract.Model.Analysis.ObservableEffectSpec</c>, same no-project-reference reasoning as <see cref="NonDeterministicRow"/>.</summary>
+internal sealed class ObservableEffectRow
+{
+    public string? PackageName { get; set; }
+    public string? Kind { get; set; }
+    public string? Target { get; set; }
+    public string? Verifiability { get; set; }
+    public string? Note { get; set; }
+}
+
 /// <summary>
 /// Generates a starter <see cref="PackageConfig"/> from `ssisx report`'s non-determinism
 /// manifest and primary-key candidates. <c>ExcludedColumns</c> is real, generated data.
@@ -32,7 +42,7 @@ internal sealed class PrimaryKeyCandidateRow
 /// </summary>
 public static class ConfigGenerator
 {
-    public static PackageConfig Generate(string packageName, string schemaScript, List<string> targetTables, string nonDeterministicJsonPath, string? primaryKeysJsonPath = null)
+    public static PackageConfig Generate(string packageName, string schemaScript, List<string> targetTables, string nonDeterministicJsonPath, string? primaryKeysJsonPath = null, string? effectsJsonPath = null)
     {
         var rows = File.Exists(nonDeterministicJsonPath)
             ? JsonSerializer.Deserialize<List<NonDeterministicRow>>(File.ReadAllText(nonDeterministicJsonPath)) ?? []
@@ -40,6 +50,10 @@ public static class ConfigGenerator
 
         var pkCandidates = primaryKeysJsonPath is not null && File.Exists(primaryKeysJsonPath)
             ? JsonSerializer.Deserialize<List<PrimaryKeyCandidateRow>>(File.ReadAllText(primaryKeysJsonPath)) ?? []
+            : [];
+
+        var effectRows = effectsJsonPath is not null && File.Exists(effectsJsonPath)
+            ? JsonSerializer.Deserialize<List<ObservableEffectRow>>(File.ReadAllText(effectsJsonPath)) ?? []
             : [];
 
         var config = new PackageConfig { PackageName = packageName, SchemaScript = schemaScript };
@@ -70,6 +84,41 @@ public static class ConfigGenerator
                 Console.WriteLine($"{table}: KeyColumn auto-filled as '{candidate.Columns![0]}' ({candidate.Confidence}, from primary-keys.json) -- still confirm this before trusting it.");
             }
         }
+
+        // Every effect NOT among --tables becomes a DeclaredEffect the run must account for --
+        // including a SqlTable effect that IS in effects.json but was left off --tables, which
+        // is exactly the "we wrote to a table nobody configured for comparison" gap this whole
+        // mechanism exists to catch, not just the file/procedure/uncharacterized-task case.
+        var configuredTables = targetTables.Select(NormalizeTableName).ToHashSet();
+        var packageEffects = effectRows.Where(e => e.PackageName == packageName).ToList();
+        foreach (var effect in packageEffects)
+        {
+            if (effect.Kind == "SqlTable" && configuredTables.Contains(NormalizeTableName(effect.Target)))
+            {
+                continue; // covered by a TargetTables entry above -- a real checker exists.
+            }
+
+            config.DeclaredEffects.Add(new DeclaredEffectConfig
+            {
+                Kind = effect.Kind ?? "Unknown",
+                Target = effect.Target ?? "",
+                Verifiability = effect.Kind == "SqlTable" ? "NeedsChecker" : (effect.Verifiability ?? "NeedsHumanReview"),
+                Note = effect.Kind == "SqlTable"
+                    ? $"effects.json names this table as written, but it is not in --tables -- either add it or confirm the package genuinely doesn't need it compared."
+                    : (effect.Note ?? ""),
+            });
+        }
+
+        var unverified = config.DeclaredEffects.Where(e => e.Verifiability != "Verifiable").ToList();
+        if (unverified.Count > 0)
+        {
+            Console.WriteLine($"WARNING: {unverified.Count} declared effect(s) have no gate-3 checker -- a run against this config can report PASS on its tables while these remain unverified:");
+            foreach (var e in unverified)
+            {
+                Console.WriteLine($"  [{e.Verifiability}] {e.Kind} '{e.Target}' -- {e.Note}");
+            }
+        }
+
         return config;
     }
 

@@ -151,7 +151,7 @@ public class ProgramEmitterTests
         Assert.Contains(
             "var sqlOptions = new SqlSourceOptions { ConnectionString = SqlConnectionStringFactory.Build(dbOptions), CommandText = \"SELECT [OrderID] AS [OrderID], [Amount] AS [Amount] FROM [dbo].[SyntheticOleDbSourceInput]\" };",
             file.Content);
-        Assert.Contains("return new SqlRowSource<OrderSqlRow>(\"OLE DB Source\", sqlOptions, OrderSqlRowReader.Read);", file.Content);
+        Assert.Contains("return new SqlRowSource<OrderSqlRow>(\"OLE DB Source\", sqlOptions, OrderSqlRowReader.Read, sp.GetRequiredService<IUnitOfWork>());", file.Content);
         Assert.Contains("var orderFlow = new DataFlowStep<OrderSqlRow, Order>(", file.Content);
 
         CodeAssertions.AssertNoSyntaxErrors(file.Content);

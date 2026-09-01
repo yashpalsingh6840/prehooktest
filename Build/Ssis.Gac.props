@@ -1,0 +1,105 @@
+<Project>
+
+  <!--
+    Shared resolver for the three GAC-installed SSIS managed assemblies
+    (Microsoft.SqlServer.Dts.Runtime and friends), imported by every project in
+    this repo that needs them:
+
+      Scripts/PkgRun.Console/PkgRun.Console.csproj
+      Tools/SsisExtractor/src/Ssis.Extract.ObjectModel/*.csproj
+      Tools/SsisExtractor/src/Ssis.Expression.Oracle/*.csproj
+
+    WHY THIS FILE EXISTS: those three csprojs each used to carry a hardcoded
+    HintPath pinned to one GAC version (v4.0_17.0.0.0, i.e. SQL Server 2025).
+    Moving to a machine with a different SQL Server release turns that into
+    MSB3245 "Could not locate the assembly Microsoft.SqlServer.ManagedDTS",
+    followed by ~30 misleading CS0234 "the namespace 'Dts' does not exist"
+    errors - which reads as "SSIS isn't installed" when in fact it is, just at
+    a different version. Detecting the version instead of pinning it means the
+    next machine change costs nothing.
+
+    The assembly version tracks the SQL Server major release, NOT the .NET
+    version, and does not match the marketing year:
+      17.x = SQL Server 2025      16.x = SQL Server 2022
+      15.x = SQL Server 2019      14.x = SQL Server 2017
+      13.x = SQL Server 2016
+    A box that has hosted several releases keeps every version side by side in
+    the GAC, so "newest present wins" is the right rule rather than "the only
+    one there".
+
+    To pin a specific version deliberately (e.g. to reproduce a build against
+    an older runtime), pass it in and the probe below is skipped:
+      dotnet build -p:SsisGacVersion=13.0.0.0
+  -->
+
+  <PropertyGroup>
+    <_SsisWinDir Condition="'$(_SsisWinDir)' == ''">$(WinDir)</_SsisWinDir>
+    <_SsisWinDir Condition="'$(_SsisWinDir)' == ''">C:\Windows</_SsisWinDir>
+    <_SsisGacMsil>$(_SsisWinDir)\Microsoft.Net\assembly\GAC_MSIL</_SsisGacMsil>
+    <!-- DTSRuntimeWrap is GAC_64 only (platform-specific), which is why every
+         consuming project must set PlatformTarget=x64, not AnyCPU. -->
+    <_SsisGac64>$(_SsisWinDir)\Microsoft.Net\assembly\GAC_64</_SsisGac64>
+    <_SsisPkt>89845dcd8080cc91</_SsisPkt>
+    <_SsisProbeDir>$(_SsisGacMsil)\Microsoft.SqlServer.ManagedDTS</_SsisProbeDir>
+  </PropertyGroup>
+
+  <!-- Newest first; the first one actually present on disk wins. An explicit
+       SsisGacVersion supplied by the caller short-circuits all of these. -->
+  <PropertyGroup>
+    <SsisGacVersion Condition="'$(SsisGacVersion)' == '' And Exists('$(_SsisProbeDir)\v4.0_17.0.0.0__$(_SsisPkt)')">17.0.0.0</SsisGacVersion>
+    <SsisGacVersion Condition="'$(SsisGacVersion)' == '' And Exists('$(_SsisProbeDir)\v4.0_16.0.0.0__$(_SsisPkt)')">16.0.0.0</SsisGacVersion>
+    <SsisGacVersion Condition="'$(SsisGacVersion)' == '' And Exists('$(_SsisProbeDir)\v4.0_15.0.0.0__$(_SsisPkt)')">15.0.0.0</SsisGacVersion>
+    <SsisGacVersion Condition="'$(SsisGacVersion)' == '' And Exists('$(_SsisProbeDir)\v4.0_14.0.0.0__$(_SsisPkt)')">14.0.0.0</SsisGacVersion>
+    <SsisGacVersion Condition="'$(SsisGacVersion)' == '' And Exists('$(_SsisProbeDir)\v4.0_13.0.0.0__$(_SsisPkt)')">13.0.0.0</SsisGacVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(SsisGacVersion)' != ''">
+    <_SsisVerDir>v4.0_$(SsisGacVersion)__$(_SsisPkt)</_SsisVerDir>
+    <_SsisManagedDtsPath>$(_SsisGacMsil)\Microsoft.SqlServer.ManagedDTS\$(_SsisVerDir)\Microsoft.SqlServer.ManagedDTS.dll</_SsisManagedDtsPath>
+    <_SsisRuntimeWrapPath>$(_SsisGac64)\Microsoft.SqlServer.DTSRuntimeWrap\$(_SsisVerDir)\Microsoft.SqlServer.DTSRuntimeWrap.dll</_SsisRuntimeWrapPath>
+  </PropertyGroup>
+
+  <!-- Private=false: resolved from the GAC at run time rather than copied next
+       to the exe, the same way dtexec/devenv load them. All three are listed
+       for every consumer; a reference a given project does not use costs
+       nothing (nothing is copied) and keeps this file the single source of
+       truth for the paths. -->
+  <ItemGroup Condition="'$(SsisGacVersion)' != ''">
+    <Reference Include="Microsoft.SqlServer.ManagedDTS">
+      <HintPath>$(_SsisGacMsil)\Microsoft.SqlServer.ManagedDTS\$(_SsisVerDir)\Microsoft.SqlServer.ManagedDTS.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.SqlServer.DTSPipelineWrap">
+      <HintPath>$(_SsisGacMsil)\Microsoft.SqlServer.DTSPipelineWrap\$(_SsisVerDir)\Microsoft.SqlServer.DTSPipelineWrap.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.SqlServer.DTSRuntimeWrap">
+      <HintPath>$(_SsisGac64)\Microsoft.SqlServer.DTSRuntimeWrap\$(_SsisVerDir)\Microsoft.SqlServer.DTSRuntimeWrap.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!--
+    Fail with the real diagnosis instead of MSB3245 + a wall of CS0234.
+
+    THREE separate checks, because they have different causes and different
+    fixes - and the second is easy to miss: the probe above is skipped entirely
+    when the caller supplies SsisGacVersion, so a typo'd or not-installed
+    explicit pin would otherwise sail straight past a "did we detect anything?"
+    check and land right back on the misleading MSB3245. Validating the
+    RESOLVED PATH is what covers both cases, however the version was chosen.
+  -->
+  <Target Name="SsisGacVersionCheck" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(SsisGacVersion)' != '' And !Exists('$(_SsisManagedDtsPath)')"
+           Code="SSISGAC002"
+           Text="SsisGacVersion '$(SsisGacVersion)' was requested but $(_SsisManagedDtsPath) does not exist. Omit -p:SsisGacVersion to auto-detect, or pass a version that is actually installed (list them with: dir &quot;$(_SsisProbeDir)&quot;)." />
+    <Error Condition="'$(SsisGacVersion)' != '' And Exists('$(_SsisManagedDtsPath)') And !Exists('$(_SsisRuntimeWrapPath)')"
+           Code="SSISGAC003"
+           Text="ManagedDTS $(SsisGacVersion) is present but $(_SsisRuntimeWrapPath) is not. DTSRuntimeWrap lives in GAC_64 and is installed separately from the GAC_MSIL assemblies, so a partial install surfaces here rather than as a confusing missing-namespace error." />
+    <Error Condition="'$(SsisGacVersion)' == ''"
+           Code="SSISGAC001"
+           Text="No SSIS managed assemblies found in the GAC. Probed $(_SsisProbeDir)\v4.0_{17,16,15,14,13}.0.0.0__$(_SsisPkt). Install the SQL Server 'Integration Services' shared feature (or SSDT), then confirm with: [System.Reflection.Assembly]::LoadWithPartialName('Microsoft.SqlServer.ManagedDTS').Location - and if it resolves to a version not in that list, add it to Build/Ssis.Gac.props." />
+    <Message Importance="normal" Text="SSIS GAC assemblies: version $(SsisGacVersion) from $(_SsisGacMsil)" />
+  </Target>
+
+</Project>

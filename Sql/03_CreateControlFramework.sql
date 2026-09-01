@@ -25,7 +25,7 @@
     guard exist in exactly one place.
 
     Usage:
-      sqlcmd -S ".\SQLFORPOC" -E -i Sql\03_CreateControlFramework.sql
+      sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\03_CreateControlFramework.sql
 
     Prerequisites: Sql\01_CreateTarget.sql, project deployed to the catalog,
     and Sql\02_SetupCatalogEnvironment.sql.

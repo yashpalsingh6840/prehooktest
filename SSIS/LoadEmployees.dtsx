@@ -122,7 +122,7 @@
         <DTS:ConnectionManager
           DTS:ConnectRetryCount="1"
           DTS:ConnectRetryInterval="5"
-          DTS:ConnectionString="Data Source=.\SQLFORPOC;User ID=ssis_loader;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Auto Translate=False;" />
+          DTS:ConnectionString="Data Source=.\SQLFORPOC_2022;User ID=ssis_loader;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Auto Translate=False;" />
       </DTS:ObjectData>
     </DTS:ConnectionManager>
   </DTS:ConnectionManagers>

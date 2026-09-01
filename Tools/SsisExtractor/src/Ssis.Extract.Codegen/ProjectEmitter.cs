@@ -12,12 +12,30 @@ public sealed record FileSourceEntryRequest(string Key, string SourceFolder, str
 /// the skeleton's own "User Secrets/env var only, never appsettings.json" rule.</summary>
 public sealed record DatabaseAuthRequest(string AuthMode, string? UserId);
 
+/// <summary>One Execute SQL Task's own connection manager, when it resolves to a DIFFERENT
+/// server/database than the package's primary <see cref="DatabaseAuthRequest"/> -- e.g.
+/// RBC_Demo_ETL's own <c>CM_SQL_SSISDemoCache</c>, a second database the primary
+/// TargetDatabase/appsettings.Shared.json config has no way to describe. Unlike
+/// <see cref="DatabaseAuthRequest"/>, <see cref="Server"/>/<see cref="Database"/> are written
+/// directly into THIS package's own appsettings.json rather than the portfolio-wide shared
+/// file -- a secondary connection is inherently package-specific, so there is no shared file
+/// for it to belong to. Never a password here either, same rule as everywhere else: User
+/// Secrets/an environment variable only.</summary>
+public sealed record SecondaryConnectionRequest(
+    string ConnectionManagerName, string AuthMode, string? UserId, string Server, string Database);
+
 public sealed record ProjectRequest(
     string PackageName,
     List<FileSourceEntryRequest> FileSourceEntries,
     DatabaseAuthRequest DatabaseAuth,
     List<string> OnSuccessRecipients,
-    List<string> OnFailureRecipients);
+    List<string> OnFailureRecipients,
+    List<SecondaryConnectionRequest>? SecondaryConnections = null)
+{
+    /// <summary>Defaults to empty so every pre-existing call site (none of which knows about
+    /// secondary connections) keeps compiling unchanged.</summary>
+    public List<SecondaryConnectionRequest> SecondaryConnections { get; init; } = SecondaryConnections ?? [];
+}
 
 /// <summary>
 /// Emits one package's project-level files: the .csproj and its appsettings.json. Does NOT
@@ -43,7 +61,13 @@ public static class ProjectEmitter
             "",
         };
 
-        if (request.DatabaseAuth.AuthMode == "SqlServer")
+        // A secondary connection can need its own SQL-auth secret even when the PRIMARY one is
+        // Windows-auth (not evidenced anywhere yet, but a real possible shape) -- so this checks
+        // every connection this package uses, not just DatabaseAuth.
+        var needsUserSecrets = request.DatabaseAuth.AuthMode == "SqlServer"
+            || request.SecondaryConnections.Any(s => s.AuthMode == "SqlServer");
+
+        if (needsUserSecrets)
         {
             lines.Add("  <ItemGroup>");
             lines.Add("    <PackageReference Include=\"Microsoft.Extensions.Configuration.UserSecrets\" />");
@@ -53,7 +77,7 @@ public static class ProjectEmitter
 
         lines.Add("  <PropertyGroup>");
         lines.Add("    <OutputType>Exe</OutputType>");
-        if (request.DatabaseAuth.AuthMode == "SqlServer")
+        if (needsUserSecrets)
             lines.Add($"    <UserSecretsId>{DeterministicUserSecretsId(request.PackageName)}</UserSecretsId>");
         lines.Add("  </PropertyGroup>");
         lines.Add("");
@@ -123,6 +147,33 @@ public static class ProjectEmitter
             ["TargetDatabase"] = targetDatabase,
             ["Notification"] = notification,
         };
+
+        // Server/Database live HERE, unlike TargetDatabase's own (Shared/appsettings.Shared.json) --
+        // a secondary connection is package-specific, so there is no portfolio-wide shared file
+        // for it to belong to. Same shape as that shared file's own TargetDatabase block
+        // (Encrypt/TrustServerCertificate/ConnectTimeoutSeconds), minus Password -- never written,
+        // same rule as everywhere else: User Secrets ("SecondaryConnections:<CM name>:Password")
+        // or an environment variable only.
+        if (request.SecondaryConnections.Count > 0)
+        {
+            var secondaryConnections = new JsonObject();
+            foreach (var secondary in request.SecondaryConnections)
+            {
+                var entry = new JsonObject
+                {
+                    ["Server"] = secondary.Server,
+                    ["Database"] = secondary.Database,
+                    ["AuthMode"] = secondary.AuthMode,
+                };
+                if (secondary.UserId is not null)
+                    entry["UserId"] = secondary.UserId;
+                entry["Encrypt"] = true;
+                entry["TrustServerCertificate"] = true;
+                entry["ConnectTimeoutSeconds"] = 15;
+                secondaryConnections[secondary.ConnectionManagerName] = entry;
+            }
+            root["SecondaryConnections"] = secondaryConnections;
+        }
 
         // JsonNode.ToJsonString's line endings/indentation are a serializer implementation
         // detail, not something to trust blindly against the LF-only rule every other emitter

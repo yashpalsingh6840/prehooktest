@@ -1,4 +1,4 @@
-<?xml version="1.0"?>
+﻿<?xml version="1.0"?>
 <DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
   DTS:refId="Package"
   DTS:CreationDate="8/12/2026 6:10:00 PM"
@@ -8,56 +8,15 @@
   DTS:Description="Loads dbo.Department and dbo.Designation from two CSVs in two different folders. All four file-location values are package parameters."
   DTS:DTSID="{F7803B39-DD7A-4B26-8565-B62908BE633F}"
   DTS:ExecutableType="Microsoft.Package"
-  DTS:LastModifiedProductVersion="17.0.1000.7"
+  DTS:LastModifiedProductVersion="17.0.1016.0"
   DTS:LocaleID="1033"
   DTS:ObjectName="LoadReferenceData"
   DTS:PackageType="5"
   DTS:ProtectionLevel="0"
-  DTS:VersionGUID="{F50D0299-AB89-4645-82E1-B072A3514738}">
+  DTS:VersionBuild="1"
+  DTS:VersionGUID="{0D2A25C4-E65F-4C2E-9EBD-FB94D92CC200}">
   <DTS:Property
     DTS:Name="PackageFormatVersion">8</DTS:Property>
-  <DTS:PackageParameters>
-    <DTS:PackageParameter
-      DTS:CreationName=""
-      DTS:DataType="8"
-      DTS:Description="Folder that holds the inbound department CSV file."
-      DTS:DTSID="{8576F622-BEA6-47C4-93F2-E4AF570AA6FD}"
-      DTS:ObjectName="DepartmentFolder">
-      <DTS:Property
-        DTS:DataType="8"
-        DTS:Name="ParameterValue">D:\PoC\SSIS\Data\Input\Department</DTS:Property>
-    </DTS:PackageParameter>
-    <DTS:PackageParameter
-      DTS:CreationName=""
-      DTS:DataType="8"
-      DTS:Description="File name of the inbound department CSV file."
-      DTS:DTSID="{9F556CF8-833E-4B0A-9171-1EABA231F16D}"
-      DTS:ObjectName="DepartmentFileName">
-      <DTS:Property
-        DTS:DataType="8"
-        DTS:Name="ParameterValue">Departments.csv</DTS:Property>
-    </DTS:PackageParameter>
-    <DTS:PackageParameter
-      DTS:CreationName=""
-      DTS:DataType="8"
-      DTS:Description="Folder that holds the inbound designation CSV file."
-      DTS:DTSID="{A0A74AA8-E0F9-4DA9-A370-A944F6D68456}"
-      DTS:ObjectName="DesignationFolder">
-      <DTS:Property
-        DTS:DataType="8"
-        DTS:Name="ParameterValue">D:\PoC\SSIS\Data\Input\Designation</DTS:Property>
-    </DTS:PackageParameter>
-    <DTS:PackageParameter
-      DTS:CreationName=""
-      DTS:DataType="8"
-      DTS:Description="File name of the inbound designation CSV file."
-      DTS:DTSID="{F9B00A8B-E0FA-454B-84DE-A721FEFF5111}"
-      DTS:ObjectName="DesignationFileName">
-      <DTS:Property
-        DTS:DataType="8"
-        DTS:Name="ParameterValue">Designations.csv</DTS:Property>
-    </DTS:PackageParameter>
-  </DTS:PackageParameters>
   <DTS:ConnectionManagers>
     <DTS:ConnectionManager
       DTS:refId="Package.ConnectionManagers[CM_DepartmentCsv]"
@@ -75,7 +34,8 @@
           DTS:ColumnNamesInFirstDataRow="True"
           DTS:RowDelimiter=""
           DTS:TextQualifier="_x0022_"
-          DTS:CodePage="1252">
+          DTS:CodePage="1252"
+          DTS:ConnectionString="D:\PoC\SSIS\Data\Input\Department\Departments.csv">
           <DTS:FlatFileColumns>
             <DTS:FlatFileColumn
               DTS:ColumnType="Delimited"
@@ -140,7 +100,8 @@
           DTS:ColumnNamesInFirstDataRow="True"
           DTS:RowDelimiter=""
           DTS:TextQualifier="_x0022_"
-          DTS:CodePage="1252">
+          DTS:CodePage="1252"
+          DTS:ConnectionString="D:\PoC\SSIS\Data\Input\Designation\Designations.csv">
           <DTS:FlatFileColumns>
             <DTS:FlatFileColumn
               DTS:ColumnType="Delimited"
@@ -201,10 +162,52 @@
         <DTS:ConnectionManager
           DTS:ConnectRetryCount="1"
           DTS:ConnectRetryInterval="5"
-          DTS:ConnectionString="Data Source=(localdb)\MSSQLLocalDB;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;" />
+          DTS:ConnectionString="Data Source=.\SQLFORPOC_2022;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;" />
       </DTS:ObjectData>
     </DTS:ConnectionManager>
   </DTS:ConnectionManagers>
+  <DTS:PackageParameters>
+    <DTS:PackageParameter
+      DTS:CreationName=""
+      DTS:DataType="8"
+      DTS:Description="File name of the inbound department CSV file."
+      DTS:DTSID="{9F556CF8-833E-4B0A-9171-1EABA231F16D}"
+      DTS:ObjectName="DepartmentFileName">
+      <DTS:Property
+        DTS:DataType="8"
+        DTS:Name="ParameterValue">Departments.csv</DTS:Property>
+    </DTS:PackageParameter>
+    <DTS:PackageParameter
+      DTS:CreationName=""
+      DTS:DataType="8"
+      DTS:Description="Folder that holds the inbound department CSV file."
+      DTS:DTSID="{8576F622-BEA6-47C4-93F2-E4AF570AA6FD}"
+      DTS:ObjectName="DepartmentFolder">
+      <DTS:Property
+        DTS:DataType="8"
+        DTS:Name="ParameterValue">D:\PoC\SSIS\Data\Input\Department</DTS:Property>
+    </DTS:PackageParameter>
+    <DTS:PackageParameter
+      DTS:CreationName=""
+      DTS:DataType="8"
+      DTS:Description="File name of the inbound designation CSV file."
+      DTS:DTSID="{F9B00A8B-E0FA-454B-84DE-A721FEFF5111}"
+      DTS:ObjectName="DesignationFileName">
+      <DTS:Property
+        DTS:DataType="8"
+        DTS:Name="ParameterValue">Designations.csv</DTS:Property>
+    </DTS:PackageParameter>
+    <DTS:PackageParameter
+      DTS:CreationName=""
+      DTS:DataType="8"
+      DTS:Description="Folder that holds the inbound designation CSV file."
+      DTS:DTSID="{A0A74AA8-E0F9-4DA9-A370-A944F6D68456}"
+      DTS:ObjectName="DesignationFolder">
+      <DTS:Property
+        DTS:DataType="8"
+        DTS:Name="ParameterValue">D:\PoC\SSIS\Data\Input\Designation</DTS:Property>
+    </DTS:PackageParameter>
+  </DTS:PackageParameters>
   <DTS:Variables>
     <DTS:Variable
       DTS:CreationName=""
@@ -215,8 +218,7 @@
       DTS:Namespace="User"
       DTS:ObjectName="DepartmentFilePath">
       <DTS:VariableValue
-        DTS:DataType="8"
-        xml:space="preserve"></DTS:VariableValue>
+        DTS:DataType="8">D:\PoC\SSIS\Data\Input\Department\Departments.csv</DTS:VariableValue>
     </DTS:Variable>
     <DTS:Variable
       DTS:CreationName=""
@@ -227,28 +229,10 @@
       DTS:Namespace="User"
       DTS:ObjectName="DesignationFilePath">
       <DTS:VariableValue
-        DTS:DataType="8"
-        xml:space="preserve"></DTS:VariableValue>
+        DTS:DataType="8">D:\PoC\SSIS\Data\Input\Designation\Designations.csv</DTS:VariableValue>
     </DTS:Variable>
   </DTS:Variables>
   <DTS:Executables>
-    <DTS:Executable
-      DTS:refId="Package\SQL_TruncateTargets"
-      DTS:CreationName="Microsoft.ExecuteSQLTask"
-      DTS:Description="Makes the package re-runnable."
-      DTS:DTSID="{5842FCC5-4A60-40C5-B0AF-16A089549436}"
-      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
-      DTS:LocaleID="-1"
-      DTS:ObjectName="SQL_TruncateTargets"
-      DTS:TaskContact="Execute SQL Task; Microsoft Corporation; SQL Server 2025; © 2025 Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1"
-      DTS:ThreadHint="0">
-      <DTS:Variables />
-      <DTS:ObjectData>
-        <SQLTask:SqlTaskData
-          SQLTask:Connection="{203D8BE4-BC5A-4EC2-9EE1-D8D84ED092BC}"
-          SQLTask:SqlStatementSource="TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
-      </DTS:ObjectData>
-    </DTS:Executable>
     <DTS:Executable
       DTS:refId="Package\DFT_LoadDepartment"
       DTS:CreationName="Microsoft.Pipeline"
@@ -262,6 +246,115 @@
         <pipeline
           version="1">
           <components>
+            <component
+              refId="Package\DFT_LoadDepartment\DER_DepartmentKey"
+              componentClassID="Microsoft.DerivedColumn"
+              contactInfo="Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0"
+              description="Creates new column values by applying expressions to transformation input columns."
+              name="DER_DepartmentKey"
+              usesDispositions="true">
+              <inputs>
+                <input
+                  refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input]"
+                  description="Input to the Derived Column Transformation"
+                  name="Derived Column Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input].Columns[DepartmentID]"
+                      cachedDataType="i4"
+                      cachedName="DepartmentID"
+                      lineageId="Package\DFT_LoadDepartment\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]" />
+                    <inputColumn
+                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input].Columns[DepartmentCode]"
+                      cachedDataType="wstr"
+                      cachedLength="10"
+                      cachedName="DepartmentCode"
+                      lineageId="Package\DFT_LoadDepartment\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]" />
+                  </inputColumns>
+                  <externalMetadataColumns />
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Output]"
+                  description="Default Output of the Derived Column Transformation"
+                  exclusionGroup="1"
+                  name="Derived Column Output"
+                  synchronousInputId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Output].Columns[DepartmentKey]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Computation"
+                      errorRowDisposition="FailComponent"
+                      length="25"
+                      lineageId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Output].Columns[DepartmentKey]"
+                      name="DepartmentKey"
+                      truncationRowDisposition="FailComponent">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Expression"
+                          name="Expression">(DT_WSTR,25)([UPPER](#{Package\DFT_LoadDepartment\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]}) + "-" + (DT_WSTR,10)#{Package\DFT_LoadDepartment\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]})</property>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Friendly Expression"
+                          expressionType="Notify"
+                          name="FriendlyExpression">(DT_WSTR,25)(UPPER(DepartmentCode) + "-" + (DT_WSTR,10)DepartmentID)</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]"
+                      dataType="dbTimeStamp"
+                      errorOrTruncationOperation="Computation"
+                      errorRowDisposition="FailComponent"
+                      lineageId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]"
+                      name="LoadedAtUtc"
+                      truncationRowDisposition="FailComponent">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Expression"
+                          name="Expression">[GETUTCDATE]()</property>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Friendly Expression"
+                          expressionType="Notify"
+                          name="FriendlyExpression">GETUTCDATE()</property>
+                      </properties>
+                    </outputColumn>
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Error Output]"
+                  description="Error Output of the Derived Column Transformation"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="Derived Column Error Output"
+                  synchronousInputId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
             <component
               refId="Package\DFT_LoadDepartment\FF_SRC_Department"
               componentClassID="Microsoft.FlatFileSource"
@@ -454,115 +547,6 @@
               </outputs>
             </component>
             <component
-              refId="Package\DFT_LoadDepartment\DER_DepartmentKey"
-              componentClassID="Microsoft.DerivedColumn"
-              contactInfo="Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0"
-              description="Creates new column values by applying expressions to transformation input columns."
-              name="DER_DepartmentKey"
-              usesDispositions="true">
-              <inputs>
-                <input
-                  refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input]"
-                  description="Input to the Derived Column Transformation"
-                  name="Derived Column Input">
-                  <inputColumns>
-                    <inputColumn
-                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input].Columns[DepartmentID]"
-                      cachedDataType="i4"
-                      cachedName="DepartmentID"
-                      lineageId="Package\DFT_LoadDepartment\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]" />
-                    <inputColumn
-                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input].Columns[DepartmentCode]"
-                      cachedDataType="wstr"
-                      cachedLength="10"
-                      cachedName="DepartmentCode"
-                      lineageId="Package\DFT_LoadDepartment\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]" />
-                  </inputColumns>
-                  <externalMetadataColumns />
-                </input>
-              </inputs>
-              <outputs>
-                <output
-                  refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Output]"
-                  description="Default Output of the Derived Column Transformation"
-                  exclusionGroup="1"
-                  name="Derived Column Output"
-                  synchronousInputId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input]">
-                  <outputColumns>
-                    <outputColumn
-                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Output].Columns[DepartmentKey]"
-                      dataType="wstr"
-                      errorOrTruncationOperation="Computation"
-                      errorRowDisposition="FailComponent"
-                      length="25"
-                      lineageId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Output].Columns[DepartmentKey]"
-                      name="DepartmentKey"
-                      truncationRowDisposition="FailComponent">
-                      <properties>
-                        <property
-                          containsID="true"
-                          dataType="System.String"
-                          description="Derived Column Expression"
-                          name="Expression">(DT_WSTR,25)([UPPER](#{Package\DFT_LoadDepartment\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]}) + "-" + (DT_WSTR,10)#{Package\DFT_LoadDepartment\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]})</property>
-                        <property
-                          containsID="true"
-                          dataType="System.String"
-                          description="Derived Column Friendly Expression"
-                          expressionType="Notify"
-                          name="FriendlyExpression">(DT_WSTR,25)(UPPER(DepartmentCode) + "-" + (DT_WSTR,10)DepartmentID)</property>
-                      </properties>
-                    </outputColumn>
-                    <outputColumn
-                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]"
-                      dataType="dbTimeStamp"
-                      errorOrTruncationOperation="Computation"
-                      errorRowDisposition="FailComponent"
-                      lineageId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]"
-                      name="LoadedAtUtc"
-                      truncationRowDisposition="FailComponent">
-                      <properties>
-                        <property
-                          containsID="true"
-                          dataType="System.String"
-                          description="Derived Column Expression"
-                          name="Expression">[GETUTCDATE]()</property>
-                        <property
-                          containsID="true"
-                          dataType="System.String"
-                          description="Derived Column Friendly Expression"
-                          expressionType="Notify"
-                          name="FriendlyExpression">GETUTCDATE()</property>
-                      </properties>
-                    </outputColumn>
-                  </outputColumns>
-                  <externalMetadataColumns />
-                </output>
-                <output
-                  refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Error Output]"
-                  description="Error Output of the Derived Column Transformation"
-                  exclusionGroup="1"
-                  isErrorOut="true"
-                  name="Derived Column Error Output"
-                  synchronousInputId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input]">
-                  <outputColumns>
-                    <outputColumn
-                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorCode]"
-                      dataType="i4"
-                      lineageId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorCode]"
-                      name="ErrorCode"
-                      specialFlags="1" />
-                    <outputColumn
-                      refId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
-                      dataType="i4"
-                      lineageId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
-                      name="ErrorColumn"
-                      specialFlags="2" />
-                  </outputColumns>
-                  <externalMetadataColumns />
-                </output>
-              </outputs>
-            </component>
-            <component
               refId="Package\DFT_LoadDepartment\OLEDST_Department"
               componentClassID="Microsoft.OLEDBDestination"
               contactInfo="OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4"
@@ -747,15 +731,15 @@
           </components>
           <paths>
             <path
-              refId="Package\DFT_LoadDepartment.Paths[Flat File Source Output]"
-              endId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input]"
-              name="Flat File Source Output"
-              startId="Package\DFT_LoadDepartment\FF_SRC_Department.Outputs[Flat File Source Output]" />
-            <path
               refId="Package\DFT_LoadDepartment.Paths[Derived Column Output]"
               endId="Package\DFT_LoadDepartment\OLEDST_Department.Inputs[OLE DB Destination Input]"
               name="Derived Column Output"
               startId="Package\DFT_LoadDepartment\DER_DepartmentKey.Outputs[Derived Column Output]" />
+            <path
+              refId="Package\DFT_LoadDepartment.Paths[Flat File Source Output]"
+              endId="Package\DFT_LoadDepartment\DER_DepartmentKey.Inputs[Derived Column Input]"
+              name="Flat File Source Output"
+              startId="Package\DFT_LoadDepartment\FF_SRC_Department.Outputs[Flat File Source Output]" />
           </paths>
         </pipeline>
       </DTS:ObjectData>
@@ -773,6 +757,115 @@
         <pipeline
           version="1">
           <components>
+            <component
+              refId="Package\DFT_LoadDesignation\DER_DesignationKey"
+              componentClassID="Microsoft.DerivedColumn"
+              contactInfo="Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0"
+              description="Creates new column values by applying expressions to transformation input columns."
+              name="DER_DesignationKey"
+              usesDispositions="true">
+              <inputs>
+                <input
+                  refId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input]"
+                  description="Input to the Derived Column Transformation"
+                  name="Derived Column Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input].Columns[DesignationCode]"
+                      cachedDataType="wstr"
+                      cachedLength="10"
+                      cachedName="DesignationCode"
+                      lineageId="Package\DFT_LoadDesignation\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]" />
+                    <inputColumn
+                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input].Columns[JobLevel]"
+                      cachedDataType="i4"
+                      cachedName="JobLevel"
+                      lineageId="Package\DFT_LoadDesignation\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]" />
+                  </inputColumns>
+                  <externalMetadataColumns />
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Output]"
+                  description="Default Output of the Derived Column Transformation"
+                  exclusionGroup="1"
+                  name="Derived Column Output"
+                  synchronousInputId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Output].Columns[DesignationKey]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Computation"
+                      errorRowDisposition="FailComponent"
+                      length="25"
+                      lineageId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Output].Columns[DesignationKey]"
+                      name="DesignationKey"
+                      truncationRowDisposition="FailComponent">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Expression"
+                          name="Expression">(DT_WSTR,25)([UPPER](#{Package\DFT_LoadDesignation\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]}) + "-" + (DT_WSTR,10)#{Package\DFT_LoadDesignation\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]})</property>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Friendly Expression"
+                          expressionType="Notify"
+                          name="FriendlyExpression">(DT_WSTR,25)(UPPER(DesignationCode) + "-" + (DT_WSTR,10)JobLevel)</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]"
+                      dataType="dbTimeStamp"
+                      errorOrTruncationOperation="Computation"
+                      errorRowDisposition="FailComponent"
+                      lineageId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]"
+                      name="LoadedAtUtc"
+                      truncationRowDisposition="FailComponent">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Expression"
+                          name="Expression">[GETUTCDATE]()</property>
+                        <property
+                          containsID="true"
+                          dataType="System.String"
+                          description="Derived Column Friendly Expression"
+                          expressionType="Notify"
+                          name="FriendlyExpression">GETUTCDATE()</property>
+                      </properties>
+                    </outputColumn>
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Error Output]"
+                  description="Error Output of the Derived Column Transformation"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="Derived Column Error Output"
+                  synchronousInputId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
             <component
               refId="Package\DFT_LoadDesignation\FF_SRC_Designation"
               componentClassID="Microsoft.FlatFileSource"
@@ -965,115 +1058,6 @@
               </outputs>
             </component>
             <component
-              refId="Package\DFT_LoadDesignation\DER_DesignationKey"
-              componentClassID="Microsoft.DerivedColumn"
-              contactInfo="Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0"
-              description="Creates new column values by applying expressions to transformation input columns."
-              name="DER_DesignationKey"
-              usesDispositions="true">
-              <inputs>
-                <input
-                  refId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input]"
-                  description="Input to the Derived Column Transformation"
-                  name="Derived Column Input">
-                  <inputColumns>
-                    <inputColumn
-                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input].Columns[DesignationCode]"
-                      cachedDataType="wstr"
-                      cachedLength="10"
-                      cachedName="DesignationCode"
-                      lineageId="Package\DFT_LoadDesignation\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]" />
-                    <inputColumn
-                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input].Columns[JobLevel]"
-                      cachedDataType="i4"
-                      cachedName="JobLevel"
-                      lineageId="Package\DFT_LoadDesignation\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]" />
-                  </inputColumns>
-                  <externalMetadataColumns />
-                </input>
-              </inputs>
-              <outputs>
-                <output
-                  refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Output]"
-                  description="Default Output of the Derived Column Transformation"
-                  exclusionGroup="1"
-                  name="Derived Column Output"
-                  synchronousInputId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input]">
-                  <outputColumns>
-                    <outputColumn
-                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Output].Columns[DesignationKey]"
-                      dataType="wstr"
-                      errorOrTruncationOperation="Computation"
-                      errorRowDisposition="FailComponent"
-                      length="25"
-                      lineageId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Output].Columns[DesignationKey]"
-                      name="DesignationKey"
-                      truncationRowDisposition="FailComponent">
-                      <properties>
-                        <property
-                          containsID="true"
-                          dataType="System.String"
-                          description="Derived Column Expression"
-                          name="Expression">(DT_WSTR,25)([UPPER](#{Package\DFT_LoadDesignation\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]}) + "-" + (DT_WSTR,10)#{Package\DFT_LoadDesignation\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]})</property>
-                        <property
-                          containsID="true"
-                          dataType="System.String"
-                          description="Derived Column Friendly Expression"
-                          expressionType="Notify"
-                          name="FriendlyExpression">(DT_WSTR,25)(UPPER(DesignationCode) + "-" + (DT_WSTR,10)JobLevel)</property>
-                      </properties>
-                    </outputColumn>
-                    <outputColumn
-                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]"
-                      dataType="dbTimeStamp"
-                      errorOrTruncationOperation="Computation"
-                      errorRowDisposition="FailComponent"
-                      lineageId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]"
-                      name="LoadedAtUtc"
-                      truncationRowDisposition="FailComponent">
-                      <properties>
-                        <property
-                          containsID="true"
-                          dataType="System.String"
-                          description="Derived Column Expression"
-                          name="Expression">[GETUTCDATE]()</property>
-                        <property
-                          containsID="true"
-                          dataType="System.String"
-                          description="Derived Column Friendly Expression"
-                          expressionType="Notify"
-                          name="FriendlyExpression">GETUTCDATE()</property>
-                      </properties>
-                    </outputColumn>
-                  </outputColumns>
-                  <externalMetadataColumns />
-                </output>
-                <output
-                  refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Error Output]"
-                  description="Error Output of the Derived Column Transformation"
-                  exclusionGroup="1"
-                  isErrorOut="true"
-                  name="Derived Column Error Output"
-                  synchronousInputId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input]">
-                  <outputColumns>
-                    <outputColumn
-                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorCode]"
-                      dataType="i4"
-                      lineageId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorCode]"
-                      name="ErrorCode"
-                      specialFlags="1" />
-                    <outputColumn
-                      refId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
-                      dataType="i4"
-                      lineageId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
-                      name="ErrorColumn"
-                      specialFlags="2" />
-                  </outputColumns>
-                  <externalMetadataColumns />
-                </output>
-              </outputs>
-            </component>
-            <component
               refId="Package\DFT_LoadDesignation\OLEDST_Designation"
               componentClassID="Microsoft.OLEDBDestination"
               contactInfo="OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4"
@@ -1258,17 +1242,34 @@
           </components>
           <paths>
             <path
-              refId="Package\DFT_LoadDesignation.Paths[Flat File Source Output]"
-              endId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input]"
-              name="Flat File Source Output"
-              startId="Package\DFT_LoadDesignation\FF_SRC_Designation.Outputs[Flat File Source Output]" />
-            <path
               refId="Package\DFT_LoadDesignation.Paths[Derived Column Output]"
               endId="Package\DFT_LoadDesignation\OLEDST_Designation.Inputs[OLE DB Destination Input]"
               name="Derived Column Output"
               startId="Package\DFT_LoadDesignation\DER_DesignationKey.Outputs[Derived Column Output]" />
+            <path
+              refId="Package\DFT_LoadDesignation.Paths[Flat File Source Output]"
+              endId="Package\DFT_LoadDesignation\DER_DesignationKey.Inputs[Derived Column Input]"
+              name="Flat File Source Output"
+              startId="Package\DFT_LoadDesignation\FF_SRC_Designation.Outputs[Flat File Source Output]" />
           </paths>
         </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\SQL_TruncateTargets"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Makes the package re-runnable."
+      DTS:DTSID="{5842FCC5-4A60-40C5-B0AF-16A089549436}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="SQL_TruncateTargets"
+      DTS:TaskContact="Execute SQL Task; Microsoft Corporation; SQL Server 2025; © 2025 Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1"
+      DTS:ThreadHint="0">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{203D8BE4-BC5A-4EC2-9EE1-D8D84ED092BC}"
+          SQLTask:SqlStatementSource="TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
       </DTS:ObjectData>
     </DTS:Executable>
   </DTS:Executables>
@@ -1290,4 +1291,140 @@
       DTS:ObjectName="{FF815502-AAA8-4E24-9D86-F09817D625C0}"
       DTS:To="Package\DFT_LoadDesignation" />
   </DTS:PrecedenceConstraints>
+  <DTS:DesignTimeProperties><![CDATA[<?xml version="1.0"?>
+<!--This CDATA section contains the layout information of the package. The section includes information such as (x,y) coordinates, width, and height.-->
+<!--If you manually edit this section and make a mistake, you can delete it. -->
+<!--The package will still be able to load normally but the previous layout information will be lost and the designer will automatically re-arrange the elements on the design surface.-->
+<Objects
+  Version="8">
+  <!--Each node below will contain properties that do not affect runtime behavior.-->
+  <Package
+    design-time-name="Package">
+    <LayoutInfo>
+      <GraphLayout
+        Capacity="8" xmlns="clr-namespace:Microsoft.SqlServer.IntegrationServices.Designer.Model.Serialization;assembly=Microsoft.SqlServer.IntegrationServices.Graph" xmlns:mssgle="clr-namespace:Microsoft.SqlServer.Graph.LayoutEngine;assembly=Microsoft.SqlServer.Graph" xmlns:assembly="http://schemas.microsoft.com/winfx/2006/xaml">
+        <NodeLayout
+          Size="188,42"
+          Id="Package\DFT_LoadDepartment"
+          TopLeft="6.00000000000003,107.5" />
+        <NodeLayout
+          Size="189,42"
+          Id="Package\DFT_LoadDesignation"
+          TopLeft="5.50000000000003,209.5" />
+        <NodeLayout
+          Size="188,42"
+          Id="Package\SQL_TruncateTargets"
+          TopLeft="6.00000000000001,5.5" />
+        <EdgeLayout
+          Id="Package.PrecedenceConstraints[{1EE17100-C69C-4B25-891D-BE9E097BA1B9\}]"
+          TopLeft="100,47.5">
+          <EdgeLayout.Curve>
+            <mssgle:Curve
+              StartConnector="{assembly:Null}"
+              EndConnector="0,60"
+              Start="0,0"
+              End="0,52.5">
+              <mssgle:Curve.Segments>
+                <mssgle:SegmentCollection
+                  Capacity="5">
+                  <mssgle:LineSegment
+                    End="0,52.5" />
+                </mssgle:SegmentCollection>
+              </mssgle:Curve.Segments>
+            </mssgle:Curve>
+          </EdgeLayout.Curve>
+          <EdgeLayout.Labels>
+            <EdgeLabelCollection />
+          </EdgeLayout.Labels>
+        </EdgeLayout>
+        <EdgeLayout
+          Id="Package.PrecedenceConstraints[{FF815502-AAA8-4E24-9D86-F09817D625C0\}]"
+          TopLeft="100,149.5">
+          <EdgeLayout.Curve>
+            <mssgle:Curve
+              StartConnector="{assembly:Null}"
+              EndConnector="0,60"
+              Start="0,0"
+              End="0,52.5">
+              <mssgle:Curve.Segments>
+                <mssgle:SegmentCollection
+                  Capacity="5">
+                  <mssgle:LineSegment
+                    End="0,52.5" />
+                </mssgle:SegmentCollection>
+              </mssgle:Curve.Segments>
+            </mssgle:Curve>
+          </EdgeLayout.Curve>
+          <EdgeLayout.Labels>
+            <EdgeLabelCollection />
+          </EdgeLayout.Labels>
+        </EdgeLayout>
+      </GraphLayout>
+    </LayoutInfo>
+  </Package>
+  <TaskHost
+    design-time-name="Package\DFT_LoadDepartment">
+    <LayoutInfo>
+      <GraphLayout
+        Capacity="8" xmlns="clr-namespace:Microsoft.SqlServer.IntegrationServices.Designer.Model.Serialization;assembly=Microsoft.SqlServer.IntegrationServices.Graph" xmlns:mssgle="clr-namespace:Microsoft.SqlServer.Graph.LayoutEngine;assembly=Microsoft.SqlServer.Graph" xmlns:assembly="http://schemas.microsoft.com/winfx/2006/xaml">
+        <NodeLayout
+          Size="185,42"
+          Id="Package\DFT_LoadDepartment\DER_DepartmentKey"
+          TopLeft="6.50000000000003,107.5" />
+        <NodeLayout
+          Size="185,42"
+          Id="Package\DFT_LoadDepartment\FF_SRC_Department"
+          TopLeft="6.50000000000001,5.5" />
+        <NodeLayout
+          Size="187,42"
+          Id="Package\DFT_LoadDepartment\OLEDST_Department"
+          TopLeft="5.50000000000003,209.5" />
+        <EdgeLayout
+          Id="Package\DFT_LoadDepartment.Paths[Flat File Source Output]"
+          TopLeft="99,47.5">
+          <EdgeLayout.Curve>
+            <mssgle:Curve
+              StartConnector="{assembly:Null}"
+              EndConnector="0,60"
+              Start="0,0"
+              End="0,52.5">
+              <mssgle:Curve.Segments>
+                <mssgle:SegmentCollection
+                  Capacity="5">
+                  <mssgle:LineSegment
+                    End="0,52.5" />
+                </mssgle:SegmentCollection>
+              </mssgle:Curve.Segments>
+            </mssgle:Curve>
+          </EdgeLayout.Curve>
+          <EdgeLayout.Labels>
+            <EdgeLabelCollection />
+          </EdgeLayout.Labels>
+        </EdgeLayout>
+        <EdgeLayout
+          Id="Package\DFT_LoadDepartment.Paths[Derived Column Output]"
+          TopLeft="99,149.5">
+          <EdgeLayout.Curve>
+            <mssgle:Curve
+              StartConnector="{assembly:Null}"
+              EndConnector="0,60"
+              Start="0,0"
+              End="0,52.5">
+              <mssgle:Curve.Segments>
+                <mssgle:SegmentCollection
+                  Capacity="5">
+                  <mssgle:LineSegment
+                    End="0,52.5" />
+                </mssgle:SegmentCollection>
+              </mssgle:Curve.Segments>
+            </mssgle:Curve>
+          </EdgeLayout.Curve>
+          <EdgeLayout.Labels>
+            <EdgeLabelCollection />
+          </EdgeLayout.Labels>
+        </EdgeLayout>
+      </GraphLayout>
+    </LayoutInfo>
+  </TaskHost>
+</Objects>]]></DTS:DesignTimeProperties>
 </DTS:Executable>

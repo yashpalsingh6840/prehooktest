@@ -1,0 +1,27 @@
+These 8 files are one zip (scripts-for-client.zip), split into email-sized pieces
+(4 MB max each) because the whole thing is ~30 MB and many mail systems reject or
+strip attachments that large.
+
+TO REJOIN (on the client's machine, after saving all 8 files to the same folder):
+
+  Open Command Prompt in that folder and run:
+
+    copy /b scripts-for-client.zip.001+scripts-for-client.zip.002+scripts-for-client.zip.003+scripts-for-client.zip.004+scripts-for-client.zip.005+scripts-for-client.zip.006+scripts-for-client.zip.007+scripts-for-client.zip.008 scripts-for-client.zip
+
+  That's a built-in Windows command -- no extra software needed. It produces
+  scripts-for-client.zip, identical to the original. Extract it, then run
+  Run-Survey.ps1 (or Run-Survey.bat) as usual.
+
+  All 8 parts must be present and in the same folder, and the copy /b command must
+  list them in order (.001 through .008) -- copy /b concatenates in the order given,
+  not by filename sort.
+
+
+
+PowerShell (if execution policy allows):
+
+.\Run-Survey.ps1 -PackageFolder "D:\Their\SSIS_Projects"
+Or the .bat twin (works even when PowerShell scripts are blocked by group policy — this is the one to hand the client if you're not sure):
+
+
+Run-Survey.bat "D:\Their\SSIS_Projects"

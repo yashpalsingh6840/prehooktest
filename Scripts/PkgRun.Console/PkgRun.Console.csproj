@@ -27,27 +27,12 @@
     <Compile Include="..\PkgRun.cs" Link="PkgRun.cs" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!--
-      These three come from the GAC (installed by SSDT / SQL Server, version
-      17.0.0.0, PublicKeyToken 89845dcd8080cc91). HintPath below matches this
-      machine; Private=False means they're resolved from the GAC at runtime
-      too (not copied next to the exe), same as dtexec/devenv do it. If you
-      build this on a different machine, re-resolve the paths with:
-        [System.Reflection.Assembly]::LoadWithPartialName('Microsoft.SqlServer.ManagedDTS').Location
-    -->
-    <Reference Include="Microsoft.SqlServer.ManagedDTS">
-      <HintPath>C:\WINDOWS\Microsoft.Net\assembly\GAC_MSIL\Microsoft.SqlServer.ManagedDTS\v4.0_17.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.ManagedDTS.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Microsoft.SqlServer.DTSPipelineWrap">
-      <HintPath>C:\WINDOWS\Microsoft.Net\assembly\GAC_MSIL\Microsoft.SqlServer.DTSPipelineWrap\v4.0_17.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSPipelineWrap.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="Microsoft.SqlServer.DTSRuntimeWrap">
-      <HintPath>C:\WINDOWS\Microsoft.Net\assembly\GAC_64\Microsoft.SqlServer.DTSRuntimeWrap\v4.0_17.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSRuntimeWrap.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-  </ItemGroup>
+  <!--
+    ManagedDTS / DTSPipelineWrap / DTSRuntimeWrap come from the GAC (installed
+    by SSDT / SQL Server). Build/Ssis.Gac.props detects which SSIS version is
+    installed rather than pinning one - see that file's header for why a
+    pinned HintPath breaks on a new machine, and for how to pin deliberately.
+  -->
+  <Import Project="..\..\Build\Ssis.Gac.props" />
 
 </Project>

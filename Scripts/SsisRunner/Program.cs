@@ -28,7 +28,7 @@ using Microsoft.Data.SqlClient;
 const string DefaultConnectionString =
     // TrustServerCertificate is required: Microsoft.Data.SqlClient defaults to
     // Encrypt=True with strict validation, and this instance has a self-signed cert.
-    "Server=.\\SQLFORPOC;Database=SsisPoC;Integrated Security=true;TrustServerCertificate=true;";
+    "Server=.\\SQLFORPOC_2022;Database=SsisPoC;Integrated Security=true;TrustServerCertificate=true;";
 
 var options = ParseArgs(args);
 if (options is null)

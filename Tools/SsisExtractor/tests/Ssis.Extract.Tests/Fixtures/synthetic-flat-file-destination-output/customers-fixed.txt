@@ -1,0 +1,3 @@
+C001      Alice Smith    alice@example.com   
+C002      Bob            bob@example.com     
+C003      Charlotte Fitzgcharlotte@example.co

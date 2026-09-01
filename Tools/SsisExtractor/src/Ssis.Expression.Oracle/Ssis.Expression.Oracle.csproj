@@ -22,19 +22,10 @@
     project exists so the corpus can be REGENERATED and re-verified on a machine that has
     SSIS installed, not so the library needs one.
 
-    GAC paths are this machine's (SSIS 17.0.0.0, PublicKeyToken 89845dcd8080cc91); resolve
-    fresh on another machine via:
-      [System.Reflection.Assembly]::LoadWithPartialName('Microsoft.SqlServer.ManagedDTS').Location
+    The GAC references (ManagedDTS / DTSRuntimeWrap) come from Build/Ssis.Gac.props, which
+    detects the installed SSIS version rather than pinning one - see that file's header for
+    why, and for how to pin a version deliberately.
   -->
-  <ItemGroup>
-    <Reference Include="Microsoft.SqlServer.ManagedDTS">
-      <HintPath>C:\WINDOWS\Microsoft.Net\assembly\GAC_MSIL\Microsoft.SqlServer.ManagedDTS\v4.0_17.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.ManagedDTS.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="Microsoft.SqlServer.DTSRuntimeWrap">
-      <HintPath>C:\WINDOWS\Microsoft.Net\assembly\GAC_64\Microsoft.SqlServer.DTSRuntimeWrap\v4.0_17.0.0.0__89845dcd8080cc91\Microsoft.SqlServer.DTSRuntimeWrap.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-  </ItemGroup>
+  <Import Project="..\..\..\..\Build\Ssis.Gac.props" />
 
 </Project>

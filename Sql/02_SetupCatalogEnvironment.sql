@@ -11,7 +11,7 @@
     Re-runnable: drops and recreates the environment each time.
 
     Usage:
-      sqlcmd -S ".\SQLFORPOC" -E -i Sql\02_SetupCatalogEnvironment.sql
+      sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\02_SetupCatalogEnvironment.sql
 
     ------------------------------------------------------------------
     WHICH VALUES LIVE HERE, AND WHICH DO NOT
@@ -161,7 +161,7 @@ EXEC catalog.create_environment_variable
      @variable_name    = N'TargetConnectionString',
      @data_type        = N'String',
      @sensitive        = 0,
-     @value            = N'Data Source=.\SQLFORPOC;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;',
+     @value            = N'Data Source=.\SQLFORPOC_2022;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;',
      @description      = N'OLE DB connection string for the destination SQL Server database.';
 
 /* Sensitive, deliberately unbound. Nothing in either package's logic is

@@ -67,6 +67,7 @@ public static partial class PackageGenerator
         var wiredOleDbCommands = new Dictionary<DataFlowPlan, ProgramOleDbCommandStep>();
         var wiredDataFlowLoops = new Dictionary<ForEachFileDataFlowPlan, ProgramForEachDataFlowLoopStep>();
         var fileSourceEntries = new List<FileSourceEntryRequest>();
+        var secondaryConnections = new Dictionary<string, SecondaryConnectionRequest>();
         var functionsUsed = new HashSet<string>();
         string? authMode = null;
         string? userId = null;
@@ -238,7 +239,7 @@ public static partial class PackageGenerator
                 EmitSeams: emitSeams,
                 MappingNamespace: $"{ns}.Mapping",
                 TransformClassName: transformClassName,
-                RowTypeNamespace: programSource is CsvFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql",
+                RowTypeNamespace: programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql",
                 RowTypeName: rowTypeName,
                 EntityNamespace: $"{ns}.Model",
                 EntityName: entityName,
@@ -316,7 +317,7 @@ public static partial class PackageGenerator
                     programSteps.Add(programOleDbCommand);
                     break;
                 case SqlStep sqlStep:
-                    programSteps.Add(new ProgramSqlStep(sqlStep.TaskName, sqlStep.Sql));
+                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, gaps));
                     break;
                 case ScriptTaskStep { Task: var scriptTask }:
                 {
@@ -380,7 +381,8 @@ public static partial class PackageGenerator
                 FileSourceEntries: fileSourceEntries,
                 DatabaseAuth: new DatabaseAuthRequest(authMode, userId),
                 OnSuccessRecipients: [],
-                OnFailureRecipients: [])));
+                OnFailureRecipients: [],
+                SecondaryConnections: secondaryConnections.Values.ToList())));
 
             gaps.Add(new GenerationGap($"{package.ObjectName}.Notification", "a .dtsx carries no notification-recipient information -- OnSuccessRecipients/OnFailureRecipients were generated empty; fill in appsettings.json manually", IsBlocking: false));
         }
@@ -502,12 +504,20 @@ public static partial class PackageGenerator
         {
             var rowTypeName = rowTypeBaseName + "CsvRow";
             var fileSourceKey = rowTypeBaseName;
+            var format = csvConnectionManager.FlatFileFormat;
 
             Merge(files, gaps, CsvRowEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
-            Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
             fileSourceEntries.Add(BuildFileSourceEntry(fileSourceKey, csvConnectionManager, gaps));
 
-            return (rowTypeName, new CsvFlowSource(flatFileSource.Name, fileSourceKey));
+            if (FlatFileRuntimeShape.IsFixedWidthWithoutHeader(format))
+            {
+                Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+                return (rowTypeName, new FixedWidthFlowSource(flatFileSource.Name, fileSourceKey,
+                    FlatFileRuntimeShape.BuildColumnPlans(format!), format!.HeaderRowsToSkip ?? 0));
+            }
+
+            Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+            return (rowTypeName, new CsvFlowSource(flatFileSource.Name, fileSourceKey, format?.HeaderRowsToSkip ?? 0));
         }
 
         if (flow.OleDbSource is { } oleDbSource)
@@ -552,12 +562,20 @@ public static partial class PackageGenerator
         {
             var rowTypeName = rowTypeBaseName + "CsvRow";
             var fileSourceKey = rowTypeBaseName;
+            var format = csvConnectionManager.FlatFileFormat;
 
             Merge(files, gaps, CsvRowEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
-            Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
             fileSourceEntries.Add(BuildFileSourceEntry(fileSourceKey, csvConnectionManager, gaps));
 
-            return (rowTypeName, new CsvFlowSource(sourceComponent.Name, fileSourceKey));
+            if (FlatFileRuntimeShape.IsFixedWidthWithoutHeader(format))
+            {
+                Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+                return (rowTypeName, new FixedWidthFlowSource(sourceComponent.Name, fileSourceKey,
+                    FlatFileRuntimeShape.BuildColumnPlans(format!), format!.HeaderRowsToSkip ?? 0));
+            }
+
+            Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+            return (rowTypeName, new CsvFlowSource(sourceComponent.Name, fileSourceKey, format?.HeaderRowsToSkip ?? 0));
         }
 
         if (SourceInfo.IsSqlSource(sourceComponent))
@@ -607,8 +625,8 @@ public static partial class PackageGenerator
         if (rightResult is null) return null;
         var (leftRowTypeName, leftSource) = leftResult.Value;
         var (rightRowTypeName, rightSource) = rightResult.Value;
-        var leftRowTypeNamespace = leftSource is CsvFlowSource ? $"{ns}.Csv" : $"{ns}.Sql";
-        var rightRowTypeNamespace = rightSource is CsvFlowSource ? $"{ns}.Csv" : $"{ns}.Sql";
+        var leftRowTypeNamespace = leftSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : $"{ns}.Sql";
+        var rightRowTypeNamespace = rightSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : $"{ns}.Sql";
 
         var rowTypeName = baseName + "Row";
         var mapperClassName = baseName + "Mapper";
@@ -699,7 +717,7 @@ public static partial class PackageGenerator
         var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow, defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames);
         if (sourceResult is null) return null;
         var (rowTypeName, programSource) = sourceResult.Value;
-        var rowTypeNamespace = programSource is CsvFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql";
+        var rowTypeNamespace = programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql";
 
         // A split flow with neither a shared upstream Derived Column, a shared upstream Data
         // Conversion, nor any per-branch Derived Column (see ConditionalSplitBranchPlan.
@@ -847,7 +865,7 @@ public static partial class PackageGenerator
             defaultIsFlatFile ? null : defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames);
         if (sourceResult is null) return null;
         var (rowTypeName, programSource) = sourceResult.Value;
-        var rowTypeNamespace = programSource is CsvFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql";
+        var rowTypeNamespace = programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql";
 
         // Phase A: validate every branch and resolve its entity name, without emitting anything
         // yet -- same convergence-detection shape as GenerateConditionalSplitFlow's own Phase A.
@@ -1595,6 +1613,59 @@ public static partial class PackageGenerator
         return parsed.AuthMode == "SqlLogin"
             ? ("SqlServer", parsed.UserId, parsed.Server, parsed.Database)
             : ("Windows", null, parsed.Server, parsed.Database);
+    }
+
+    /// <summary>
+    /// Real bug: RBC_Demo_ETL's own SQL_CacheSet_SecondDb (Package_Legacy.dtsx) runs
+    /// <c>EXEC dbo.Cache_Set ...</c> against CM_SQL_SSISDemoCache -- a genuinely different
+    /// database from the flow this package's every other SQL task/destination uses
+    /// (CM_SQL_SSISDemo). Before this, every SqlStep ran through the package's ONE
+    /// IUnitOfWork/DbContext connection unconditionally, so this task's own EXEC silently ran
+    /// against the wrong database (failing there with "Could not find stored procedure", since
+    /// dbo.Cache_Set only exists in SSISDemoCache).
+    ///
+    /// <para>Compares <paramref name="sqlStep"/>'s own resolved connection manager's
+    /// (Server, Database) against the package's already-resolved primary
+    /// (<paramref name="targetServer"/>, <paramref name="targetDatabase"/>) -- same plain
+    /// ordinal comparison <see cref="BuildSqlFlowSource"/> already uses for the equivalent
+    /// source-vs-destination check. A mismatch routes to
+    /// <see cref="ProgramSecondaryConnectionSqlStep"/> (its own independent, autocommitted
+    /// connection -- see that Etl.Core type's own doc comment for why that, and not the shared
+    /// transaction, is the faithful translation) instead of the ordinary
+    /// <see cref="ProgramSqlStep"/>. Deduped by connection manager name in
+    /// <paramref name="secondaryConnections"/> so two SqlSteps against the same secondary
+    /// database (not evidenced anywhere, but possible) still produce ONE appsettings.json entry
+    /// and one top-level connection string.</para>
+    ///
+    /// <para>Deliberately unresolved, falling back to the unchanged ordinary
+    /// <see cref="ProgramSqlStep"/> path, in three cases where there is no evidence to say
+    /// otherwise: <see cref="SqlStep.ConnectionManagerName"/> is null (a dangling DTSID
+    /// reference); that name doesn't resolve to a connection manager with parsed connection-
+    /// string info; or the package's own primary server/database was never resolved at all (no
+    /// flow's destination had a SQL connection -- e.g. every destination is a Flat File
+    /// Destination), in which case there is nothing to compare against.</para>
+    /// </summary>
+    private static ProgramStep ResolveSqlStep(
+        PackageSpec package, SqlStep sqlStep, string? targetServer, string? targetDatabase,
+        Dictionary<string, SecondaryConnectionRequest> secondaryConnections, List<GenerationGap> gaps)
+    {
+        if (sqlStep.ConnectionManagerName is not { } cmName
+            || FindConnectionManager(package, cmName) is not { } cm
+            || cm.Parsed is not { Server: { } server, Database: { } database } parsed
+            || targetServer is null || targetDatabase is null
+            || (server == targetServer && database == targetDatabase))
+        {
+            return new ProgramSqlStep(sqlStep.TaskName, sqlStep.Sql);
+        }
+
+        if (!secondaryConnections.ContainsKey(cmName))
+        {
+            secondaryConnections[cmName] = parsed.AuthMode == "SqlLogin"
+                ? new SecondaryConnectionRequest(cmName, "SqlServer", parsed.UserId, server, database)
+                : new SecondaryConnectionRequest(cmName, "Windows", null, server, database);
+        }
+
+        return new ProgramSecondaryConnectionSqlStep(sqlStep.TaskName, cmName, sqlStep.Sql);
     }
 
     /// <summary>Translates a <see cref="ForEachFileLoopPlan"/>'s own raw SSIS facts into

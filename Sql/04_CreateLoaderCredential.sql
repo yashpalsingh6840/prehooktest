@@ -2,7 +2,7 @@
     SSIS PoC - SQL login for LoadEmployees' target connection
     -----------------------------------------------------------
     Run once (or after rotating the password -- see below):
-        sqlcmd -S ".\SQLFORPOC" -E -i Sql\04_CreateLoaderCredential.sql
+        sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\04_CreateLoaderCredential.sql
 
     Why this exists: every other connection in this PoC uses Windows/
     Integrated Security, which has no password to protect -- that is exactly

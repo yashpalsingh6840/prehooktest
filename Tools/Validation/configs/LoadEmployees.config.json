@@ -1,6 +1,9 @@
 {
   "PackageName": "LoadEmployees",
   "SchemaScript": "../../../Sql/01_CreateTarget.sql",
+  "AdditionalSchemaScripts": [
+    "../../../Sql/04_CreateLoaderCredential.sql"
+  ],
   "TargetTables": [
     {
       "Table": "dbo.Employee",
@@ -9,5 +12,6 @@
         "LoadedAtUtc"
       ]
     }
-  ]
+  ],
+  "DeclaredEffects": []
 }

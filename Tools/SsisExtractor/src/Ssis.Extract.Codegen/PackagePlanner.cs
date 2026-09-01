@@ -251,7 +251,21 @@ internal sealed record ConditionalConstraints(
 public sealed record FailureHandlerPlan(string TaskName, string Sql, string RefId);
 
 public sealed record FlowStep(DataFlowPlan Flow) : PackageStep;
-public sealed record SqlStep(string TaskName, string Sql) : PackageStep;
+
+/// <summary><paramref name="ConnectionManagerName"/> is the SSIS connection manager this task's
+/// own SqlStatementSource actually runs against (<c>ExecuteSqlTaskPayload.ConnectionName</c>,
+/// resolved from its DTSID reference) -- carried through unconditionally, whether or not it
+/// turns out to be the package's primary one. Deciding that, and so whether this becomes an
+/// ordinary <c>ProgramSqlStep</c> (runs inside the shared package transaction) or a
+/// <c>ProgramSecondaryConnectionSqlStep</c> (its own independent, autocommitted connection --
+/// see that type's own doc comment for why), needs the package's own resolved target
+/// server/database, which <see cref="PackagePlanner"/> does not know at plan time -- that
+/// happens in <c>PackageGenerator</c>, after every flow's own destination has been resolved.
+/// Null when the raw DTSID reference didn't resolve to a known connection manager at all (a
+/// dangling reference) -- unchanged from before this field existed: such a task is still
+/// generated as an ordinary <c>ProgramSqlStep</c>, since there is no evidence to say
+/// otherwise.</summary>
+public sealed record SqlStep(string TaskName, string Sql, string? ConnectionManagerName = null) : PackageStep;
 public sealed record FileSystemStep(string TaskName, FileSystemActionPlan Action) : PackageStep;
 public sealed record ForEachFileLoopStep(ForEachFileLoopPlan Loop) : PackageStep;
 public sealed record ForEachDataFlowLoopStep(ForEachFileDataFlowPlan Loop) : PackageStep;
@@ -1044,7 +1058,7 @@ public static class PackagePlanner
 
                 if (isPostFlow)
                 {
-                    steps.Add(Gated(refId, new SqlStep(executable.ObjectName ?? refId, sqlTask.SqlStatementSource)));
+                    steps.Add(Gated(refId, new SqlStep(executable.ObjectName ?? refId, sqlTask.SqlStatementSource, sqlTask.ConnectionName)));
                     flowOrAfter.Add(refId);
                 }
                 else

@@ -129,7 +129,7 @@ flowchart LR
 | `$Project::SourceFolder` | project | folder containing the source CSV |
 | `$Project::SourceFileName` | project | source CSV file name |
 | `CM.CM_TargetDb.Password` | package (auto-split, sensitive) | `ssis_loader`'s password — bound to environment variable `TargetDbPassword`, see below |
-| `CM.CM_TargetDb.ServerName` / `.InitialCatalog` | package (auto-split) | destination server/database — left at design defaults (`.\SQLFORPOC` / `SsisPoC`) unless overridden |
+| `CM.CM_TargetDb.ServerName` / `.InitialCatalog` | package (auto-split) | destination server/database — left at design defaults (`.\SQLFORPOC_2022` / `SsisPoC`) unless overridden |
 
 `$Project::TargetConnectionString` exists in the project but this package
 does **not** read it — see "A genuinely protected credential" for why.
@@ -247,7 +247,7 @@ All three externally-variable settings are **project parameters**
 |----------------------------|---------------------------------------------------------------------------------------------------|---------|
 | `$Project::SourceFolder`         | `D:\PoC\SSIS\Data\Input`                                                                    | builds the CSV path |
 | `$Project::SourceFileName`       | `Employees.csv`                                                                              | builds the CSV path |
-| `$Project::TargetConnectionString` | `Data Source=.\SQLFORPOC;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;` | `LoadReferenceData`'s OLE DB destinations only, as of 2026-08-13 — see below |
+| `$Project::TargetConnectionString` | `Data Source=.\SQLFORPOC_2022;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;` | `LoadReferenceData`'s OLE DB destinations only, as of 2026-08-13 — see below |
 
 **⚠️ Important:** `dtexec`'s local `/Project` execution mode (running a
 `.ispac` directly, no catalog) does **not** support overriding `$Project::`
@@ -538,7 +538,7 @@ Compiles `PkgRun.cs` on the fly via `Add-Type`, no build step needed.
 
 # LoadReferenceData -- still Integrated Security, runs end to end locally
 .\Scripts\Run-Package.ps1 -PackageName LoadReferenceData.dtsx -Override @(
-    'TargetConnectionString=Data Source=.\SQLFORPOC;Initial Catalog=SsisPoC;Integrated Security=SSPI;Provider=MSOLEDBSQL.1;'
+    'TargetConnectionString=Data Source=.\SQLFORPOC_2022;Initial Catalog=SsisPoC;Integrated Security=SSPI;Provider=MSOLEDBSQL.1;'
 )
 ```
 
@@ -572,7 +572,7 @@ dotnet build Scripts\PkgRun.Console\PkgRun.Console.csproj -c Release
 
 # LoadReferenceData -- still Integrated Security, runs end to end locally
 .\Scripts\PkgRun.Console\bin\Release\PkgRun.Console.exe --package LoadReferenceData.dtsx `
-  --set "TargetConnectionString=Data Source=.\SQLFORPOC;Initial Catalog=SsisPoC;Integrated Security=SSPI;Provider=MSOLEDBSQL.1;"
+  --set "TargetConnectionString=Data Source=.\SQLFORPOC_2022;Initial Catalog=SsisPoC;Integrated Security=SSPI;Provider=MSOLEDBSQL.1;"
 ```
 
 `--ispac` and `--package` are also available to point at a different
@@ -585,15 +585,15 @@ Both entry points take plain parameter names (`SourceFolder`, not
 `$Project::SourceFolder(String)`) — no datatype suffix, no delimiter
 escaping. Both were verified working with defaults and with a full
 override (redirected source file + a second throwaway database) against
-the real `.\SQLFORPOC` SQL Server 2025 instance.
+the real `.\SQLFORPOC_2022` SQL Server 2022 instance.
 
-## Target: SQL Server 2025 (`.\SQLFORPOC`)
+## Target: SQL Server 2022 (`.\SQLFORPOC_2022`)
 
 This machine has a local **SQL Server 2025 Developer Edition** named
-instance, `SQLFORPOC`, so both packages point at it by default — a real SQL
+instance, `SQLFORPOC_2022`, so both packages point at it by default — a real SQL
 Server, not LocalDB, and it matches this project's `TargetServerVersion`
 (`SQLServer2025`) exactly. `LoadReferenceData` gets there via
-`TargetConnectionString` (`Data Source=.\SQLFORPOC;...`); `LoadEmployees`
+`TargetConnectionString` (`Data Source=.\SQLFORPOC_2022;...`); `LoadEmployees`
 gets there via `CM_TargetDb`'s own `ServerName`/`InitialCatalog` properties
 plus SQL authentication (see "A genuinely protected credential" below).
 
@@ -607,7 +607,7 @@ at the catalog level the same way `CM.CM_TargetDb.Password` is bound below.
 ## How it was verified (on this machine)
 
 1. `Sql/01_CreateTarget.sql` run via `sqlcmd` → created `SsisPoC` DB and
-   `dbo.Employee` table on `.\SQLFORPOC`.
+   `dbo.Employee` table on `.\SQLFORPOC_2022`.
 2. Project built with `devenv SSIS.sln /Build Development` →
    `SSIS\bin\Development\SSIS.ispac` produced successfully.
 3. **Note:** `dtexec.exe` on this box only has the standalone SSIS *design*
@@ -635,7 +635,7 @@ at the catalog level the same way `CM.CM_TargetDb.Password` is bound below.
    new CSV (3 rows) and wrote them into the new database, proving the
    source and destination are both fully externalized. The test database
    was dropped afterward.
-7. Once SQL Server 2025 (`.\SQLFORPOC`) became available, repointed
+7. Once SQL Server (originally 2025 as `.\SQLFORPOC`, now 2022 as `.\SQLFORPOC_2022` after the 2026-08-21 laptop change) became available, repointed
    `$Project::TargetConnectionString` at it, rebuilt, and re-ran against the
    real server: **12/12 rows loaded**, confirmed with `sqlcmd`:
    ```
@@ -667,7 +667,7 @@ at the catalog level the same way `CM.CM_TargetDb.Password` is bound below.
 & "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.com" SSIS.sln /Build Development
 
 # reset the target table (package also does this itself via SQL_TruncateTarget)
-sqlcmd -S ".\SQLFORPOC" -E -i Sql\01_CreateTarget.sql
+sqlcmd -S ".\SQLFORPOC_2022" -E -i Sql\01_CreateTarget.sql
 
 # run (on a machine with the Integration Services feature installed)
 dtexec /Project "SSIS\bin\Development\SSIS.ispac" /Package "LoadEmployees.dtsx"

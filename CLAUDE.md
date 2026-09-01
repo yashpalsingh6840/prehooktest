@@ -5435,6 +5435,203 @@ pre-existing per-pairing coercion and Data Conversion target-type gaps. Failure 
 the next round by the conditional-constraint measurement, are now closed for the one evidenced
 shape.
 
+### Running the real SSIS packages and the generated rewrite side by side, and fixing three real bugs found doing it (2026-08-31/2026-09-01)
+
+Everything above this point had been VERIFIED against real dtexec probes and real generated-code
+runs on a fixture-by-fixture basis -- but the real SSIS packages (`SSIS_From_Sandeep`) and the
+generated rewrite (`D:\PoC\SSIS_From_Sandeep_Generated`) had never actually been run side by
+side, end to end, on the same machine. Both existed; neither had been exercised together. This
+round did that for real, and it surfaced two genuine, previously-unknown bugs the fixture-level
+verification had never hit (both fixtures happen to avoid the exact shapes that trigger them),
+plus a third (already-flagged) real gap that was fixed as a deliberate follow-up.
+
+**Standing up the environment.** The third party's own `docker-compose.yml`
+(`SSIS_From_Sandeep/docker-compose.yml`) was used to bring up a real
+`mcr.microsoft.com/mssql/server:2022-latest` container (`ssisdemo-sqlserver`, port 1433), seeded
+with `SSISDemo`/`SSISDemoCache` via the repo's own `sql/*.sql` scripts. All 5 real packages were
+then run for real via `DTExec.exe`, using `.dtsConfig` override files (SSIS's own external
+connection-string-override mechanism -- the `DTS:Password` nodes in these third-party `.dtsx`
+files are encrypted with `EncryptSensitiveWithUserKey`, tied to the ORIGINAL author's Windows
+account, and are undecryptable here; a `.dtsConfig` sidesteps that entirely rather than editing
+the `.dtsx`). One environment gap was found and fixed along the way, unrelated to any code:
+`Package_Advanced`'s own `dbo.DripEligibility` table was never created by any of the third
+party's 6 SQL setup scripts -- derived its schema directly from the package's own destination
+`<inputColumn>` metadata and created it by hand, a one-time environment fix. All 5 real packages
+then ran successfully, matching the README's own documented expected-results table and the third
+party's own committed sample output files. A full golden snapshot of every target table/file was
+captured before touching the generated code at all.
+
+**Then the generated rewrite was pointed at the exact same, freshly-seeded databases.** 3 of 5
+packages matched the SSIS baseline byte-for-byte on the first try. 2 failed, both with genuine,
+previously-unknown bugs -- invisible in every earlier round's own dedicated fixture, because no
+fixture built so far happened to combine a RaggedRight flat file with no delimiters (Bug 2) or a
+multi-flow package whose second flow's SQL source reads a table the FIRST flow just wrote in the
+same still-open transaction (Bug 1).
+
+**Bug 2 -- `Package_Legacy`'s own `CustomerFixedImport` load, a fixed-width/no-delimiter read
+CsvHelper cannot do at all.** `ClassMapEmitter` always emits CsvHelper's `.Name(...)` mapping,
+which needs delimiters to split a line on -- but `CustomersFixed.txt` is genuinely fixed-width
+(`Format="RaggedRight"`, `HeaderRowsToSkip="1"`, no real column-name header at all). Fixed with a
+new, non-CsvHelper reader: `Etl.Core.Csv.FixedWidthRowSource<TRow>` (reads by character
+position, honors `SkipRows`) plus a new codegen path,
+`Ssis.Extract.Codegen.FlatFileRuntimeShape`/`FixedWidthRowReaderEmitter`, that detects this shape
+(`MaximumWidth` set, `ColumnDelimiterDecoded` empty) and routes to it instead of the ordinary CSV
+path. `HeaderRowsToSkip` was also wired generically into the ORDINARY delimited path
+(`CsvSourceOptions.SkipRows`/`CsvRowSource`) along the way -- it had been extracted all along but
+never consumed anywhere. **Verified against the real motivating package**: regenerated, built
+0 warnings/0 errors, run against the real container -- `CustomerFixedImport` landed
+**byte-for-byte identical** to real SSIS's own padded values (including the padding itself, not
+just the trimmed content), and `legacy-audit-trail.txt` matched byte-for-byte too. 212/212 in
+`Ssis.Extract.Codegen.Tests` (was 205, 6 new).
+
+**Bug 1 -- `Package`'s own multi-flow load, a genuine, reproduced self-deadlock.** `Package.dtsx`
+loads `StagingCustomers` then `SalesSummary`, the second flow's own `SqlRowSource` reading a
+table the FIRST flow just bulk-inserted, all still inside the package's single open
+transaction (`PackageRunner`'s own deliberate whole-package-transaction design, the improvement
+over SSIS's own separately-auto-committed TRUNCATE). `SqlRowSource` owns an INDEPENDENT
+connection (by design -- the same separation a real OLE DB Source's read connection has from a
+destination's transactional one), so this second connection can never see the first connection's
+uncommitted write: the read blocked for the full command timeout and failed with "Execution
+Timeout Expired", every time, deterministically.
+
+Two things had to be measured, not guessed, to fix this correctly:
+1. **READ UNCOMMITTED alone does not work here.** A live 2-session SQL Server probe proved a
+   pre-load `TRUNCATE`'s schema-stability (Sch-M) lock blocks even a NOLOCK/READ UNCOMMITTED
+   reader for its own transaction's full duration -- NOLOCK only ever skips row/page locks, never
+   a schema-stability one. (A plain `DELETE`+`INSERT`'s row locks WOULD have been bypassable this
+   way; `TRUNCATE` specifically is what defeats it.)
+2. **`sp_bindsession`/`sp_getbindtoken`** -- SQL Server's own mechanism for joining a SECOND
+   physical connection to a FIRST one's exact transaction/lock context (not a snapshot, not a
+   dirty read -- literally the same transaction, confirmed live and reusable across multiple
+   independent follower connections) -- is what actually works, and is now wired into
+   `Etl.Core.Data.SqlRowSource<TRow>` via a new, optional `IUnitOfWork? uow` constructor
+   parameter (defaulting to `null`, so a Lookup preload's own already-working, transaction-free
+   read is untouched) and a new `IUnitOfWork.GetBindTokenAsync`/`UnitOfWork.GetBindTokenAsync`
+   (issues `EXEC sp_getbindtoken @token OUTPUT`, caches the result for the life of the
+   transaction).
+
+**A second, subtler deadlock was found wiring this in naively, and it is the one actually worth
+remembering.** Fetching the bind token LAZILY, from inside `SqlRowSource.ReadAsync` itself,
+still hung -- root-caused (after ruling out several isolated repro attempts and confirming via
+live DMV inspection that no server-side request was even active) to a SELF-INFLICTED
+connection-contention deadlock: this second flow's own `SqlRowSource` is read from WHILE the
+FIRST flow's `SqlBulkCopy.WriteToServerAsync` is still actively streaming on the shared writer
+connection (a destination pulls from its source as it writes) -- so a lazy token fetch issues a
+SECOND command on a connection `SqlBulkCopy` is already mid-operation on, which can never
+complete without MARS. Fixed by having `PackageRunner.RunAsync` pre-fetch the token ONCE, right
+after `BeginAsync`, before any pre-load statement or step runs -- every later step's own lazy
+call becomes a cache hit that never touches the connection again. **Verified against the real
+motivating package**: `Package` now succeeds end to end, `SalesSummary` landed byte-for-byte
+identical to the real SSIS baseline (7 rows); rerunning the other 4 packages afterward confirmed
+no regression. 54/54 in `Etl.Core.Tests` (was 53, 2 new -- including one specifically pinning
+that two steps each calling `GetBindTokenAsync` still net exactly ONE real fetch).
+
+**Bug 3 -- found the same session, deliberately deferred at the time, then fixed as its own
+round on the user's own explicit request.** `Package_Legacy`'s own final step,
+`SQL_CacheSet_SecondDb`, runs `EXEC dbo.Cache_Set N'LegacyImport', N'fixed-width import
+completed';` against `CM_SQL_SSISDemoCache` -- a genuinely SECOND database
+(`sql/06_legacy_objects.sql`'s own comment: *"a SECOND DATABASE, so one package can span two of
+them the way production's FXRate_Import ... and RORPackage do"*) -- while every other connection
+manager in that package targets `CM_SQL_SSISDemo`. `ExecuteSqlTaskPayload.ConnectionName` was
+already extracted (resolved from the task's own DTSID reference, slice 2); the gap was entirely
+in codegen, which routed EVERY `SqlStep` through the package's one shared `IUnitOfWork`
+connection unconditionally -- so this task silently ran against the wrong database and failed
+there (`dbo.Cache_Set` only exists in `SSISDemoCache`).
+
+**Framed as a design question before being built, not assumed.** The user asked whether the LLM
+should take a larger role in emitting packages generally, specifically to avoid issues like this
+one. Answered directly: Bug 3 is not a Tier-1/2 gap in this project's own AI-assisted-gap-filling
+taxonomy (see the chunks above) -- it is Tier-3, a deterministic tool-modeling gap ("an Execute
+SQL Task can target a connection manager other than the flow's primary one"), the exact category
+that taxonomy deliberately routes AWAY from AI, precisely so a systemic gap gets fixed once for
+the whole portfolio rather than hidden behind N one-off per-package translations. The user then
+asked for, and got, the deterministic emitter fix instead.
+
+**What real SSIS actually does here was measured before building anything, the same discipline
+as every other round: no `DTS:TransactionOption` appears anywhere in `Package_Legacy.dtsx`**,
+meaning SSIS runs `SQL_CacheSet_SecondDb` on its own default, autocommitted, physical connection,
+completely uncoordinated with the package's other connection managers (no MSDTC escalation). So
+the faithful translation is a SECOND, independent, autocommitted connection -- not an attempt to
+enlist a different database in the package's own shared `SqlTransaction`, which isn't even
+possible without a distributed transaction, a design this rewrite has deliberately not taken on
+elsewhere (see the "Not built" parallel-execution note).
+
+**What was built:**
+- `Etl.Core.Pipeline.SecondaryConnectionSqlStep` (new): an `ILoadTask` that deliberately does
+  NOT use the `IUnitOfWork` passed to `RunAsync` at all -- opens its own `SqlConnection`, runs
+  autocommitted, no explicit transaction. Same independent-connection precedent
+  `Etl.Core.Data.SqlRowSource<TRow>` already established on the read side, applied here to a
+  write.
+- `Ssis.Extract.Codegen.PackagePlanner.SqlStep` gained an optional `ConnectionManagerName` (from
+  `ExecuteSqlTaskPayload.ConnectionName`, carried through unconditionally -- `PackagePlanner`
+  itself doesn't know the package's own resolved primary database yet at plan time, since that's
+  only resolved later, per-flow, in `PackageGenerator`).
+- `PackageGenerator.ResolveSqlStep` (new): compares the task's own connection manager's parsed
+  (Server, Database) against the package's already-resolved primary (same plain ordinal
+  comparison `BuildSqlFlowSource` already uses for its own source-vs-destination check). A
+  mismatch routes to a new `ProgramSecondaryConnectionSqlStep` instead of the ordinary
+  `ProgramSqlStep`; falls back to the unchanged, ordinary path whenever there's no evidence to
+  say otherwise (a dangling connection reference, or no flow ever resolved a primary
+  server/database at all). Deduped by connection manager name, so two tasks against the same
+  secondary database would still produce one config entry and one connection string.
+- `ProjectEmitter.SecondaryConnectionRequest`/`ProjectRequest.SecondaryConnections`: a new
+  per-package `"SecondaryConnections"` section in THIS package's own `appsettings.json`
+  (Server/Database/AuthMode/UserId/Encrypt/TrustServerCertificate/ConnectTimeoutSeconds -- never
+  a password, same rule as `TargetDatabase`; supplied via
+  `SecondaryConnections:<CM name>:Password` in User Secrets/an environment variable, symmetric
+  with `TargetDatabase:Password`). Unlike `TargetDatabase`, this lives in the PACKAGE's own
+  config, not the portfolio-wide `Shared/appsettings.Shared.json` -- a secondary connection is
+  inherently package-specific.
+- `ProgramEmitter.ProgramSecondaryConnectionSqlStep`: builds one connection-string local per
+  DISTINCT secondary connection manager at `Program.cs` TOP LEVEL (same reason as the Lookup
+  preload's own `lookupConnectionString` -- no `ServiceProvider` exists yet), captured by the
+  later per-step factory lambda.
+
+**Verified two ways, same discipline as every other round:**
+1. **The real motivating package** -- regenerated `Package_Legacy.dtsx`: its own
+   `appsettings.json` now carries a `SecondaryConnections.CM_SQL_SSISDemoCache` entry
+   (`Server: "localhost,1433"`, `Database: "SSISDemoCache"`), `Program.cs` constructs
+   `SecondaryConnectionSqlStep("SQL_CacheSet_SecondDb", "CM_SQL_SSISDemoCache", ...)`, and the
+   whole 6-project regenerated solution (5 packages + a copy of `Etl.Core`) builds
+   **0 warnings/0 errors**. Run for real against the Docker container: `Package_Legacy` now
+   succeeds end to end (previously the one remaining failure), `CustomerFixedImport` still landed
+   8 rows correctly, and -- the actual proof -- `SSISDemoCache.dbo.CacheEntry` genuinely gained
+   the row `SQL_CacheSet_SecondDb` writes (`LegacyImport` / `fixed-width import completed`),
+   confirmed by querying `SSISDemoCache` directly, not `SSISDemo` (where the table doesn't exist
+   at all -- confirmed via `OBJECT_ID('dbo.SyntheticSecondConnectionLog')` on the dedicated
+   fixture's own equivalent table, returning `NULL`, i.e. the statement could only have succeeded
+   by genuinely reaching the second database). The other 4 real packages' own `appsettings.json`
+   files correctly gained NO `SecondaryConnections` section at all (grepped directly) -- the fix
+   is scoped to the one evidenced case, not applied speculatively everywhere.
+2. **A new dedicated fixture**, `SyntheticSecondConnectionSql.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `second-connection-sql` mode): `SQL_PreLoad` (TRUNCATE,
+   primary CM) -> `DFT_Load` (CSV -> Derived Column `LoadedAtUtc` -> OLE DB Destination, primary
+   CM) -> `SQL_CacheSet_SecondDb` (INSERT, a genuinely different SECOND database on the same
+   `.\SQLFORPOC_2022` instance, `SsisPoC_Secondary` -- see
+   `synthetic-second-connection-sql-tables.sql`). **Generated, built against a copy of
+   `Etl.Core` (0 warnings/0 errors), and actually RUN against `.\SQLFORPOC_2022`**: read back
+   afterward, not trusted from the exit code -- the primary database's own
+   `SyntheticSecondConnectionTarget` got its 3 CSV rows, and the SEPARATE `SsisPoC_Secondary`
+   database's own `SyntheticSecondConnectionLog` genuinely gained the row the secondary step
+   writes.
+
+Two new `PackagePlannerTests` (the resolved `ConnectionManagerName`, both on the ordinary
+pre-load task and the secondary one) and one new `PackageGeneratorTests`
+(`Generate_RoutesAPostFlowExecuteSqlTask_ToItsOwnSecondaryConnection_WhenItTargetsADifferentDatabase`,
+asserting the exact `Program.cs`/`appsettings.json` wiring and that no plain `ExecuteSqlStep` is
+ever emitted for this task) plus two new `Etl.Core.Tests`
+(`SecondaryConnectionSqlStepTests` -- `Name` returns the constructor value; a connection failure
+propagates as a real `SqlException` and never silently falls back to running the SQL through
+`IUnitOfWork` instead). Regression: 214/214 in `Ssis.Extract.Codegen.Tests` (was 212), 56/56 in
+`Etl.Core.Tests` (was 54), same 3 pre-existing unrelated failures in `Ssis.Extract.Tests`.
+
+**Remaining known gaps, unchanged by this round except for its own closure:** the conditional
+forms that fire on both paths, chunk 4, Aggregate-inside-a-Multicast-branch plus a two-output
+Lookup (`DFT_LookupAndAggregate`), and the pre-existing per-pairing coercion/Data-Conversion
+target-type gaps. Cross-database Execute SQL Task routing, found and deferred earlier this
+session as "Bug 3", is now closed for the one evidenced shape (a task on a genuinely different
+database, with no `TransactionOption="Required"` anywhere to say otherwise).
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

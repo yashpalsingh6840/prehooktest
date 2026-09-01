@@ -37,14 +37,23 @@ internal static class Program
         var tables = Require(opts, "tables").Split(',').Select(t => t.Trim()).ToList();
         var nonDetPath = Require(opts, "nondeterministic-json");
         var primaryKeysPath = opts.TryGetValue("primary-keys-json", out var pkp) ? pkp : null;
+        var effectsPath = opts.TryGetValue("effects-json", out var ep) ? ep : null;
         var outPath = Require(opts, "out");
 
-        var config = ConfigGenerator.Generate(packageName, schemaScript, tables, nonDetPath, primaryKeysPath);
+        var config = ConfigGenerator.Generate(packageName, schemaScript, tables, nonDetPath, primaryKeysPath, effectsPath);
         ConfigGenerator.WriteToFile(config, outPath);
         var unfilled = config.TargetTables.Where(t => t.KeyColumn is null).Select(t => t.Table).ToList();
         Console.WriteLine(unfilled.Count > 0
             ? $"wrote {outPath}. KeyColumn still needs a human fill-in for: {string.Join(", ", unfilled)} (plan §12: generated configs are reviewed by a human)."
             : $"wrote {outPath}. Every KeyColumn was auto-filled from primary-keys.json -- still confirm each one before trusting it (see the per-table messages above).");
+        if (effectsPath is null)
+        {
+            Console.WriteLine("NOTE: --effects-json was not given, so this config cannot tell a real un-checked effect (a file, a notification, a stored procedure's own writes) apart from a package that genuinely has none. A 'run' against this config can report Pass while missing real output. Pass --effects-json from 'ssisx report' to close that gap.");
+        }
+        else if (config.DeclaredEffects.Count == 0)
+        {
+            Console.WriteLine($"Every effect effects.json found for {packageName} is covered by --tables. No DeclaredEffects needed.");
+        }
         return 0;
     }
 
@@ -97,8 +106,15 @@ internal static class Program
         // machines/CI), so it must be resolved relative to the config's own directory --
         // not the caller's current working directory, which varies by how 'run' is invoked.
         var configDir = Path.GetDirectoryName(Path.GetFullPath(configPath))!;
-        var resolvedSchemaScript = Path.IsPathRooted(config.SchemaScript) ? config.SchemaScript : Path.GetFullPath(Path.Combine(configDir, config.SchemaScript));
-        config = new PackageConfig { PackageName = config.PackageName, SchemaScript = resolvedSchemaScript, TargetTables = config.TargetTables };
+        string ResolveRelativeToConfig(string p) => Path.IsPathRooted(p) ? p : Path.GetFullPath(Path.Combine(configDir, p));
+        config = new PackageConfig
+        {
+            PackageName = config.PackageName,
+            SchemaScript = ResolveRelativeToConfig(config.SchemaScript),
+            AdditionalSchemaScripts = config.AdditionalSchemaScripts.Select(ResolveRelativeToConfig).ToList(),
+            TargetTables = config.TargetTables,
+            DeclaredEffects = config.DeclaredEffects,
+        };
         var corpusRunDir = Require(opts, "corpus-run");
         var targetConn = Require(opts, "connection");
         var jobCommand = Require(opts, "job");
@@ -106,8 +122,13 @@ internal static class Program
         var reportDir = Require(opts, "report-dir");
 
         var result = await GateRunner.Run(config, corpusRunDir, targetConn, jobCommand, jobArgs, jobInputDir, reportDir);
-        Console.WriteLine(result.Passed ? $"[gate3] PASS -- {config.PackageName}" : $"[gate3] FAIL -- {config.PackageName}, see {reportDir}");
-        return result.Passed ? 0 : 1;
+        Console.WriteLine(result.Outcome switch
+        {
+            "Pass" => $"[gate3] PASS -- {config.PackageName}",
+            "Incomplete" => $"[gate3] INCOMPLETE -- {config.PackageName}: tables matched, but {result.UnverifiedEffects.Count} declared effect(s) have no checker -- see {reportDir}",
+            _ => $"[gate3] FAIL -- {config.PackageName}, see {reportDir}",
+        });
+        return result.Outcome switch { "Pass" => 0, "Incomplete" => 3, _ => 1 };
     }
 
     private static Dictionary<string, string> ParseOptions(string[] args)
@@ -145,7 +166,7 @@ internal static class Program
 
             generate-config --package <name> --schema-script <path> --tables <t1,t2,...>
                              --nondeterministic-json <path> [--primary-keys-json <path>]
-                             --out <config.json>
+                             [--effects-json <path>] --out <config.json>
               Generates a starter config from `ssisx report`'s non-determinism manifest.
               ExcludedColumns is real generated data. KeyColumn is auto-filled from
               --primary-keys-json (ssisx report's own best-effort naming-convention guess)
@@ -153,6 +174,12 @@ internal static class Program
               trusting it -- a .dtsx carries no real primary-key concept, see
               PrimaryKeyCandidateSpec's doc comment. Left null (for a human to fill in) when
               --primary-keys-json is omitted or has no confident candidate for that table.
+              --effects-json (ssisx report's effects.json) fills DeclaredEffects with every
+              real-world effect --tables doesn't cover -- a file drop, a stored procedure's
+              own writes, or a task type the extractor couldn't characterize at all. Omitting
+              it does NOT make those effects go away; it just means 'run' can't tell you
+              about them, and a package whose real output isn't a SQL table could report
+              Pass having verified nothing. Always pass it if it exists.
 
             capture-corpus --package-key <ctl key> --package-name <name>
                             --runner-exe <path to SsisRunner.exe>
@@ -171,8 +198,12 @@ internal static class Program
               Gate 3 itself: restores schema, seeds the "before" snapshot, stages the golden
               input files, runs the job under test, diffs the resulting tables against the
               golden "after" snapshot (excluding the config's ExcludedColumns), and writes
-              report.json/report.md. Exit 0 pass, 1 mismatch, 2 usage/setup error.
-              No SSIS/GAC dependency -- runs anywhere .NET 8 does, including in a container.
+              report.json/report.md. Exit 0 Pass, 1 Fail (job error or table mismatch),
+              2 usage/setup error, 3 Incomplete -- every checked table matched, but the
+              config's DeclaredEffects names a real effect (file/procedure/uncharacterized
+              task) with no checker yet, so the package is NOT proven correct, only
+              not-yet-caught-wrong on the part that was actually compared. Never treat 3 the
+              same as 0. No SSIS/GAC dependency -- runs anywhere .NET 8 does, in a container.
             """);
     }
 }
