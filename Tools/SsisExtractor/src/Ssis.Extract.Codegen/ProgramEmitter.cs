@@ -39,7 +39,8 @@ public sealed record MergeJoinFlowSource(
     string LeftRowTypeName,
     string RightRowTypeName,
     string MapperClassName,
-    string KeyClrType) : FlowSourceSpec(ComponentName);
+    string KeyClrType,
+    string JoinType) : FlowSourceSpec(ComponentName);
 
 /// <summary>A genuinely multi-independent-source <c>Microsoft.Merge</c>/<c>Microsoft.UnionAll</c>
 /// -- gap-audit Phase 3.6 (2026-09-02). Every side is itself a <see cref="FlowSourceSpec"/>
@@ -796,7 +797,7 @@ public static class ProgramEmitter
                 lines.Add("        BuildLeft(), BuildRight(),");
                 lines.Add($"        {mj.MapperClassName}.LeftKey, {mj.MapperClassName}.RightKey,");
                 lines.Add($"        Comparer<{mj.KeyClrType}>.Default,");
-                lines.Add("        MergeJoinType.LeftOuter,");
+                lines.Add($"        MergeJoinType.{mj.JoinType},");
                 lines.Add($"        {mj.MapperClassName}.Map);");
                 break;
             case CsvFlowSource csv:

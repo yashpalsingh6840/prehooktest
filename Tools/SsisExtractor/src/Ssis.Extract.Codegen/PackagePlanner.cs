@@ -176,7 +176,8 @@ public sealed record MergeJoinSideSource(
 public sealed record MergeJoinPlan(
     PipelineComponentSpec Component,
     MergeJoinSideSource Left,
-    MergeJoinSideSource Right);
+    MergeJoinSideSource Right,
+    string JoinType);
 
 /// <summary>One side (input) of a genuinely multi-independent-source <c>Microsoft.Merge</c>/
 /// <c>Microsoft.UnionAll</c>, resolved back through an optional Sort and optional Data
@@ -2094,14 +2095,86 @@ public static class PackagePlanner
         var outPath = pipeline.Paths.FirstOrDefault(p => p.StartId == mainOutput.RefId);
         var destination = outPath is null ? null : pipeline.Components.FirstOrDefault(c => c.Inputs.Any(i => i.RefId == outPath.EndId));
         if (destination is null ||
-            (destination.ComponentClassId != "Microsoft.OLEDBDestination" && destination.AdoNetDestination is null && destination.ComponentClassId != "Microsoft.FlatFileDestination"))
+            (destination.ComponentClassId != "Microsoft.OLEDBDestination" && destination.AdoNetDestination is null))
         {
-            gaps.Add(new GenerationGap(taskName, $"Merge Join '{mergeJoin.Name}' does not connect directly to an OLE DB/ADO NET/Flat File Destination -- a transform (e.g. Derived Column) after a Merge Join is not supported yet"));
+            // Flat File Destination is deliberately NOT accepted here even though the rest of
+            // this tool supports it: GenerateMergeJoinFlow resolves its entity name via
+            // TryResolveEntityName (a TABLE name) and hardcodes new SqlFlowSink(), so a Merge
+            // Join landing in a flat file used to generate a SQL bulk-insert into a table that
+            // does not exist -- broken code with no gap reported. Gap it until a flat-file sink
+            // path exists here (gap-audit Phase 1, 2026-09-02).
+            var what = destination is null
+                ? "does not connect directly to a destination"
+                : $"connects to '{destination.Name}' ({destination.ComponentClassId})";
+            gaps.Add(new GenerationGap(taskName, $"Merge Join '{mergeJoin.Name}' {what} -- only a direct OLE DB/ADO NET Destination is supported (a transform after a Merge Join, or a Flat File Destination, is not)"));
             return null;
         }
 
+        var joinType = ResolveMergeJoinType(taskName, mergeJoin, gaps);
+        if (joinType is null) return null; // ResolveMergeJoinType already added the gap
+
         return new DataFlowPlan(taskName, pipeline, FlatFileSource: null, OleDbSource: null, DerivedColumn: null, Lookup: null,
-            ConditionalSplit: null, DestinationComponent: destination, DataConversion: null, MergeJoin: new MergeJoinPlan(mergeJoin, left, right));
+            ConditionalSplit: null, DestinationComponent: destination, DataConversion: null, MergeJoin: new MergeJoinPlan(mergeJoin, left, right, joinType));
+    }
+
+    /// <summary>
+    /// Maps <c>Microsoft.MergeJoin</c>'s own raw <c>JoinType</c> property to the
+    /// <c>Etl.Core.Abstractions.MergeJoinType</c> member name to emit.
+    /// <para><b>MEASURED against real SSIS via dtexec (2026-09-02), not inferred.</b> A probe
+    /// package joined a left input keyed {1,2,3} to a right input keyed {2,4} (so exactly one
+    /// key matches) once per raw value and the output rows were read back:</para>
+    /// <list type="bullet">
+    /// <item><c>0</c> -> 4 rows: every left row plus the unmatched right row = <b>FULL OUTER</b></item>
+    /// <item><c>1</c> -> 3 rows: every left row, unmatched right dropped = <b>LEFT OUTER</b></item>
+    /// <item><c>2</c> -> 1 row: the matching key only = <b>INNER</b></item>
+    /// </list>
+    /// <para><b>Only 1 and 2 are EMITTED.</b> Raw 0 is measured and understood but still
+    /// gapped, because <c>MergeJoinEmitter</c> emits left-sourced columns as
+    /// <c>left!.Column</c> (it passes <c>mayBeAbsent: isRightSide</c>) and a full outer join
+    /// genuinely has no left row for a right-only key -- see the <c>case 0</c> arm below.</para>
+    /// <para>Note this is the exact REVERSE of <c>MergeJoinType</c>'s own C# ordinal order
+    /// (Inner=0, LeftOuter=1, FullOuter=2), so a naive <c>(MergeJoinType)raw</c> cast is wrong
+    /// for 0 and 2 and right only for 1 -- which is why this maps explicitly. Before this
+    /// existed, <c>ProgramEmitter</c> hardcoded <c>MergeJoinType.LeftOuter</c> for every Merge
+    /// Join regardless of the raw value, so the one real evidenced package
+    /// (RBC_Demo_ETL's Package_Transforms.dtsx, MRG_CustomerContacts, JoinType=2 = INNER)
+    /// generated code that emitted unmatched left rows with a nulled right side that real SSIS
+    /// drops entirely.</para>
+    /// <para>The property is ALWAYS persisted, even when left at its designer default -- also
+    /// measured: a probe package that never called <c>SetComponentProperty("JoinType", ...)</c>
+    /// still saved <c>&lt;property name="JoinType"&gt;2&lt;/property&gt;</c> (and the live
+    /// default read back as 2, i.e. Inner, matching SSIS's own documented default). So a null
+    /// raw value means the property genuinely is not there, which is a gap rather than a
+    /// default to fall back on.</para>
+    /// </summary>
+    private static string? ResolveMergeJoinType(string taskName, PipelineComponentSpec mergeJoin, List<GenerationGap> gaps)
+    {
+        var raw = mergeJoin.MergeJoin?.JoinTypeRaw;
+        switch (raw)
+        {
+            case 1: return "LeftOuter";
+            case 2: return "Inner";
+            case 0:
+                // Raw 0 IS full outer -- measured, see this method's own doc comment. It is
+                // still gapped because MergeJoinEmitter cannot express it: that emitter passes
+                // mayBeAbsent: isRightSide, so every LEFT-sourced column is emitted with a
+                // null-forgiving "left!.Column". Under a full outer join the left row genuinely
+                // IS absent for a right-only key, so the generated mapper would throw a
+                // NullReferenceException on the first such row. Emitting FullOuter here without
+                // that work would trade the old silent-wrong-rows bug for a silent crash.
+                gaps.Add(new GenerationGap(
+                    taskName,
+                    $"Merge Join '{mergeJoin.Name}' declares JoinType=0 (FULL OUTER, measured against real SSIS). Etl.Core supports it, but the generated "
+                        + "mapper assumes the left row is always present (it emits 'left!.Column'), which a full outer join violates for a right-only key -- "
+                        + "so generating it would produce a NullReferenceException at runtime. Needs absent-left nullability in MergeJoinEmitter first."));
+                return null;
+            default:
+                gaps.Add(new GenerationGap(
+                    taskName,
+                    $"Merge Join '{mergeJoin.Name}' declares JoinType={(raw is null ? "(absent)" : raw.ToString())}, which this tool has not measured against real SSIS -- "
+                        + "only 0 (full outer), 1 (left outer) and 2 (inner) are confirmed. Refusing to guess a join type, since the wrong one silently emits or drops rows."));
+                return null;
+        }
     }
 
     /// <summary>Walks backward from one of a Merge Join's own inputs to the Sort feeding it

@@ -514,10 +514,11 @@ public sealed class SortKeySpec
 /// <c>Microsoft.MergeJoin</c>. Confirmed real via RBC_Demo_ETL's own Package_Transforms.dtsx
 /// (<c>MRG_CustomerContacts</c>), discovered testing this tool against a real third-party
 /// portfolio (SSIS_From_Sandeep, 2026-08-27). <see cref="JoinTypeRaw"/> is kept as the raw
-/// integer only, same "don't hand-guess an enum without independent confirmation" rule as
-/// <c>OleDbDestinationPayload.AccessMode</c> -- see <c>Etl.Core.Abstractions.MergeJoinType</c>'s
-/// own doc comment for which raw value is actually confirmed (2 = LeftOuter, via a real
-/// generated run) versus merely documented.
+/// integer here (this layer decodes nothing); the semantics are MEASURED against real SSIS via
+/// dtexec and mapped in <c>PackagePlanner.ResolveMergeJoinType</c> --
+/// <b>0 = full outer, 1 = left outer, 2 = inner</b>. An earlier version of this comment claimed
+/// "2 = LeftOuter, via a real generated run", which was wrong on both counts: raw 2 is INNER,
+/// and that run only exercised generated code with LeftOuter hardcoded into it.
 /// </summary>
 public sealed class MergeJoinPayload
 {

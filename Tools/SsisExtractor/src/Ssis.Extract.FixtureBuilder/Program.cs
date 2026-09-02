@@ -2209,13 +2209,35 @@ internal static class Program
     }
 
     /// <summary>
-    /// <b>NOT YET PRODUCING A CLEAN, CHECKED-IN FIXTURE -- left here as a documented starting
-    /// point for whoever continues this, not deleted, since every fact below IS confirmed real.</b>
-    /// Intended shape: two OLE DB Sources (Left: ID/Name; Right: ID/Phone) -> Sort each (key: ID,
-    /// ascending) -> Microsoft.MergeJoin (JoinType=2, the real evidenced raw value from
-    /// RBC_Demo_ETL's own MRG_CustomerContacts) -> OLE DB Destination, SQL-sourced (not Flat
+    /// Two OLE DB Sources (Left: ID/Name; Right: ID/Phone) -> Sort each (key: ID, ascending) ->
+    /// <c>Microsoft.MergeJoin</c> (JoinType=2 = INNER, the real evidenced raw value from
+    /// RBC_Demo_ETL's own MRG_CustomerContacts) -> OLE DB Destination. SQL-sourced (not Flat
     /// File + Data Conversion, unlike the real package) specifically to isolate Sort/MergeJoin's
     /// own mechanics in the smallest possible shape.
+    ///
+    /// <para><b>This fixture used to be blocked on a "phantom output columns" quirk documented
+    /// here as unresolved. It is RESOLVED (gap-audit Phase 1, 2026-09-02) and the fixture now
+    /// builds, validates VS_ISVALID, and runs under real dtexec.</b> The old account had TWO
+    /// wrong premises, both corrected by dumping the live component state instead of reasoning
+    /// about it:
+    /// <list type="bullet">
+    /// <item>It claimed Merge Join "starts with exactly ONE input from
+    /// <c>ProvideComponentProperties()</c>", so it called <c>InsertInput</c> to add a second.
+    /// It actually starts with <b>TWO</b> (printed directly off a live component). The
+    /// <c>InsertInput</c> therefore created a THIRD, which is why the inputs' own identities
+    /// "didn't line up with the index-0/index-1 assumption" -- the paths were attached to
+    /// inputs 0 and 1 while the component's own join logic used a different pair. Same shape as
+    /// <c>Microsoft.Merge</c>, which this file already documents as starting with two.</item>
+    /// <item>It added output columns by hand via <c>AddMergeJoinOutputColumn</c>. Merge Join
+    /// <b>auto-creates one output column per marked-used INPUT column</b>, so those manual calls
+    /// were duplicates -- that is the whole source of the "SIX output columns (ID/Name/ID1 via
+    /// the auto form, ID2/Name1/Phone1 via manual calls)" the old comment reported. The auto
+    /// form was never a mystery mechanism; it was the component doing its job.</item>
+    /// </list>
+    /// The two facts together also explain the duplicate <c>ID</c>: with both inputs' ID marked
+    /// used, the component emits two output columns of the same name. Marking the key on the LEFT
+    /// only is sufficient -- the join key is taken from each input's own <c>SortKeyPosition</c>
+    /// plus <c>NumKeyColumns</c>, independent of which columns are marked used.</para>
     ///
     /// <para><b>Object-model facts confirmed empirically while building this</b> (same "ask the
     /// runtime, don't guess" discipline as trap 12), all independently verified, none guessed:
@@ -2225,38 +2247,38 @@ internal static class Program
     /// only after reading a real SSDT-authored Sort's own saved XML during the extractor's own
     /// reader work (see <c>SortPayload</c>'s doc comment for the full story, including an
     /// initial wrong reading). <see cref="AddSortByKey"/> works correctly end to end.</item>
-    /// <item><c>Microsoft.MergeJoin</c> starts with exactly ONE input from <c>ProvideComponentProperties()</c>
-    /// -- <c>InsertInput(DTSInsertPlacement.IP_AFTER, 0)</c> adds the second.</item>
+    /// <item><c>Microsoft.MergeJoin</c> starts with <b>TWO</b> inputs from
+    /// <c>ProvideComponentProperties()</c> -- do NOT call <c>InsertInput</c>. Both inputs and the
+    /// output also come back UNNAMED and must be named explicitly, or the package fails
+    /// validation with "the object name is not valid. The name cannot be empty".</item>
     /// <item>The designtime <c>InsertOutputColumnAt</c> throws <c>COMException 0xC0208019</c>
     /// unconditionally for Merge Join's own output (unlike Conditional Split, where the
-    /// equivalent call works) -- the raw <c>output.OutputColumnCollection.New()</c> plus setting
-    /// <c>Name</c>/<c>SetDataTypeProperties</c>/<c>MappedColumnID</c> directly on the resulting
-    /// <c>IDTSOutputColumn100</c> works instead, and <c>MappedColumnID</c> is confirmed to be
-    /// what persists as the saved XML's own <c>InputColumnID</c> custom property.</item>
+    /// equivalent call works) -- but nothing needs to add an output column at all, since the
+    /// component creates them itself from the marked input columns.</item>
+    /// <item>A source's own output can be declared pre-sorted directly
+    /// (<c>output.IsSorted = true</c> plus <c>outputColumn.SortKeyPosition = 1</c>), which lets a
+    /// Merge Join fixture skip the Sort components entirely. Not used here -- this fixture keeps
+    /// its two Sorts on purpose, because the codegen path under test
+    /// (<c>PackagePlanner.ResolveMergeJoinSide</c>) requires a Sort per side -- but it is the
+    /// smallest way to build a Merge Join probe when codegen is not what is being tested.</item>
     /// </list>
     /// </para>
     ///
-    /// <para><b>The actual unresolved problem, found by reading the saved XML back, not
-    /// guessed:</b> after <c>SetComponentProperty("JoinType"/"NumKeyColumns"/"TreatNullsAsEqual", ...)</c>
-    /// runs, the component appears to auto-generate its OWN additional output columns (via the
-    /// SAME <c>InputColumnID</c>-custom-property persistence form real SSDT output uses, not the
-    /// raw <c>MappedColumnID</c> attribute this method's own manual calls produce) for every
-    /// input column already marked used on BOTH inputs -- confirmed by reading the saved XML,
-    /// which shows SIX output columns (ID/Name/ID1 via the auto form, ID2/Name1/Phone1 via this
-    /// method's own manual calls) instead of the 3 intended, with the auto-generated set's own
-    /// refId path (<c>Inputs[83]</c>, an unnamed numeric input id) suggesting the TWO inputs'
-    /// own identities also don't line up with this method's own index-0/index-1 assumption the
-    /// way expected. Not root-caused -- a future attempt should dump the component's own
-    /// <c>InputCollection</c>/<c>OutputCollection</c> state at each step (after
-    /// <c>InsertInput</c>, after each <c>SetComponentProperty</c> call) to see exactly when the
-    /// extra columns appear, rather than assuming this method's own call ordering is at fault.</para>
+    /// <para><b>What this fixture is for.</b> JoinType's raw-value-to-semantics mapping had no
+    /// independent verification at all until this fixture ran: the codegen layer hardcoded
+    /// <c>MergeJoinType.LeftOuter</c> for every Merge Join regardless of the raw value, and the
+    /// claim that raw 2 meant LeftOuter was inferred from the real destination's column shape,
+    /// never measured. Running this fixture under dtexec once per raw value settled it --
+    /// <b>0 = FULL OUTER, 1 = LEFT OUTER, 2 = INNER</b> -- so the one real evidenced package
+    /// (JoinType=2) had been generating an INNER join as a LEFT OUTER one, emitting unmatched
+    /// left rows that real SSIS drops. See
+    /// <c>PackagePlanner.ResolveMergeJoinType</c> for the measurement and the mapping.</para>
     ///
-    /// Given this, Sort/MergeJoin's own RUNTIME join algorithm was instead verified via a plain
-    /// C# unit test with no SSIS involved at all
-    /// (<c>D:\PoC\SSIS_Rewrite\tests\Etl.Core.Tests\Data\MergeJoinRowSourceTests.cs</c>), and the
-    /// real evidenced package (RBC_Demo_ETL's own Package_Transforms.dtsx) already proves
-    /// extraction/codegen/build correctness end to end (0 warnings/0 errors regenerating its
-    /// whole solution) -- see CLAUDE.md's own Merge Join section for the full account.
+    /// <para>Seed data is chosen to separate all three join types by row count alone: left keys
+    /// {1,2,3}, right keys {2,3,4}, so key 1 is left-only and key 4 is right-only. INNER yields
+    /// 2 rows, LEFT OUTER 3, FULL OUTER 4. The two derived variants
+    /// (<c>SyntheticMergeJoinLeftOuter.dtsx</c>/<c>...FullOuter.dtsx</c>) are byte-preserving
+    /// edits of this one with only the JoinType property value changed.</para>
     ///
     /// Requires the backing tables from
     /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-merge-join-tables.sql</c> already created
@@ -2291,7 +2313,14 @@ internal static class Program
         var mjInst = mjMeta.Instantiate();
         mjInst.ProvideComponentProperties(); // resets Name -- see AddOleDbComponent's own comment
         mjMeta.Name = "MRG_LeftRight";
-        mjInst.InsertInput(DTSInsertPlacement.IP_AFTER, 0); // starts with 1 input; this adds the 2nd
+        // Microsoft.MergeJoin already has BOTH inputs after ProvideComponentProperties() --
+        // measured, see this method's own doc comment. Calling InsertInput here (as an earlier
+        // version did) created a THIRD input and was the real cause of the "phantom output
+        // columns" quirk this fixture was blocked on for days. The guard is defensive only.
+        if (mjMeta.InputCollection.Count < 2) mjInst.InsertInput(DTSInsertPlacement.IP_AFTER, 0);
+        if (string.IsNullOrEmpty(mjMeta.InputCollection[0].Name)) mjMeta.InputCollection[0].Name = "Merge Join Left Input";
+        if (string.IsNullOrEmpty(mjMeta.InputCollection[1].Name)) mjMeta.InputCollection[1].Name = "Merge Join Right Input";
+        if (string.IsNullOrEmpty(mjMeta.OutputCollection[0].Name)) mjMeta.OutputCollection[0].Name = "Merge Join Output";
 
         AttachPath(pipe, leftSortMeta.OutputCollection[0], mjMeta.InputCollection[0]);
         AttachPath(pipe, rightSortMeta.OutputCollection[0], mjMeta.InputCollection[1]);
@@ -2304,17 +2333,25 @@ internal static class Program
         // whose own Left/Right Input each carry only a SUBSET of their upstream Sort's own
         // output columns (the join key plus whatever's actually needed downstream), not every
         // column Sort passed through.
+        // The RIGHT side's own "ID" is deliberately NOT marked used: Merge Join auto-creates one
+        // OUTPUT column per MARKED INPUT column (measured -- see the doc comment), so marking ID
+        // on both sides produces two output columns both called "ID" and the package saves
+        // corrupt. The join itself is unaffected, because the join key comes from each input's
+        // own SortKeyPosition plus NumKeyColumns, NOT from which columns are marked used --
+        // confirmed by a real dtexec run that joined correctly with the right key unmarked.
         MarkInputColumnsUsed(mjInst, mjMeta.InputCollection[0], "ID", "Name");
-        MarkInputColumnsUsed(mjInst, mjMeta.InputCollection[1], "ID", "Phone");
+        MarkInputColumnsUsed(mjInst, mjMeta.InputCollection[1], "Phone");
 
         mjInst.SetComponentProperty("JoinType", 2); // the real evidenced raw value -- this fixture exists to learn what it means
         mjInst.SetComponentProperty("NumKeyColumns", 1);
         mjInst.SetComponentProperty("TreatNullsAsEqual", true);
 
+        // No manual output columns: the component already created ID/Name/Phone itself from the
+        // three marked input columns above. Adding them by hand (as an earlier version did) is
+        // what produced SIX output columns in the saved XML.
         var mjOutput = mjMeta.OutputCollection[0];
-        AddMergeJoinOutputColumn(mjOutput, mjMeta.InputCollection[0], "ID");
-        AddMergeJoinOutputColumn(mjOutput, mjMeta.InputCollection[0], "Name");
-        AddMergeJoinOutputColumn(mjOutput, mjMeta.InputCollection[1], "Phone");
+        var producedColumns = string.Join(",", mjOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>().Select(c => c.Name));
+        Console.WriteLine($"  Merge Join auto-created output columns: {producedColumns}");
 
         var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
             accessMode: 3, openRowset: "[dbo].[SyntheticMergeJoinTarget]");
@@ -3504,27 +3541,6 @@ internal static class Program
             if (names.Contains(vcol.Name))
                 inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
         }
-    }
-
-    /// <summary>Adds one Merge Join output column mapped back to <paramref name="sourceColumnName"/>
-    /// on <paramref name="fromInput"/>. Merge Join's own output is NOT auto-populated the way a
-    /// synchronous passthrough transform's is, so every wanted column must be added explicitly --
-    /// and, confirmed empirically, NOT via the designtime <c>InsertOutputColumnAt</c> (which
-    /// threw <c>COMException 0xC0208019</c> unconditionally for this component, the same "raw
-    /// .New() instead of the designtime call" shape <c>Microsoft.UnionAll</c>'s own second INPUT
-    /// already needed for a different reason). The raw <c>IDTSOutputColumn100</c> exposes
-    /// <c>Name</c>/<c>DataType</c>/etc. as ordinary settable properties (no <c>IDTSName100</c>
-    /// cast needed, unlike a flat-file column) plus a <c>MappedColumnID</c> property that turns
-    /// out to BE what persists as the saved XML's own <c>InputColumnID</c> custom property --
-    /// confirmed by reading the saved XML back after setting it this way, not guessed from the
-    /// property's name alone.</summary>
-    private static void AddMergeJoinOutputColumn(IDTSOutput100 output, IDTSInput100 fromInput, string sourceColumnName)
-    {
-        var sourceCol = fromInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == sourceColumnName);
-        var newCol = (IDTSOutputColumn100)output.OutputColumnCollection.New();
-        newCol.Name = sourceColumnName;
-        newCol.SetDataTypeProperties(sourceCol.DataType, sourceCol.Length, sourceCol.Precision, sourceCol.Scale, sourceCol.CodePage);
-        newCol.MappedColumnID = sourceCol.LineageID;
     }
 
     /// <summary>

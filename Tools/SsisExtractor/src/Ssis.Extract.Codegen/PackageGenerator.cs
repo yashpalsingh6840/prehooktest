@@ -715,7 +715,8 @@ public static partial class PackageGenerator
         tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
 
         var mergeJoinSource = new MergeJoinFlowSource(
-            mergeJoin.Component.Name, leftSource, rightSource, leftRowTypeName, rightRowTypeName, mapperClassName, mergeJoinResult.KeyClrType);
+            mergeJoin.Component.Name, leftSource, rightSource, leftRowTypeName, rightRowTypeName, mapperClassName, mergeJoinResult.KeyClrType,
+            mergeJoin.JoinType);
 
         if (authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
             (authMode, userId, targetServer, targetDatabase) = auth;
