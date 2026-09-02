@@ -769,7 +769,7 @@ public static partial class PackageGenerator
         var sides = new List<FlowSourceSpec>();
         foreach (var side in union.Sides)
         {
-            var sqlSource = BuildSqlFlowSource(package, side.SourceComponent.Name, side.SourceComponent, flow.DestinationComponent, gaps);
+            var sqlSource = BuildSqlFlowSource(package, side.SourceComponent.Name, side.SourceComponent, flow.DestinationComponent, gaps, side.ColumnAliases);
             if (sqlSource is null) return null; // BuildSqlFlowSource already added the reason
             sides.Add(sqlSource);
         }
@@ -1694,9 +1694,14 @@ public static partial class PackageGenerator
     /// <see cref="BuildOleDbFlowSource"/> or <see cref="BuildAdoNetFlowSource"/> after the one
     /// check both share: a resolvable connection manager targeting the same server/database as
     /// the flow's own destination (a second source connection is not supported yet).</summary>
+    /// <param name="columnAliases">Optional component-column-name -&gt; required-exposed-name map,
+    /// supplied only by a Union All/Merge side whose own column names differ from the union's own
+    /// output column names (the generated reader is keyed on the latter). Identity when omitted.
+    /// </param>
     private static SqlFlowSource? BuildSqlFlowSource(
         PackageSpec package, string taskName, PipelineComponentSpec source,
-        PipelineComponentSpec? destinationComponent, List<GenerationGap> gaps)
+        PipelineComponentSpec? destinationComponent, List<GenerationGap> gaps,
+        IReadOnlyDictionary<string, string>? columnAliases = null)
     {
         var sourceCmName = SourceInfo.ConnectionName(source);
         if (sourceCmName is not { } cmName || FindConnectionManager(package, cmName) is not { } sourceCm
@@ -1725,9 +1730,20 @@ public static partial class PackageGenerator
             }
         }
 
-        return source.OleDbSource is { } oleDbPayload
-            ? BuildOleDbFlowSource(taskName, source.Name, oleDbPayload, gaps)
-            : BuildAdoNetFlowSource(taskName, source.Name, source.AdoNetSource!, gaps);
+        if (source.OleDbSource is { } oleDbPayload)
+            return BuildOleDbFlowSource(taskName, source.Name, oleDbPayload, gaps, columnAliases);
+
+        // The ADO NET path has never been run end to end (no fixture -- an SSIS object-model
+        // limitation in this environment blocks building one), so it deliberately does not gain
+        // an untested aliasing branch here: a rename is a named gap instead.
+        if (RequiresRename(columnAliases))
+        {
+            var renames = string.Join(", ", columnAliases!.Where(kv => kv.Key != kv.Value).Select(kv => $"{kv.Key} -> {kv.Value}"));
+            gaps.Add(new GenerationGap(taskName,
+                $"ADO NET Source '{source.Name}' feeds a Union All/Merge that maps its columns to differently-named output columns ({renames}) -- renaming is only supported for an OLE DB Source in OpenRowset mode, where this tool builds the SELECT itself"));
+            return null;
+        }
+        return BuildAdoNetFlowSource(taskName, source.Name, source.AdoNetSource!, gaps);
     }
 
     /// <summary>Builds the actual SELECT text per AccessMode: 0 (OpenRowset) builds
@@ -1737,7 +1753,16 @@ public static partial class PackageGenerator
     /// non-fatal gap stating the assumption that the result set's own column names/aliases
     /// already match the buffer's column names -- a fact this tool cannot verify from the spec
     /// alone. Any other AccessMode is a fatal gap.</summary>
-    private static SqlFlowSource? BuildOleDbFlowSource(string taskName, string sourceName, OleDbSourcePayload payload, List<GenerationGap> gaps)
+    /// <summary>True when a Union All/Merge maps one of this side's columns to an output column
+    /// of a DIFFERENT name. The generated reader is keyed on the union's own output column names
+    /// and is shared by every side, so such a side would be read under names it does not expose:
+    /// a throw from GetOrdinal at best, and -- for a SWAPPED mapping, where every name still
+    /// resolves -- silently transposed values.</summary>
+    private static bool RequiresRename(IReadOnlyDictionary<string, string>? aliases) =>
+        aliases is not null && aliases.Any(kv => !string.Equals(kv.Key, kv.Value, StringComparison.Ordinal));
+
+    private static SqlFlowSource? BuildOleDbFlowSource(string taskName, string sourceName, OleDbSourcePayload payload, List<GenerationGap> gaps,
+        IReadOnlyDictionary<string, string>? columnAliases = null)
     {
         switch (payload.AccessMode)
         {
@@ -1747,6 +1772,18 @@ public static partial class PackageGenerator
                     gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{sourceName}' has AccessMode=0 (OpenRowset) but no OpenRowset/ColumnMappings to build a SELECT from"));
                     return null;
                 }
+                // A rename is refused here too, not aliased. Aliasing this generated SELECT is
+                // the obvious fix and would be a one-line change -- but no fixture in this repo
+                // has an OpenRowset-mode Union All/Merge side, so that branch could not be run
+                // end to end, and an unexercised translation branch is precisely what this
+                // audit is correcting elsewhere. Refuse until there is a fixture.
+                if (RequiresRename(columnAliases))
+                {
+                    var openRowsetRenames = string.Join(", ", columnAliases!.Where(kv => kv.Key != kv.Value).Select(kv => $"{kv.Key} -> {kv.Value}"));
+                    gaps.Add(new GenerationGap(taskName,
+                        $"OLE DB Source '{sourceName}' feeds a Union All/Merge that maps its columns to differently-named output columns ({openRowsetRenames}). The generated reader is keyed on the union's own output column names, so this side would be read under the wrong names. Aliasing this generated SELECT would fix it, but that path has no fixture to verify it against yet."));
+                    return null;
+                }
                 var columns = string.Join(", ", payload.ColumnMappings.Select(m => $"[{m.ExternalColumnName}] AS [{m.ComponentColumnName}]"));
                 return new SqlFlowSource(sourceName, $"SELECT {columns} FROM {payload.OpenRowset}");
 
@@ -1754,6 +1791,16 @@ public static partial class PackageGenerator
                 if (string.IsNullOrEmpty(payload.SqlCommand))
                 {
                     gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{sourceName}' has AccessMode=2 (SQL command) but no SqlCommand text"));
+                    return null;
+                }
+                // A rename can only be honoured by aliasing, and this tool never rewrites the
+                // author's own SQL -- so a union side needing one is a real gap here, not an
+                // advisory.
+                if (RequiresRename(columnAliases))
+                {
+                    var renames = string.Join(", ", columnAliases!.Where(kv => kv.Key != kv.Value).Select(kv => $"{kv.Key} -> {kv.Value}"));
+                    gaps.Add(new GenerationGap(taskName,
+                        $"OLE DB Source '{sourceName}' uses a SqlCommand, but its Union All/Merge maps its columns to differently-named output columns ({renames}). Honouring that needs the SELECT list aliased, and this tool never rewrites the author's own SQL -- alias it in the package instead, or rename the union's output columns to match."));
                     return null;
                 }
                 gaps.Add(new GenerationGap(taskName, $"OLE DB Source '{sourceName}' uses a SqlCommand -- generated code assumes each result-set column is named/aliased exactly like the pipeline's own buffer column name; verify before running. This tool never rewrites the author's own SQL.", IsBlocking: false));

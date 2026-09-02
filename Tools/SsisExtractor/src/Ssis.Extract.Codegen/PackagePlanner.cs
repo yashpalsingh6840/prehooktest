@@ -191,7 +191,8 @@ public sealed record UnionSideSource(
     PipelineComponentSpec SourceComponent,
     PipelineComponentSpec? Sort,
     PipelineComponentSpec? DataConversion,
-    SortKeyPlan? SortKey);
+    SortKeyPlan? SortKey,
+    IReadOnlyDictionary<string, string> ColumnAliases);
 
 /// <summary>A genuinely multi-independent-source <c>Microsoft.Merge</c> or <c>Microsoft.UnionAll</c>
 /// flow -- gap-audit Phase 3.6 (2026-09-02), distinct from the "diverge-then-reconverge from one
@@ -1959,6 +1960,40 @@ public static class PackagePlanner
             return null;
         }
 
+        // Resolve each side's own per-input column mapping (OutputColumnLineageID) and check it
+        // covers the union's whole output. Before this, the mapping was never read at all and
+        // ONE reader keyed on the union's OUTPUT column names was applied to every side's result
+        // set -- which is only correct when every side happens to use those same names. A
+        // rename produced a GetOrdinal throw at best, and a SWAPPED mapping silently transposed
+        // that side's values, since a swap keeps every name resolvable.
+        var outputColumnsByLineageId = mainOutput.Columns.ToDictionary(c => c.LineageId, c => c.Name, StringComparer.Ordinal);
+        for (var i = 0; i < inputs.Count; i++)
+        {
+            var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var col in inputs[i].Columns)
+            {
+                if (col.OutputColumnLineageId is null ||
+                    !outputColumnsByLineageId.TryGetValue(col.OutputColumnLineageId, out var outputColumnName))
+                {
+                    gaps.Add(new GenerationGap(taskName,
+                        $"'{unionComponent.Name}' input '{inputs[i].Name}' column '{col.CachedName}' does not resolve to one of the component's own output columns via OutputColumnLineageID -- refusing to assume it maps to an output column of the same name"));
+                    return null;
+                }
+                aliases[col.CachedName] = outputColumnName;
+            }
+
+            var mapped = new HashSet<string>(aliases.Values, StringComparer.Ordinal);
+            var missing = mainOutput.Columns.Select(c => c.Name).Where(n => !mapped.Contains(n)).ToList();
+            if (missing.Count > 0)
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"'{unionComponent.Name}' input '{inputs[i].Name}' does not map anything to output column(s) {string.Join(", ", missing)} -- every side must supply every output column"));
+                return null;
+            }
+
+            sides[i] = sides[i] with { ColumnAliases = aliases };
+        }
+
         var outPath = pipeline.Paths.FirstOrDefault(p => p.StartId == mainOutput.RefId);
         var destination = outPath is null ? null : pipeline.Components.FirstOrDefault(c => c.Inputs.Any(i => i.RefId == outPath.EndId));
         if (destination is null ||
@@ -2061,7 +2096,9 @@ public static class PackagePlanner
             sortKey = resolvedKey;
         }
 
-        return new UnionSideSource(trueSource, sort, dataConversion, sortKey);
+        // ColumnAliases is filled in by PlanUnion once the union's own output columns are known
+        // (this method resolves one side in isolation and has no view of them).
+        return new UnionSideSource(trueSource, sort, dataConversion, sortKey, new Dictionary<string, string>(StringComparer.Ordinal));
     }
 
     /// <summary>Resolves a Merge Join's own two independent source chains (each walked BACKWARD

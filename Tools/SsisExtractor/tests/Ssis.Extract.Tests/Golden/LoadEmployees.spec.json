@@ -591,6 +591,7 @@
                       "ExternalMetadataColumnId": null,
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[FirstName]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[FirstName]",
                       "UsageType": null
@@ -606,6 +607,7 @@
                       "ExternalMetadataColumnId": null,
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[LastName]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[LastName]",
                       "UsageType": null
@@ -621,6 +623,7 @@
                       "ExternalMetadataColumnId": null,
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[City]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[City]",
                       "UsageType": null
@@ -636,6 +639,7 @@
                       "ExternalMetadataColumnId": null,
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[State]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[State]",
                       "UsageType": null
@@ -651,6 +655,7 @@
                       "ExternalMetadataColumnId": null,
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[Department]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[Department]",
                       "UsageType": null
@@ -666,6 +671,7 @@
                       "ExternalMetadataColumnId": null,
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[EmployeeID]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[EmployeeID]",
                       "UsageType": null
@@ -1480,6 +1486,7 @@
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[EmployeeID]",
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[EmployeeID]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[EmployeeID]",
                       "UsageType": null
@@ -1495,6 +1502,7 @@
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[Department]",
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[Department]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[Department]",
                       "UsageType": null
@@ -1510,6 +1518,7 @@
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[HireDate]",
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[HireDate]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[HireDate]",
                       "UsageType": null
@@ -1525,6 +1534,7 @@
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[Salary]",
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[Salary]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[Salary]",
                       "UsageType": null
@@ -1540,6 +1550,7 @@
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[FullName]",
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Outputs[Derived Column Output].Columns[FullName]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[FullName]",
                       "UsageType": null
@@ -1555,6 +1566,7 @@
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[Location]",
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Outputs[Derived Column Output].Columns[Location]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[Location]",
                       "UsageType": null
@@ -1570,6 +1582,7 @@
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[EmployeeKey]",
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Outputs[Derived Column Output].Columns[EmployeeKey]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[EmployeeKey]",
                       "UsageType": null
@@ -1585,6 +1598,7 @@
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[LoadedAtUtc]",
                       "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+                      "OutputColumnLineageId": null,
                       "Properties": [],
                       "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[LoadedAtUtc]",
                       "UsageType": null

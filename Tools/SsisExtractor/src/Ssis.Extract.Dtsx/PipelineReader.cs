@@ -488,6 +488,7 @@ internal static class PipelineReader
                     UsageType = c.Attr("usageType"),
                     Expression = GetProperty(props, "Expression"),
                     FriendlyExpression = GetProperty(props, "FriendlyExpression"),
+                    OutputColumnLineageId = StripLineageRef(GetProperty(props, "OutputColumnLineageID")),
                     Properties = props,
                 };
             })

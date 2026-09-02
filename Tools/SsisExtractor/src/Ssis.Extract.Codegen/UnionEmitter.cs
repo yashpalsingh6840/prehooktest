@@ -11,17 +11,20 @@ namespace Ssis.Extract.Codegen;
 /// <see cref="AggregateRowEmitter"/> already resolve their own row types straight off raw output
 /// columns.
 ///
-/// <b>ONE reader class is shared by every side</b> -- deliberate, not an oversight: this round is
-/// scoped to the shape both real dtexec probes prove (<c>Ssis.Extract.FixtureBuilder.Program.
-/// BuildMergeInterleaveProbeFixture</c>/<c>BuildUnionTwoSourcesFixture</c>), where every side is a
-/// SQL source producing the EXACT SAME column names/types as the union's own output (real SSIS
-/// enforces matching schemas across every Merge/UnionAll input at design time). Since
-/// <see cref="ProgramEmitter"/>'s existing <c>SqlFlowSource</c>/<c>SqlRowReaderEmitter</c>-style
-/// by-name reading already resolves a buffer column purely by NAME with no awareness of WHICH
-/// component produced it (the same "Sort/Merge are pure name-preserving pass-throughs" precedent
-/// the 2026-08-28 Conditional-Split/Sort/Merge round already established), one reader reading the
-/// union's own column set by name works identically against either side's own SqlCommand result
-/// set -- no per-side row-type divergence to reconcile.
+/// <b>ONE reader class is shared by every side</b>, keyed on the union's OWN output column names.
+/// That is safe only because <c>PackagePlanner.PlanUnion</c> now guarantees each side actually
+/// EXPOSES those names -- either because they already match, or because the side is an OLE DB
+/// Source in OpenRowset mode whose generated SELECT is aliased to them.
+///
+/// <para><b>An earlier version of this comment claimed "real SSIS enforces matching schemas
+/// across every Merge/UnionAll input at design time". That is false</b>, measured 2026-09-02: a
+/// Union All whose output column is named <c>UnifiedName</c> accepted input 1 mapping
+/// <c>CustName -&gt; UnifiedName</c> and input 2 mapping <c>ClientName -&gt; UnifiedName</c> --
+/// three different names -- and validated VS_ISVALID. The real mapping is per-input and explicit,
+/// in each input column's own <c>OutputColumnLineageID</c>, which nothing in this tool read at
+/// all until the gap audit. Applying this reader blindly to such a side threw on
+/// <c>GetOrdinal</c> at best; a SWAPPED mapping was worse, silently transposing that side's
+/// values because every name still resolved.</para>
 /// </summary>
 public static class UnionEmitter
 {

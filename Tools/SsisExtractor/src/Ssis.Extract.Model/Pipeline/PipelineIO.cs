@@ -51,6 +51,21 @@ public sealed class PipelineInputColumnSpec
     /// <summary>Human-readable form of <see cref="Expression"/> (e.g. <c>UPPER(Name)</c>), same
     /// pairing as <see cref="PipelineOutputColumnSpec.FriendlyExpression"/>.</summary>
     public string? FriendlyExpression { get; init; }
+
+    /// <summary>
+    /// For a <c>Microsoft.UnionAll</c>/<c>Microsoft.Merge</c> input column: the LineageId of the
+    /// component's OWN output column this input column feeds, promoted off the
+    /// <c>OutputColumnLineageID</c> property with its <c>#{...}</c> wrapper stripped.
+    ///
+    /// <para><b>This is the per-input column mapping, and it is NOT implied by column names.</b>
+    /// Measured against real SSIS (2026-09-02): a Union All whose output column is named
+    /// <c>UnifiedName</c> accepted input 1 mapping <c>CustName -&gt; UnifiedName</c> and input 2
+    /// mapping <c>ClientName -&gt; UnifiedName</c> -- three different names -- and validated
+    /// VS_ISVALID. So the long-standing assumption that "real SSIS enforces matching schemas
+    /// across every Merge/UnionAll input" is false, and a generated reader keyed on the union's
+    /// own output column names cannot be applied blindly to each side's result set.</para>
+    /// </summary>
+    public string? OutputColumnLineageId { get; init; }
 }
 
 /// <summary>One &lt;output&gt;. <see cref="SynchronousInputId"/> present means this output shares its buffer with that input (a synchronous transform, e.g. Derived Column) -- absent means asynchronous (a blocking/semi-blocking memory consumer, a performance-relevant fact per plan §4.7). Neither of this PoC's slice-3 components was asynchronous (Sort/Aggregate/Union All etc. are all "(nP)" in the plan), so this field was evidenced as "always present here" but the null case was always real schema, not a guess -- and the synthetic Lookup/Conditional Split fixtures (component-coverage pass, see docs/report-schema.md) confirm both stay synchronous too.</summary>
