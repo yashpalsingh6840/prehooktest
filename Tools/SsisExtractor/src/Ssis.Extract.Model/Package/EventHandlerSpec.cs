@@ -6,12 +6,22 @@ namespace Ssis.Extract.Model.Package;
 /// A <c>DTS:EventHandler</c> (plan §4.6) -- OnError/OnTaskFailed/OnPreExecute/OnPostExecute/
 /// OnWarning/OnVariableValueChanged/etc. Structurally a container just like
 /// <see cref="ExecutableSpec"/> (its own Variables/Executables/PrecedenceConstraints),
-/// walked with the same recursive code. Not present in either of this PoC's two packages
-/// -- wired generically because it's explicit plan scope for this build slice and the
-/// container-walking code is already generic, but genuinely unverified against a real
-/// example; treat the exact attribute names here (particularly which attribute actually
-/// carries the event name -- see <see cref="EventName"/>) as best-effort until confirmed
-/// against a client package that has one.
+/// walked with the same recursive code. Absent from both of this PoC's own packages, so this
+/// was wired generically and carried an "unverified against a real example" caveat for a long
+/// time.
+///
+/// <b>Now CONFIRMED against a real one (2026-09-02):</b> the third-party
+/// Package_Advanced.dtsx carries an OnError handler containing an Execute SQL Task, and it
+/// extracts correctly -- <c>EventName='OnError'</c>, one child with its SQL resolved. Note that
+/// real element carries NO <c>DTS:ObjectName</c> at all (its attributes are refId,
+/// CreationName, DTSID, EventID, EventName, LocaleID), so the event name came from the
+/// FALLBACK path <see cref="EventName"/> documents rather than the primary one -- i.e. the
+/// primary read would have failed on the first real package it ever met, and the fallback is
+/// what makes this work.
+///
+/// Codegen does NOT translate event handlers; <c>PackagePlanner.ReportEventHandlers</c> reports
+/// each one that contains work, because before that they were omitted from generated output in
+/// complete silence.
 /// </summary>
 public sealed class EventHandlerSpec
 {

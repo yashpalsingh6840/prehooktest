@@ -491,6 +491,7 @@ public static class PackagePlanner
             failureHandlerRefIds: resolved.FailureHandlers.Keys.ToHashSet());
 
         ReportParallelismFlattening(package, gaps);
+        ReportEventHandlers(package, gaps);
         ReportUnappliedGuards(package, guards, guardsApplied, gaps);
 
         var seeds = steps
@@ -964,6 +965,67 @@ public static class PackagePlanner
 
     /// <summary>Every executable that owns children, at any depth -- the containers whose own
     /// <see cref="ExecutableSpec.Dag"/> describes a separate ordering problem from its parent's.</summary>
+    /// <summary>
+    /// Reports every <c>DTS:EventHandler</c> that actually contains work.
+    ///
+    /// <para>Event handlers were extracted all along -- <c>PackageSpec.EventHandlers</c> and
+    /// <c>ExecutableSpec.EventHandlers</c> -- and <b>nothing in Ssis.Extract.Codegen referenced
+    /// them at all</b> (grep-confirmed: zero hits before the 2026-09-02 gap audit). So a package
+    /// with an OnError handler generated as though it had none, silently, and still reported as
+    /// generatable. Exactly the same bug shape as codegen ignoring
+    /// <c>ExecutableSpec.Disabled</c>, and equally live: the third-party
+    /// Package_Advanced.dtsx has an OnError handler containing an Execute SQL Task
+    /// (<c>SQL_LogOnError</c>), so real SSIS writes a log row on any error and the generated job
+    /// does not.</para>
+    ///
+    /// <para><b>Blocking, and deliberately not translated.</b> An OnError handler looks close to
+    /// the Failure-precedence-constraint handler this tool already generates
+    /// (<c>Etl.Core.FailureHandlerAction</c>), but the semantics are NOT the same and the
+    /// difference has not been measured: an SSIS event fires per error event, can fire more than
+    /// once for one task, and propagates up the container tree unless the handler's own
+    /// Propagate variable stops it, whereas a Failure constraint fires once for its own task.
+    /// Equating them without measuring would be the same unmeasured inference that produced the
+    /// Merge Join JoinType bug.</para>
+    ///
+    /// <para>A handler holding no executables (only the stock <c>Propagate</c> variable, which is
+    /// what SSDT creates the moment you click into the handler tab) runs nothing, so it is not
+    /// reported at all -- reporting it would be the noise that trains people to ignore gaps. One
+    /// that is disabled, or whose owner sets <c>DisableEventHandlers</c>, is reported as a
+    /// non-blocking advisory instead: it declares work, but SSIS does not run it either.</para>
+    /// </summary>
+    private static void ReportEventHandlers(PackageSpec package, List<GenerationGap> gaps)
+    {
+        var owners = new List<(string Owner, bool HandlersDisabled, List<EventHandlerSpec> Handlers)>
+        {
+            (package.ObjectName, package.ExecutionSemantics?.DisableEventHandlers == true, package.EventHandlers),
+        };
+        foreach (var executable in EnumerateContainers(package.Executables))
+            owners.Add((executable.ObjectName ?? executable.RefId, false, executable.EventHandlers));
+
+        foreach (var (owner, handlersDisabled, handlers) in owners)
+        {
+            foreach (var handler in handlers)
+            {
+                var live = handler.Children.Where(c => c.Disabled != true).ToList();
+                if (live.Count == 0) continue; // declares nothing that runs
+
+                var what = string.Join(", ", live.Select(c => $"'{c.ObjectName ?? c.RefId}' ({c.ExecutableType})"));
+                var location = $"{owner}.EventHandlers[{handler.EventName}]";
+
+                if (handlersDisabled || handler.Disabled == true)
+                {
+                    gaps.Add(new GenerationGap(location,
+                        $"{handler.EventName} event handler on '{owner}' contains {what}, but it is disabled -- SSIS does not run it either, so generated code omitting it matches. Reported only so the difference between the package and the generated job is never silent.",
+                        IsBlocking: false));
+                    continue;
+                }
+
+                gaps.Add(new GenerationGap(location,
+                    $"{handler.EventName} event handler on '{owner}' contains {what} -- SSIS runs this when that event fires and generated code does not run it at all. Event handlers are not translated: an SSIS event fires per event occurrence and propagates up the container tree, which is not the same as the Failure-constraint handler this tool does generate, and the difference has not been measured."));
+            }
+        }
+    }
+
     private static IEnumerable<ExecutableSpec> EnumerateContainers(List<ExecutableSpec> executables)
     {
         foreach (var executable in executables)
