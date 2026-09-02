@@ -5,6 +5,112 @@ read that first. This file is operational notes for an agent picking this
 project back up in a fresh session: environment specifics, exact commands
 known to work, and traps already hit once (don't re-discover them).
 
+## READ THIS FIRST â€” corrections from the 2026-09-02/03 gap audit
+
+An audit was run deliberately from primary evidence only (source code, the
+real SSIS component set, and behaviour measured via dtexec), specifically
+**without** reading this file first, because this file has repeatedly
+described the project's own work as more verified than the code showed. It
+found six real defects under a fully green test suite. All are now fixed, and
+the corrections below **supersede anything later in this file that
+contradicts them.** Later sections were accurate when written; several are
+now stale, and they are left in place rather than rewritten because they are
+a historical record.
+
+**Current test counts** (via the new `Tools/SsisExtractor/scripts/Run-Tests.ps1`,
+which is the only thing that runs everything and fails on any failure):
+
+| Suite | Count |
+|---|---|
+| `Ssis.Extract.Codegen.Tests` | 302 |
+| `Ssis.Extract.Tests` | 156 |
+| `Ssis.Runtime.Expressions.Tests` | 149 |
+| `Etl.Core.Tests` (sibling repo) | 81 |
+| `LoadEmployees.Tests` / `LoadReferenceData.Tests` | 11 / 7 |
+
+**The refrain "the same 3 pre-existing unrelated failures" appears 27 times
+below. It is obsolete â€” every suite is green.** Those three were NOT
+"someone's in-progress SSDT edits", as this file repeatedly said: the tree was
+clean and `SSIS/LoadReferenceData.dtsx` was committed, so they were permanent
+committed failures â€” two stale goldens plus an `.ispac` test pinning a package
+count the SSIS project had legitimately outgrown. They survived because
+**there is no CI in this repo at all** (no workflow, no pipeline, and until
+now nothing that ran `dotnet test`), not because an exit code was swallowed.
+
+**What was actually wrong, and what it means for the deliverable:**
+
+1. **Merge Join ignored `JoinType`.** `ProgramEmitter` hardcoded
+   `MergeJoinType.LeftOuter` for every Merge Join. Measured via dtexec:
+   **raw 0 = FULL OUTER, 1 = LEFT OUTER, 2 = INNER** â€” the exact reverse of
+   the C# enum's ordinal order. The real portfolio's only Merge Join declares
+   2, so the shipped deliverable was emitting unmatched left rows that SSIS
+   drops. Any earlier claim here that raw 2 means LeftOuter is wrong, and the
+   "verified via a real generated run" that backed it was circular â€” that run
+   exercised code with LeftOuter compiled in.
+2. **In-place column modification was invisible.** A Derived Column in
+   "Replace &lt;column&gt;" mode (and Character Map's in-place mode) persists
+   its expression on its own readWrite INPUT column and declares no output
+   column. Every output-column-based mechanism missed it at once: codegen
+   emitted the RAW value, and conformance, testgen, `expressions.csv` and the
+   non-determinism manifest all recorded nothing â€” with 0 blocking gaps and
+   100% coverage. Latent for the tracked corpus (grep for
+   `usageType="readWrite"` finds none), severe for the next portfolio.
+3. **Union All/Merge per-input column mapping was never read.** This file and
+   `UnionEmitter` claimed "real SSIS enforces matching schemas across every
+   Merge/UnionAll input". **False, measured:** one output column named
+   `UnifiedName` accepted `CustName` from input 1 and `ClientName` from input
+   2 and validated VS_ISVALID. The mapping is explicit in each input column's
+   `OutputColumnLineageID`, which nothing read.
+4. **Lookup duplicate keys resolved to the wrong row.** The generated cache
+   used last-wins; **measured SSIS keeps the FIRST duplicate.** This changed
+   the real deliverable (`Package_Transforms`' own `LKP_CountryCache`).
+   `NoMatchBehavior` was also never read at all.
+5. **Event handlers were omitted in complete silence.** Extracted all along,
+   referenced nowhere in codegen. The third-party `Package_Advanced.dtsx` has
+   an `OnError` handler containing an Execute SQL Task, so SSIS logs on error
+   and the generated job does not. Reporting it moves that package out of the
+   generatable set: **4/5 â†’ 3/5.** The count was wrong, not the package.
+6. **A guard could silently skip its step.** Conditional-precedence guards read
+   variables via `PackageVariables.Get<T>`, which returns `default(T)` on a
+   type mismatch â€” so a guard reading `int` against a `long` silently saw 0 and
+   skipped. Guards now use the new `GetRequired<T>`, which throws.
+
+**Three audit items dissolved on inspection and were deliberately NOT
+"fixed"** â€” recorded so nobody re-opens them: `DT_UI8 â†’ long` is already
+documented with its tradeoff reasoned out; a renamed Merge Join output column
+is already safe (`MergeJoinEmitter` resolves via `SourceColumnLineageId`, not
+by name); and `LegacyComponentIds`' three bare CLSIDs already carry their
+provenance in the file. One audit claim was also simply **wrong**: unmodelled
+control-flow TASK types were said to be omitted silently, but `WalkContainer`
+has always ended with a generic fall-through gap. Only the event-handler half
+was real.
+
+**Two long-standing "unresolved"/"unverified" caveats are now closed with
+evidence, so ignore the sections below that still say otherwise:**
+- The Merge Join fixture's "phantom output columns" quirk is **root-caused**.
+  Two wrong premises: `Microsoft.MergeJoin` starts with **TWO** inputs after
+  `ProvideComponentProperties()`, not one (so the old `InsertInput` created a
+  third), and it **auto-creates one output column per marked-used input
+  column** (so the manual `AddMergeJoinOutputColumn` calls were duplicates).
+  `SyntheticMergeJoin.dtsx` now exists, validates VS_ISVALID and runs under
+  dtexec â€” Merge Join codegen had never been verified end to end before.
+- Event handlers were "genuinely unverified against a real example". They are
+  now verified against `Package_Advanced.dtsx`. Note the real element carries
+  **no `DTS:ObjectName`**, so the event name comes from the FALLBACK read â€”
+  the primary read would have failed on the first real package it met.
+
+**The pattern worth internalising, because it has now produced four wrong
+claims in this file:** a negative conclusion ("SSIS never persists X", "SSIS
+enforces Y") drawn from a synthetic fixture is worth very little, because the
+fixture may simply never have exercised X. That is how the Lookup join key,
+the Script Component source shape, the Union All schema claim, and the Merge
+Join quirk all became wrong. Measure against a real SSDT-authored package or
+a dtexec run before writing a negative down.
+
+Also: commit `4f679b0` ("Close the SsisExtractor gap-audit plan (Phases
+1-3.6)") landed real work that was never written into this file. The sections
+below jump from 2026-09-02's `DFT_LookupAndAggregate` round straight past it.
+
 ## What this project is
 
 Two SSIS Project-Deployment-Model packages that read CSVs, merge columns with
