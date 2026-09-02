@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using Ssis.Extract.Dtsx;
 using Ssis.Extract.Model.Package;
+using Ssis.Extract.Model.Shared;
 
 namespace Ssis.Extract.Codegen.Tests;
 
@@ -14,6 +15,42 @@ public class PackageGeneratorTests
         var fixturesDir = Path.GetFullPath(Path.Combine(
             Path.GetDirectoryName(ThisFilePath())!, "..", "Ssis.Extract.Tests", "Fixtures"));
         return DtsxPackageReader.Read(Path.Combine(fixturesDir, dtsxFileName), noRedact: false);
+    }
+
+    [Fact]
+    public void Generate_ReportsAnEncryptedConnectionManagerSecret_AsATier1Gap()
+    {
+        var package = new PackageSpec
+        {
+            ObjectName = "PkgWithEncryptedSecret",
+            SourceDtsxPath = "PkgWithEncryptedSecret.dtsx",
+            Sha256 = new string('0', 64),
+            FileSizeBytes = 1,
+            LastWriteTimeUtc = DateTime.UnixEpoch,
+            ProtectionLevelRaw = 3,
+            ProtectionLevelName = "EncryptSensitiveWithUserKey",
+            Coverage = new CoverageStats { TotalElements = 1, UnmappedElements = 0, ExcludedElements = 0, CoveragePercent = 100 },
+            ConnectionManagers =
+            [
+                new ConnectionManagerSpec
+                {
+                    ObjectName = "CM_TargetDb",
+                    CreationName = "OLEDB",
+                    Scope = "Package",
+                    WasRedacted = false,
+                    EncryptedProperties = ["Password"],
+                },
+            ],
+        };
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var gap = Assert.Single(result.Gaps, g => g.Kind == Ssis.Extract.Model.Analysis.GapKind.EncryptedConnectionManagerSecret);
+        Assert.Equal("CM_TargetDb", gap.Location);
+        Assert.Contains("Password", gap.Reason);
+        Assert.Contains("never extracts the ciphertext", gap.Reason);
+        // No secret material anywhere in the gap's own reason text.
+        Assert.DoesNotContain("AQAAA", gap.Reason);
     }
 
     [Fact]
@@ -774,6 +811,51 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WiresEveryAggregationType_SumAverageMinimumMaximumCountDistinctCountAll()
+    {
+        // SyntheticAggregateFunctions.dtsx, built 2026-09-02 (gap-audit Phase 3.3). Confirmed
+        // beyond this test by actually building the generated exe against a copy of Etl.Core and
+        // running it against .\SQLFORPOC_2022 -- an EXACT match, all-NULL group included, against
+        // a real dtexec probe run of the same fixture (Region A: TotalRows=4, DistinctAmounts=2,
+        // SumAmount=40, AverageAmount=13.333..., MinAmount=10, MaxAmount=20; Region C, all NULL:
+        // TotalRows=2, DistinctAmounts=0, Sum/Average/Min/MaxAmount all NULL -- proving generated
+        // code reproduces SQL semantics, not .NET's own Enumerable.Sum-returns-0-for-all-null
+        // quirk, independently verified this same round to diverge).
+        var package = LoadSyntheticFixture("SyntheticAggregateFunctions.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var aggregateRow = Assert.Single(result.Files, f => f.RelativePath == "Sql/SyntheticAggregateFunctionsTargetAggregateRow.cs");
+        Assert.Contains("public string Region { get; set; } = \"\";", aggregateRow.Content);
+        Assert.Contains("public long TotalRows { get; set; }", aggregateRow.Content);
+        Assert.Contains("public long DistinctAmounts { get; set; }", aggregateRow.Content);
+        Assert.Contains("public double? SumAmount { get; set; }", aggregateRow.Content);
+        Assert.Contains("public double? AverageAmount { get; set; }", aggregateRow.Content);
+        Assert.Contains("public double? MinAmount { get; set; }", aggregateRow.Content);
+        Assert.Contains("public double? MaxAmount { get; set; }", aggregateRow.Content);
+
+        var entity = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticAggregateFunctionsTarget.cs");
+        Assert.Contains("public double? SumAmount { get; set; }", entity.Content);
+
+        var transform = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticAggregateFunctionsTargetTransform.cs");
+        Assert.Contains("SumAmount = row.SumAmount,", transform.Content);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains("TotalRows = rows.Count,", programFile.Content);
+        Assert.Contains("DistinctAmounts = rows.Select(r => r.Amount).Where(v => v != null).Distinct().Count(),", programFile.Content);
+        Assert.Contains("SumAmount = rows.All(r => r.Amount == null) ? null : rows.Sum(r => r.Amount),", programFile.Content);
+        Assert.Contains("AverageAmount = rows.Average(r => r.Amount),", programFile.Content);
+        Assert.Contains("MinAmount = rows.Min(r => r.Amount),", programFile.Content);
+        Assert.Contains("MaxAmount = rows.Max(r => r.Amount)", programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Only the two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption
+        // on the source, and Notification.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+    }
+
+    [Fact]
     public void Generate_WiresAnExcelSourcedFlow_IntoProgramCsViaExcelRowSource()
     {
         // SyntheticExcelSource.dtsx: Microsoft.ExcelSource (reading the real, checked-in
@@ -844,10 +926,17 @@ public class PackageGeneratorTests
     [Fact]
     public void Generate_ReportsAGap_ForAnExcelSourceSqlCommand_ThatIsNotABareSelectStarFromSheet()
     {
-        // Same fixture as above, with a WHERE clause added to the SqlCommand -- this generator's
-        // ExcelRowSource is an ExcelDataReader-backed grid reader with no query engine at all, so
-        // anything beyond a bare worksheet reference must gap rather than guess (a WHERE clause,
-        // column list, JOIN, or range address has no way to execute against that reader).
+        // Same fixture family as above, with an explicit column list -- gap-audit Phase 3.4
+        // (2026-09-02) confirmed via a real raw System.Data.OleDb probe against the checked-in
+        // workbook that ACE OLEDB genuinely REORDERS/NARROWS its result set to match the SELECT
+        // list's own stated order (not the worksheet's physical layout). Etl.Core.Excel.
+        // ExcelRowSource has no query engine at all -- it reads the raw physical grid, always in
+        // true physical order, with no way to reorder or skip columns, and the .dtsx alone never
+        // records a narrowed query's true physical layout. So a column list is a PERMANENT
+        // architectural ceiling (see ExcelWhereClauseTranslator's own doc comment), not a
+        // temporary gap -- this fixture used to carry a WHERE clause instead (now supported, see
+        // SyntheticExcelSourceSqlCommandWhere.dtsx), bumped here to the one shape that remains
+        // genuinely, permanently unsupported.
         var package = LoadSyntheticFixture("SyntheticExcelSourceSqlCommandUnsupported.dtsx");
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
@@ -855,8 +944,40 @@ public class PackageGeneratorTests
         Assert.DoesNotContain(result.Files, f => f.RelativePath == "Program.cs");
         var gap = Assert.Single(result.Gaps, g => g.Location == "DFT_ExcelLoad");
         Assert.Contains("cannot translate", gap.Reason);
-        Assert.Contains("only a bare 'SELECT * FROM [SheetName$]' is supported", gap.Reason);
+        Assert.Contains("a column list, JOIN, or range address is not", gap.Reason);
     }
+
+    [Fact]
+    public void Generate_WiresAnExcelSourceInSqlCommandMode_WithAWhereClause()
+    {
+        // SyntheticExcelSourceSqlCommandWhere.dtsx: gap-audit Phase 3.4 (2026-09-02), a
+        // byte-preserving derived edit of SyntheticExcelSourceSqlCommand.dtsx (same reason as
+        // that fixture's own note -- see its doc comment above). SqlCommand = "SELECT * FROM
+        // [DripEligibility$] WHERE CustomerID > 5". Confirmed via the same real raw
+        // System.Data.OleDb probe that a bare "SELECT *" WHERE clause genuinely filters
+        // server-side (4 of the 9 real rows: CustomerID 6/7/9/10), and that string equality is
+        // measured CASE-INSENSITIVE ('y' matched the same rows as 'Y') -- this fixture's own
+        // numeric comparison doesn't exercise that half directly, but ExcelWhereClauseTranslator
+        // applies it uniformly per its own doc comment. Confirmed beyond this test by actually
+        // building the generated exe against a copy of Etl.Core and running it against
+        // .\SQLFORPOC_2022 and the real checked-in workbook -- exactly those 4 rows landed.
+        var package = LoadSyntheticFixture("SyntheticExcelSourceSqlCommandWhere.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains(
+            "return new FilteringRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", new ExcelRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", excelOptions, SyntheticExcelSourceSqlCommandWhereTargetExcelRowReader.Read), row => row.CustomerID > 5);",
+            programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        var gap = Assert.Single(result.Gaps);
+        Assert.Equal("SyntheticExcelSourceSqlCommandWhere.Notification", gap.Location);
+    }
+
+    // Grammar edge cases (unknown column, OR, mixed operators, type mismatches) are tested
+    // directly against ExcelWhereClauseTranslator in ExcelWhereClauseTranslatorTests.cs --
+    // simpler than fabricating a fourth PipelineComponentSpec/PackageSpec for each negative case.
 
     [Fact]
     public void Generate_WiresAnOleDbCommandFlow_WithNoEntityOrDbTable()
@@ -893,6 +1014,35 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WrapsTheRowSourceInACountingRowSource_ForALiveMidChainRowCount()
+    {
+        // SyntheticRowCountVariable.dtsx (gap-audit Phase 3.2): OLE DB Source -> RowCount
+        // (User::RowsLoaded, live, mid-chain) -> OLE DB Destination, then a post-flow Script
+        // Task reads the variable back. Before this round the RowCount's own side effect was
+        // silently dropped -- TransformEmitter already treats it as a safe passthrough for
+        // COLUMN resolution, so the flow generated cleanly with zero gaps and no reproduction of
+        // the count at all. Confirmed beyond this test by actually building the generated exe
+        // against a copy of Etl.Core and running it against .\SQLFORPOC_2022 -- the logged
+        // RowsLoaded value matched the real row count exactly, and a real dtexec run of the same
+        // fixture confirmed RowCount's own passthrough never drops/alters rows.
+        var package = LoadSyntheticFixture("SyntheticRowCountVariable.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null, emitSeams: true);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains("var packageVariables = new PackageVariables();", programFile.Content);
+        Assert.Contains(
+            "new CountingRowSource<SyntheticRowCountVariableTargetSqlRow>(\"DFT_Load.RowCount\", sp.GetRequiredService<IRowSource<SyntheticRowCountVariableTargetSqlRow>>(), packageVariables, \"User::RowsLoaded\"),",
+            programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Only the unavoidable/expected gaps: the SqlCommand-mode advisory, the Script Task seam
+        // (this fixture's post-flow reader), and Notification -- none about RC_RowsLoaded itself.
+        Assert.Equal(3, result.Gaps.Count);
+        Assert.DoesNotContain(result.Gaps, g => g.Location.Contains("RC_RowsLoaded", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Generate_WiresAMulticastFlow_FanningToBothASqlAndAFlatFileBulkSink()
     {
         // SyntheticMulticast.dtsx: OLE DB Source -> Multicast -> {OLE DB Destination, Flat File
@@ -923,5 +1073,89 @@ public class PackageGeneratorTests
         // the unavoidable non-blocking gaps (SqlCommand-mode advisory, Notification).
         Assert.Equal(2, result.Gaps.Count);
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticMulticast.Notification");
+    }
+
+    [Fact]
+    public void Generate_WrapsTheRowSourceInSortingRowSource_ForAStandaloneSort()
+    {
+        // SyntheticStandaloneSort.dtsx (gap-audit Phase 3.5, 2026-09-02): OLE DB Source (seed
+        // rows deliberately out of ID order: 3, 1, 2) -> Sort (by ID, ascending) -> Flat File
+        // Destination. Confirmed beyond this test: a real dtexec run of this exact fixture wrote
+        // "1,Alice / 2,Bob / 3,Carol"; the generated exe, built against a copy of Etl.Core (0
+        // warnings/0 errors) and run against .\SQLFORPOC_2022 with the output file cleared
+        // first, wrote the EXACT SAME byte-for-byte content -- see
+        // Tools/SsisExtractor/CLAUDE.md's own "standalone Sort" section.
+        var package = LoadSyntheticFixture("SyntheticStandaloneSort.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains(
+            "new SortingRowSource<DFT_SortSqlRow, int>(\"DFT_Sort.Sort\", sp.GetRequiredService<IRowSource<DFT_SortSqlRow>>(), row => row.ID, Comparer<int>.Default),",
+            programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Three unavoidable/unrelated gaps -- the SqlCommand-mode column-naming advisory (same
+        // as every other SqlCommand-sourced flow's own test), the unresolved-auth-mode fallback
+        // (this fixture's own connection manager carries no auth info), and Notification. None
+        // of them is about the Sort itself, confirming it generated with zero gaps of its own.
+        Assert.Equal(3, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticStandaloneSort.Notification");
+    }
+
+    [Fact]
+    public void Generate_WrapsBothSidesInMergeInterleaveRowSource_ForAGenuinelyMultiSourceMerge()
+    {
+        // SyntheticMergeInterleaveProbe.dtsx (gap-audit Phase 3.6, 2026-09-02): two genuinely
+        // independent OLE DB Sources with disjoint, interleaved key ranges (Left: 1,3,5; Right:
+        // 2,4,6, both seeded out of order) -> Sort each -> Microsoft.Merge -> Flat File
+        // Destination. Confirmed beyond this test: a real dtexec run of this exact fixture wrote
+        // "1,2,3,4,5,6" -- a TRUE sort-preserving interleave, not concatenation; the generated
+        // exe, built against a copy of Etl.Core (0 warnings/0 errors) and run against
+        // .\SQLFORPOC_2022, wrote the EXACT SAME byte-for-byte content -- see
+        // Tools/SsisExtractor/docs/report-schema.md's own "gap-audit Phase 3.6" section.
+        var package = LoadSyntheticFixture("SyntheticMergeInterleaveProbe.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains(
+            "return new MergeInterleaveRowSource<MRG_InterleaveRow, int>(\n" +
+            "        \"MRG_Interleave\", BuildSide0(), BuildSide1(),\n" +
+            "        row => row.ID, Comparer<int>.Default);",
+            programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        // Four unavoidable/unrelated gaps -- a SqlCommand-mode column-naming advisory PER SIDE
+        // (both sources are SqlCommand-mode), the unresolved-auth-mode fallback (a Flat File
+        // Destination resolves no target server/database of its own), and Notification. None of
+        // them is about the Merge/interleave itself.
+        Assert.Equal(4, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticMergeInterleaveProbe.Notification");
+    }
+
+    [Fact]
+    public void Generate_WrapsBothSidesInConcatenatingRowSource_ForAGenuinelyMultiSourceUnionAll()
+    {
+        // SyntheticUnionTwoSources.dtsx (gap-audit Phase 3.6, 2026-09-02): two genuinely
+        // independent OLE DB Sources, no Sort at all -> Microsoft.UnionAll -> Flat File
+        // Destination. The generated exe, built against a copy of Etl.Core (0 warnings/0
+        // errors) and run against .\SQLFORPOC_2022, wrote each side's own rows in full, in that
+        // side's own order, before moving to the next -- see
+        // Tools/SsisExtractor/docs/report-schema.md's own "gap-audit Phase 3.6" section for the
+        // real, left-unresolved dtexec construction quirk that makes this shape's OWN dtexec run
+        // unavailable (unlike the Merge case above).
+        var package = LoadSyntheticFixture("SyntheticUnionTwoSources.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        Assert.Contains(
+            "return new ConcatenatingRowSource<UNION_TwoSourcesRow>(\"UNION_TwoSources\", [BuildSide0(), BuildSide1()]);",
+            programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+
+        Assert.Equal(4, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticUnionTwoSources.Notification");
     }
 }

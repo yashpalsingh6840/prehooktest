@@ -80,7 +80,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources]");
             return 2;
         }
 
@@ -165,6 +165,10 @@ internal static class Program
         {
             return BuildAggregateFixture(args[0]);
         }
+        if (fixtureName == "aggregate-functions")
+        {
+            return BuildAggregateFunctionsFixture(args[0]);
+        }
         if (fixtureName == "int-numeric-coercion")
         {
             return BuildIntNumericCoercionFixture(args[0]);
@@ -180,6 +184,18 @@ internal static class Program
         if (fixtureName == "oledb-command")
         {
             return BuildOleDbCommandFixture(args[0]);
+        }
+        if (fixtureName == "oledb-command-reordered")
+        {
+            return BuildOleDbCommandReorderedFixture(args[0]);
+        }
+        if (fixtureName == "oledb-command-exec-named")
+        {
+            return BuildOleDbCommandExecNamedFixture(args[0]);
+        }
+        if (fixtureName == "row-count-variable")
+        {
+            return BuildRowCountVariableFixture(args[0]);
         }
         if (fixtureName == "multicast")
         {
@@ -229,9 +245,34 @@ internal static class Program
         {
             return BuildSecondConnectionSqlFixture(args[0]);
         }
+        if (fixtureName == "lookup-then-aggregate")
+        {
+            return BuildLookupThenAggregateFixture(args[0]);
+        }
+        if (fixtureName == "multicast-discard")
+        {
+            return BuildMulticastDiscardFixture(args[0]);
+        }
+        if (fixtureName == "execute-package-task")
+        {
+            return BuildExecutePackageTaskFixture(args[0]);
+        }
+        if (fixtureName == "standalone-sort")
+        {
+            return BuildStandaloneSortFixture(args[0]);
+        }
+        if (fixtureName == "merge-interleave-probe")
+        {
+            return BuildMergeInterleaveProbeFixture(args[0]);
+        }
+        if (fixtureName == "union-two-sources")
+        {
+            return BuildUnionTwoSourcesFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', or 'failure-handler'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', or 'union-two-sources'.");
+
             return 2;
         }
 
@@ -545,6 +586,295 @@ internal static class Program
             accessMode: 3, openRowset: "[dbo].[SyntheticLookupSingleTarget]");
         AttachPath(pipe, matchOutput, destMeta.InputCollection[0]);
         ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// The real evidenced Lookup+Aggregate composed shape (RBC_Demo_ETL's own
+    /// DFT_LookupAndAggregate), built 2026-09-02: OLE DB Source (Country, CustomerID) -> Lookup
+    /// (full cache, NoMatchBehavior=1/REDIRECT -- unlike BuildLookupSingleFixture's own
+    /// fail-on-no-match, this is the first fixture needing a genuinely wired No-Match output) ->
+    /// Multicast -> {Output 1 -> Aggregate (GroupBy Region, Count CustomerID) -> OLE DB
+    /// Destination, Output 2 -> RowCount dead end}, Lookup's own No-Match output -> a SECOND
+    /// RowCount dead end. Both RowCount targets are genuinely never read anywhere else in this
+    /// package -- the whole point of the discard recognition this fixture exercises.
+    /// </summary>
+    private static int BuildLookupThenAggregateFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticLookupThenAggregate" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        pkg.Variables.Add("MatchedRows", false, "User", 0);
+        pkg.Variables.Add("UnmatchedRows", false, "User", 0);
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_LookupAndAggregate";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT Country, CustomerID FROM dbo.SyntheticLookupThenAggregateSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+
+        // --- the Lookup itself, NoMatchBehavior=1 this time (redirect, not fail) ---
+        var lookupMeta = pipe.ComponentMetaDataCollection.New();
+        lookupMeta.ComponentClassID = "Microsoft.Lookup";
+        var lookupInst = lookupMeta.Instantiate();
+        lookupInst.ProvideComponentProperties();
+        lookupMeta.Name = "LKP_Country";
+
+        var lookupConn = lookupMeta.RuntimeConnectionCollection[0];
+        lookupConn.ConnectionManagerID = sqlCm.ID;
+        lookupConn.ConnectionManager = DtsConvert.GetExtendedInterface(sqlCm);
+
+        lookupInst.SetComponentProperty("CacheType", 0);        // full cache
+        lookupInst.SetComponentProperty("NoMatchBehavior", 1);  // redirect to no-match output
+        lookupInst.SetComponentProperty("SqlCommand",
+            "SELECT CountryName, Region FROM dbo.SyntheticLookupThenAggregateReference");
+
+        AttachPath(pipe, srcOutput, lookupMeta.InputCollection[0]);
+        lookupInst.AcquireConnections(null);
+        lookupInst.ReinitializeMetaData();
+        lookupInst.ReleaseConnections();
+
+        var lookupInput = lookupMeta.InputCollection[0];
+        var virtualInput = lookupInput.GetVirtualInput();
+        var virtualCountry = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>()
+            .First(c => c.Name == "Country");
+        var mappedCountry = lookupInst.SetUsageType(
+            lookupInput.ID, virtualInput, virtualCountry.LineageID, DTSUsageType.UT_READONLY);
+        lookupInst.SetInputColumnProperty(lookupInput.ID, mappedCountry.ID, "JoinToReferenceColumn", "CountryName");
+
+        var matchOutput = lookupMeta.OutputCollection.Cast<IDTSOutput100>().First(o => o.Name == "Lookup Match Output");
+        var noMatchOutput = lookupMeta.OutputCollection.Cast<IDTSOutput100>().First(o => o.Name == "Lookup No Match Output");
+
+        var regionOutCol = lookupInst.InsertOutputColumnAt(matchOutput.ID, matchOutput.OutputColumnCollection.Count, "Region", "");
+        lookupInst.SetOutputColumnProperty(matchOutput.ID, regionOutCol.ID, "CopyFromReferenceColumn", "Region");
+
+        // --- Lookup's own No-Match output -> a dead-end RowCount, discarded ---
+        var rcUnmatchedMeta = pipe.ComponentMetaDataCollection.New();
+        rcUnmatchedMeta.ComponentClassID = "Microsoft.RowCount";
+        var rcUnmatchedInst = rcUnmatchedMeta.Instantiate();
+        rcUnmatchedInst.ProvideComponentProperties();
+        rcUnmatchedMeta.Name = "RC_UnmatchedRows";
+        rcUnmatchedInst.SetComponentProperty("VariableName", "User::UnmatchedRows");
+        AttachPath(pipe, noMatchOutput, rcUnmatchedMeta.InputCollection[0]);
+        rcUnmatchedInst.AcquireConnections(null);
+        rcUnmatchedInst.ReinitializeMetaData();
+        rcUnmatchedInst.ReleaseConnections();
+
+        // --- Multicast downstream of the Match output ---
+        var mcMeta = pipe.ComponentMetaDataCollection.New();
+        mcMeta.ComponentClassID = "Microsoft.Multicast";
+        var mcInst = mcMeta.Instantiate();
+        mcInst.ProvideComponentProperties();
+        mcMeta.Name = "MCAST_Matched";
+        AttachPath(pipe, matchOutput, mcMeta.InputCollection[0]);
+        mcInst.AcquireConnections(null);
+        mcInst.ReinitializeMetaData();
+        mcInst.ReleaseConnections();
+
+        // Same auto-provisioning behavior as BuildMulticastFixture: exactly one output exists
+        // right after ReinitializeMetaData; attaching a path to it grows the collection to two.
+        var mcOutput1 = mcMeta.OutputCollection.Cast<IDTSOutput100>().Single();
+
+        // --- Output 1 -> Aggregate -> OLE DB Destination (the one real live path) ---
+        var aggMeta = pipe.ComponentMetaDataCollection.New();
+        aggMeta.ComponentClassID = "Microsoft.Aggregate";
+        var aggInst = aggMeta.Instantiate();
+        aggInst.ProvideComponentProperties();
+        aggMeta.Name = "AGG_ByRegion";
+
+        AttachPath(pipe, mcOutput1, aggMeta.InputCollection[0]);
+        aggInst.AcquireConnections(null);
+        aggInst.ReinitializeMetaData();
+        aggInst.ReleaseConnections();
+
+        // Unlike BuildAggregateFixture's own plain OLE DB Source (Region, CustomerID only --
+        // every virtual input column IS referenced by an output), this fixture's Multicast
+        // passes through EVERY Lookup Match output column, including "Country" -- confirmed
+        // real via a dtexec probe: mapping it as UT_READONLY without an AggregationColumnId
+        // referencing it fails validation with 0xC0208218 ("input column ... is not
+        // referenced"). Aggregate demands every mapped input column actually be used by SOME
+        // output, unlike a plain destination. So only the two columns this Aggregate actually
+        // needs are mapped here.
+        var aggInput = aggMeta.InputCollection[0];
+        var aggVirtualInput = aggInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in aggVirtualInput.VirtualInputColumnCollection)
+        {
+            if (vcol.Name is "Region" or "CustomerID")
+                aggInst.SetUsageType(aggInput.ID, aggVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var regionInputCol = aggInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "Region");
+        var customerIdInputCol = aggInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "CustomerID");
+
+        var aggOutput = aggMeta.OutputCollection[0];
+
+        var groupByOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, 0, "Region", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, groupByOutCol.ID, "AggregationColumnId", regionInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, groupByOutCol.ID, "AggregationType", 0); // GroupBy
+
+        var countOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, 1, "CustomerCount", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, countOutCol.ID, "AggregationColumnId", customerIdInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, countOutCol.ID, "AggregationType", 1); // Count
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticLookupThenAggregateTarget]");
+        AttachPath(pipe, aggOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        // --- Output 2 -> a second dead-end RowCount, discarded ---
+        var mcOutput2 = mcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.ID != mcOutput1.ID);
+
+        var rcMatchedMeta = pipe.ComponentMetaDataCollection.New();
+        rcMatchedMeta.ComponentClassID = "Microsoft.RowCount";
+        var rcMatchedInst = rcMatchedMeta.Instantiate();
+        rcMatchedInst.ProvideComponentProperties();
+        rcMatchedMeta.Name = "RC_MatchedRows";
+        rcMatchedInst.SetComponentProperty("VariableName", "User::MatchedRows");
+        AttachPath(pipe, mcOutput2, rcMatchedMeta.InputCollection[0]);
+        rcMatchedInst.AcquireConnections(null);
+        rcMatchedInst.ReinitializeMetaData();
+        rcMatchedInst.ReleaseConnections();
+        // A third Multicast output now exists, unconnected/"dangling" -- left as-is, matching
+        // BuildMulticastFixture's own already-confirmed real behavior.
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A plain Multicast + discard, no Lookup and no Aggregate: OLE DB Source -> Multicast ->
+    /// {Output 1 -> OLE DB Destination (the one live branch), Output 2 -> a dead-end RowCount}.
+    /// Built 2026-09-02 specifically to prove GenerateMulticastFlow's own defensive discard-skip
+    /// independently of the Lookup+Aggregate composed shape -- a direct, foreseeable consequence
+    /// of ResolveBranch now accepting a discard, not the real motivating case (which always
+    /// reaches GenerateLookupThenAggregateFlow instead, since an Aggregate anywhere in the
+    /// pipeline wins dispatch first).
+    /// </summary>
+    private static int BuildMulticastDiscardFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticMulticastDiscard" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        pkg.Variables.Add("RowsSeen", false, "User", 0);
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_MulticastDiscard";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, Name FROM dbo.SyntheticMulticastDiscardSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+
+        var mcMeta = pipe.ComponentMetaDataCollection.New();
+        mcMeta.ComponentClassID = "Microsoft.Multicast";
+        var mcInst = mcMeta.Instantiate();
+        mcInst.ProvideComponentProperties();
+        mcMeta.Name = "MCAST_Discard";
+        AttachPath(pipe, srcOutput, mcMeta.InputCollection[0]);
+        mcInst.AcquireConnections(null);
+        mcInst.ReinitializeMetaData();
+        mcInst.ReleaseConnections();
+
+        var mcOutput1 = mcMeta.OutputCollection.Cast<IDTSOutput100>().Single();
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticMulticastDiscardTarget]");
+        AttachPath(pipe, mcOutput1, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        var mcOutput2 = mcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.ID != mcOutput1.ID);
+
+        var rcMeta = pipe.ComponentMetaDataCollection.New();
+        rcMeta.ComponentClassID = "Microsoft.RowCount";
+        var rcInst = rcMeta.Instantiate();
+        rcInst.ProvideComponentProperties();
+        rcMeta.Name = "RC_RowsSeen";
+        rcInst.SetComponentProperty("VariableName", "User::RowsSeen");
+        AttachPath(pipe, mcOutput2, rcMeta.InputCollection[0]);
+        rcInst.AcquireConnections(null);
+        rcInst.ReinitializeMetaData();
+        rcInst.ReleaseConnections();
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source (a literal 3-row VALUES() list, no separate source table needed) ->
+    /// RowCount (User::RowsLoaded, MID-CHAIN passthrough to a real destination -- NOT a
+    /// discarded dead end, the already-handled 2026-09-02 shape) -> OLE DB Destination, then a
+    /// post-flow Script Task reads the variable back and logs it into a real table -- gap-audit
+    /// Phase 3.2's motivating shape. Two things a real dtexec run against this fixture must
+    /// prove: RowCount's own count is genuinely "rows that reached this component" (not, say,
+    /// the source's own declared row estimate or something measured a different way), and a
+    /// downstream STEP correctly sees the TRUE final count rather than a stale/default one --
+    /// both unverified assumptions until measured for real.
+    ///
+    /// Backing tables: tests/Ssis.Extract.Tests/Fixtures/synthetic-row-count-variable-tables.sql.
+    /// </summary>
+    private static int BuildRowCountVariableFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticRowCountVariable" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var rowsLoaded = pkg.Variables.Add("RowsLoaded", false, "User", 0);
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT * FROM (VALUES (1,N'Alice'),(2,N'Bob'),(3,N'Carol')) AS X(ID,Name)");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+
+        var rcMeta = pipe.ComponentMetaDataCollection.New();
+        rcMeta.ComponentClassID = "Microsoft.RowCount";
+        var rcInst = rcMeta.Instantiate();
+        rcInst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        rcMeta.Name = "RC_RowsLoaded";
+        rcInst.SetComponentProperty("VariableName", "User::RowsLoaded");
+        AttachPath(pipe, srcOutput, rcMeta.InputCollection[0]);
+        rcInst.AcquireConnections(null);
+        rcInst.ReinitializeMetaData();
+        rcInst.ReleaseConnections();
+
+        var rcOutput = rcMeta.OutputCollection.Cast<IDTSOutput100>().Single();
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticRowCountVariableTarget]");
+        AttachPath(pipe, rcOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        var logTask = AddScriptTask(pkg, "SCR_LogCount", readOnlyVariables: rowsLoaded.QualifiedName);
+        pkg.PrecedenceConstraints.Add(dftHost, (Executable)logTask);
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -2410,6 +2740,108 @@ internal static class Program
     }
 
     /// <summary>
+    /// Closes gap-audit Phase 3.3 (2026-09-02): widens Aggregate support beyond the original
+    /// GroupBy/Count-only round to Sum(4)/Average(5)/Minimum(6)/Maximum(7)/CountDistinct(3)/
+    /// CountAll(2) -- every raw value measured via two temporary object-model probes (since
+    /// removed) run against `.\SQLFORPOC_2022`: <c>aggregate-type-probe</c> (discovered the live
+    /// COM property's own valid range is exactly 0-7, string names all REJECTED with
+    /// <c>0xC0204006</c> -- a pure native int enum, no string coercion) and
+    /// <c>aggregate-type-semantics-probe</c> (a real dtexec run against deliberately
+    /// distinguishing seed data -- a NULL, a duplicate, a wide spread, and an all-NULL group --
+    /// mapped each raw value to its real function unambiguously, see
+    /// <c>Ssis.Extract.Model.Pipeline.AggregatePayload</c>'s own doc comment for the full result).
+    ///
+    /// OLE DB Source (SqlCommand: the exact seed shape the probe itself used) -&gt; Aggregate
+    /// (GroupBy Region; TotalRows = CountAll with NO AggregationColumnId at all, proving SSIS's
+    /// own "CountAll needs no column reference" behavior for real, not just in the probe;
+    /// DistinctAmounts = CountDistinct(Amount); SumAmount/AverageAmount/MinAmount/MaxAmount =
+    /// Sum/Average/Minimum/Maximum(Amount)) -&gt; OLE DB Destination.
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-aggregate-functions-tables.sql</c> already
+    /// created on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildAggregateFunctionsFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticAggregateFunctions" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_AggregateFunctions";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT Region, Amount FROM dbo.SyntheticAggregateFunctionsSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+
+        var aggMeta = pipe.ComponentMetaDataCollection.New();
+        aggMeta.ComponentClassID = "Microsoft.Aggregate";
+        var aggInst = aggMeta.Instantiate();
+        aggInst.ProvideComponentProperties();
+        aggMeta.Name = "AGG_Functions";
+
+        AttachPath(pipe, srcOutput, aggMeta.InputCollection[0]);
+        aggInst.AcquireConnections(null);
+        aggInst.ReinitializeMetaData();
+        aggInst.ReleaseConnections();
+
+        var aggInput = aggMeta.InputCollection[0];
+        var aggVirtualInput = aggInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in aggVirtualInput.VirtualInputColumnCollection)
+            aggInst.SetUsageType(aggInput.ID, aggVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+
+        var regionInputCol = aggInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "Region");
+        var amountInputCol = aggInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "Amount");
+
+        var aggOutput = aggMeta.OutputCollection[0];
+
+        var regionOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, 0, "Region", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, regionOutCol.ID, "AggregationColumnId", regionInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, regionOutCol.ID, "AggregationType", 0); // GroupBy
+
+        // CountAll -- deliberately NO AggregationColumnId at all, proving the real "no column
+        // reference needed" behavior end to end, not just in the removed probe.
+        var totalRowsOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, aggOutput.OutputColumnCollection.Count, "TotalRows", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, totalRowsOutCol.ID, "AggregationType", 2); // CountAll
+
+        var distinctOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, aggOutput.OutputColumnCollection.Count, "DistinctAmounts", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, distinctOutCol.ID, "AggregationColumnId", amountInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, distinctOutCol.ID, "AggregationType", 3); // CountDistinct
+
+        var sumOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, aggOutput.OutputColumnCollection.Count, "SumAmount", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, sumOutCol.ID, "AggregationColumnId", amountInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, sumOutCol.ID, "AggregationType", 4); // Sum
+
+        var avgOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, aggOutput.OutputColumnCollection.Count, "AverageAmount", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, avgOutCol.ID, "AggregationColumnId", amountInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, avgOutCol.ID, "AggregationType", 5); // Average
+
+        var minOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, aggOutput.OutputColumnCollection.Count, "MinAmount", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, minOutCol.ID, "AggregationColumnId", amountInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, minOutCol.ID, "AggregationType", 6); // Minimum
+
+        var maxOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, aggOutput.OutputColumnCollection.Count, "MaxAmount", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, maxOutCol.ID, "AggregationColumnId", amountInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, maxOutCol.ID, "AggregationType", 7); // Maximum
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticAggregateFunctionsTarget]");
+        AttachPath(pipe, aggOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
     /// A PROBE, built 2026-08-30: OLE DB Source (SqlCommand: ID, I8Val bigint, NumericVal
     /// decimal(18,2), R4Val real) -&gt; OLE DB Destination (all three narrowed to int), a plain
     /// passthrough with NO Data Conversion/Derived Column in between -- three simultaneous
@@ -2701,6 +3133,366 @@ internal static class Program
         return meta;
     }
 
+    /// <summary>
+    /// OLE DB Source (SqlCommand, seed rows deliberately out of ID order) -> Sort (by ID,
+    /// ascending) -> Flat File Destination, gap-audit Phase 3.5 (2026-09-02). Deliberately a
+    /// Flat File, not a SQL, destination -- <c>SqlBulkCopy</c> gives no storage-order guarantee,
+    /// so ordering has no OBSERVABLE effect against a SQL table; a flat file's own row order is
+    /// directly readable back. Reuses <see cref="AddSortByKey"/> verbatim (already proven via
+    /// the Merge Join round) and <see cref="AddFlatFileDestinationConnectionManager"/>/the same
+    /// raw Flat File Destination construction <see cref="BuildOleDbToFlatFileExport"/> already
+    /// uses -- no new object-model technique needed for this fixture.</summary>
+    private static int BuildStandaloneSortFixture(string outputPath)
+    {
+        var outDir = Path.Combine(TestFixturesDir(), "synthetic-standalone-sort-output");
+        Directory.CreateDirectory(outDir);
+        var exportPath = Path.Combine(outDir, "sorted-export.csv");
+
+        var pkg = new RtPackage { Name = "SyntheticStandaloneSort" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var ffCm = AddFlatFileDestinationConnectionManager(pkg, "CM_FF_Export", exportPath,
+            format: "Delimited", columnNamesInFirstDataRow: true,
+            ("ID", 20, false), ("Name", 50, true));
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Sort";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Name FROM dbo.SyntheticStandaloneSortSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var sortMeta = AddSortByKey(pipe, "SORT_ById", srcMeta, "ID");
+
+        var destMeta = pipe.ComponentMetaDataCollection.New();
+        destMeta.ComponentClassID = "Microsoft.FlatFileDestination";
+        var destInst = destMeta.Instantiate();
+        destInst.ProvideComponentProperties();
+        destMeta.Name = "Flat File Destination";
+        destInst.SetComponentProperty("Overwrite", true);
+
+        var destConn = destMeta.RuntimeConnectionCollection[0];
+        destConn.ConnectionManagerID = ffCm.ID;
+        destConn.ConnectionManager = DtsConvert.GetExtendedInterface(ffCm);
+
+        var sortOutput = sortMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+        AttachPath(pipe, sortOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Gap-audit Phase 3.6 -- the single most important probe in that phase, per its own
+    /// plan: two GENUINELY INDEPENDENT OLE DB Sources (not diverged from one shared upstream,
+    /// unlike every prior Merge fixture in this file -- <see cref="BuildSortMergeRemergeFixture"/>'s
+    /// own Merge always joins two branches of the SAME Conditional Split), each with a
+    /// DISJOINT, INTERLEAVED key range (Left: ID 1,3,5; Right: ID 2,4,6, both seeded out of
+    /// order so <see cref="AddSortByKey"/>'s own Sort is genuinely exercised on each side) ->
+    /// <c>Microsoft.Merge</c> -> Flat File Destination, so the real output ROW ORDER is
+    /// directly readable back (a SQL destination gives no storage-order guarantee, same
+    /// reasoning as <see cref="BuildStandaloneSortFixture"/>).
+    ///
+    /// <para><b>What this settles, read directly off the output file, no guessing:</b> a
+    /// result of <c>1,2,3,4,5,6</c> means <c>Microsoft.Merge</c> performs a TRUE
+    /// sort-preserving two-pointer interleave of its two sorted inputs (needing a new
+    /// algorithm, essentially <c>MergeJoinRowSource</c> minus the key-match test, over two
+    /// <c>SortingRowSource</c>-wrapped sides); a result of <c>1,3,5,2,4,6</c> means it is
+    /// plain concatenation after independently sorting each side (no new algorithm beyond a
+    /// trivial sequential-concatenation source fed by two <c>SortingRowSource</c>-wrapped
+    /// sides). Object-model construction reuses <see cref="BuildSortMergeRemergeFixture"/>'s
+    /// own already-proven Merge recipe (two inputs already exist from
+    /// <c>ProvideComponentProperties()</c>; second input's output columns must be mapped
+    /// explicitly via <c>OutputColumnLineageID</c>) verbatim -- nothing new needed there.</para>
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-merge-interleave-probe-tables.sql</c>
+    /// already created and seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildMergeInterleaveProbeFixture(string outputPath)
+    {
+        var outDir = Path.Combine(TestFixturesDir(), "synthetic-merge-interleave-probe-output");
+        Directory.CreateDirectory(outDir);
+        var exportPath = Path.Combine(outDir, "merged-export.csv");
+
+        var pkg = new RtPackage { Name = "SyntheticMergeInterleaveProbe" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var ffCm = AddFlatFileDestinationConnectionManager(pkg, "CM_FF_Export", exportPath,
+            format: "Delimited", columnNamesInFirstDataRow: true,
+            ("ID", 20, false), ("Name", 50, true));
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_MergeInterleaveProbe";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var leftSrcMeta = AddOleDbComponent(pipe, "OLE DB Source Left", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Name FROM dbo.SyntheticMergeProbeLeft");
+        ResolveOleDbMetadata(leftSrcMeta, isDestination: false);
+
+        var rightSrcMeta = AddOleDbComponent(pipe, "OLE DB Source Right", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Name FROM dbo.SyntheticMergeProbeRight");
+        ResolveOleDbMetadata(rightSrcMeta, isDestination: false);
+
+        var leftSortMeta = AddSortByKey(pipe, "SORT_Left", leftSrcMeta, "ID");
+        var rightSortMeta = AddSortByKey(pipe, "SORT_Right", rightSrcMeta, "ID");
+
+        var mergeMeta = pipe.ComponentMetaDataCollection.New();
+        mergeMeta.ComponentClassID = "Microsoft.Merge";
+        var mergeInst = mergeMeta.Instantiate();
+        mergeInst.ProvideComponentProperties(); // resets Name -- see AddOleDbComponent's own comment
+        mergeMeta.Name = "MRG_Interleave";
+
+        // Microsoft.Merge already has TWO inputs from ProvideComponentProperties() -- see
+        // BuildSortMergeRemergeFixture's own doc comment for why (both UnionAll's and Merge
+        // Join's own "add a second input" recipes fail against this component specifically).
+        AttachPath(pipe, leftSortMeta.OutputCollection[0], mergeMeta.InputCollection[0]);
+        AttachPath(pipe, rightSortMeta.OutputCollection[0], mergeMeta.InputCollection[1]);
+        mergeInst.AcquireConnections(null);
+        mergeInst.ReinitializeMetaData();
+        mergeInst.ReleaseConnections();
+
+        var mergeFirstInput = mergeMeta.InputCollection[0];
+        var mergeFirstVirtualInput = mergeFirstInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in mergeFirstVirtualInput.VirtualInputColumnCollection)
+            mergeInst.SetUsageType(mergeFirstInput.ID, mergeFirstVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+
+        var mergeSecondInput = mergeMeta.InputCollection[1];
+        var mergeSecondVirtualInput = mergeSecondInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in mergeSecondVirtualInput.VirtualInputColumnCollection)
+            mergeInst.SetUsageType(mergeSecondInput.ID, mergeSecondVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+
+        // The second input's own columns are NOT auto-mapped by ReinitializeMetaData() -- same
+        // rule as BuildSortMergeRemergeFixture's own second input.
+        var mergeOutput = mergeMeta.OutputCollection[0];
+        foreach (IDTSInputColumn100 inCol in mergeSecondInput.InputColumnCollection)
+        {
+            var matchingOutputCol = mergeOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>()
+                .FirstOrDefault(oc => oc.Name == inCol.Name)
+                ?? throw new InvalidOperationException($"fixture build error: Merge has no output column named '{inCol.Name}' to map the second input's own column onto.");
+            mergeInst.SetInputColumnProperty(mergeSecondInput.ID, inCol.ID, "OutputColumnLineageID", matchingOutputCol.LineageID);
+        }
+
+        var destMeta = pipe.ComponentMetaDataCollection.New();
+        destMeta.ComponentClassID = "Microsoft.FlatFileDestination";
+        var destInst = destMeta.Instantiate();
+        destInst.ProvideComponentProperties();
+        destMeta.Name = "Flat File Destination";
+        destInst.SetComponentProperty("Overwrite", true);
+
+        var destConn = destMeta.RuntimeConnectionCollection[0];
+        destConn.ConnectionManagerID = ffCm.ID;
+        destConn.ConnectionManager = DtsConvert.GetExtendedInterface(ffCm);
+
+        AttachPath(pipe, mergeOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Gap-audit Phase 3.6's second probe: two genuinely independent OLE DB Sources (no Sort
+    /// anywhere -- deliberately, since <c>Microsoft.UnionAll</c> carries no "sorted input"
+    /// concept the way <c>Microsoft.Merge</c> does) -> <c>Microsoft.UnionAll</c> -> Flat File
+    /// Destination, seeded with each side's own rows deliberately NOT in ID order, meant to read
+    /// back whether UnionAll is a plain, order-preserving, side-then-side concatenation (the
+    /// assumed behavior every prior "diverge-then-reconverge from one shared source" UnionAll
+    /// fixture in this file was never positioned to actually test, since those always feed from
+    /// ONE upstream source through a Conditional Split, never two independently-ordered sources).
+    ///
+    /// <para><b>NOT confirmed dtexec-executable -- a real, left-unresolved object-model quirk,
+    /// documented rather than papered over, same acceptable tier as this file's own ADO NET
+    /// connection-manager and Merge Join extra-output-column quirks.</b> Two independent
+    /// construction recipes were tried, both producing a package that builds and saves cleanly
+    /// via the object model but fails dtexec's own XML LOAD validation (before execution even
+    /// starts) with "Error setting input object during XML load" / "Load error encountered near
+    /// object with ID 60" -- confirmed to be dtexec's own internal load-position counter, not a
+    /// real refId (grepping the saved XML for any "60"-bearing id finds nothing):
+    /// <list type="bullet">
+    /// <item>The all-at-once recipe <see cref="BuildConditionalSplitRemergeFixture"/>'s own
+    /// UnionAll construction uses (second input via <c>InputCollection.New()</c> before either
+    /// path is attached, both paths attached, ONE joint <c>ReinitializeMetaData()</c> call) --
+    /// this uncovered a real, previously-undocumented fact along the way: attaching a path to an
+    /// input makes UnionAll auto-provision a FRESH spare input the instant that happens, the
+    /// exact same "auto-provisions a spare the instant a path attaches" behavior CLAUDE.md's
+    /// Multicast section already documents for that component's OUTPUT side -- confirmed here
+    /// for UnionAll's INPUT side instead (unlike Multicast's own harmless dangling spare output,
+    /// a dangling zero-column spare INPUT was itself explicitly removable via
+    /// <c>RemoveObjectByID</c>, and removing it DID reduce the saved XML from 3 inputs to the
+    /// intended 2 -- but the load failure persisted identically regardless, so the spare was
+    /// never the true cause).</item>
+    /// <item>An INCREMENTAL recipe (attach + resolve the first input alone, then create the
+    /// second input, attach + resolve again) -- the opposite ordering
+    /// <see cref="BuildConditionalSplitRemergeFixture"/>'s own doc comment says was tried and
+    /// REJECTED for an unrelated symptom on that fixture (a stale lineage ID on the SPLIT's own
+    /// input) -- produced the byte-identical dtexec failure here too.</item>
+    /// </list>
+    /// Also confirmed: <c>IDTSInput100</c> does NOT support an <c>IDTSName100</c> cast (throws
+    /// <c>InvalidCastException</c>, HRESULT <c>E_NOINTERFACE</c>) -- unlike a flat-file column or
+    /// a Conditional Split output, an input's own <c>Name</c> is not independently settable via
+    /// any interface probed here, so the second input persists unnamed (<c>Inputs[46]</c>-style
+    /// refId rather than a human-readable one) regardless of which recipe is used.</para>
+    ///
+    /// <para>This does NOT block using the fixture for its actual purpose: <c>ssisx extract</c>/
+    /// <c>generate</c> parse the saved XML directly (plan §2.1) and never invoke SSIS's own
+    /// object model or its execution-time validation, so they read this fixture's genuinely
+    /// two-independent-source UnionAll shape correctly regardless. UnionAll's real runtime row-
+    /// order semantics are instead evidenced two other ways: (1) the component's own official
+    /// Microsoft-authored description text, extracted directly from this live installation's own
+    /// object model and visible verbatim in the saved XML's <c>description</c> attribute --
+    /// "Combines rows from multiple data flows WITHOUT SORTING" -- a real fact pulled from the
+    /// runtime, not documentation guesswork; (2) a plain C# unit test of the new
+    /// <c>ConcatenatingRowSource&lt;TRow&gt;</c> proving its own sequential-concatenation
+    /// algorithm correct with no SSIS involved at all, the same fallback tier
+    /// <see cref="BuildMergeJoinFixture"/>'s own unresolved quirk already established for
+    /// Merge Join's join algorithm.</para>
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-merge-interleave-probe-tables.sql</c>
+    /// (reused verbatim -- same two source tables the Merge probe above uses, just read in a
+    /// deliberately different, non-ID order this time) already created and seeded on
+    /// <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildUnionTwoSourcesFixture(string outputPath)
+    {
+        var outDir = Path.Combine(TestFixturesDir(), "synthetic-union-two-sources-output");
+        Directory.CreateDirectory(outDir);
+        var exportPath = Path.Combine(outDir, "union-export.csv");
+
+        var pkg = new RtPackage { Name = "SyntheticUnionTwoSources" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var ffCm = AddFlatFileDestinationConnectionManager(pkg, "CM_FF_Export", exportPath,
+            format: "Delimited", columnNamesInFirstDataRow: true,
+            ("ID", 20, false), ("Name", 50, true));
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_UnionTwoSources";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        // Deliberately NOT ordered by ID -- each side's own SELECT ... ORDER BY pins a known,
+        // non-ID-ascending row sequence per side, so the readback can tell "concatenation
+        // preserving each side's own order" apart from "something reorders within a side too."
+        var leftSrcMeta = AddOleDbComponent(pipe, "OLE DB Source Left", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Name FROM dbo.SyntheticMergeProbeLeft ORDER BY ID DESC");
+        ResolveOleDbMetadata(leftSrcMeta, isDestination: false);
+
+        var rightSrcMeta = AddOleDbComponent(pipe, "OLE DB Source Right", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Name FROM dbo.SyntheticMergeProbeRight ORDER BY ID DESC");
+        ResolveOleDbMetadata(rightSrcMeta, isDestination: false);
+
+        var unionMeta = pipe.ComponentMetaDataCollection.New();
+        unionMeta.ComponentClassID = "Microsoft.UnionAll";
+        var unionInst = unionMeta.Instantiate();
+        unionInst.ProvideComponentProperties(); // resets Name -- see AddOleDbComponent's own comment
+        unionMeta.Name = "UNION_TwoSources";
+
+        // Second input created BEFORE any path is attached -- see
+        // BuildConditionalSplitRemergeFixture's own doc comment for why (InsertInput throws
+        // 0xC020800E unconditionally for this component; InputCollection.New() is the only
+        // recipe that works, and only while still in the just-constructed state). Both real
+        // inputs' own IDs captured up front and re-fetched via GetObjectByID below -- COM RCWs
+        // are not guaranteed stable across a ReinitializeMetaData() call (same lesson
+        // BuildConditionalSplitRemergeFixture already learned the hard way).
+        //
+        // <b>A real, previously-undocumented object-model fact, confirmed empirically:</b>
+        // attaching a path to an input (AttachPathAndPropagateNotifications) makes UnionAll
+        // auto-provision a FRESH spare input the instant that happens -- the exact same
+        // "auto-provisions a spare the instant a path attaches" behavior CLAUDE.md's Multicast
+        // section already documents for THAT component's OUTPUT side, confirmed here for
+        // UnionAll's INPUT side instead. ReinitializeMetaData() resolves the two REAL inputs
+        // (both end up with real columns) but leaves exactly one dangling, zero-column spare
+        // input behind. Unlike Multicast's own dangling spare OUTPUT (harmless -- an output
+        // simply never fires), a dangling spare INPUT with zero columns fails dtexec's own XML
+        // LOAD validation outright ("Error setting input object during XML load") -- so, unlike
+        // Multicast, it must be explicitly removed via RemoveObjectByID before saving, not just
+        // skipped downstream in codegen.
+        var unionFirstInputId = unionMeta.InputCollection[0].ID;
+        var leftOutput = leftSrcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+        var rightOutput = rightSrcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+
+        // Resolved INCREMENTALLY -- attach + resolve the first input alone, THEN create the
+        // second input, attach + resolve again -- rather than creating both inputs and
+        // attaching both paths before any ReinitializeMetaData() call (which left one dangling,
+        // zero-column spare input behind; explicit RemoveObjectByID cleanup of that spare still
+        // left the two REAL inputs in a shape dtexec's own XML loader rejected outright, so the
+        // spare wasn't the true cause after all).
+        AttachPath(pipe, leftOutput, unionMeta.InputCollection.GetObjectByID(unionFirstInputId));
+        unionInst.AcquireConnections(null);
+        unionInst.ReinitializeMetaData();
+        unionInst.ReleaseConnections();
+
+        var unionSecondInputId = unionMeta.InputCollection.New().ID;
+        AttachPath(pipe, rightOutput, unionMeta.InputCollection.GetObjectByID(unionSecondInputId));
+        unionInst.AcquireConnections(null);
+        unionInst.ReinitializeMetaData();
+        unionInst.ReleaseConnections();
+
+        foreach (var dangling in unionMeta.InputCollection.Cast<IDTSInput100>()
+                     .Where(i => i.ID != unionFirstInputId && i.ID != unionSecondInputId)
+                     .ToList())
+        {
+            unionMeta.InputCollection.RemoveObjectByID(dangling.ID);
+        }
+
+        // InputColumnCollection stays empty until each input's own virtual columns are marked
+        // used -- same rule as every other UnionAll/Merge/Sort input in this file.
+        var unionFirstInput = unionMeta.InputCollection.GetObjectByID(unionFirstInputId);
+        MarkInputColumnsUsed(unionInst, unionFirstInput, "ID", "Name");
+
+        var unionSecondInput = unionMeta.InputCollection.GetObjectByID(unionSecondInputId);
+        MarkInputColumnsUsed(unionInst, unionSecondInput, "ID", "Name");
+
+        // The second input's own columns are NOT auto-mapped -- same rule as every other
+        // UnionAll/Merge second input in this file.
+        var unionOutput = unionMeta.OutputCollection[0];
+        foreach (IDTSInputColumn100 inCol in unionSecondInput.InputColumnCollection)
+        {
+            var matchingOutputCol = unionOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>()
+                .FirstOrDefault(oc => oc.Name == inCol.Name)
+                ?? throw new InvalidOperationException($"fixture build error: UnionAll has no output column named '{inCol.Name}' to map the second input's own column onto.");
+            unionInst.SetInputColumnProperty(unionSecondInput.ID, inCol.ID, "OutputColumnLineageID", matchingOutputCol.LineageID);
+        }
+
+        var destMeta = pipe.ComponentMetaDataCollection.New();
+        destMeta.ComponentClassID = "Microsoft.FlatFileDestination";
+        var destInst = destMeta.Instantiate();
+        destInst.ProvideComponentProperties();
+        destMeta.Name = "Flat File Destination";
+        destInst.SetComponentProperty("Overwrite", true);
+
+        var destConn = destMeta.RuntimeConnectionCollection[0];
+        destConn.ConnectionManagerID = ffCm.ID;
+        destConn.ConnectionManager = DtsConvert.GetExtendedInterface(ffCm);
+
+        AttachPath(pipe, unionOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
     /// <summary>Marks exactly the named columns as used (UT_READONLY) on one input --
     /// InputColumnCollection stays empty until this is called, same rule as
     /// <see cref="AddSortByKey"/>'s own input.</summary>
@@ -2943,6 +3735,170 @@ internal static class Program
         cmdInst.SetUsageType(cmdInput.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
         var matchColumn = cmdInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "CustomerID");
         cmdInst.MapInputColumn(cmdInput.ID, matchColumn.ID, externalParam.ID);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source -> OLE DB Command, TWO parameters, deliberately attached (SetUsageType
+    /// order) in the OPPOSITE order from how they're bound (MapInputColumn) to the SQL's own
+    /// '?' placeholders -- gap-audit Phase 3.1's motivating shape. A live object-model probe
+    /// (2026-09-02, not checked in -- see <c>OleDbCommandPayload</c>'s own doc comment for the
+    /// findings) proved real SSIS binds each parameter via the input column's own
+    /// <c>externalMetadataColumnId</c> (a <c>Param_N</c> reference), independent of
+    /// &lt;inputColumns&gt; declaration order, and that <c>ParameterMapping</c> itself is never
+    /// populated at all. <c>StatusCode</c> is seeded at 0 and the source computes
+    /// <c>NewStatus = CustomerID + 100</c> (101-103, a range that can never equal a real
+    /// CustomerID 1-3) specifically so a declaration-order regression is unambiguously
+    /// observable: it would bind the WHERE clause to a NewStatus value, matching zero rows, so
+    /// StatusCode would stay 0 for every row instead of becoming CustomerID + 100.
+    ///
+    /// Requires the backing table from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-oledb-command-reordered-tables.sql</c>
+    /// already created on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildOleDbCommandReorderedFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticOleDbCommandReordered" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_ReorderedParams";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT CustomerID, CustomerID + 100 AS NewStatus FROM dbo.SyntheticOleDbCommandReorderedTarget");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var cmdMeta = pipe.ComponentMetaDataCollection.New();
+        cmdMeta.ComponentClassID = "Microsoft.OLEDBCommand";
+        var cmdInst = cmdMeta.Instantiate();
+        cmdInst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        cmdMeta.Name = "OLECMD_SetStatus";
+
+        var cmdConn = cmdMeta.RuntimeConnectionCollection[0];
+        cmdConn.ConnectionManagerID = sqlCm.ID;
+        cmdConn.ConnectionManager = DtsConvert.GetExtendedInterface(sqlCm);
+
+        // Placeholder 0 = the new StatusCode value (NewStatus), placeholder 1 = the WHERE key
+        // (CustomerID).
+        cmdInst.SetComponentProperty("SqlCommand",
+            "UPDATE dbo.SyntheticOleDbCommandReorderedTarget SET StatusCode = ? WHERE CustomerID = ?");
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, cmdMeta.InputCollection[0]);
+
+        cmdInst.AcquireConnections(null);
+        cmdInst.ReinitializeMetaData();
+        cmdInst.ReleaseConnections();
+
+        var cmdInput = cmdMeta.InputCollection[0];
+        var param0 = cmdInput.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>().Single(e => e.Name == "Param_0");
+        var param1 = cmdInput.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>().Single(e => e.Name == "Param_1");
+
+        var virtualInput = cmdInput.GetVirtualInput();
+        // Attach in DECLARATION order CustomerID, NewStatus -- the OPPOSITE of the SQL's own
+        // placeholder order (NewStatus is placeholder 0, CustomerID is placeholder 1).
+        var vCustomerId = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>().First(v => v.Name == "CustomerID");
+        cmdInst.SetUsageType(cmdInput.ID, virtualInput, vCustomerId.LineageID, DTSUsageType.UT_READONLY);
+        var vNewStatus = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>().First(v => v.Name == "NewStatus");
+        cmdInst.SetUsageType(cmdInput.ID, virtualInput, vNewStatus.LineageID, DTSUsageType.UT_READONLY);
+
+        // Bind to the TRUE placeholder position, opposite of declaration order: CustomerID
+        // (declared first) -> Param_1 (the SECOND '?'), NewStatus (declared second) -> Param_0
+        // (the FIRST '?').
+        var customerIdCol = cmdInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "CustomerID");
+        var newStatusCol = cmdInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "NewStatus");
+        cmdInst.MapInputColumn(cmdInput.ID, customerIdCol.ID, param1.ID);
+        cmdInst.MapInputColumn(cmdInput.ID, newStatusCol.ID, param0.ID);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source -> OLE DB Command calling a real stored procedure via EXEC, TWO parameters,
+    /// deliberately attached (SetUsageType order) in the OPPOSITE order from the procedure's own
+    /// declared parameters -- reproduces the REAL evidenced shape from SSIS_From_Sandeep's own
+    /// Package_Advanced.dtsx (DFT_FlagCustomers, EXEC dbo.usp_SetCustomerFlag ?, N'flagged'),
+    /// whose bound external columns are named after the procedure's own parameters
+    /// ("@CustomerID") -- NOT "Param_N" the way a bare parameterized UPDATE/SELECT names them
+    /// (see SyntheticOleDbCommandReordered.dtsx). A live object-model probe (2026-09-02) proved
+    /// codegen must resolve true binding order from each bound external column's own INDEX
+    /// within the input's &lt;externalMetadataColumns&gt; list -- which stays call-order-correct
+    /// regardless of whether the name itself encodes a position -- not from parsing the name.
+    ///
+    /// Requires the backing table/procedure from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-oledb-command-exec-named-tables.sql</c>
+    /// already created on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildOleDbCommandExecNamedFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticOleDbCommandExecNamed" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_ExecNamedParams";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT CustomerID, CustomerID + 100 AS NewStatus FROM dbo.SyntheticOleDbCommandExecNamedTarget");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var cmdMeta = pipe.ComponentMetaDataCollection.New();
+        cmdMeta.ComponentClassID = "Microsoft.OLEDBCommand";
+        var cmdInst = cmdMeta.Instantiate();
+        cmdInst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        cmdMeta.Name = "OLECMD_SetStatus";
+
+        var cmdConn = cmdMeta.RuntimeConnectionCollection[0];
+        cmdConn.ConnectionManagerID = sqlCm.ID;
+        cmdConn.ConnectionManager = DtsConvert.GetExtendedInterface(sqlCm);
+
+        // dbo.usp_SyntheticSetStatus(@CustomerID INT, @NewStatus INT) -- procedure's own
+        // declared order: @CustomerID first, @NewStatus second.
+        cmdInst.SetComponentProperty("SqlCommand", "EXEC dbo.usp_SyntheticSetStatus ?, ?");
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, cmdMeta.InputCollection[0]);
+
+        cmdInst.AcquireConnections(null);
+        cmdInst.ReinitializeMetaData();
+        cmdInst.ReleaseConnections();
+
+        var cmdInput = cmdMeta.InputCollection[0];
+        var externalCols = cmdInput.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>().ToList();
+        var customerIdExt = externalCols.First(e => e.Name.IndexOf("CustomerID", StringComparison.OrdinalIgnoreCase) >= 0);
+        var newStatusExt = externalCols.First(e => e.Name.IndexOf("NewStatus", StringComparison.OrdinalIgnoreCase) >= 0);
+
+        var virtualInput = cmdInput.GetVirtualInput();
+        // Attach in the OPPOSITE order from the procedure's own declared parameters: NewStatus
+        // first, CustomerID second.
+        var vNewStatus = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>().First(v => v.Name == "NewStatus");
+        cmdInst.SetUsageType(cmdInput.ID, virtualInput, vNewStatus.LineageID, DTSUsageType.UT_READONLY);
+        var vCustomerId = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>().First(v => v.Name == "CustomerID");
+        cmdInst.SetUsageType(cmdInput.ID, virtualInput, vCustomerId.LineageID, DTSUsageType.UT_READONLY);
+
+        // Bind by the TRUE parameter identity, not declaration order.
+        var customerIdCol = cmdInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "CustomerID");
+        var newStatusCol = cmdInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "NewStatus");
+        cmdInst.MapInputColumn(cmdInput.ID, customerIdCol.ID, customerIdExt.ID);
+        cmdInst.MapInputColumn(cmdInput.ID, newStatusCol.ID, newStatusExt.ID);
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -4037,6 +4993,42 @@ internal static class Program
 
         var onFailure = pkg.PrecedenceConstraints.Add((Executable)body, (Executable)handler);
         onFailure.Value = Microsoft.SqlServer.Dts.Runtime.DTSExecResult.Failure;
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Reproduces BOTH real Execute Package Task shapes confirmed via <c>probe-execpkg</c> (see
+    /// <c>ExecutePackageTaskPayload</c>'s own doc comment for the full round-trip evidence) in one
+    /// package, two independent sibling tasks: <c>EPT_ProjectRef</c> (project-reference mode --
+    /// <c>UseProjectReference=true</c>, <c>PackageName</c> only) and <c>EPT_FileRef</c> (legacy
+    /// file-reference mode -- a FILE connection manager plus <c>PackageName</c>/
+    /// <c>ExecuteOutOfProcess</c>). No backing SQL tables or real child .dtsx needed -- extraction
+    /// reads the saved XML, it never invokes the referenced package.
+    /// </summary>
+    private static int BuildExecutePackageTaskFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticExecutePackageTask" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var projRefTask = (RtTaskHost)pkg.Executables.Add("Microsoft.ExecutePackageTask");
+        projRefTask.Name = "EPT_ProjectRef";
+        projRefTask.Properties["UseProjectReference"].SetValue(projRefTask, true);
+        projRefTask.Properties["PackageName"].SetValue(projRefTask, "ChildInSameProject.dtsx");
+
+        var fileCm = pkg.Connections.Add("FILE");
+        fileCm.Name = "CM_FILE_ChildPackage";
+        fileCm.Properties["FileUsageType"].SetValue(fileCm, 0); // 0 = FileExists, same convention as FileSystemTask's own probe
+        fileCm.ConnectionString = @"C:\SsisChildPackages\Legacy\ChildPackage.dtsx";
+
+        var fileRefTask = (RtTaskHost)pkg.Executables.Add("Microsoft.ExecutePackageTask");
+        fileRefTask.Name = "EPT_FileRef";
+        fileRefTask.Properties["ExecuteOutOfProcess"].SetValue(fileRefTask, true);
+        fileRefTask.Properties["PackageName"].SetValue(fileRefTask, "ChildPackage.dtsx");
+        fileRefTask.Properties["Connection"].SetValue(fileRefTask, fileCm.Name);
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));

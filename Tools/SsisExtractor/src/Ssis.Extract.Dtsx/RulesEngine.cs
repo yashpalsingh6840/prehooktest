@@ -88,7 +88,16 @@ public static class RulesEngine
             foreach (var comp in ex.DataFlowTask.Pipeline.Components)
             {
                 var location = $"{ex.RefId}/{comp.Name}";
-                if (!comp.ComponentClassId.StartsWith("Microsoft.", StringComparison.Ordinal))
+                if (comp.IsUnresolvedLegacyClsid)
+                {
+                    // Deliberately NOT third-party-component: a bare CLSID this table has no
+                    // evidence for might well be a legitimate stock Microsoft component under an
+                    // old spelling -- contactInfo is vendor-supplied free text this tool does not
+                    // trust to identify it (same "don't guess" reasoning as the Lookup join key).
+                    Add(findings, "unmapped-legacy-clsid", "RewriteEffort", "Warning", package.ObjectName, location,
+                        $"Component identified only by CLSID {comp.ComponentClassId} -- unrecognized by this tool's legacy-ID table, so its real type is unknown (contactInfo says '{comp.ContactInfo}', but that string is not trusted to identify the component). Confirm the real type and extend LegacyComponentIds.cs once known.");
+                }
+                else if (!comp.ComponentClassId.StartsWith("Microsoft.", StringComparison.Ordinal))
                 {
                     Add(findings, "third-party-component", "RewriteEffort", "Error", package.ObjectName, location,
                         $"Component class '{comp.ComponentClassId}' is not a built-in Microsoft component -- likely needs a vendor-specific or custom replacement; the generic model here captures its properties but not its licensed behavior.");
@@ -190,6 +199,24 @@ public static class RulesEngine
         {
             Add(findings, "protection-level-password-based", "EnvironmentCoupling", "Warning", package.ObjectName, "(package)",
                 $"ProtectionLevel={package.ProtectionLevelName} -- the package can only be opened/deployed with the same password used to save it; a CI/CD pipeline needs that password as a secret, and losing it makes the sensitive content unrecoverable.");
+        }
+        // EncryptSensitiveWithUserKey was previously excluded from this rule entirely -- wrongly:
+        // it DPAPI-encrypts every sensitive property (a connection manager's password, most
+        // commonly) to the AUTHOR'S OWN Windows account, which makes it unreadable/unrecoverable on
+        // ANY other machine, including this one right now. Different risk shape from the
+        // password-based modes above (no shared secret to manage -- there is no way in at all
+        // without the original author's account), so it gets its own wording, not reused text.
+        else if (package.ProtectionLevelName == "EncryptSensitiveWithUserKey")
+        {
+            Add(findings, "protection-level-user-key-based", "EnvironmentCoupling", "Warning", package.ObjectName, "(package)",
+                "ProtectionLevel=EncryptSensitiveWithUserKey -- every sensitive property is DPAPI-encrypted to the ORIGINAL AUTHOR's own Windows account, unrecoverable on any other machine (including this one). See the 'encrypted-connection-manager-secret' finding(s) below for exactly which connection manager(s) are affected.");
+        }
+
+        foreach (var cm in package.ConnectionManagers.Where(cm => cm.EncryptedProperties.Count > 0))
+        {
+            var propertyList = string.Join(", ", cm.EncryptedProperties);
+            Add(findings, "encrypted-connection-manager-secret", "EnvironmentCoupling", "Error", package.ObjectName, cm.ObjectName,
+                $"Connection manager '{cm.ObjectName}' carries a DPAPI-encrypted sensitive value ({propertyList}), undecryptable outside the original author's Windows account. This extractor never reads the ciphertext or reports a value -- a human must supply the real credential out of band before any rewrite of this package's connection can authenticate. Silently missing this is the risk: a clean-looking extraction with no visible sign a credential ever existed.");
         }
 
         var configsEntry = package.Unmapped.FirstOrDefault(u => u.Location == "Package/Configurations");

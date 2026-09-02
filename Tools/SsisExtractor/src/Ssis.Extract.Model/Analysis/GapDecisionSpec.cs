@@ -19,6 +19,13 @@ namespace Ssis.Extract.Model.Analysis;
 /// </summary>
 public sealed class GapDecisionSpec
 {
+    // NOTE: an entry for GapKind.EncryptedConnectionManagerSecret uses only ConfirmedBy/ConfirmedOn/
+    // Rationale/EvidenceSha256 below -- InputColumn/ReferenceColumn are Lookup-specific. There is
+    // deliberately no "Value"/"Secret" field anywhere on this type: an acknowledgment for that gap
+    // kind records that a human is aware and has supplied the real value elsewhere (User Secrets),
+    // never the value itself -- this file is tracked and hand-maintained, and a secret must never
+    // live in it.
+
     /// <summary>For a Lookup join key: the pipeline INPUT column the component joins on.</summary>
     public string? InputColumn { get; init; }
 

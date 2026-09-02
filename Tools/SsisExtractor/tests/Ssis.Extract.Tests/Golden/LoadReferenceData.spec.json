@@ -301,6 +301,7 @@
       "DtsId": "{5842FCC5-4A60-40C5-B0AF-16A089549436}",
       "EventHandlers": [],
       "ExecutableType": "Microsoft.ExecuteSQLTask",
+      "ExecutePackageTask": null,
       "ExecuteSqlTask": {
         "BypassPrepare": null,
         "CodePage": null,
@@ -609,6 +610,7 @@
                 "RetainNulls": false
               },
               "Inputs": [],
+              "IsUnresolvedLegacyClsid": false,
               "LocaleId": "1033",
               "Lookup": null,
               "MergeJoin": null,
@@ -939,7 +941,9 @@
                   "Value": ""
                 }
               ],
+              "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "RowCount": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
@@ -997,6 +1001,7 @@
                   "TruncationRowDisposition": null
                 }
               ],
+              "IsUnresolvedLegacyClsid": false,
               "LocaleId": null,
               "Lookup": null,
               "MergeJoin": null,
@@ -1141,7 +1146,9 @@
                 }
               ],
               "Properties": [],
+              "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey",
+              "RowCount": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
@@ -1331,6 +1338,7 @@
                   "TruncationRowDisposition": null
                 }
               ],
+              "IsUnresolvedLegacyClsid": false,
               "LocaleId": null,
               "Lookup": null,
               "MergeJoin": null,
@@ -1527,7 +1535,9 @@
                   "Value": "2147483647"
                 }
               ],
+              "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department",
+              "RowCount": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
@@ -1558,6 +1568,7 @@
       "DtsId": "{93C16893-1514-4443-9C6F-7448933F05AA}",
       "EventHandlers": [],
       "ExecutableType": "Microsoft.Pipeline",
+      "ExecutePackageTask": null,
       "ExecuteSqlTask": null,
       "FailPackageOnFailure": null,
       "FailParentOnFailure": null,
@@ -1854,6 +1865,7 @@
                 "RetainNulls": false
               },
               "Inputs": [],
+              "IsUnresolvedLegacyClsid": false,
               "LocaleId": "1033",
               "Lookup": null,
               "MergeJoin": null,
@@ -2184,7 +2196,9 @@
                   "Value": ""
                 }
               ],
+              "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "RowCount": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
@@ -2242,6 +2256,7 @@
                   "TruncationRowDisposition": null
                 }
               ],
+              "IsUnresolvedLegacyClsid": false,
               "LocaleId": null,
               "Lookup": null,
               "MergeJoin": null,
@@ -2386,7 +2401,9 @@
                 }
               ],
               "Properties": [],
+              "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey",
+              "RowCount": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
@@ -2576,6 +2593,7 @@
                   "TruncationRowDisposition": null
                 }
               ],
+              "IsUnresolvedLegacyClsid": false,
               "LocaleId": null,
               "Lookup": null,
               "MergeJoin": null,
@@ -2772,7 +2790,9 @@
                   "Value": "2147483647"
                 }
               ],
+              "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation",
+              "RowCount": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
@@ -2803,6 +2823,7 @@
       "DtsId": "{CCE1AFA2-0279-428B-96E8-309891EED3B4}",
       "EventHandlers": [],
       "ExecutableType": "Microsoft.Pipeline",
+      "ExecutePackageTask": null,
       "ExecuteSqlTask": null,
       "FailPackageOnFailure": null,
       "FailParentOnFailure": null,

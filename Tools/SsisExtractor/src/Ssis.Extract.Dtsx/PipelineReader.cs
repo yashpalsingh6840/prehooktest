@@ -35,9 +35,16 @@ internal static class PipelineReader
         };
     }
 
-    private static PipelineComponentSpec ReadComponent(XElement compEl, Dictionary<string, string> cmRefIdToName)
+    internal static PipelineComponentSpec ReadComponent(XElement compEl, Dictionary<string, string> cmRefIdToName)
     {
-        var componentClassId = compEl.Attr("componentClassID") ?? "";
+        var rawComponentClassId = compEl.Attr("componentClassID") ?? "";
+        var componentClassId = rawComponentClassId;
+        string? normalizedFromRaw = null;
+        if (LegacyComponentIds.TryNormalize(rawComponentClassId, out var canonical))
+        {
+            componentClassId = canonical;
+            normalizedFromRaw = rawComponentClassId;
+        }
 
         var properties = ReadProperties(compEl.Element("properties"));
 
@@ -81,6 +88,7 @@ internal static class PipelineReader
         ExcelSourcePayload? excelSource = null;
         OleDbCommandPayload? oleDbCommand = null;
         AggregatePayload? aggregate = null;
+        RowCountPayload? rowCount = null;
 
         // Script Component's own componentClassID is the generic "Microsoft.ManagedComponentHost"
         // -- not a Script-Component-specific ID the way every other bespoke type here is --
@@ -227,6 +235,9 @@ internal static class PipelineReader
                 Parameters = (mainInput?.Columns ?? [])
                     .Select(c => new OleDbCommandParameterSpec { Name = c.CachedName, DataType = c.CachedDataType })
                     .ToList(),
+                ColumnMappings = mainInput is null ? [] : BuildColumnMappings(
+                    mainInput.Columns.Select(c => (c.CachedName, c.ExternalMetadataColumnId)),
+                    mainInput.ExternalMetadataColumns),
             };
         }
         else if (componentClassId == "Microsoft.Lookup")
@@ -364,6 +375,13 @@ internal static class PipelineReader
                 OutputColumns = outputColumns,
             };
         }
+        else if (componentClassId == "Microsoft.RowCount")
+        {
+            rowCount = new RowCountPayload
+            {
+                VariableName = NullIfEmpty(GetProperty(properties, "VariableName")),
+            };
+        }
 
         return new PipelineComponentSpec
         {
@@ -371,6 +389,8 @@ internal static class PipelineReader
             Name = compEl.Attr("name") ?? "",
             Description = compEl.Attr("description"),
             ComponentClassId = componentClassId,
+            RawComponentClassId = normalizedFromRaw,
+            IsUnresolvedLegacyClsid = LegacyComponentIds.IsUnresolvedClsid(rawComponentClassId),
             ContactInfo = compEl.Attr("contactInfo"),
             Version = compEl.Attr("version"),
             LocaleId = compEl.Attr("localeId"),
@@ -395,6 +415,7 @@ internal static class PipelineReader
             ExcelSource = excelSource,
             OleDbCommand = oleDbCommand,
             Aggregate = aggregate,
+            RowCount = rowCount,
         };
     }
 

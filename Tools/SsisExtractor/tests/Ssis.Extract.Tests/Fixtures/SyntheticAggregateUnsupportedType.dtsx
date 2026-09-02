@@ -153,7 +153,7 @@
                           dataType="System.Int32"
                           description="Specifies the type of aggregation."
                           name="AggregationType"
-                          typeConverter="AggregationType">3</property>
+                          typeConverter="AggregationType">9</property>
                         <property
                           dataType="System.Int32"
                           description="Indicates whether the column requires special handling because it may contain oversized data or it requires precision beyond a float data type."

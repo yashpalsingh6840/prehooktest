@@ -30,7 +30,12 @@ internal static class GenerateCommand
         string? outDir = null;
         var recursive = false;
         string? namespacePrefix = null;
-        var seams = false;
+        // Seams are the default (see the --unsafe-skip-seams case below for why): without
+        // them, a Script Task/Script Component's logic is silently omitted from otherwise
+        // clean-building, clean-running generated code -- exactly the "compiles and runs but
+        // is wrong" failure class this tool otherwise refuses to allow. --seams is kept as an
+        // accepted no-op so any script/doc still passing it explicitly keeps working.
+        var seams = true;
         string? fillsDir = null;
 
         for (var i = 0; i < args.Length; i++)
@@ -44,6 +49,13 @@ internal static class GenerateCommand
                     case "--recursive": recursive = true; break;
                     case "--namespace-prefix": namespacePrefix = RequireValue(args, ref i, "--namespace-prefix"); break;
                     case "--seams": seams = true; break;
+                    // Opts back into the pre-this-flip behavior: a Script Task/Script
+                    // Component's logic is silently dropped -- the generated project builds
+                    // and runs cleanly with those columns/tasks missing, no compile-time
+                    // signal at all. Named "unsafe" deliberately, not "--no-seams" or
+                    // "--skip-seams", so the risk is visible at the call site, not just in
+                    // --help.
+                    case "--unsafe-skip-seams": seams = false; break;
                     case "--fills": fillsDir = RequireValue(args, ref i, "--fills"); break;
                     default:
                         Console.Error.WriteLine($"error: unknown generate option '{args[i]}'");

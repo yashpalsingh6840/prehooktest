@@ -123,7 +123,7 @@ internal static class Program
 
               ssisx generate --input <dir|file.dtsx|file.dtproj|file.ispac> --out <dir>
                               [--recursive] [--namespace-prefix <prefix>]
-                              [--seams] [--fills <dir>]
+                              [--unsafe-skip-seams] [--fills <dir>]
 
             generate options: turns a package into a runnable C# ETL project -- entity,
             DbContext, CSV row + ClassMap, Derived Column transform, the oracle-verified
@@ -140,18 +140,22 @@ internal static class Program
             --namespace-prefix roots every generated namespace under a prefix (e.g.
             "Contoso.Etl") instead of just the package name. Generated code under
             <out>/generate/ has no hand-editing expectation -- rerun freely.
-            --seams turns the two things whose logic this tool cannot translate, but whose
-            source IS in the .dtsx, into `private partial` methods for a human to implement
-            instead of omitting them: a column produced by a Script Component becomes a
-            Fill_<Column> on its transform class, and a Script Task becomes a whole
-            ILoadTask class with a RunScriptAsync seam (so it keeps its real position in the
-            step order, and its port gets the package's shared variables). This
-            deliberately makes the generated project FAIL to build (CS8795) until every
-            seam is filled -- the point being that today such a package builds clean while
-            silently missing those columns and skipping those tasks entirely. Fills live outside <out>/generate/ and ARE
-            hand-maintained, the same way 'conformance' claims are: --fills points at that
-            directory (default <out>/fills/), which ssisx only ever READS -- both the
-            Fill_* parts applied by 'apply-fills' and <Package>.decisions.json.
+            Seams are ON BY DEFAULT: the two things whose logic this tool cannot translate,
+            but whose source IS in the .dtsx, become `private partial` methods for a human
+            to implement instead of being silently omitted -- a column produced by a Script
+            Component becomes a Fill_<Column> on its transform class, and a Script Task
+            becomes a whole ILoadTask class with a RunScriptAsync seam (so it keeps its real
+            position in the step order, and its port gets the package's shared variables).
+            This deliberately makes the generated project FAIL to build (CS8795) until every
+            seam is filled -- the alternative is a package that builds clean while silently
+            missing those columns and skipping those tasks entirely, which is exactly the
+            failure class this tool otherwise refuses to allow. --seams is accepted as a
+            no-op (it's already the default). --unsafe-skip-seams opts back into the old
+            silent-omission behavior -- named to make that risk visible at the call site,
+            not just here. Fills live outside <out>/generate/ and ARE hand-maintained, the
+            same way 'conformance' claims are: --fills points at that directory (default
+            <out>/fills/), which ssisx only ever READS -- both the Fill_* parts applied by
+            'apply-fills' and <Package>.decisions.json.
 
               ssisx apply-fills --out <dir> [--fills <dir>]
 

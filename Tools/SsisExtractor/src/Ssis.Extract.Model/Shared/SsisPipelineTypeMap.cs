@@ -92,6 +92,20 @@ public static class SsisPipelineTypeMap
         // realistically approach long's own max value), so this is safe, not just convenient.
         ["ui8"] = new("DT_UI8", "long", SsisFacetKind.None, null, Evidenced: true),
 
+        // DT_UI4 (unsigned 4-byte int) is what Microsoft.Aggregate's own CountDistinct function
+        // produces (confirmed real via a live object-model probe, gap-audit Phase 3.3,
+        // 2026-09-02 -- narrower than Count/CountAll's own DT_UI8). Mapped to `long`, not `uint`,
+        // for the same reason and by the same convention as `ui8` above -- not because
+        // AggregateRowEmitter's own row class is EF-mapped (it isn't, confirmed: it's a plain
+        // POCO only ever consumed by AggregateRowSource<TSourceRow,TKey,TRow>, never registered
+        // with DbContextEmitter), but because this table is SHARED across every emitter, and a
+        // `uint` reaching EntityEmitter/SqlRowEmitter for some future real UI4-typed destination
+        // column would hit the identical "no native EF Core SqlServer mapping" failure `ui8`'s
+        // own comment already documents. Mapping both to the same safe signed type also means a
+        // CountDistinct value landing at a typical INT destination column flows through the
+        // EXISTING, already-measured NarrowI8ToI4 coercion with zero new code.
+        ["ui4"] = new("DT_UI4", "long", SsisFacetKind.None, null, Evidenced: true),
+
         // --- floating point / exact numeric ---
         ["r4"] = new("DT_R4", "float", SsisFacetKind.None, null, Evidenced: false),
         ["r8"] = new("DT_R8", "double", SsisFacetKind.None, null, Evidenced: false),

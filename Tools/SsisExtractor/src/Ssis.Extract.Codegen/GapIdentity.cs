@@ -29,6 +29,7 @@ public static class GapIdentity
         GapKind.ScriptComponentColumn => "SCRIPT-COLUMN",
         GapKind.LookupJoinKey => "LOOKUP-JOIN-KEY",
         GapKind.ConditionalConstraint => "CONSTRAINT",
+        GapKind.EncryptedConnectionManagerSecret => "ENCRYPTED-SECRET",
         _ => "GAP",
     };
 
@@ -40,7 +41,7 @@ public static class GapIdentity
     /// </summary>
     public static GapTier TierOf(GenerationGap gap) => gap.Kind switch
     {
-        GapKind.LookupJoinKey => GapTier.MissingDatum,
+        GapKind.LookupJoinKey or GapKind.EncryptedConnectionManagerSecret => GapTier.MissingDatum,
         GapKind.ScriptTask or GapKind.ScriptComponentColumn => GapTier.MissingLogic,
         _ => gap.IsBlocking ? GapTier.MissingToolSupport : GapTier.Advisory,
     };

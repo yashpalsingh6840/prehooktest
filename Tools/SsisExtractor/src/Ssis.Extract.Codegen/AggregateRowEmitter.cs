@@ -18,13 +18,27 @@ namespace Ssis.Extract.Codegen;
 /// </summary>
 public static class AggregateRowEmitter
 {
-    public static EmitResult Emit(string ns, string rowClassName, PipelineComponentSpec aggregate)
+    /// <summary>Sum(4)/Average(5)/Minimum(6)/Maximum(7) can genuinely produce NULL -- when a
+    /// group has zero non-null source values -- confirmed via a real dtexec run against a
+    /// deliberately all-NULL group (gap-audit Phase 3.3, 2026-09-02, see AggregatePayload's own
+    /// doc comment). GroupBy/Count/CountAll/CountDistinct never can. Excluded from string columns
+    /// (never evidenced -- every measured function targets a numeric source column). Internal,
+    /// not private -- <c>PackageGenerator</c> reuses the identical set to decide the DESTINATION
+    /// entity's own property nullability, so the two can never drift apart (same sharing
+    /// precedent as <c>TransformEmitter.CollectSsisFunctions</c>).</summary>
+    internal static readonly HashSet<int> NullableAggregationTypes = [4, 5, 6, 7];
+
+    public static EmitResult Emit(string ns, string rowClassName, AggregatePlan aggregate)
     {
-        var output = aggregate.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+        var component = aggregate.Component;
+        var output = component.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
         if (output is null)
         {
-            return new EmitResult([], [new GenerationGap(rowClassName, $"Aggregate '{aggregate.Name}' has no main (non-error) output")]);
+            return new EmitResult([], [new GenerationGap(rowClassName, $"Aggregate '{component.Name}' has no main (non-error) output")]);
         }
+
+        var nullableColumnNames = new HashSet<string>(
+            aggregate.Functions.Where(f => NullableAggregationTypes.Contains(f.AggregationTypeRaw)).Select(f => f.OutputColumnName));
 
         var gaps = new List<GenerationGap>();
         var propertyLines = new List<string>();
@@ -39,8 +53,10 @@ public static class AggregateRowEmitter
             }
 
             if (propertyLines.Count > 0) propertyLines.Add("");
-            var initializer = type.ClrTypeName == "string" ? " = \"\";" : "";
-            propertyLines.Add($"    public {type.ClrTypeName} {column.Name} {{ get; set; }}{initializer}");
+            var isNullable = type.ClrTypeName != "string" && nullableColumnNames.Contains(column.Name);
+            var clrTypeName = isNullable ? type.ClrTypeName + "?" : type.ClrTypeName;
+            var initializer = !isNullable && type.ClrTypeName == "string" ? " = \"\";" : "";
+            propertyLines.Add($"    public {clrTypeName} {column.Name} {{ get; set; }}{initializer}");
         }
 
         if (propertyLines.Count == 0)

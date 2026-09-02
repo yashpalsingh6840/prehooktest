@@ -42,6 +42,35 @@ public static partial class PackageGenerator
         var files = new List<GeneratedFile>();
         var gaps = new List<GenerationGap>();
 
+        // A connection manager whose sensitive property is DPAPI-encrypted (ProtectionLevel
+        // EncryptSensitiveWithUserKey/EncryptSensitiveWithPassword) is undecryptable outside the
+        // original author's Windows account -- the extractor records that the value existed and
+        // is missing, never the ciphertext. Raised up front, independent of flows/plan.Gaps, since
+        // it's about a connection manager, not a Data Flow Task.
+        //
+        // Deliberately does NOT claim a User Secrets slot gets specially wired FOR this gap --
+        // checked directly: ResolveDatabaseAuth/the SecondaryConnections builder both derive
+        // AuthMode purely from ConnectionManagerSpec.Parsed.AuthMode == "SqlLogin" (itself just
+        // "does the raw connection string carry User ID=/Integrated Security="), which is
+        // completely independent of whether a <DTS:Password Encrypted="1"> node exists alongside
+        // it. In every realistic case a SQL-auth connection manager's string already says so, so
+        // the existing mechanism already wires the slot -- this gap's only job is to say the loud
+        // part: THAT a real value must be supplied there, since the extractor found no other way
+        // to tell a human this credential exists at all. If this connection manager is never
+        // resolved into any generated flow, nothing generated needs the secret either, and there
+        // is genuinely no slot to fill.
+        foreach (var cm in package.ConnectionManagers.Where(cm => cm.EncryptedProperties.Count > 0))
+        {
+            var secretGapId = GapIdentity.ComputeId(package.ObjectName, GapKind.EncryptedConnectionManagerSecret, cm.ObjectName);
+            var acknowledged = decisions.ResolveEncryptedSecretAcknowledgment(secretGapId, currentEvidenceSha256: null);
+            var propertyList = string.Join(", ", cm.EncryptedProperties);
+            gaps.Add(new GenerationGap(cm.ObjectName,
+                $"Connection manager '{cm.ObjectName}' carries an encrypted sensitive value ({propertyList}) -- its ProtectionLevel DPAPI-encrypts this in the .dtsx, undecryptable outside the original author's Windows account. This tool never extracts the ciphertext or guesses the real value. If this connection manager is used by generated code and requires SQL authentication, User Secrets is already wired for it (see appsettings.json/the generate report for the exact key -- TargetDatabase:Password, or SecondaryConnections:{cm.ObjectName}:Password) -- supply the real value there before running the generated project" +
+                (acknowledged ? "; acknowledged, see the report's decisions table" : "") + ".",
+                Kind: GapKind.EncryptedConnectionManagerSecret,
+                EvidenceRefId: cm.RefId));
+        }
+
         var plan = PackagePlanner.Plan(package, emitSeams);
         gaps.AddRange(plan.Gaps);
 
@@ -153,6 +182,19 @@ public static partial class PackageGenerator
                 continue;
             }
 
+            // A genuinely multi-independent-source Microsoft.Merge/UnionAll -- gap-audit
+            // Phase 3.6 (2026-09-02). PlanUnion already guarantees flow.Union is the ONLY
+            // populated field alongside DestinationComponent, mirroring MergeJoin's own
+            // convention.
+            if (flow.Union is { } union)
+            {
+                var unionFlow = GenerateUnionFlow(
+                    package, ns, flow, union, fileSourceEntries, files, tables, functionsUsed,
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+                if (unionFlow is not null) wiredFlows[flow] = unionFlow;
+                continue;
+            }
+
             if (flow.Multicast is { } multicast)
             {
                 var multicastStep = GenerateMulticastFlow(
@@ -259,7 +301,12 @@ public static partial class PackageGenerator
                 continue;
             }
 
-            wiredFlows[flow] = new ProgramFlowSpec(flow.TaskName, programSource, rowTypeName, entityName, transformClassName, sink);
+            var rowCountVariableNames = flow.RowCounts is { Count: > 0 }
+                ? flow.RowCounts.Select(rc => rc.VariableName).ToList()
+                : null;
+            var sortKey = flow.SortKey is { } sk ? new ProgramSortKeySpec(sk.KeyColumnName, sk.KeyClrType.ClrTypeName) : null;
+            wiredFlows[flow] = new ProgramFlowSpec(flow.TaskName, programSource, rowTypeName, entityName, transformClassName, sink,
+                RowCountVariableNames: rowCountVariableNames, SortKey: sortKey);
 
             if (!isFlatFileDestination && authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
             {
@@ -677,6 +724,113 @@ public static partial class PackageGenerator
     }
 
     /// <summary>
+    /// Generates a whole genuinely multi-independent-source Merge/UnionAll flow -- gap-audit
+    /// Phase 3.6 (2026-09-02). Unlike <see cref="GenerateMergeJoinFlow"/>'s own two DIFFERENT
+    /// row types (Left/Right, joined), every side here shares ONE row type/reader (via
+    /// <see cref="UnionEmitter"/>), since real SSIS enforces matching schemas across every
+    /// Merge/UnionAll input -- each side is just its own <see cref="BuildSqlFlowSource"/> result
+    /// against that one shared row type (this round's own scope trim: SQL-sourced sides only,
+    /// see <c>UnionPlan</c>'s own doc comment).
+    /// </summary>
+    private static ProgramFlowSpec? GenerateUnionFlow(
+        PackageSpec package, string ns, DataFlowPlan flow, UnionPlan union,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
+        Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
+        bool emitSeams)
+    {
+        // Same isFlatFileDestination branching the single-destination path already has -- both
+        // real probe fixtures for THIS round (gap-audit Phase 3.6) are Flat File destinations
+        // deliberately (a SQL destination gives no storage-order guarantee, so ordering has no
+        // OBSERVABLE effect there -- the same reasoning gap-audit Phase 3.5's own standalone Sort
+        // round already established), so this path must support it, not just OLE DB/ADO NET.
+        var isFlatFileDestination = flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination";
+        var entityName = isFlatFileDestination
+            ? SanitizeIdentifier(flow.TaskName)
+            : TryResolveEntityName(flow.TaskName, flow.DestinationComponent, gaps);
+        if (entityName is null) return null;
+
+        if (!isFlatFileDestination && !DestinationInfo.IsFastLoadConfigured(flow.DestinationComponent))
+        {
+            gaps.Add(new GenerationGap(flow.TaskName, $"destination '{flow.DestinationComponent.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
+            return null;
+        }
+
+        var rowTypeName = SanitizeIdentifier(union.Component.Name) + "Row";
+        var rowTypeResult = UnionEmitter.EmitRowType($"{ns}.Sql", rowTypeName, union.Component);
+        Merge(files, gaps, rowTypeResult);
+        if (rowTypeResult.Files.Count == 0) return null; // UnionEmitter already recorded why
+
+        var readerResult = UnionEmitter.EmitReader($"{ns}.Sql", rowTypeName, union.Component);
+        Merge(files, gaps, readerResult);
+        if (readerResult.Files.Count == 0) return null;
+
+        var sides = new List<FlowSourceSpec>();
+        foreach (var side in union.Sides)
+        {
+            var sqlSource = BuildSqlFlowSource(package, side.SourceComponent.Name, side.SourceComponent, flow.DestinationComponent, gaps);
+            if (sqlSource is null) return null; // BuildSqlFlowSource already added the reason
+            sides.Add(sqlSource);
+        }
+
+        Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent));
+
+        var transformClassName = entityName + "Transform";
+        var transformResult = TransformEmitter.Emit(new TransformRequest(
+            EmitSeams: emitSeams,
+            MappingNamespace: $"{ns}.Mapping",
+            TransformClassName: transformClassName,
+            RowTypeNamespace: $"{ns}.Sql",
+            RowTypeName: rowTypeName,
+            EntityNamespace: $"{ns}.Model",
+            EntityName: entityName,
+            SsisFnNamespace: $"{ns}.Ssis",
+            Pipeline: flow.Pipeline,
+            DerivedColumns: [],
+            DestinationComponent: flow.DestinationComponent,
+            NullableColumnNames: null,
+            // UnionEmitter already resolved every one of rowTypeName's own columns straight off
+            // the union component's own raw output -- same reasoning GenerateMergeJoinFlow's own
+            // call already established for its combined row type.
+            TrustAllPassthroughColumns: true));
+        Merge(files, gaps, transformResult.Result);
+        foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
+
+        if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
+
+        FlowSinkSpec sink;
+        if (isFlatFileDestination)
+        {
+            var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, flow.DestinationComponent, entityName, fileSourceEntries, gaps);
+            if (flatFileSink is null) return null; // ResolveFlatFileSink already added the reason
+            sink = flatFileSink;
+        }
+        else
+        {
+            primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
+            tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
+            sink = new SqlFlowSink();
+        }
+
+        string? keyPropertyName = null;
+        string? keyClrType = null;
+        if (union.IsSortedInterleave)
+        {
+            // PlanUnion already guarantees exactly 2 sides, both with a resolved SortKey, and
+            // both sides' own key CLR types matching -- safe to read side 0's alone.
+            keyPropertyName = union.Sides[0].SortKey!.KeyColumnName;
+            keyClrType = union.Sides[0].SortKey!.KeyClrType.ClrTypeName;
+        }
+
+        var unionSource = new UnionFlowSource(union.Component.Name, union.IsSortedInterleave, sides, rowTypeName, keyPropertyName, keyClrType);
+
+        if (!isFlatFileDestination && authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
+            (authMode, userId, targetServer, targetDatabase) = auth;
+
+        return new ProgramFlowSpec(flow.TaskName, unionSource, rowTypeName, entityName, transformClassName, sink);
+    }
+
+    /// <summary>
     /// Generates a whole Conditional Split flow: one shared source (via <see cref="ResolveFlowSource"/>),
     /// the flow's own shared Derived Column (if any, unchanged from the single-destination path
     /// -- scope decision 1, CLAUDE.md), one router (<see cref="RouterEmitter"/>), and one
@@ -703,7 +857,10 @@ public static partial class PackageGenerator
         bool emitSeams)
     {
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
-        var defaultDestination = split.Branches[^1].Destination;
+        // Never null here: ConditionalSplitBranchPlan.Discarded is gated to Multicast only in
+        // ResolveBranch (a Conditional Split branch is always fatal-for-the-whole-flow if it
+        // can't resolve to a real destination -- that invariant is unchanged).
+        var defaultDestination = split.Branches[^1].Destination!;
 
         // Computed before ResolveFlowSource (unlike the single-destination path's own ordering
         // note doesn't apply here since there's no DerivedColumn-null gate before it in THIS
@@ -752,13 +909,14 @@ public static partial class PackageGenerator
         var entityNames = new List<string>();
         foreach (var branch in split.Branches)
         {
-            if (!DestinationInfo.IsFastLoadConfigured(branch.Destination))
+            var branchDestination = branch.Destination!; // never null -- see defaultDestination's own comment above
+            if (!DestinationInfo.IsFastLoadConfigured(branchDestination))
             {
-                gaps.Add(new GenerationGap(flow.TaskName, $"Conditional Split branch '{branch.OutputName}': destination '{branch.Destination.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
+                gaps.Add(new GenerationGap(flow.TaskName, $"Conditional Split branch '{branch.OutputName}': destination '{branchDestination.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
                 return null;
             }
 
-            var entityName = TryResolveEntityName(flow.TaskName, branch.Destination, gaps);
+            var entityName = TryResolveEntityName(flow.TaskName, branchDestination, gaps);
             if (entityName is null) return null;
             entityNames.Add(entityName);
         }
@@ -776,6 +934,7 @@ public static partial class PackageGenerator
         for (var i = 0; i < split.Branches.Count; i++)
         {
             var branch = split.Branches[i];
+            var branchDestination = branch.Destination!; // never null -- see defaultDestination's own comment above
             var entityName = entityNames[i];
 
             // Two or more branches sharing an entity (a Union All remerge) still need distinct
@@ -786,11 +945,11 @@ public static partial class PackageGenerator
                 ? entityName + SanitizeIdentifier(branch.OutputName) + "Transform"
                 : entityName + "Transform";
 
-            if (emittedDestinationRefIds.Add(branch.Destination.RefId))
+            if (emittedDestinationRefIds.Add(branchDestination.RefId))
             {
-                Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branch.Destination, nullableColumnNames));
-                primaryKeysByDestination.TryGetValue(branch.Destination.RefId, out var primaryKey);
-                branchTables.Add(new DbContextEmitter.TableSpec(entityName, branch.Destination, primaryKey));
+                Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branchDestination, nullableColumnNames));
+                primaryKeysByDestination.TryGetValue(branchDestination.RefId, out var primaryKey);
+                branchTables.Add(new DbContextEmitter.TableSpec(entityName, branchDestination, primaryKey));
             }
 
             var derivedColumns = new List<PipelineComponentSpec>();
@@ -809,7 +968,7 @@ public static partial class PackageGenerator
                 Pipeline: flow.Pipeline,
                 DerivedColumns: derivedColumns,
                 DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
-                DestinationComponent: branch.Destination,
+                DestinationComponent: branchDestination,
                 NullableColumnNames: nullableColumnNames));
             Merge(branchFiles, gaps, transformResult.Result);
             foreach (var fn in transformResult.SsisFunctionsUsed) branchFunctionsUsed.Add(fn);
@@ -818,7 +977,7 @@ public static partial class PackageGenerator
 
             branches.Add(new ProgramConditionalSplitBranch(branch.OutputName, entityName, branchTransformClassName));
 
-            if (resolvedAuth is null && ResolveDatabaseAuth(package, branch.Destination) is { } auth)
+            if (resolvedAuth is null && ResolveDatabaseAuth(package, branchDestination) is { } auth)
                 resolvedAuth = auth;
         }
 
@@ -852,7 +1011,25 @@ public static partial class PackageGenerator
         bool emitSeams)
     {
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
-        var defaultDestination = multicast.Branches[^1].Destination;
+
+        // A Discarded branch (added 2026-09-02 -- see ConditionalSplitBranchPlan's own doc
+        // comment) has no Destination and generates nothing: its advisory gap was already
+        // recorded by ResolveBranch at planning time (that gaps list flows straight into
+        // PackageGenerateResult.Gaps), so nothing more to do here than exclude it. Not the
+        // motivating real shape (which always reaches here via GenerateLookupFlow's own composed
+        // path instead, since an Aggregate anywhere in the pipeline wins dispatch first -- see
+        // that method's own doc comment) but a direct, foreseeable consequence of ResolveBranch
+        // now accepting a discard: a plain Multicast with one live branch and one discarded
+        // RowCount branch, no Lookup and no Aggregate, would otherwise reach this method and
+        // crash dereferencing a null Destination.
+        var liveBranches = multicast.Branches.Where(b => !b.Discarded).ToList();
+        if (liveBranches.Count == 0)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName, $"Multicast '{multicast.Component.Name}' has no live branches -- every output is a discarded RowCount dead end"));
+            return null;
+        }
+
+        var defaultDestination = liveBranches[^1].Destination!; // never null for a live branch
         var defaultIsFlatFile = defaultDestination.ComponentClassId == "Microsoft.FlatFileDestination";
 
         var nullableColumnNames = ResolveNullableColumnNames(flow);
@@ -871,14 +1048,15 @@ public static partial class PackageGenerator
         // yet -- same convergence-detection shape as GenerateConditionalSplitFlow's own Phase A.
         var entityNames = new List<string>();
         var branchIsFlatFile = new List<bool>();
-        foreach (var branch in multicast.Branches)
+        foreach (var branch in liveBranches)
         {
-            var isFlatFile = branch.Destination.ComponentClassId == "Microsoft.FlatFileDestination";
+            var branchDestination = branch.Destination!; // never null -- liveBranches excludes Discarded
+            var isFlatFile = branchDestination.ComponentClassId == "Microsoft.FlatFileDestination";
             branchIsFlatFile.Add(isFlatFile);
 
-            if (!isFlatFile && !DestinationInfo.IsFastLoadConfigured(branch.Destination))
+            if (!isFlatFile && !DestinationInfo.IsFastLoadConfigured(branchDestination))
             {
-                gaps.Add(new GenerationGap(flow.TaskName, $"Multicast branch '{branch.OutputName}': destination '{branch.Destination.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
+                gaps.Add(new GenerationGap(flow.TaskName, $"Multicast branch '{branch.OutputName}': destination '{branchDestination.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
                 return null;
             }
 
@@ -888,8 +1066,8 @@ public static partial class PackageGenerator
             // Flat File Destination (via a Union All) naturally compute the identical entity
             // name too, the same convergence-detection shape entityNameCounts below relies on.
             var entityName = isFlatFile
-                ? SanitizeIdentifier(flow.TaskName) + SanitizeIdentifier(branch.Destination.Name)
-                : TryResolveEntityName(flow.TaskName, branch.Destination, gaps);
+                ? SanitizeIdentifier(flow.TaskName) + SanitizeIdentifier(branchDestination.Name)
+                : TryResolveEntityName(flow.TaskName, branchDestination, gaps);
             if (entityName is null) return null;
             entityNames.Add(entityName);
         }
@@ -904,9 +1082,10 @@ public static partial class PackageGenerator
         var emittedDestinationRefIds = new HashSet<string>(StringComparer.Ordinal);
         (string AuthMode, string? UserId, string? Server, string? Database)? resolvedAuth = null;
 
-        for (var i = 0; i < multicast.Branches.Count; i++)
+        for (var i = 0; i < liveBranches.Count; i++)
         {
-            var branch = multicast.Branches[i];
+            var branch = liveBranches[i];
+            var branchDestination = branch.Destination!; // never null -- liveBranches excludes Discarded
             var entityName = entityNames[i];
             var isFlatFile = branchIsFlatFile[i];
 
@@ -915,19 +1094,19 @@ public static partial class PackageGenerator
                 : entityName + "Transform";
 
             FlowSinkSpec? sink = null;
-            if (emittedDestinationRefIds.Add(branch.Destination.RefId))
+            if (emittedDestinationRefIds.Add(branchDestination.RefId))
             {
-                Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branch.Destination, nullableColumnNames));
+                Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branchDestination, nullableColumnNames));
                 if (isFlatFile)
                 {
-                    var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, branch.Destination, entityName, fileSourceEntries, gaps);
+                    var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, branchDestination, entityName, fileSourceEntries, gaps);
                     if (flatFileSink is null) return null; // ResolveFlatFileSink already added the reason
                     sink = flatFileSink;
                 }
                 else
                 {
-                    primaryKeysByDestination.TryGetValue(branch.Destination.RefId, out var primaryKey);
-                    branchTables.Add(new DbContextEmitter.TableSpec(entityName, branch.Destination, primaryKey));
+                    primaryKeysByDestination.TryGetValue(branchDestination.RefId, out var primaryKey);
+                    branchTables.Add(new DbContextEmitter.TableSpec(entityName, branchDestination, primaryKey));
                     sink = new SqlFlowSink();
                 }
             }
@@ -948,7 +1127,7 @@ public static partial class PackageGenerator
                 Pipeline: flow.Pipeline,
                 DerivedColumns: derivedColumns,
                 DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
-                DestinationComponent: branch.Destination,
+                DestinationComponent: branchDestination,
                 NullableColumnNames: nullableColumnNames));
             Merge(branchFiles, gaps, transformResult.Result);
             foreach (var fn in transformResult.SsisFunctionsUsed) branchFunctionsUsed.Add(fn);
@@ -967,7 +1146,7 @@ public static partial class PackageGenerator
 
             branches.Add(new ProgramMulticastBranch(branch.OutputName, entityName, branchTransformClassName, sink));
 
-            if (!isFlatFile && resolvedAuth is null && ResolveDatabaseAuth(package, branch.Destination) is { } auth)
+            if (!isFlatFile && resolvedAuth is null && ResolveDatabaseAuth(package, branchDestination) is { } auth)
                 resolvedAuth = auth;
         }
 
@@ -1098,11 +1277,23 @@ public static partial class PackageGenerator
     /// saved .dtsx -- the reference query, the reference columns, and each output column's own
     /// <c>CopyFromReferenceColumn</c> -- so no part of the generated output is guessed.
     ///
-    /// Deliberately narrow, matching the one shape that can be verified end to end today: a
-    /// single-destination SQL flow whose Lookup routes exactly one output onward. A Lookup that
-    /// also routes its no-match rows somewhere (RBC_Demo_ETL's own DFT_LookupAndAggregate does,
-    /// into a Multicast feeding an Aggregate) is a genuinely different, composed shape and is
-    /// gapped rather than half-generated.
+    /// Classifies every routed (non-error) output first (2026-09-02): a dead-end
+    /// <c>Microsoft.RowCount</c> -- one with no outgoing path of its own -- is a discarded,
+    /// non-fatal branch (advisory gap, mirroring <c>ResolveBranch</c>'s own Multicast-branch
+    /// advisory), not a hard failure; everything else is a candidate LIVE output, and exactly
+    /// one must survive. This is what closes RBC_Demo_ETL's own DFT_LookupAndAggregate: its
+    /// Lookup routes BOTH a Match output (live) and a No-Match output (a dead-end RowCount,
+    /// discarded) -- see this file's own CLAUDE.md entry for the full real-evidence account.
+    ///
+    /// The live output's own next hop then decides the shape:
+    /// - Goes straight to <see cref="DataFlowPlan.DestinationComponent"/> -- today's original,
+    ///   still most-common shape, completely unchanged.
+    /// - Goes into <see cref="DataFlowPlan.Multicast"/> (the SAME instance PlanMulticast already
+    ///   resolved, including recognizing ITS own dead-end/Aggregate branches) with exactly one
+    ///   live Multicast branch, feeding <see cref="DataFlowPlan.Aggregate"/> -- the new composed
+    ///   shape, delegated to <see cref="GenerateLookupThenAggregateFlow"/>.
+    /// - Anything else composed (Multicast leading straight to a destination with no Aggregate,
+    ///   or more than one live Multicast branch) is unevidenced and gapped rather than guessed.
     /// </summary>
     private static ProgramFlowSpec? GenerateLookupFlow(
         PackageSpec package, string ns, DataFlowPlan flow, PipelineComponentSpec lookup, string cacheClassName,
@@ -1124,19 +1315,40 @@ public static partial class PackageGenerator
             return null;
         }
 
-        // Exactly one non-error output may carry rows onward. Two means the no-match rows go
-        // somewhere too, which needs a second wired branch this shape does not generate.
-        var routedOutputs = lookup.Outputs
-            .Where(o => o.IsErrorOut != true && flow.Pipeline.Paths.Any(p => p.StartId == o.RefId))
-            .ToList();
-        if (routedOutputs.Count != 1)
+        PipelineOutputSpec? matchOutput = null;
+        PipelineComponentSpec? liveOutputNext = null;
+        var needsFiltering = false;
+        foreach (var output in lookup.Outputs.Where(o => o.IsErrorOut != true && flow.Pipeline.Paths.Any(p => p.StartId == o.RefId)))
         {
-            gaps.Add(new GenerationGap(flow.TaskName,
-                $"Lookup '{lookup.Name}' routes {routedOutputs.Count} outputs onward ({string.Join(", ", routedOutputs.Select(o => $"'{o.Name}'"))}) -- only a single routed output (match rows straight to one destination) is supported yet; a wired no-match branch is a composed shape this tool does not generate"));
-            return null;
+            var path = flow.Pipeline.Paths.First(p => p.StartId == output.RefId);
+            var next = flow.Pipeline.Components.FirstOrDefault(c => c.Inputs.Any(i => i.RefId == path.EndId));
+
+            if (next is not null && next.ComponentClassId == "Microsoft.RowCount"
+                && !flow.Pipeline.Paths.Any(p => next.Outputs.Any(o2 => o2.RefId == p.StartId)))
+            {
+                var variableName = next.Properties.FirstOrDefault(p => p.Name == "VariableName")?.Value;
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"Lookup '{lookup.Name}' output '{output.Name}' counts rows into '{variableName ?? "(unknown variable)"}' via RowCount '{next.Name}', which nothing else in this package reads -- this count is not reproduced in generated code",
+                    IsBlocking: false));
+                needsFiltering = true;
+                continue;
+            }
+
+            if (matchOutput is not null)
+            {
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"Lookup '{lookup.Name}' routes more than one output to real downstream processing ('{matchOutput.Name}', '{output.Name}') -- only a single live routed output is supported yet"));
+                return null;
+            }
+            matchOutput = output;
+            liveOutputNext = next;
         }
 
-        var matchOutput = routedOutputs[0];
+        if (matchOutput is null)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName, $"Lookup '{lookup.Name}' routes no output to real downstream processing -- not supported"));
+            return null;
+        }
 
         // The join key column has to exist on the Lookup's own input, or the confirmed decision
         // does not describe this package -- a stale decision reaching generation is exactly what
@@ -1176,6 +1388,47 @@ public static partial class PackageGenerator
 
         var entityName = TryResolveEntityName(flow.TaskName, flow.DestinationComponent, gaps);
         if (entityName is null) return null;
+
+        // The live output's own next hop tells us which shape this is. flow.Multicast, when
+        // populated, is the SAME instance PackagePlanner.PlanMulticast already fully resolved
+        // (including recognizing its own dead-end/Aggregate branches) -- reused directly rather
+        // than re-walked here, since ResolveBranch's hop-walk assumes a single linear chain per
+        // hop and a Multicast is a genuine fan-out.
+        var viaMulticast = flow.Multicast is not null && liveOutputNext is not null && liveOutputNext.RefId == flow.Multicast.Component.RefId;
+        if (viaMulticast)
+        {
+            var liveMulticastBranches = flow.Multicast!.Branches.Where(b => !b.Discarded).ToList();
+            if (liveMulticastBranches.Count != 1)
+            {
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"Multicast '{flow.Multicast.Component.Name}' downstream of Lookup '{lookup.Name}' has {liveMulticastBranches.Count} live branches -- only exactly one is supported for a Lookup+Multicast composed flow"));
+                return null;
+            }
+
+            if (flow.Aggregate is { } aggregatePlan)
+            {
+                return GenerateLookupThenAggregateFlow(package, ns, flow, lookup, cacheClassName, joinKey, keyType,
+                    outputToReference, aggregatePlan, entityName, fileSourceEntries, files, tables, functionsUsed,
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+            }
+
+            // Not evidenced anywhere (the one real case always goes through an Aggregate) --
+            // gapped rather than guessed at wiring a plain passthrough through a Multicast.
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Lookup '{lookup.Name}''s live output leads through Multicast '{flow.Multicast.Component.Name}' straight to a destination with no Aggregate downstream -- this composed shape is not evidenced and not supported yet"));
+            return null;
+        }
+
+        if (needsFiltering)
+        {
+            // A Lookup that redirects its no-match rows away, but whose live output goes
+            // straight to the destination with no Multicast at all, is also not evidenced --
+            // gapped rather than guessed at wiring a FilteringRowSource wrap for a shape nothing
+            // has ever exercised.
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Lookup '{lookup.Name}' redirects its no-match output away, but its live output goes straight to the destination with no Multicast/Aggregate downstream -- this shape is not evidenced and not supported yet"));
+            return null;
+        }
 
         var nullableColumnNames = ResolveNullableColumnNames(flow);
         var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames);
@@ -1263,25 +1516,145 @@ public static partial class PackageGenerator
             return null;
         }
 
-        // The source row's own counted column(s) are nullable BY CONSTRUCTION -- SSIS's own
-        // Count aggregation excludes NULL (measured via a real dtexec run, see
-        // AggregateCountSpec's own doc comment), so the generated `row.X != null` check must
-        // compile against a genuinely nullable property, not an inferred-non-nullable one.
-        var sourceNullableColumnNames = new HashSet<string>(aggregate.Counts.Select(c => c.SourceColumnName));
+        // The source row's own aggregated column(s) are nullable BY CONSTRUCTION -- every
+        // measured function (Count/CountDistinct/Sum/Average/Minimum/Maximum) excludes NULL from
+        // its own computation (see AggregatePayload's own doc comment), so the generated
+        // aggregation expression must compile against a genuinely nullable property, not an
+        // inferred-non-nullable one. CountAll's own column, when it has one, is included too --
+        // harmless, since CountAll never actually reads the value, only counts the row.
+        var sourceNullableColumnNames = new HashSet<string>(
+            aggregate.Functions.Select(f => f.SourceColumnName).Where(n => n is not null)!);
 
         var sourceRowBaseName = SanitizeIdentifier(aggregate.Component.Name) + "Source";
         var sourceResult = ResolveFlowSource(package, ns, sourceRowBaseName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, sourceNullableColumnNames);
         if (sourceResult is null) return null; // ResolveFlowSource already added the reason
         var (sourceRowTypeName, innerSource) = sourceResult.Value;
 
+        var emitted = EmitAggregateRowEntityAndTransform(package, ns, flow, aggregate, innerSource, sourceRowTypeName,
+            groupByType.ClrTypeName, entityName, lookupKey: null, lookupFilter: null, files, tables, functionsUsed,
+            primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+        if (emitted is null) return null;
+
+        return new ProgramFlowSpec(flow.TaskName, emitted.Value.Source, emitted.Value.RowTypeName, entityName, emitted.Value.TransformClassName, new SqlFlowSink());
+    }
+
+    /// <summary>
+    /// Generates a Lookup+Aggregate composed flow (2026-09-02) -- the real evidenced shape
+    /// (RBC_Demo_ETL's own DFT_LookupAndAggregate): a Lookup's live (Match) output feeds a
+    /// Multicast whose one live branch feeds an Aggregate, with every other Lookup/Multicast
+    /// output already classified as a discarded RowCount dead end by <see cref="GenerateLookupFlow"/>.
+    ///
+    /// The Aggregate's own GroupBy source column is usually the Lookup's own copied reference
+    /// column (e.g. "Region", from <paramref name="outputToReference"/> -- built from the Match
+    /// output's own CopyFromReferenceColumn properties, exactly like the plain single-output
+    /// Lookup path already uses), not a plain raw source-row property at all -- resolved here via
+    /// the Lookup's own reference query result set, the same type-resolution
+    /// <c>LookupCacheEmitter</c> already uses for every OTHER reference column. Falls back to the
+    /// raw source's own column (the same resolution <see cref="GenerateAggregateFlow"/> uses) when
+    /// it isn't a Lookup-copied column, so a GroupBy on a genuinely plain passthrough column
+    /// downstream of this Lookup still works.
+    ///
+    /// A Lookup miss is EXCLUDED from the aggregate entirely (never grouped under a null/sentinel
+    /// key) whenever <see cref="GenerateLookupFlow"/> found a discarded no-match branch --
+    /// independent of whether the GroupBy value itself is Lookup-derived, see
+    /// <see cref="AggregateFlowSource.LookupFilter"/>'s own doc comment.
+    /// </summary>
+    private static ProgramFlowSpec? GenerateLookupThenAggregateFlow(
+        PackageSpec package, string ns, DataFlowPlan flow, PipelineComponentSpec lookup, string cacheClassName,
+        (string InputColumn, string ReferenceColumn) joinKey, SsisPipelineType keyType,
+        Dictionary<string, string> outputToReference, AggregatePlan aggregate, string entityName,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
+        HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase, bool emitSeams)
+    {
+        var lookupVariableName = LowerFirst(cacheClassName);
+
+        AggregateLookupKeySpec? lookupKey = null;
+        string? groupByClrType = null;
+        if (outputToReference.TryGetValue(aggregate.GroupBySourceColumnName, out var groupByReferenceColumn))
+        {
+            var referenceColumnSpec = lookup.Lookup!.ReferenceColumns.FirstOrDefault(c => c.Name == groupByReferenceColumn);
+            var resolved = referenceColumnSpec is null ? null : SsisPipelineTypeMap.Resolve(CsvRowEmitter.ToPipelineTypeKey(referenceColumnSpec.DataType ?? ""));
+            if (resolved is not null)
+            {
+                groupByClrType = resolved.ClrTypeName;
+                lookupKey = new AggregateLookupKeySpec(lookupVariableName, joinKey.InputColumn, groupByReferenceColumn);
+            }
+        }
+        if (groupByClrType is null && flow.OleDbSource is { } sqlSourceComponent)
+        {
+            var sourceOutput = sqlSourceComponent.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            groupByClrType = sourceOutput is null
+                ? null
+                : PipelineResolver.Resolve(sourceOutput).Columns.FirstOrDefault(c => c.PipelineColumnName == aggregate.GroupBySourceColumnName)?.Type?.ClrTypeName;
+        }
+        if (groupByClrType is null)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Aggregate '{aggregate.Component.Name}': GroupBy source column '{aggregate.GroupBySourceColumnName}' could not be resolved to a CLR type (neither a Lookup-copied reference column nor a plain source column)"));
+            return null;
+        }
+
+        var sourceNullableColumnNames = new HashSet<string>(
+            aggregate.Functions.Select(f => f.SourceColumnName).Where(n => n is not null)!);
+        var sourceRowBaseName = SanitizeIdentifier(aggregate.Component.Name) + "Source";
+        var sourceResult = ResolveFlowSource(package, ns, sourceRowBaseName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, sourceNullableColumnNames);
+        if (sourceResult is null) return null; // ResolveFlowSource already added the reason
+        var (sourceRowTypeName, innerSource) = sourceResult.Value;
+
+        // A discarded no-match branch means SOME rows genuinely miss the Lookup -- exclude them
+        // from the aggregate entirely, regardless of whether lookupKey above is set (see
+        // AggregateFlowSource.LookupFilter's own doc comment on why these are independent axes).
+        (string LookupVariableName, string JoinInputPropertyName)? lookupFilter =
+            (lookupVariableName, joinKey.InputColumn);
+
+        var emitted = EmitAggregateRowEntityAndTransform(package, ns, flow, aggregate, innerSource, sourceRowTypeName,
+            groupByClrType, entityName, lookupKey, lookupFilter, files, tables, functionsUsed,
+            primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+        if (emitted is null) return null;
+
+        var preload = new LookupPreload(
+            VariableName: lookupVariableName,
+            CacheClassName: cacheClassName,
+            KeyClrType: keyType.ClrTypeName,
+            ReferenceKeyColumn: joinKey.ReferenceColumn);
+
+        // The transform is a plain TrustAllPassthroughColumns mapping (EmitAggregateRowEntityAndTransform
+        // never passes a LookupJoin) -- the cache is already fully consumed upstream, by
+        // AggregateFlowSource's own key selector/filter, so it takes no constructor argument.
+        return new ProgramFlowSpec(flow.TaskName, emitted.Value.Source, emitted.Value.RowTypeName, entityName, emitted.Value.TransformClassName, new SqlFlowSink(), preload, TransformNeedsLookupCache: false);
+    }
+
+    /// <summary>Shared core of an Aggregate flow's own row/entity/transform emission -- reused by
+    /// both <see cref="GenerateAggregateFlow"/>'s standalone (SQL-sourced) shape and
+    /// <see cref="GenerateLookupThenAggregateFlow"/>'s composed shape, which differ only in how
+    /// the raw source and GroupBy CLR type are resolved before this point (and whether a Lookup
+    /// cache is involved at all). Returns the ready-to-wrap <see cref="AggregateFlowSource"/>
+    /// alongside the row type/transform class names <c>ProgramFlowSpec</c> needs, or null with
+    /// the reason already added to <paramref name="gaps"/>.</summary>
+    private static (AggregateFlowSource Source, string RowTypeName, string TransformClassName)? EmitAggregateRowEntityAndTransform(
+        PackageSpec package, string ns, DataFlowPlan flow, AggregatePlan aggregate, FlowSourceSpec innerSource, string sourceRowTypeName,
+        string groupByClrType, string entityName, AggregateLookupKeySpec? lookupKey, (string LookupVariableName, string JoinInputPropertyName)? lookupFilter,
+        List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
+        Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase, bool emitSeams)
+    {
         var aggregateRowTypeName = entityName + "AggregateRow";
-        Merge(files, gaps, AggregateRowEmitter.Emit($"{ns}.Sql", aggregateRowTypeName, aggregate.Component));
+        Merge(files, gaps, AggregateRowEmitter.Emit($"{ns}.Sql", aggregateRowTypeName, aggregate));
 
-        var counts = aggregate.Counts.Select(c => new AggregateCountFieldSpec(c.OutputColumnName, c.SourceColumnName)).ToList();
+        var functions = aggregate.Functions
+            .Select(f => new AggregateFunctionFieldSpec(f.OutputColumnName, f.SourceColumnName, f.AggregationTypeRaw))
+            .ToList();
         var aggregateSource = new AggregateFlowSource(aggregate.Component.Name, innerSource, sourceRowTypeName,
-            aggregate.GroupByOutputColumnName, groupByType.ClrTypeName, counts);
+            aggregate.GroupByOutputColumnName, groupByClrType, functions, lookupKey, lookupFilter);
 
-        Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent));
+        // The destination entity's own Sum/Average/Minimum/Maximum property must be nullable too
+        // (see AggregateRowEmitter.NullableAggregationTypes' own doc comment for why) -- a plain
+        // TrustAllPassthroughColumns assignment from the (now nullable) aggregate row property
+        // would otherwise fail to compile.
+        var entityNullableColumnNames = new HashSet<string>(
+            aggregate.Functions.Where(f => AggregateRowEmitter.NullableAggregationTypes.Contains(f.AggregationTypeRaw)).Select(f => f.OutputColumnName));
+        Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, entityNullableColumnNames));
 
         var transformClassName = entityName + "Transform";
         var transformResult = TransformEmitter.Emit(new TransformRequest(
@@ -1313,7 +1686,7 @@ public static partial class PackageGenerator
         if (authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
             (authMode, userId, targetServer, targetDatabase) = auth;
 
-        return new ProgramFlowSpec(flow.TaskName, aggregateSource, aggregateRowTypeName, entityName, transformClassName, new SqlFlowSink());
+        return (aggregateSource, aggregateRowTypeName, transformClassName);
     }
 
     /// <summary>Resolves an OLE DB or ADO NET Source into a SqlFlowSource -- dispatches to
@@ -1391,28 +1764,35 @@ public static partial class PackageGenerator
         }
     }
 
-    /// <summary>Matches a bare "SELECT * FROM [SheetName$]" -- optionally without brackets, with
-    /// a trailing semicolon -- and captures the sheet reference (including its own trailing
-    /// "$"). This is deliberately the ONLY SqlCommand shape this tool ever translates for an
-    /// Excel Source: <c>Etl.Core.Excel.ExcelRowSource</c> is an ExcelDataReader-backed grid
-    /// reader with no query engine at all (see that type's own doc comment) -- it can select a
-    /// worksheet by name, nothing more. A WHERE clause, column list, JOIN, or range address
-    /// (e.g. "[Sheet1$A1:C10]") has no way to execute against that reader and is a named gap,
-    /// never guessed.</summary>
-    [GeneratedRegex(@"^SELECT\s+\*\s+FROM\s+\[?([^\[\]\s]+\$)\]?\s*;?\s*$", RegexOptions.IgnoreCase)]
-    private static partial Regex BareSelectStarFromSheetPattern();
+    /// <summary>Matches "SELECT * FROM [SheetName$]" -- optionally without brackets, with a
+    /// trailing semicolon, and, since gap-audit Phase 3.4 (2026-09-02), an optional trailing
+    /// "WHERE ..." clause -- capturing the sheet reference (including its own trailing "$") and
+    /// the raw WHERE text (if any, everything between WHERE and the end/semicolon).
+    ///
+    /// The column list itself must still be a bare "*" -- this is deliberately the only column-
+    /// list shape this tool ever translates for an Excel Source, and it is a PERMANENT ceiling,
+    /// not a temporary limitation: see <see cref="ExcelWhereClauseTranslator"/>'s own doc comment
+    /// for why an explicit column list (narrowing or reordering) cannot be safely reproduced by
+    /// <c>Etl.Core.Excel.ExcelRowSource</c>'s architecture at all, confirmed via a real raw
+    /// OleDb probe. A JOIN or range address (e.g. "[Sheet1$A1:C10]") is likewise a named gap,
+    /// never guessed -- <see cref="ExcelWhereClauseTranslator"/> is what actually translates the
+    /// WHERE half, once matched here.</summary>
+    [GeneratedRegex(@"^SELECT\s+\*\s+FROM\s+\[?(?<sheet>[^\[\]\s]+\$)\]?(?:\s+WHERE\s+(?<where>.+?))?\s*;?\s*$", RegexOptions.IgnoreCase)]
+    private static partial Regex ExcelSelectStarPattern();
 
     /// <summary>Resolves an Excel Source into an <see cref="ExcelFlowSource"/>. AccessMode=0
     /// (OpenRowset, i.e. a worksheet) is the one evidenced value across the tracked portfolio.
     /// AccessMode=2 (SqlCommand) -- built SPECULATIVELY 2026-08-30, no real package needs it --
-    /// is accepted ONLY when the SQL text is a bare <see cref="BareSelectStarFromSheetPattern"/>
-    /// match, functionally equivalent to naming the worksheet directly (confirmed via a raw
+    /// is accepted ONLY when the column list is a bare "*" (see <see cref="ExcelSelectStarPattern"/>'s
+    /// own doc comment for why an explicit column list is a permanent, not temporary, ceiling),
+    /// functionally equivalent to naming the worksheet directly (confirmed via a raw
     /// System.Data.OleDb probe against the real checked-in workbook: the real ACE OLEDB provider
     /// returns the identical 9 rows/3 columns for "SELECT * FROM [DripEligibility$]" as it does
-    /// for the bare worksheet OpenRowset) -- any other Jet/ACE SQL shape (see
-    /// <see cref="ExcelSourcePayload"/>'s own doc comment) is a named gap, never guessed. The
-    /// worksheet's own header-row setting (Extended Properties=HDR=YES/NO) lives on the EXCEL
-    /// connection manager, not the component -- resolved from
+    /// for the bare worksheet OpenRowset), optionally followed by a WHERE clause (gap-audit Phase
+    /// 3.4, 2026-09-02 -- see <see cref="ExcelWhereClauseTranslator"/>). Any other Jet/ACE SQL
+    /// shape (see <see cref="ExcelSourcePayload"/>'s own doc comment) is a named gap, never
+    /// guessed. The worksheet's own header-row setting (Extended Properties=HDR=YES/NO) lives on
+    /// the EXCEL connection manager, not the component -- resolved from
     /// <see cref="ParsedConnectionString.Extras"/>, the generic pass-through capture every
     /// OLEDB-shaped connection string already gets for a segment with no bespoke field. That
     /// capture has a real, benign quirk here: "Extended Properties=&quot;EXCEL 12.0
@@ -1427,6 +1807,7 @@ public static partial class PackageGenerator
         var payload = source.ExcelSource!;
 
         string worksheetName;
+        string? whereFilter = null;
         if (payload.AccessMode is null or 0)
         {
             if (string.IsNullOrEmpty(payload.OpenRowset))
@@ -1438,17 +1819,40 @@ public static partial class PackageGenerator
         }
         else if (payload.AccessMode == 2)
         {
-            var match = string.IsNullOrEmpty(payload.SqlCommand) ? null : BareSelectStarFromSheetPattern().Match(payload.SqlCommand.Trim());
+            var match = string.IsNullOrEmpty(payload.SqlCommand) ? null : ExcelSelectStarPattern().Match(payload.SqlCommand.Trim());
             if (match is not { Success: true })
             {
-                gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has AccessMode=2 (SqlCommand) with a query this tool cannot translate -- this generator's ExcelRowSource has no query engine, only a worksheet-name reader, so only a bare 'SELECT * FROM [SheetName$]' is supported; a WHERE clause, column list, JOIN, or range address is not."));
+                gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has AccessMode=2 (SqlCommand) with a query this tool cannot translate -- this generator's ExcelRowSource has no query engine, only a worksheet-name reader, so only 'SELECT * FROM [SheetName$]' optionally followed by a WHERE clause is supported; a column list, JOIN, or range address is not."));
                 return null;
             }
-            worksheetName = match.Groups[1].Value;
+            worksheetName = match.Groups["sheet"].Value;
+
+            if (match.Groups["where"] is { Success: true } whereGroup)
+            {
+                var output = source.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+                var columnTypes = output is null
+                    ? null
+                    : PipelineResolver.Resolve(output).Columns
+                        .Where(c => c.Type is not null)
+                        .ToDictionary(c => c.PipelineColumnName, c => c.Type!.ClrTypeName, StringComparer.OrdinalIgnoreCase);
+                if (columnTypes is null)
+                {
+                    gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has a WHERE clause but its own output columns could not be resolved to translate it against"));
+                    return null;
+                }
+
+                var (expression, translateGap) = ExcelWhereClauseTranslator.Translate(whereGroup.Value, columnTypes);
+                if (translateGap is not null)
+                {
+                    gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' {translateGap}"));
+                    return null;
+                }
+                whereFilter = expression;
+            }
         }
         else
         {
-            gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has AccessMode={payload.AccessMode} -- only OpenRowset (0) or a bare 'SELECT * FROM [SheetName$]' SqlCommand (2) are supported yet"));
+            gaps.Add(new GenerationGap(taskName, $"Excel Source '{source.Name}' has AccessMode={payload.AccessMode} -- only OpenRowset (0) or a 'SELECT * FROM [SheetName$]' [WHERE ...] SqlCommand (2) are supported yet"));
             return null;
         }
 
@@ -1469,7 +1873,7 @@ public static partial class PackageGenerator
             hasHeaderRow = found.Value.TrimEnd('"').Equals("YES", StringComparison.OrdinalIgnoreCase);
         }
 
-        return new ExcelFlowSource(source.Name, fileSourceKey, worksheetName, hasHeaderRow);
+        return new ExcelFlowSource(source.Name, fileSourceKey, worksheetName, hasHeaderRow, whereFilter);
     }
 
     /// <summary>ADO NET Source's own AccessMode enum is not reverse-engineered (see
@@ -1742,10 +2146,10 @@ public static partial class PackageGenerator
         var flow = loop.Flow;
 
         if (flow.Lookup is not null || flow.ConditionalSplit is not null || flow.MergeJoin is not null
-            || flow.Multicast is not null || flow.OleDbCommand is not null)
+            || flow.Multicast is not null || flow.OleDbCommand is not null || flow.Union is not null)
         {
             gaps.Add(new GenerationGap(loop.TaskName,
-                $"{flow.TaskName}: ForEach Loop's own Data Flow Task body uses a Lookup/Conditional Split/Merge Join/Multicast/OLE DB Command -- only a plain single-destination flow is supported inside a loop body yet"));
+                $"{flow.TaskName}: ForEach Loop's own Data Flow Task body uses a Lookup/Conditional Split/Merge Join/Multicast/OLE DB Command/multi-source Merge-UnionAll -- only a plain single-destination flow is supported inside a loop body yet"));
             return null;
         }
 

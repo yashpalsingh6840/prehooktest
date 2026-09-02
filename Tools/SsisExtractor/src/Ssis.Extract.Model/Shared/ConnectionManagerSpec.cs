@@ -47,6 +47,17 @@ public sealed class ConnectionManagerSpec
 
     /// <summary>Populated only when <see cref="CreationName"/> is FLATFILE or MULTIFLATFILE.</summary>
     public FlatFileFormatSpec? FlatFileFormat { get; init; }
+
+    /// <summary>
+    /// Names of sensitive child properties (e.g. <c>Password</c>) found with
+    /// <c>Encrypted="1"</c> in the raw XML -- i.e. a <c>ProtectionLevel</c> that DPAPI-encrypts
+    /// sensitive values (<c>EncryptSensitiveWithUserKey</c>) rather than stripping them at
+    /// deploy time. The ciphertext itself is NEVER extracted (same redaction discipline as a
+    /// plaintext <c>Password=</c> segment in <see cref="ConnectionString"/>) -- only that the
+    /// value existed and is undecryptable outside the original author's Windows account. Empty
+    /// when the connection manager carries no such node.
+    /// </summary>
+    public List<string> EncryptedProperties { get; init; } = [];
 }
 
 /// <summary>

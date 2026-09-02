@@ -208,11 +208,33 @@ public sealed class ExcelSourcePayload
 /// <c>OLECMD_SetFlag</c>: <c>EXEC dbo.usp_SetCustomerFlag ?, N'flagged'</c>). Unlike every
 /// other bespoke destination-shaped payload in this file, this component has NO destination
 /// table at all -- it executes <see cref="SqlCommand"/> once per input row, with each
-/// <c>?</c> placeholder bound positionally to the matching entry in <see cref="Parameters"/>
-/// (the component's own <c>&lt;inputColumns&gt;</c>, in declaration order -- confirmed real
-/// from the evidenced XML). <see cref="ParameterMapping"/> is kept as raw text purely so
-/// codegen can detect a non-empty value and report a gap rather than guess a remapping --
-/// the one evidenced instance leaves it empty, relying on the declaration-order default.
+/// <c>?</c> placeholder bound to one input column.
+///
+/// <para><b>Real binding order, corrected 2026-09-02 (gap-audit Phase 3.1), TWICE in one
+/// round:</b> the original 2026-08-28 doc comment here claimed binding order was "the
+/// component's own &lt;inputColumns&gt;, in declaration order" -- true only by coincidence for
+/// the single-parameter case that was the only evidence available then. A live SSIS 16.0/2022
+/// object-model probe (two parameters, deliberately attached in the OPPOSITE declaration order
+/// from their own placeholder position) proved that's wrong in general. The first fix tried
+/// resolving order from a <c>Param_&lt;N&gt;</c> numeric suffix on each bound external column's
+/// own name -- which then REGRESSED the one real evidenced instance above, because a real
+/// EXEC-stored-procedure call's external column is named after the procedure's own parameter
+/// (<c>"@CustomerID"</c>), not <c>"Param_0"</c>. A second probe (a real 2-parameter stored
+/// procedure, columns again attached out of order) proved the actually-reliable signal is
+/// simpler and covers both shapes: each bound external column's own INDEX within the input's
+/// <c>&lt;externalMetadataColumns&gt;</c> list, in the order <c>ReinitializeMetaData</c> itself
+/// saved them -- confirmed to already be the true call/parameter order in both the positional
+/// and the named-parameter case, independent of both &lt;inputColumns&gt; declaration order and
+/// of whether the external column's own name encodes a position at all.
+/// <see cref="ColumnMappings"/> (built the same way <see cref="OleDbSourcePayload.ColumnMappings"/>
+/// is) carries each input column's own bound external column NAME; codegen resolves true
+/// position by looking that name up in the input's own external-column list order.</para>
+///
+/// <para><see cref="ParameterMapping"/> was also probed the same session and found to never
+/// be populated at all -- not merely empty, genuinely absent from the saved XML even under a
+/// deliberately non-default binding. It appears to be dead/vestigial metadata for this SSIS
+/// version, not the real carrier of order; kept only so codegen can still treat a future,
+/// unevidenced non-empty value as a named gap rather than silently ignoring it.</para>
 /// </summary>
 public sealed class OleDbCommandPayload
 {
@@ -221,8 +243,17 @@ public sealed class OleDbCommandPayload
     public string? ParameterMapping { get; init; }
     public int? CommandTimeout { get; init; }
 
-    /// <summary>The command's own input columns, in declaration order -- position N binds to the Nth <c>?</c> placeholder in <see cref="SqlCommand"/> when <see cref="ParameterMapping"/> is empty.</summary>
+    /// <summary>The command's own input columns, in raw declaration order -- kept for backward
+    /// compatibility and diagnostics, but NOT a reliable source of placeholder binding order.
+    /// Use <see cref="ColumnMappings"/> for that.</summary>
     public List<OleDbCommandParameterSpec> Parameters { get; init; } = [];
+
+    /// <summary>Input columns ↔ external <c>Param_N</c> columns, built from the main input's
+    /// columns against their own <c>externalMetadataColumns</c> -- same construction as
+    /// <see cref="OleDbSourcePayload.ColumnMappings"/>. <see cref="PipelineColumnMappingSpec.ExternalColumnName"/>
+    /// is the real, position-bearing name (<c>"Param_0"</c>, <c>"Param_1"</c>, ...); codegen
+    /// resolves the numeric suffix to determine true placeholder order.</summary>
+    public List<PipelineColumnMappingSpec> ColumnMappings { get; init; } = [];
 }
 
 public sealed class OleDbCommandParameterSpec
@@ -515,28 +546,64 @@ public sealed class MergeJoinOutputColumnSpec
 }
 
 /// <summary>
-/// <c>Microsoft.Aggregate</c>, built speculatively 2026-08-30: RBC_Demo_ETL's own real instance
-/// (<c>DFT_LookupAndAggregate\AGG_ByRegion</c>) sits downstream of a <c>Microsoft.Lookup</c> that
-/// already blocks the whole flow regardless of Aggregate support (confirmed twice by re-surveying
-/// the tracked portfolio), so this was built on the user's own explicit request rather than to
-/// close a real gap. <see cref="AggregateColumnSpec.AggregationTypeRaw"/>'s own enum has no public
-/// Microsoft SDK reference and no managed CLR type backs it (confirmed by reflecting every loaded
-/// assembly and finding nothing named <c>AggregationType</c>) -- its two evidenced values (0 for
-/// the GroupBy column, 1 for a Count column, from <c>AGG_ByRegion</c>'s own real saved XML) were
-/// confirmed via a genuine dtexec run, not guessed: seed data with one NULL in the counted column
-/// showed AggregationType=1 excludes NULLs, matching ordinary SQL <c>COUNT(column)</c> semantics
-/// rather than <c>COUNT(*)</c>. Any other AggregationType value (Sum/Average/Minimum/Maximum/
-/// CountDistinct/CountAll) is a named generation gap, not attempted -- none is evidenced anywhere
-/// in the tracked portfolio, and none was measured.
+/// <c>Microsoft.Aggregate</c>, built speculatively 2026-08-30 (GroupBy/Count only): RBC_Demo_ETL's
+/// own real instance (<c>DFT_LookupAndAggregate\AGG_ByRegion</c>) sits downstream of a
+/// <c>Microsoft.Lookup</c> that already blocks the whole flow regardless of Aggregate support
+/// (confirmed twice by re-surveying the tracked portfolio), so this was built on the user's own
+/// explicit request rather than to close a real gap. <see cref="AggregateColumnSpec.AggregationTypeRaw"/>'s
+/// own enum has no public Microsoft SDK reference and no managed CLR type backs it (confirmed by
+/// reflecting every loaded assembly and finding nothing named <c>AggregationType</c>, and by
+/// directly probing every string in {"GroupBy","Sum","Average","Min","Max","Count",
+/// "CountDistinct","CountAll",...} against the live COM property -- every one REJECTED with
+/// <c>0xC0204006</c>, confirming this is a pure native int enum with no string-coercion path at
+/// all).
+///
+/// <para><b>Widened 2026-09-02 (gap-audit Phase 3.3) to the full raw-value mapping, measured via a
+/// dedicated live dtexec probe</b> (deliberately distinguishing seed data -- a group with a NULL, a
+/// duplicate value, and a wide numeric spread so Sum/Average/Min/Max/CountDistinct/CountAll could
+/// never coincidentally collide -- see <c>PackagePlanner.PlanAggregate</c>'s own doc comment and
+/// <c>Ssis.Extract.FixtureBuilder</c>'s temporary <c>aggregate-type-semantics-probe</c> mode):</para>
+/// <list type="bullet">
+/// <item><b>0 = GroupBy.</b></item>
+/// <item><b>1 = Count</b> -- excludes NULL (ordinary SQL <c>COUNT(column)</c>), confirmed
+/// 2026-08-30. Output type <c>DT_UI8</c>, never null.</item>
+/// <item><b>2 = CountAll</b> -- includes every row regardless of NULL (a genuine
+/// <c>COUNT(*)</c>), and is the ONE function SSIS accepts with no <c>AggregationColumnId</c> at
+/// all (confirmed: setting AggregationType=2 with no column reference is accepted and produces
+/// the identical row count as a column-qualified CountAll). Output type <c>DT_UI8</c>, never
+/// null.</item>
+/// <item><b>3 = CountDistinct</b> -- excludes NULL, dedups non-null values (ordinary SQL
+/// <c>COUNT(DISTINCT column)</c>). Output type <c>DT_UI4</c> (narrower than Count/CountAll's own
+/// UI8 -- confirmed real, not assumed uniform), never null.</item>
+/// <item><b>4 = Sum</b> -- excludes NULL; <b>returns NULL, not 0, when a group has zero non-null
+/// values</b> (confirmed via a dedicated all-NULL group -- this is SQL semantics, NOT .NET LINQ's
+/// own <c>Enumerable.Sum</c> behavior over a nullable sequence, which was independently verified
+/// in this same round to return 0 for an all-null/empty sequence -- so generated code needs an
+/// explicit guard here, unlike Average/Min/Max below). Output type depends on the SOURCE column's
+/// own type: widens an integer source to <c>DT_I8</c>, promotes a float source to <c>DT_R8</c>
+/// (both confirmed real, not assumed to always promote to float).</item>
+/// <item><b>5 = Average</b> -- excludes NULL; NULL for an all-NULL group. Output type is ALWAYS
+/// <c>DT_R8</c>, regardless of the source column's own type (confirmed: an INT source still
+/// produces a DT_R8 average, unlike Sum's own type-dependent promotion) -- and .NET's own
+/// <c>Enumerable.Average</c> over a nullable sequence already returns null for an all-null/empty
+/// sequence, so no explicit guard is needed in generated code, unlike Sum.</item>
+/// <item><b>6 = Minimum</b>, <b>7 = Maximum</b> -- excludes NULL; NULL for an all-NULL group
+/// (confirmed for both a float and an integer source column -- output type PRESERVES the source
+/// column's own type in both cases, e.g. an INT source yields a DT_I4 Minimum/Maximum). .NET's
+/// own <c>Enumerable.Min</c>/<c>Max</c> over a nullable sequence already return null for an
+/// all-null/empty sequence, matching this exactly -- no explicit guard needed.</item>
+/// </list>
+/// <para>Any other raw value is a named generation gap, never a guess.</para>
 /// </summary>
 public sealed class AggregatePayload
 {
     public List<AggregateColumnSpec> Columns { get; init; } = [];
 }
 
-/// <summary>One output column of an Aggregate component -- either the GroupBy key
-/// (<see cref="AggregationTypeRaw"/> == 0) or a Count column (== 1). Every other value is a
-/// generation gap, see <see cref="AggregatePayload"/>'s own doc comment.</summary>
+/// <summary>One output column of an Aggregate component -- the GroupBy key
+/// (<see cref="AggregationTypeRaw"/> == 0) or one of the seven measured aggregation functions
+/// (1-7, see <see cref="AggregatePayload"/>'s own doc comment for the full mapping). Every other
+/// value is a generation gap.</summary>
 public sealed class AggregateColumnSpec
 {
     public required string OutputColumnName { get; init; }
@@ -549,4 +616,27 @@ public sealed class AggregateColumnSpec
     public string? SourceColumnLineageId { get; init; }
 
     public int? AggregationTypeRaw { get; init; }
+}
+
+/// <summary>
+/// <c>Microsoft.RowCount</c> -- added 2026-09-02 (gap-audit Phase 3.2). A pure synchronous
+/// passthrough (confirmed real: its own saved <c>&lt;output&gt;</c> carries
+/// <c>synchronousInputId</c>, and a downstream destination's own columns resolve by lineageId
+/// straight past it to the true upstream producer, the same rule every other untouched
+/// passthrough transform in this tool already follows -- so this payload carries no column
+/// information at all, only the one real side effect: writing the number of rows that reached
+/// it into a package variable.
+///
+/// <see cref="VariableName"/> is a plain <c>System.String</c> custom property (e.g.
+/// <c>"User::MatchedRows"</c>), confirmed directly from RBC_Demo_ETL's own real, SSDT-authored
+/// <c>Package_Transforms.dtsx</c> -- no live probe needed for this fact, since a real evidenced
+/// file already settles it. What DID need a live SSIS 16.0/2022 dtexec probe (measured, not
+/// assumed): that the count really is "rows that reached this specific component" -- proven by
+/// a mid-chain RowCount feeding a real downstream destination, with a post-flow Script Task
+/// reading the variable back and logging it, matching the destination's own actual row count
+/// exactly.
+/// </summary>
+public sealed class RowCountPayload
+{
+    public string? VariableName { get; init; }
 }

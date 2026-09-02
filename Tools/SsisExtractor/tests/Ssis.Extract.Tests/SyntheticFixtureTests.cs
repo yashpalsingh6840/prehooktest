@@ -117,6 +117,51 @@ public class SyntheticFixtureTests
     }
 
     [Fact]
+    public void ConnectionManager_ReadConnectionManager_DetectsEncryptedPropertyDirectly()
+    {
+        // Direct unit test rather than a full .dtsx fixture: constructs the one XML shape
+        // confirmed real against SSIS_From_Sandeep/RBC_Demo_ETL/RBC_Demo_ETL/Package_Advanced.dtsx
+        // -- a <DTS:Password Sensitive="1" Encrypted="1"> node persisted by
+        // EncryptSensitiveWithUserKey -- and calls the reader directly via InternalsVisibleTo,
+        // the same pattern ScriptTask_ReadScriptTask_DetectsSourceStrippedFromObjectDataDirectly
+        // uses above. No synthetic fixture builder can produce real DPAPI ciphertext, so there is
+        // no full .dtsx to build this from.
+        var cmEl = System.Xml.Linq.XElement.Parse("""
+            <DTS:ConnectionManager xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+                DTS:ObjectName="CM_TargetDb" DTS:CreationName="OLEDB" DTS:DTSID="{C43B25F8-2685-4555-A052-CF8FF8B65E7A}">
+              <DTS:ObjectData>
+                <DTS:ConnectionManager DTS:ConnectionString="Data Source=localhost,1433;User ID=sa;Initial Catalog=SSISDemo;Provider=MSOLEDBSQL.1;Persist Security Info=True;">
+                  <DTS:Password DTS:Name="Password" Sensitive="1" Encrypted="1">AQAAANCMnd8B...ciphertext...</DTS:Password>
+                </DTS:ConnectionManager>
+              </DTS:ObjectData>
+            </DTS:ConnectionManager>
+            """);
+
+        var spec = DtsxPackageReader.ReadConnectionManager(cmEl, noRedact: false);
+
+        Assert.Equal(["Password"], spec.EncryptedProperties);
+        // The ciphertext itself must never be extracted -- only that the property existed.
+        Assert.DoesNotContain("ciphertext", spec.ConnectionString);
+    }
+
+    [Fact]
+    public void ConnectionManager_ReadConnectionManager_LeavesEncryptedPropertiesEmpty_WhenNoneEncrypted()
+    {
+        var cmEl = System.Xml.Linq.XElement.Parse("""
+            <DTS:ConnectionManager xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+                DTS:ObjectName="CM_Plain" DTS:CreationName="OLEDB" DTS:DTSID="{00000000-0000-0000-0000-000000000000}">
+              <DTS:ObjectData>
+                <DTS:ConnectionManager DTS:ConnectionString="Data Source=.;Initial Catalog=Foo;Integrated Security=SSPI;" />
+              </DTS:ObjectData>
+            </DTS:ConnectionManager>
+            """);
+
+        var spec = DtsxPackageReader.ReadConnectionManager(cmEl, noRedact: false);
+
+        Assert.Empty(spec.EncryptedProperties);
+    }
+
+    [Fact]
     public void ScriptTask_And_ForEachLoop_TriggerTheirRewriteEffortRules()
     {
         var package = DtsxPackageReader.Read(ForEachScriptPath, noRedact: false);

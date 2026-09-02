@@ -152,7 +152,7 @@ public static partial class DtsxPackageReader
 
     // ---- Control flow (plan §4.5-§4.6) ----
 
-    private sealed class CoverageAccumulator
+    internal sealed class CoverageAccumulator
     {
         public int Unmapped;
         public int Excluded;
@@ -201,6 +201,7 @@ public static partial class DtsxPackageReader
         UnmappedTaskPayload? unmappedPayload = null;
         ScriptTaskPayload? scriptTaskPayload = null;
         FileSystemTaskPayload? fileSystemTaskPayload = null;
+        ExecutePackageTaskPayload? executePackageTaskPayload = null;
 
         var objectData = exEl.Element(Dts + "ObjectData");
         if (objectData is not null)
@@ -212,6 +213,10 @@ public static partial class DtsxPackageReader
             else if (executableType == "Microsoft.FileSystemTask")
             {
                 fileSystemTaskPayload = ReadFileSystemTask(objectData, cmDtsIdToName);
+            }
+            else if (executableType == "Microsoft.ExecutePackageTask")
+            {
+                executePackageTaskPayload = ReadExecutePackageTask(objectData, cmDtsIdToName, coverage);
             }
             else if (executableType == "Microsoft.Pipeline")
             {
@@ -282,6 +287,7 @@ public static partial class DtsxPackageReader
             ScriptTask = scriptTaskPayload,
             ForEachLoop = forEachLoopPayload,
             FileSystemTask = fileSystemTaskPayload,
+            ExecutePackageTask = executePackageTaskPayload,
         };
     }
 
@@ -319,6 +325,51 @@ public static partial class DtsxPackageReader
             DestinationConnectionName = destConnectionName,
             OverwriteDestination = el.AttrBool("TaskOverwriteDestFile"),
         };
+    }
+
+    /// <summary>
+    /// <c>Microsoft.ExecutePackageTask</c>'s own unqualified <c>&lt;ExecutePackageTask&gt;</c> --
+    /// unlike <c>&lt;FileSystemData&gt;</c>/<c>&lt;ScriptProject&gt;</c>, its own children are
+    /// ELEMENTS (<c>&lt;PackageName&gt;value&lt;/PackageName&gt;</c>), not attributes -- confirmed
+    /// via a live object-model round trip, see <see cref="ExecutePackageTaskPayload"/>'s own doc
+    /// comment. Any <c>&lt;ParameterAssignments&gt;</c> content (project-reference parameter
+    /// bindings) is deliberately not modeled -- bumps <paramref name="coverage"/> instead of being
+    /// silently swept into "covered", the same discipline the ForEach Loop enumerator/pipeline
+    /// output-property fixes established for exactly this failure shape.
+    /// </summary>
+    internal static ExecutePackageTaskPayload ReadExecutePackageTask(XElement objectData, Dictionary<string, string> cmDtsIdToName, CoverageAccumulator coverage)
+    {
+        var el = objectData.Element("ExecutePackageTask");
+        if (el is null) return new ExecutePackageTaskPayload();
+
+        var paramAssignments = el.Element("ParameterAssignments");
+        if (paramAssignments is not null)
+        {
+            coverage.Unmapped += paramAssignments.DescendantsAndSelf().Count();
+        }
+
+        var connectionRaw = el.Element("Connection")?.Value;
+        var connectionName = connectionRaw is not null && cmDtsIdToName.TryGetValue(connectionRaw, out var name) ? name : null;
+
+        return new ExecutePackageTaskPayload
+        {
+            ExecuteOutOfProcess = ParseElementBool(el.Element("ExecuteOutOfProcess")?.Value),
+            UseProjectReference = ParseElementBool(el.Element("UseProjectReference")?.Value),
+            PackageName = el.Element("PackageName")?.Value,
+            PackageIdRaw = el.Element("PackageID")?.Value,
+            VersionIdRaw = el.Element("VersionID")?.Value,
+            ConnectionRefRaw = connectionRaw,
+            ConnectionName = connectionName,
+        };
+    }
+
+    /// <summary>Same "True"/"False" (and "1"/"0", for parity with <see cref="XmlHelpers.AttrBool"/>) tolerance as attribute-based bools, but for an element's own text VALUE -- <c>&lt;ExecutePackageTask&gt;</c>'s children are elements, not attributes.</summary>
+    private static bool? ParseElementBool(string? raw)
+    {
+        if (raw is null) return null;
+        if (raw.Equals("true", StringComparison.OrdinalIgnoreCase) || raw == "1") return true;
+        if (raw.Equals("false", StringComparison.OrdinalIgnoreCase) || raw == "0") return false;
+        return null;
     }
 
     internal static ScriptTaskPayload ReadScriptTask(XElement objectData)
@@ -567,7 +618,10 @@ public static partial class DtsxPackageReader
 
     // ---- Connection managers / flat-file format (slice 1) ----
 
-    private static ConnectionManagerSpec ReadConnectionManager(XElement cmEl, bool noRedact)
+    // internal (not private), same reasoning as ReadFileSystemTask/ReadScriptTask above: a
+    // direct unit test via InternalsVisibleTo, for a shape (DPAPI ciphertext) no synthetic
+    // fixture builder can easily produce.
+    internal static ConnectionManagerSpec ReadConnectionManager(XElement cmEl, bool noRedact)
     {
         var creationName = cmEl.Attr(Dts + "CreationName") ?? "";
         var objectData = cmEl.Element(Dts + "ObjectData")?.Element(Dts + "ConnectionManager");
@@ -583,6 +637,20 @@ public static partial class DtsxPackageReader
         var propertyExpressions = cmEl.Elements(Dts + "PropertyExpression")
             .Select(el => new PropertyExpressionSpec { PropertyName = el.Attr(Dts + "Name") ?? "", Expression = el.Value })
             .ToList();
+
+        // A ProtectionLevel of EncryptSensitiveWithUserKey (or EncryptSensitiveWithPassword)
+        // DPAPI-encrypts a sensitive property IN PLACE rather than stripping it at deploy time
+        // -- e.g. <DTS:Password DTS:Name="Password" Sensitive="1" Encrypted="1">ciphertext...
+        // </DTS:Password> as a child of the inner <DTS:ConnectionManager> element. Confirmed
+        // real against SSIS_From_Sandeep/RBC_Demo_ETL/RBC_Demo_ETL/Package_Advanced.dtsx.
+        // Searched generically (not just <DTS:Password>) since any sensitive child property
+        // could in principle use the same shape -- only the ciphertext itself is never read,
+        // matching the redaction discipline already applied to a plaintext Password= segment.
+        var encryptedProperties = objectData?
+            .Descendants()
+            .Where(el => el.AttrBool("Encrypted") == true)
+            .Select(el => el.Attr(Dts + "Name") ?? el.Name.LocalName)
+            .ToList() ?? [];
 
         return new ConnectionManagerSpec
         {
@@ -600,6 +668,7 @@ public static partial class DtsxPackageReader
             RetainSameConnection = cmEl.AttrBool(Dts + "RetainSameConnection"),
             PropertyExpressions = propertyExpressions,
             FlatFileFormat = isFlatFileLike && objectData is not null ? ReadFlatFileFormat(objectData) : null,
+            EncryptedProperties = encryptedProperties,
         };
     }
 

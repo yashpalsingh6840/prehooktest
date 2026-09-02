@@ -48,6 +48,70 @@ public class LookupFlowTests
     }
 
     [Fact]
+    public void Generate_WiresALookupThenAggregateFlow_ThroughAMulticast()
+    {
+        // SyntheticLookupThenAggregate.dtsx (2026-09-02) -- the real evidenced composed shape
+        // (RBC_Demo_ETL's own DFT_LookupAndAggregate): Lookup (NoMatchBehavior=1/redirect) ->
+        // Multicast -> {live branch -> Aggregate -> destination, discarded branch -> RowCount},
+        // Lookup's own No-Match output -> a second discarded RowCount. Verified end-to-end
+        // against real dtexec and a real generated run (see Tools/SsisExtractor/CLAUDE.md) --
+        // this test pins the exact generated wiring so a regression is caught at unit-test
+        // speed, not only by re-running the fixture by hand.
+        var package = LoadSyntheticFixture("SyntheticLookupThenAggregate.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        // Every gap is advisory -- both discarded RowCount branches, plus the unavoidable
+        // SqlCommand-column-naming and Notification advisories. Nothing blocks generation.
+        Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("Multicast 'MCAST_Matched' output 'Multicast Output 2'") && g.Reason.Contains("User::MatchedRows"));
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("Lookup 'LKP_Country' output 'Lookup No Match Output'") && g.Reason.Contains("User::UnmatchedRows"));
+
+        var program = result.Files.Single(f => f.RelativePath == "Program.cs").Content;
+
+        // The raw source is filtered by the lookup cache BEFORE it ever reaches grouping --
+        // a Lookup miss must never be aggregated under a null/sentinel key.
+        Assert.Contains("return new FilteringRowSource<AGG_ByRegionSourceSqlRow>(\"AGG_ByRegion\", BuildRawSource(), row => lKP_CountryCache.ContainsKey(row.Country));", program);
+        // The GroupBy key itself reads through the SAME cache, not a plain row property --
+        // "Region" only exists via the Lookup's own copied reference column.
+        Assert.Contains("row => lKP_CountryCache[row.Country].Region,", program);
+        // The Count column is untouched -- CustomerID is a plain raw column, no lookup involved.
+        Assert.Contains("CustomerCount = rows.Count(r => r.CustomerID != null)", program);
+
+        // The transform takes NO constructor argument -- unlike the plain single-output Lookup
+        // shape, the cache is already fully consumed upstream by AggregateFlowSource itself, so
+        // registering it by type (not `new ...Transform(cache)`) is what must be emitted; the
+        // opposite would be a build error (no such constructor exists).
+        Assert.Contains("AddScoped<IRowTransform<SyntheticLookupThenAggregateTargetAggregateRow, SyntheticLookupThenAggregateTarget>, SyntheticLookupThenAggregateTargetTransform>();", program);
+        Assert.DoesNotContain("new SyntheticLookupThenAggregateTargetTransform(", program);
+
+        var transform = result.Files.Single(f => f.RelativePath == "Mapping/SyntheticLookupThenAggregateTargetTransform.cs").Content;
+        Assert.Contains("Region = row.Region,", transform);
+        Assert.Contains("CustomerCount = row.CustomerCount,", transform);
+    }
+
+    [Fact]
+    public void Generate_SkipsADiscardedMulticastBranch_WithNoLookupOrAggregate()
+    {
+        // SyntheticMulticastDiscard.dtsx (2026-09-02): a plain Multicast, one live branch, one
+        // discarded RowCount branch -- proves GenerateMulticastFlow's own defensive discard-skip
+        // (added as a direct, foreseeable consequence of ResolveBranch now accepting a discard,
+        // not the real motivating shape, which always reaches GenerateLookupThenAggregateFlow
+        // instead since an Aggregate anywhere in the pipeline wins dispatch first).
+        var package = LoadSyntheticFixture("SyntheticMulticastDiscard.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("User::RowsSeen"));
+
+        var program = result.Files.Single(f => f.RelativePath == "Program.cs").Content;
+        // Exactly one branch wired -- the discarded one contributes no ProgramMulticastBranch,
+        // no entity, no transform, no table (and so no second ConditionalSplitBranch<> local).
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(program, "new ConditionalSplitBranch<"));
+    }
+
+    [Fact]
     public void Generate_ReportsAGap_ForALookupThatDeclaresNoJoinKey()
     {
         // SyntheticLookupSplit.dtsx is the real reachable case: built through the object model
@@ -84,10 +148,12 @@ public class LookupFlowTests
         var outcome = Assert.Single(decisions.Outcomes);
         Assert.Equal(GapDecisionStatus.Applied, outcome.Status);
         // The "no join key" gap is gone -- generation moved on to this flow's NEXT real
-        // limitation (its Lookup routes both a match and a no-match output onward), rather than
-        // repeating a reason that no longer applies.
+        // limitation (its Lookup routes both a match and a no-match output to real downstream
+        // processing -- SyntheticLookupSplit's own No-Match output leads to a real destination,
+        // not a discardable RowCount dead end, so both are "live" and this is still a hard gap),
+        // rather than repeating a reason that no longer applies.
         Assert.DoesNotContain(result.Gaps, g => g.Reason.Contains("declares no join key"));
-        Assert.Contains(result.Gaps, g => g.Reason.Contains("routes 2 outputs onward"));
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("routes more than one output to real downstream processing"));
     }
 
     [Theory]

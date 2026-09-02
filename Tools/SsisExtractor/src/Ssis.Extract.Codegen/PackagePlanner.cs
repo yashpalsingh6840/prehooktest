@@ -63,38 +63,100 @@ public sealed record DataFlowPlan(
     /// source row shape, so <see cref="PackageGenerator"/> checks this field before
     /// <see cref="ConditionalSplit"/>/<see cref="MergeJoin"/>/etc., the same "must win first"
     /// convention <see cref="Lookup"/>'s own doc comment already established.</summary>
-    AggregatePlan? Aggregate = null);
+    AggregatePlan? Aggregate = null,
+    /// <summary>Added 2026-09-02 (gap-audit Phase 3.2). Every <c>Microsoft.RowCount</c> in this
+    /// flow's own pipeline, resolved to its target variable name -- scoped to the
+    /// single-source/single-destination shape only (a Conditional Split/Multicast branch's own
+    /// mid-chain RowCount, as opposed to the already-handled discarded-dead-end case, remains
+    /// unevidenced and unsupported). A RowCount is a pure synchronous passthrough (see
+    /// <c>RowCountPayload</c>'s own doc comment), so it needs no chain-walking or column
+    /// resolution here at all -- <see cref="PackageGenerator"/> wraps the flow's row source in
+    /// one <c>CountingRowSource&lt;TRow&gt;</c> per entry, reproducing the side effect a plain
+    /// passthrough-column resolution would otherwise silently drop.</summary>
+    IReadOnlyList<RowCountPlan>? RowCounts = null,
+    /// <summary>Added 2026-09-02 (gap-audit Phase 3.5). A standalone <c>Microsoft.Sort</c> in the
+    /// plain single-source/single-destination flow shape only (a Conditional Split/Multicast
+    /// branch's own Sort, and a Sort feeding a Merge Join, are each already handled separately --
+    /// <see cref="PackagePlanner.ResolveBranch"/>'s own pass-through widening and
+    /// <see cref="PackagePlanner.PlanMergeJoin"/> respectively). Before this field existed, a
+    /// standalone Sort was silently INVISIBLE to <see cref="PackagePlanner.PlanDataFlow"/> --
+    /// confirmed real, not assumed, by generating a fixture with this exact shape before the fix
+    /// and reading the emitted Program.cs: a plain unconditional read, no ordering applied at
+    /// all, Sort's own reordering effect silently dropped. Populated only when the Sort's own
+    /// single ascending key resolves AND its output provably reaches this flow's own resolved
+    /// <see cref="DestinationComponent"/> -- either condition failing is a generation gap, never
+    /// a silent no-op (repeating that would be the exact bug this field exists to close).</summary>
+    SortKeyPlan? SortKey = null,
+    /// <summary>Added 2026-09-02 (gap-audit Phase 3.6). A genuinely multi-independent-source
+    /// <c>Microsoft.Merge</c>/<c>Microsoft.UnionAll</c> -- see <see cref="UnionPlan"/>'s own doc
+    /// comment for exactly how this is told apart from the already-closed "diverge-then-
+    /// reconverge from one shared source" UnionAll shape. When populated,
+    /// <see cref="FlatFileSource"/>/<see cref="OleDbSource"/>/<see cref="DerivedColumn"/> are all
+    /// null -- the flow's own row source is built entirely from <see cref="UnionSideSource"/>
+    /// instead, mirroring <see cref="MergeJoin"/>'s own convention.</summary>
+    UnionPlan? Union = null);
+
+/// <summary>One <c>Microsoft.RowCount</c> resolved for <see cref="DataFlowPlan.RowCounts"/> --
+/// see <see cref="Ssis.Extract.Model.Pipeline.RowCountPayload"/>'s own doc comment for what's
+/// evidenced and what's measured.</summary>
+public sealed record RowCountPlan(PipelineComponentSpec Component, string VariableName);
+
+/// <summary>A standalone Sort's own single ascending key, resolved for <see cref="DataFlowPlan.SortKey"/>
+/// -- <see cref="KeyColumnName"/> names a buffer column already reachable by plain name (Sort
+/// never renames/retypes a column, confirmed real since the 2026-08-28 Conditional-Split/Sort/
+/// Merge round), <see cref="KeyClrType"/> is its resolved CLR type (needed for the generated
+/// <c>SortingRowSource&lt;TRow,TKey&gt;</c>'s own type argument). Only a single-key, ascending
+/// sort is supported -- multi-key or descending is a separate, currently-unevidenced probe, per
+/// this round's own stated scope (matching <c>SortKeySpec</c>'s own doc comment: a negative
+/// <c>Position</c>, which SSIS's docs suggest means descending, has never been independently
+/// confirmed and is deliberately not decoded).</summary>
+public sealed record SortKeyPlan(PipelineComponentSpec Sort, string KeyColumnName, SsisPipelineType KeyClrType);
 
 /// <summary>A resolved <c>Microsoft.OLEDBCommand</c> flow -- <see cref="SqlTemplate"/> has every
 /// <c>?</c> placeholder rewritten to EF Core's own "{0}", "{1}", ... raw-SQL parameter syntax,
-/// positionally matching <see cref="ParameterColumnNames"/> (the command's own declared input
-/// columns, in order -- the well-documented default when the component's ParameterMapping
-/// property is empty; a non-empty one is a named gap in <see cref="PackagePlanner"/>, never
-/// guessed).</summary>
+/// positionally matching <see cref="ParameterColumnNames"/>. Resolved 2026-09-02 (gap-audit
+/// Phase 3.1) from each bound external column's own INDEX within the input's
+/// <c>&lt;externalMetadataColumns&gt;</c> list -- NOT from <c>&lt;inputColumns&gt;</c>
+/// declaration order, and NOT from parsing a <c>Param_N</c> numeric suffix (a real EXEC-
+/// stored-procedure call names its external columns after the procedure's own parameters, e.g.
+/// <c>"@CustomerID"</c>, with no embedded number at all) -- see
+/// <see cref="OleDbCommandPayload"/>'s own doc comment for the two live probes this was
+/// corrected against. A column with no resolvable external-column binding, or a non-empty
+/// <c>ParameterMapping</c> property (never observed populated, but checked defensively), is a
+/// named gap in <see cref="PackagePlanner"/>, never guessed.</summary>
 public sealed record OleDbCommandPlan(
     PipelineComponentSpec Component,
     string SqlTemplate,
     IReadOnlyList<string> ParameterColumnNames);
 
-/// <summary>One Count output column of an Aggregate, resolved back to the real SOURCE column
-/// it counts (via <c>Ssis.Extract.Dtsx.LineageBuilder</c>'s new "Aggregate" edge kind) -- e.g.
-/// <c>CustomerCount</c> counting non-NULL values of the source's own <c>CustomerID</c> column
-/// (confirmed via a real dtexec run that AggregationType=1 excludes NULLs, matching ordinary SQL
-/// <c>COUNT(column)</c>, not <c>COUNT(*)</c> -- see <c>AggregatePayload</c>'s own doc comment).</summary>
-public sealed record AggregateCountSpec(string OutputColumnName, string SourceColumnName);
+/// <summary>One non-GroupBy output column of an Aggregate, resolved back to the real SOURCE
+/// column it aggregates (via <c>Ssis.Extract.Dtsx.LineageBuilder</c>'s "Aggregate" edge kind) --
+/// e.g. <c>CustomerCount</c> counting non-NULL values of the source's own <c>CustomerID</c>
+/// column. <see cref="SourceColumnName"/> is null exactly for a raw AggregationType 2 (CountAll)
+/// column with no <c>AggregationColumnId</c> at all -- confirmed real via a live object-model
+/// probe (gap-audit Phase 3.3, 2026-09-02): CountAll is the one function SSIS accepts with no
+/// column reference whatsoever, a genuine <c>COUNT(*)</c>. Every other raw type requires one.
+/// <see cref="AggregationTypeRaw"/> is carried through (not resolved to an enum -- there is no
+/// managed CLR enum for this native COM property, confirmed by reflection, see
+/// <c>AggregatePayload</c>'s own doc comment) so <see cref="Ssis.Extract.Codegen.ProgramEmitter"/>
+/// knows which LINQ aggregation to emit.</summary>
+public sealed record AggregateFunctionSpec(string OutputColumnName, string? SourceColumnName, int AggregationTypeRaw);
 
-/// <summary>A resolved <c>Microsoft.Aggregate</c> flow, built speculatively 2026-08-30 -- see
-/// <c>Ssis.Extract.Model.Pipeline.AggregatePayload</c>'s own doc comment for why. Scoped
-/// deliberately to exactly the evidenced shape: one GroupBy column
-/// (<see cref="GroupByOutputColumnName"/>, resolved back to its own real source column via
-/// lineage) plus one or more Count columns. Any other AggregationType, zero or more than one
-/// GroupBy column, or an unresolvable source reference is a generation gap, not a guess -- see
-/// <see cref="PackagePlanner"/>'s own <c>PlanAggregate</c>.</summary>
+/// <summary>A resolved <c>Microsoft.Aggregate</c> flow, built speculatively 2026-08-30, widened
+/// 2026-09-02 (gap-audit Phase 3.3) from Count-only to every measured AggregationType -- see
+/// <c>Ssis.Extract.Model.Pipeline.AggregatePayload</c>'s own doc comment for the full raw-value
+/// mapping and how each was measured. Scoped deliberately to exactly the evidenced/measured
+/// shape: one GroupBy column (<see cref="GroupByOutputColumnName"/>, resolved back to its own
+/// real source column via lineage) plus one or more function columns (Count/CountAll/
+/// CountDistinct/Sum/Average/Minimum/Maximum). Any other AggregationType, zero or more than one
+/// GroupBy column, or an unresolvable source reference (for anything other than a column-less
+/// CountAll) is a generation gap, not a guess -- see <see cref="PackagePlanner"/>'s own
+/// <c>PlanAggregate</c>.</summary>
 public sealed record AggregatePlan(
     PipelineComponentSpec Component,
     string GroupByOutputColumnName,
     string GroupBySourceColumnName,
-    List<AggregateCountSpec> Counts);
+    List<AggregateFunctionSpec> Functions);
 
 /// <summary>One side (Left or Right) of a Merge Join, resolved back through its own Sort and
 /// (if present) Data Conversion to the true source component -- mirrors
@@ -116,6 +178,41 @@ public sealed record MergeJoinPlan(
     MergeJoinSideSource Left,
     MergeJoinSideSource Right);
 
+/// <summary>One side (input) of a genuinely multi-independent-source <c>Microsoft.Merge</c>/
+/// <c>Microsoft.UnionAll</c>, resolved back through an optional Sort and optional Data
+/// Conversion to the true source component -- gap-audit Phase 3.6 (2026-09-02), the same
+/// backward-walk shape as <see cref="MergeJoinSideSource"/>, generalized: <see cref="Sort"/> is
+/// non-null only for a <c>Microsoft.Merge</c> side (SSIS requires sorted input there; a
+/// <c>Microsoft.UnionAll</c> side needs no Sort at all, confirmed via the component's own
+/// official "combines... without sorting" description text) and carries the resolved single
+/// ascending key <c>Microsoft.Merge</c> needs to interleave correctly.</summary>
+public sealed record UnionSideSource(
+    PipelineComponentSpec SourceComponent,
+    PipelineComponentSpec? Sort,
+    PipelineComponentSpec? DataConversion,
+    SortKeyPlan? SortKey);
+
+/// <summary>A genuinely multi-independent-source <c>Microsoft.Merge</c> or <c>Microsoft.UnionAll</c>
+/// flow -- gap-audit Phase 3.6 (2026-09-02), distinct from the "diverge-then-reconverge from one
+/// shared upstream source" UnionAll shape <see cref="PackagePlanner.ResolveBranch"/>'s own
+/// pass-through walk already closed (2026-08-27/28) -- that shape always has a Conditional
+/// Split/Multicast upstream feeding this component; this one never does (see
+/// <see cref="PackagePlanner.PlanDataFlow"/>'s own gating comment for exactly how the two are
+/// told apart). <see cref="IsSortedInterleave"/> is true for <c>Microsoft.Merge</c> (a REAL
+/// dtexec-confirmed true sort-preserving interleave, not concatenation -- see
+/// <c>Etl.Core.Data.MergeInterleaveRowSource{TRow,TKey}</c>'s own doc comment for the exact
+/// probe) and false for <c>Microsoft.UnionAll</c> (plain concatenation -- NOT independently
+/// dtexec-confirmed, a real left-unresolved object-model construction quirk, see
+/// <c>Etl.Core.Data.ConcatenatingRowSource{TRow}</c>'s own doc comment). Scoped deliberately to
+/// the one evidenced/measured shape: every side directly SQL-sourced (OLE DB/ADO NET), no Data
+/// Conversion on any side, matching the exact probe fixtures this round was built and verified
+/// against -- a Flat File/Excel-sourced side, or a Data-Conversion-fed side, is a named gap for a
+/// future round, not guessed at.</summary>
+public sealed record UnionPlan(
+    PipelineComponentSpec Component,
+    bool IsSortedInterleave,
+    IReadOnlyList<UnionSideSource> Sides);
+
 /// <summary>One non-default, non-error branch of a Conditional Split resolves to a
 /// <see cref="FriendlyExpression"/> (case) or null (the default, no condition of its own) plus
 /// the OLE DB Destination this branch's own rows eventually reach -- <see cref="Destination"/>
@@ -128,8 +225,17 @@ public sealed record MergeJoinPlan(
 /// the branch connects straight to its destination (the original, still-most-common shape).
 /// Two or more branches CAN resolve to the same <see cref="Destination"/> instance (a Union
 /// All remerge) -- PackageGenerator, not this planner, is what dedupes the resulting
-/// entity/table emission and disambiguates the per-branch transform class names.</summary>
-public sealed record ConditionalSplitBranchPlan(string OutputName, string? FriendlyExpression, List<PipelineComponentSpec> DerivedColumns, PipelineComponentSpec Destination);
+/// entity/table emission and disambiguates the per-branch transform class names.
+///
+/// <see cref="Destination"/> is null exactly when <see cref="Discarded"/> is true -- added
+/// 2026-09-02 for a Multicast branch (only; ResolveBranch gates this on componentKind ==
+/// "Multicast", so a Conditional Split branch can never resolve this way) that dead-ends at a
+/// Microsoft.RowCount with no path of its own: RBC_Demo_ETL's own DFT_LookupAndAggregate fans
+/// one live branch (through an Aggregate) alongside a second branch that only counts rows into
+/// a package variable nothing else in the package ever reads. A discarded branch generates no
+/// code at all -- ResolveBranch already recorded a non-blocking advisory naming the variable
+/// being dropped, so this is never silent.</summary>
+public sealed record ConditionalSplitBranchPlan(string OutputName, string? FriendlyExpression, List<PipelineComponentSpec> DerivedColumns, PipelineComponentSpec? Destination, bool Discarded = false);
 
 /// <summary>One Conditional Split, fully resolved: every case in EvaluationOrder, THEN the
 /// default branch last (<see cref="Branches"/>[^1]) -- this ordering is what RouterEmitter and
@@ -140,9 +246,15 @@ public sealed record ConditionalSplitPlan(PipelineComponentSpec Component, List<
 /// <summary>One Multicast, fully resolved: every output is an unconditional branch (no
 /// evaluation order, no default -- every row goes to every branch). Reuses
 /// <see cref="ConditionalSplitBranchPlan"/> for the branch shape (destination + any per-branch
-/// Derived Column/Union-All/Sort/Merge chain, via the same <c>ResolveBranch</c> walker) with
-/// <c>FriendlyExpression</c> always null -- there is no condition to translate, so
-/// <see cref="PackageGenerator"/>'s Multicast emission never calls RouterEmitter at all.</summary>
+/// Derived Column/Union-All/Sort/Merge/Aggregate chain, via the same <c>ResolveBranch</c>
+/// walker) with <c>FriendlyExpression</c> always null -- there is no condition to translate, so
+/// <see cref="PackageGenerator"/>'s Multicast emission never calls RouterEmitter at all.
+///
+/// A branch may also be <see cref="ConditionalSplitBranchPlan.Discarded"/> (a dead-end
+/// RowCount) -- <see cref="PackageGenerator.GenerateMulticastFlow"/> skips those; whichever
+/// Lookup/Aggregate composition consumes this Multicast directly (see
+/// <see cref="DataFlowPlan.Lookup"/>'s own doc comment) is what actually generates the one real
+/// evidenced shape (a live branch through an Aggregate).</summary>
 public sealed record MulticastPlan(PipelineComponentSpec Component, List<ConditionalSplitBranchPlan> Branches);
 
 /// <summary>One resolved File System Task action -- <see cref="Operation"/> is one of the
@@ -1119,6 +1231,26 @@ public static class PackagePlanner
                 continue;
             }
 
+            // Recognized explicitly rather than falling through to the generic "unsupported
+            // executable type" message below: package-to-package invocation is a genuine,
+            // deferred ARCHITECTURAL decision (in-process reference vs. shell-out vs.
+            // macro-flatten -- see ExecutePackageTaskPayload's own doc comment), not a
+            // translation failure this planner merely hasn't gotten to yet. Stating what the
+            // task actually references (mode, child package, connection) up front is what lets a
+            // human size that decision without opening the .dtsx.
+            if (executable.ExecutePackageTask is { } execPkg)
+            {
+                var mode = execPkg.UseProjectReference == true ? "project reference" : "file/legacy reference";
+                var target = execPkg.PackageName is { Length: > 0 } pn ? $"'{pn}'" : "(no package name recorded)";
+                var connectionDetail = execPkg.UseProjectReference != true && execPkg.ConnectionName is { Length: > 0 } cn
+                    ? $", via connection manager '{cn}'"
+                    : "";
+                gaps.Add(new GenerationGap(executable.ObjectName ?? refId,
+                    $"Execute Package Task ({mode}) targets {target}{connectionDetail} -- running one generated package from inside another is a deferred architectural decision (in-process reference vs. shell-out vs. macro-flatten), not yet implemented by this tool. The child package is extracted independently; nothing here composes the two.",
+                    Kind: GapKind.Unclassified));
+                continue;
+            }
+
             // A Script Task is classified rather than left Unclassified: its real source IS present
             // in the .dtsx (ScriptTaskPayload.ProjectItems), so it is a translation job a human
             // working with AI can close, not missing tool support. Every OTHER unsupported
@@ -1336,6 +1468,21 @@ public static class PackagePlanner
         if (mergeJoinComponent is not null)
             return PlanMergeJoin(taskName, pipeline, mergeJoinComponent, gaps);
 
+        // Same carve-out, for a genuinely multi-independent-source Microsoft.Merge/UnionAll --
+        // gap-audit Phase 3.6 (2026-09-02). Gated on there being NO Conditional Split/Multicast
+        // anywhere in this pipeline: every already-closed "diverge-then-reconverge from one
+        // shared upstream source" UnionAll shape (2026-08-27/28) always has one of those feeding
+        // it, and is already fully handled by ResolveBranch's own forward pass-through walk
+        // (reached later, via PlanConditionalSplit/Multicast below) -- letting THIS check fire
+        // for that shape too would wrongly intercept it: ResolveUnionSide's own backward walk
+        // expects a real source/Sort/Data-Conversion feeding each input, not a Conditional
+        // Split's own per-branch output, and would report a confusing, wrong gap instead of
+        // falling through to the already-working resolution.
+        var unionComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId is "Microsoft.Merge" or "Microsoft.UnionAll");
+        var hasSplitOrMulticastUpstream = pipeline.Components.Any(c => c.ComponentClassId is "Microsoft.ConditionalSplit" or "Microsoft.Multicast");
+        if (unionComponent is not null && !hasSplitOrMulticastUpstream)
+            return PlanUnion(taskName, pipeline, unionComponent, gaps);
+
         // More than one source component in a single Data Flow Task means something merges them
         // (Merge/Merge Join/Union All feeding a single destination directly, not via a
         // Conditional Split -- that shape has its own chain-walking gate in ResolveBranch) --
@@ -1399,10 +1546,26 @@ public static class PackagePlanner
             }
         }
 
+        // Scoped to the plain single-source/single-destination shape only -- a Conditional
+        // Split/Multicast branch's own mid-chain RowCount (as opposed to the already-handled
+        // discarded-dead-end case) is left to ResolveBranch's existing generic "not supported"
+        // fallthrough, unevidenced and unchanged by this round.
+        List<RowCountPlan>? rowCounts = null;
+        if (conditionalSplit is null && multicast is null)
+        {
+            rowCounts = ResolveRowCounts(taskName, pipeline, gaps);
+            if (rowCounts is null) return null; // ResolveRowCounts already added the gap
+        }
+
         var destination = conditionalSplit is not null
             ? conditionalSplit.Branches[^1].Destination // the default branch, resolved last
             : multicast is not null
-                ? multicast.Branches[^1].Destination
+                // Not simply [^1] any more -- a discarded (RowCount-dead-end) branch's own
+                // Destination is null, and for the one real evidenced shape (LKP_Country's own
+                // Multicast) that discarded branch IS the last one declared. Picking the first
+                // NON-null destination is behaviorally identical to [^1] for every flow that
+                // predates discard support (every branch there already had a real destination).
+                ? multicast.Branches.Select(b => b.Destination).FirstOrDefault(d => d is not null)
                 : pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.OLEDBDestination")
                     ?? pipeline.Components.FirstOrDefault(c => c.AdoNetDestination is not null)
                     ?? pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.FlatFileDestination");
@@ -1415,14 +1578,17 @@ public static class PackagePlanner
             // destination search already failed, so every existing destination-based flow is
             // completely unaffected.
             var commandComponents = pipeline.Components.Where(c => c.ComponentClassId == "Microsoft.OLEDBCommand").ToList();
-            if (commandComponents.Count == 1 && conditionalSplit is null)
+            // multicast must also be checked null here now -- a Multicast whose every branch is
+            // discarded (no live branch at all) leaves `destination` null without implying no
+            // Multicast was found, unlike before discard support existed.
+            if (commandComponents.Count == 1 && conditionalSplit is null && multicast is null)
             {
                 var oleDbCommandPlan = ResolveOleDbCommand(taskName, commandComponents[0], gaps);
                 if (oleDbCommandPlan is null) return null; // ResolveOleDbCommand already added the gap
                 // Multicast is never populated here -- destination being null already implies no
                 // multicast was found either, per the mutual-exclusion check above.
                 return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup,
-                    conditionalSplit, commandComponents[0], dataConversion, ExcelSource: excelSource, OleDbCommand: oleDbCommandPlan, Aggregate: aggregate);
+                    conditionalSplit, commandComponents[0], dataConversion, ExcelSource: excelSource, OleDbCommand: oleDbCommandPlan, Aggregate: aggregate, RowCounts: rowCounts);
             }
 
             gaps.Add(new GenerationGap(taskName,
@@ -1430,18 +1596,153 @@ public static class PackagePlanner
             return null;
         }
 
-        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, ExcelSource: excelSource, Multicast: multicast, Aggregate: aggregate);
+        // Scoped to the plain single-source/single-destination shape only -- a Conditional
+        // Split/Multicast branch's own Sort is a different, already-handled shape
+        // (ResolveBranch's own pass-through widening), and a Lookup/Aggregate flow's own
+        // destination-row-type resolution is different enough (RBC_Demo_ETL has no evidenced
+        // Lookup/Aggregate+Sort combination) that a stray Sort there is left alone rather than
+        // guessed at.
+        SortKeyPlan? sortKey = null;
+        if (conditionalSplit is null && multicast is null && aggregate is null && lookup is null)
+        {
+            var (hasGap, resolvedSort) = ResolveStandaloneSort(taskName, pipeline, destination, gaps);
+            if (hasGap) return null; // ResolveStandaloneSort already added the gap
+            sortKey = resolvedSort;
+        }
+
+        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, ExcelSource: excelSource, Multicast: multicast, Aggregate: aggregate, RowCounts: rowCounts, SortKey: sortKey);
+    }
+
+    /// <summary>Detects a standalone <c>Microsoft.Sort</c> in the plain (non-Conditional-Split,
+    /// non-Multicast, non-Lookup, non-Aggregate, non-Merge-Join) single-destination flow shape
+    /// and resolves its single ascending sort key -- gap-audit Phase 3.5 (2026-09-02). Returns
+    /// <c>(false, null)</c> (no gap, nothing to apply) when no Sort exists in this pipeline at
+    /// all, so every existing, already-verified fixture with no Sort is completely unaffected.
+    /// Returns <c>(true, null)</c> -- a gap already added to <paramref name="gaps"/> -- when a
+    /// Sort exists but cannot be safely reproduced: more than one Sort, an unresolvable/
+    /// multi-column key, or a Sort whose own output does not provably reach the resolved
+    /// destination. Silently proceeding in any of those cases would repeat the exact silent-drop
+    /// bug this round fixes (confirmed real by generating a fixture with this shape BEFORE this
+    /// method existed: a plain unconditional read, no ordering applied, no gap reported).</summary>
+    private static (bool HasGap, SortKeyPlan? Sort) ResolveStandaloneSort(
+        string taskName, PipelineSpec pipeline, PipelineComponentSpec destination, List<GenerationGap> gaps)
+    {
+        var sorts = pipeline.Components.Where(c => c.ComponentClassId == "Microsoft.Sort").ToList();
+        if (sorts.Count == 0) return (false, null);
+
+        if (sorts.Count > 1)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"this Data Flow Task has {sorts.Count} Sort components -- only exactly one, applying to the flow's own destination, is supported"));
+            return (true, null);
+        }
+
+        var sort = sorts[0];
+        if (!ComponentReachesForward(pipeline, sort, destination))
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Sort '{sort.Name}' does not lead to this flow's own resolved destination '{destination.Name}' -- not supported"));
+            return (true, null);
+        }
+
+        return ResolveSortKeyForComponent(taskName, sort, gaps);
+    }
+
+    /// <summary>Resolves ONE <c>Microsoft.Sort</c> component's own single ascending key --
+    /// extracted from <see cref="ResolveStandaloneSort"/> (gap-audit Phase 3.5) so
+    /// <see cref="ResolveUnionSide"/> (gap-audit Phase 3.6, a <c>Microsoft.Merge</c> side's own
+    /// upstream Sort) can reuse the identical resolution rather than duplicating it. Callers
+    /// that need a reachability check first (e.g. <see cref="ResolveStandaloneSort"/>'s own
+    /// "does this Sort lead to the resolved destination") do that BEFORE calling this -- this
+    /// method only ever resolves the key itself.</summary>
+    private static (bool HasGap, SortKeyPlan? Sort) ResolveSortKeyForComponent(
+        string taskName, PipelineComponentSpec sort, List<GenerationGap> gaps)
+    {
+        var keys = sort.Sort?.Keys ?? [];
+        if (keys.Count != 1)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Sort '{sort.Name}' has {keys.Count} sort key(s) -- only exactly one (ascending) is supported"));
+            return (true, null);
+        }
+
+        var keyColumn = sort.Outputs.SelectMany(o => o.Columns).FirstOrDefault(c => c.Name == keys[0].ColumnName);
+        var keyClrType = keyColumn?.DataType is null ? null : SsisPipelineTypeMap.Resolve(keyColumn.DataType);
+        if (keyColumn is null || keyClrType is null)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Sort '{sort.Name}''s own key column '{keys[0].ColumnName}' could not be resolved to a known CLR type"));
+            return (true, null);
+        }
+
+        return (false, new SortKeyPlan(sort, keys[0].ColumnName, keyClrType));
+    }
+
+    /// <summary>Breadth-first walk forward from <paramref name="from"/>'s own non-error output(s)
+    /// through the pipeline's <c>&lt;paths&gt;</c> to see whether <paramref name="target"/> is
+    /// reachable, hopping through any number of intermediate components (Derived Column, Data
+    /// Conversion, another Sort, etc.) -- deliberately generic rather than special-cased to a
+    /// known list of "pass-through" component types, since this only answers a structural
+    /// reachability question, never a value-resolution one (that stays with the existing,
+    /// unmodified name-based column resolution every destination emitter already uses).</summary>
+    private static bool ComponentReachesForward(PipelineSpec pipeline, PipelineComponentSpec from, PipelineComponentSpec target)
+    {
+        var visited = new HashSet<string> { from.RefId };
+        var queue = new Queue<string>(from.Outputs.Where(o => o.IsErrorOut != true).Select(o => o.RefId));
+
+        while (queue.Count > 0)
+        {
+            var outputRefId = queue.Dequeue();
+            foreach (var path in pipeline.Paths.Where(p => p.StartId == outputRefId))
+            {
+                var next = pipeline.Components.FirstOrDefault(c => c.Inputs.Any(i => i.RefId == path.EndId));
+                if (next is null || !visited.Add(next.RefId)) continue;
+                if (next.RefId == target.RefId) return true;
+
+                foreach (var output in next.Outputs.Where(o => o.IsErrorOut != true)) queue.Enqueue(output.RefId);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Resolves every <c>Microsoft.RowCount</c> in this flow's own pipeline into a
+    /// <see cref="RowCountPlan"/> -- see <see cref="DataFlowPlan.RowCounts"/>'s own doc comment
+    /// for the scope this is deliberately limited to. A RowCount with no (or empty)
+    /// <c>VariableName</c> fails the whole flow, never silently dropping the side effect --
+    /// unevidenced (every real instance seen so far declares one), but this tool never guesses a
+    /// variable name.</summary>
+    private static List<RowCountPlan>? ResolveRowCounts(string taskName, PipelineSpec pipeline, List<GenerationGap> gaps)
+    {
+        var rowCounts = new List<RowCountPlan>();
+        foreach (var component in pipeline.Components.Where(c => c.ComponentClassId == "Microsoft.RowCount"))
+        {
+            var variableName = component.RowCount?.VariableName;
+            if (string.IsNullOrEmpty(variableName))
+            {
+                gaps.Add(new GenerationGap(taskName, $"RowCount '{component.Name}' has no VariableName -- not supported"));
+                return null;
+            }
+
+            rowCounts.Add(new RowCountPlan(component, variableName));
+        }
+
+        return rowCounts;
     }
 
     /// <summary>
     /// Resolves a <c>Microsoft.Aggregate</c> component into an <see cref="AggregatePlan"/> --
-    /// built speculatively 2026-08-30, see <c>AggregatePayload</c>'s own doc comment. Deliberately
-    /// narrow: exactly one GroupBy column (AggregationType=0) plus one or more Count columns
-    /// (AggregationType=1), each resolved back to its own real source column name via
-    /// <see cref="LineageBuilder"/>'s "Aggregate" edge kind. Any other AggregationType value, zero
-    /// or more than one GroupBy column, or an unresolvable source reference is a generation gap,
-    /// never a guess -- none of Sum/Average/Minimum/Maximum/CountDistinct/CountAll is evidenced
-    /// anywhere in the tracked portfolio, and none was measured.
+    /// built speculatively 2026-08-30 (Count only), widened 2026-09-02 (gap-audit Phase 3.3) to
+    /// every measured AggregationType. Deliberately narrow: exactly one GroupBy column
+    /// (AggregationType=0) plus one or more function columns (1=Count, 2=CountAll, 3=CountDistinct,
+    /// 4=Sum, 5=Average, 6=Minimum, 7=Maximum -- see <c>AggregatePayload</c>'s own doc comment for
+    /// how every raw value was measured), each resolved back to its own real source column name
+    /// via <see cref="LineageBuilder"/>'s "Aggregate" edge kind -- except CountAll (2), which SSIS
+    /// itself accepts with no <c>AggregationColumnId</c> at all (a genuine <c>COUNT(*)</c>,
+    /// confirmed via a live object-model probe) and so is the one function column allowed to
+    /// resolve with a null source. Any other raw AggregationType value, zero or more than one
+    /// GroupBy column, or an unresolvable source reference for anything else is a generation gap,
+    /// never a guess.
     /// </summary>
     private static AggregatePlan? PlanAggregate(string taskName, PipelineSpec pipeline, PipelineComponentSpec component, List<GenerationGap> gaps)
     {
@@ -1453,19 +1754,32 @@ public static class PackagePlanner
         }
 
         var lineage = LineageBuilder.Build(pipeline);
-        string? ResolveSourceColumnName(string outputColumnName) =>
-            lineage.Edges.FirstOrDefault(e =>
-                e.Kind == "Aggregate" && e.ToComponentRefId == component.RefId && e.ToColumnName == outputColumnName)?.FromColumnName;
+        // A CountAll (2) column with no AggregationColumnId at all still gets one written by
+        // SSIS -- a placeholder lineage reference (e.g. "#{Package\...\0:invalid}") that never
+        // matches any real producer (confirmed real, gap-audit Phase 3.3, 2026-09-02: every
+        // Aggregate output column persists this property unconditionally). LineageBuilder's own
+        // MakeEdge resilience fallback (unrelated to this round) resolves an unmatched lineageId
+        // to a sentinel FromComponentName of "(unresolved)" rather than dropping the edge -- so a
+        // column-less CountAll's own "source" would otherwise resolve to that bogus placeholder
+        // string instead of null. Recognized here, specific to this call site, rather than
+        // widened generically -- every OTHER function type still correctly gaps on a genuinely
+        // unresolvable reference via the same "(unresolved)" check.
+        string? ResolveSourceColumnName(string outputColumnName)
+        {
+            var edge = lineage.Edges.FirstOrDefault(e =>
+                e.Kind == "Aggregate" && e.ToComponentRefId == component.RefId && e.ToColumnName == outputColumnName);
+            return edge is null || edge.FromComponentName == "(unresolved)" ? null : edge.FromColumnName;
+        }
 
         var groupByColumns = payload.Columns.Where(c => c.AggregationTypeRaw == 0).ToList();
-        var countColumns = payload.Columns.Where(c => c.AggregationTypeRaw == 1).ToList();
-        var otherColumns = payload.Columns.Where(c => c.AggregationTypeRaw is not (0 or 1)).ToList();
+        var functionColumns = payload.Columns.Where(c => c.AggregationTypeRaw is >= 1 and <= 7).ToList();
+        var otherColumns = payload.Columns.Where(c => c.AggregationTypeRaw is null or < 0 or > 7).ToList();
 
         if (otherColumns.Count > 0)
         {
             var names = string.Join(", ", otherColumns.Select(c => $"{c.OutputColumnName} (AggregationType={(c.AggregationTypeRaw?.ToString() ?? "(unknown)")})"));
             gaps.Add(new GenerationGap(taskName,
-                $"Aggregate '{component.Name}' has column(s) using an unsupported AggregationType: {names} -- only GroupBy (0) and Count (1) are supported"));
+                $"Aggregate '{component.Name}' has column(s) using an unrecognized AggregationType: {names} -- only GroupBy (0), Count (1), CountAll (2), CountDistinct (3), Sum (4), Average (5), Minimum (6), and Maximum (7) are supported"));
             return null;
         }
 
@@ -1476,10 +1790,10 @@ public static class PackagePlanner
             return null;
         }
 
-        if (countColumns.Count == 0)
+        if (functionColumns.Count == 0)
         {
             gaps.Add(new GenerationGap(taskName,
-                $"Aggregate '{component.Name}' has no Count column -- a GroupBy with nothing aggregated is not supported"));
+                $"Aggregate '{component.Name}' has no aggregated column -- a GroupBy with nothing aggregated is not supported"));
             return null;
         }
 
@@ -1492,29 +1806,35 @@ public static class PackagePlanner
             return null;
         }
 
-        var counts = new List<AggregateCountSpec>();
-        foreach (var col in countColumns)
+        var functions = new List<AggregateFunctionSpec>();
+        foreach (var col in functionColumns)
         {
+            var rawType = col.AggregationTypeRaw!.Value;
             var source = ResolveSourceColumnName(col.OutputColumnName);
-            if (source is null)
+            if (source is null && rawType != 2) // CountAll (2) is the one function SSIS allows with no AggregationColumnId
             {
                 gaps.Add(new GenerationGap(taskName,
-                    $"Aggregate '{component.Name}': Count column '{col.OutputColumnName}' has no resolvable source column -- not supported"));
+                    $"Aggregate '{component.Name}': column '{col.OutputColumnName}' has no resolvable source column -- not supported"));
                 return null;
             }
-            counts.Add(new AggregateCountSpec(col.OutputColumnName, source));
+            functions.Add(new AggregateFunctionSpec(col.OutputColumnName, source, rawType));
         }
 
-        return new AggregatePlan(component, groupByCol.OutputColumnName, groupBySource, counts);
+        return new AggregatePlan(component, groupByCol.OutputColumnName, groupBySource, functions);
     }
 
     /// <summary>Resolves one <c>Microsoft.OLEDBCommand</c> component into an <see cref="OleDbCommandPlan"/>
     /// -- rewrites its raw SqlCommand text's <c>?</c> placeholders into EF Core's own "{0}", "{1}",
-    /// ... positional raw-SQL syntax, matched against the component's own declared input columns
-    /// in DECLARATION order (the well-documented default when ParameterMapping is empty).
-    /// A non-empty ParameterMapping, or a placeholder count that doesn't match the declared input
-    /// column count, is a named gap -- neither is evidenced in any real package seen so far, and
-    /// guessing a remapping would risk binding the wrong value to the wrong parameter.</summary>
+    /// ... positional raw-SQL syntax, matched against each input column's own bound external
+    /// column (<see cref="OleDbCommandPayload.ColumnMappings"/>), ordered by that external
+    /// column's own INDEX within the input's declared external-column list -- NOT by
+    /// &lt;inputColumns&gt; declaration order, and NOT by parsing a name for an embedded number
+    /// (see <see cref="OleDbCommandPlan"/>'s own doc comment for why both were tried and
+    /// rejected). A non-empty ParameterMapping, a column with no resolvable external-column
+    /// binding, a duplicate binding, non-contiguous positions, or a placeholder count that
+    /// doesn't match the resolved binding count, is each a named gap -- none of these shapes is
+    /// evidenced in any real package seen so far, and guessing would risk binding the wrong
+    /// value to the wrong parameter.</summary>
     private static OleDbCommandPlan? ResolveOleDbCommand(string taskName, PipelineComponentSpec command, List<GenerationGap> gaps)
     {
         var payload = command.OleDbCommand;
@@ -1527,15 +1847,52 @@ public static class PackagePlanner
         if (!string.IsNullOrEmpty(payload.ParameterMapping))
         {
             gaps.Add(new GenerationGap(taskName,
-                $"OLE DB Command '{command.Name}' has a non-empty ParameterMapping ('{payload.ParameterMapping}') -- only the declaration-order default (empty ParameterMapping) is supported"));
+                $"OLE DB Command '{command.Name}' has a non-empty ParameterMapping ('{payload.ParameterMapping}') -- this property has never been observed populated by real SSIS (a live probe found it absent even under an explicit non-default binding) and its real format is unknown, so it is not supported"));
             return null;
         }
 
         var placeholderCount = payload.SqlCommand.Count(ch => ch == '?');
-        if (placeholderCount != payload.Parameters.Count)
+
+        // True binding order is each bound external column's own position within the input's
+        // <externalMetadataColumns> list -- confirmed real via two live object-model probes
+        // (2026-09-02): a positional "Param_N" case and a real, evidenced named "@ParamName"
+        // case (an EXEC stored-procedure call) both preserve true call order there, regardless
+        // of <inputColumns> declaration order and regardless of whether the external column's
+        // own name encodes a position at all.
+        var mainInput = command.Inputs.FirstOrDefault();
+        var externalColumnPosition = (mainInput?.ExternalMetadataColumns ?? [])
+            .Select((ext, index) => (ext.Name, index))
+            .ToDictionary(x => x.Name, x => x.index);
+
+        var ordered = new SortedDictionary<int, string>();
+        foreach (var param in payload.Parameters)
+        {
+            var mapping = payload.ColumnMappings.FirstOrDefault(m => m.ComponentColumnName == param.Name);
+            if (mapping is null || !externalColumnPosition.TryGetValue(mapping.ExternalColumnName, out var position))
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"OLE DB Command '{command.Name}': input column '{param.Name}' has no resolvable placeholder binding -- not supported"));
+                return null;
+            }
+            if (!ordered.TryAdd(position, param.Name))
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"OLE DB Command '{command.Name}': more than one input column is bound to the same placeholder position ({position}) -- not supported"));
+                return null;
+            }
+        }
+
+        if (placeholderCount != ordered.Count)
         {
             gaps.Add(new GenerationGap(taskName,
-                $"OLE DB Command '{command.Name}' has {placeholderCount} '?' placeholder(s) but {payload.Parameters.Count} declared input column(s) -- not supported"));
+                $"OLE DB Command '{command.Name}' has {placeholderCount} '?' placeholder(s) but {ordered.Count} resolvably-bound input column(s) -- not supported"));
+            return null;
+        }
+
+        if (ordered.Count > 0 && (ordered.Keys.First() != 0 || ordered.Keys.Last() != ordered.Count - 1))
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"OLE DB Command '{command.Name}': resolved placeholder positions ({string.Join(",", ordered.Keys)}) are not a contiguous, 0-based sequence -- not supported"));
             return null;
         }
 
@@ -1546,7 +1903,164 @@ public static class PackagePlanner
             sqlTemplate = sqlTemplate[..index] + "{" + i + "}" + sqlTemplate[(index + 1)..];
         }
 
-        return new OleDbCommandPlan(command, sqlTemplate, payload.Parameters.Select(p => p.Name).ToList());
+        return new OleDbCommandPlan(command, sqlTemplate, ordered.Values.ToList());
+    }
+
+    /// <summary>Resolves a genuinely multi-independent-source <c>Microsoft.Merge</c>/
+    /// <c>Microsoft.UnionAll</c> -- gap-audit Phase 3.6 (2026-09-02). Every input is walked
+    /// BACKWARD via <see cref="ResolveUnionSide"/> (Sort required only for Merge); fatal for the
+    /// whole flow if any side or the destination fails to resolve, same "no half-finished
+    /// implementations" rule <see cref="PlanMergeJoin"/> already follows.</summary>
+    private static DataFlowPlan? PlanUnion(string taskName, PipelineSpec pipeline, PipelineComponentSpec unionComponent, List<GenerationGap> gaps)
+    {
+        var isMerge = unionComponent.ComponentClassId == "Microsoft.Merge";
+        var inputs = unionComponent.Inputs;
+        if (inputs.Count < 2)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"'{unionComponent.Name}' ({unionComponent.ComponentClassId}) has {inputs.Count} input(s) -- at least 2 are required"));
+            return null;
+        }
+
+        // Microsoft.Merge is hard-capped at exactly 2 inputs by SSIS itself -- confirmed real:
+        // attempting a 3rd via the object model crashes the native ReinitializeMetaData() with
+        // an AccessViolationException (see BuildSortMergeRemergeFixture's own doc comment). A
+        // saved .dtsx that somehow declares a different count is unevidenced, not guessed at.
+        if (isMerge && inputs.Count != 2)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Merge '{unionComponent.Name}' has {inputs.Count} inputs -- Microsoft.Merge is only ever evidenced with exactly 2, not supported"));
+            return null;
+        }
+
+        var sides = new List<UnionSideSource>();
+        foreach (var input in inputs)
+        {
+            var side = ResolveUnionSide(taskName, pipeline, unionComponent, input, sortRequired: isMerge, gaps);
+            if (side is null) return null; // ResolveUnionSide already added the gap
+            sides.Add(side);
+        }
+
+        // A Microsoft.Merge side's own key must resolve to the SAME CLR type on both sides --
+        // MergeInterleaveRowSource<TRow,TKey> needs one shared TKey to compare across sides at
+        // all, and SSIS itself would refuse to bind two differently-typed key columns together.
+        if (isMerge && sides[0].SortKey?.KeyClrType.ClrTypeName != sides[1].SortKey?.KeyClrType.ClrTypeName)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Merge '{unionComponent.Name}''s two sides sort by different CLR types ('{sides[0].SortKey?.KeyClrType.ClrTypeName}' vs '{sides[1].SortKey?.KeyClrType.ClrTypeName}') -- not supported"));
+            return null;
+        }
+
+        var mainOutput = unionComponent.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+        if (mainOutput is null)
+        {
+            gaps.Add(new GenerationGap(taskName, $"'{unionComponent.Name}' has no non-error output -- not supported"));
+            return null;
+        }
+
+        var outPath = pipeline.Paths.FirstOrDefault(p => p.StartId == mainOutput.RefId);
+        var destination = outPath is null ? null : pipeline.Components.FirstOrDefault(c => c.Inputs.Any(i => i.RefId == outPath.EndId));
+        if (destination is null ||
+            (destination.ComponentClassId != "Microsoft.OLEDBDestination" && destination.AdoNetDestination is null && destination.ComponentClassId != "Microsoft.FlatFileDestination"))
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"'{unionComponent.Name}' does not connect directly to an OLE DB/ADO NET/Flat File Destination -- a transform after a multi-source Merge/UnionAll is not supported yet"));
+            return null;
+        }
+
+        return new DataFlowPlan(taskName, pipeline, FlatFileSource: null, OleDbSource: null, DerivedColumn: null, Lookup: null,
+            ConditionalSplit: null, DestinationComponent: destination, DataConversion: null,
+            Union: new UnionPlan(unionComponent, isMerge, sides));
+    }
+
+    /// <summary>Walks backward from one input of a genuinely multi-independent-source Merge/
+    /// UnionAll to the real source feeding it -- mirrors <see cref="ResolveMergeJoinSide"/>'s own
+    /// backward-walk shape, generalized: <paramref name="sortRequired"/> requires an immediate
+    /// upstream <c>Microsoft.Sort</c> (Merge) or allows a direct/Data-Conversion-only hop
+    /// (UnionAll, which SSIS never requires sorted input for). Deliberately does NOT walk through
+    /// a Flat File/Excel Source -- see <see cref="UnionPlan"/>'s own doc comment for why that's a
+    /// stated scope trim, not an oversight: this round's own dtexec probes are both SQL-sourced,
+    /// and a mixed-source-kind side would need its own row-reading machinery this round never
+    /// built or verified.</summary>
+    private static UnionSideSource? ResolveUnionSide(
+        string taskName, PipelineSpec pipeline, PipelineComponentSpec unionComponent, PipelineInputSpec input, bool sortRequired, List<GenerationGap> gaps)
+    {
+        var sideName = string.IsNullOrEmpty(input.Name) ? input.RefId : input.Name;
+        var representative = input.Columns.FirstOrDefault();
+        if (representative is null)
+        {
+            gaps.Add(new GenerationGap(taskName, $"'{unionComponent.Name}''s input '{sideName}' has no columns -- not supported"));
+            return null;
+        }
+
+        var producer = FindProducerComponent(pipeline, representative.LineageId);
+
+        PipelineComponentSpec? sort = null;
+        var afterSortInput = input;
+        if (producer?.ComponentClassId == "Microsoft.Sort")
+        {
+            sort = producer;
+            var sortInput = sort.Inputs.FirstOrDefault();
+            if (sortInput is null || sortInput.Columns.Count == 0)
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"Sort '{sort.Name}' (feeding '{unionComponent.Name}''s input '{sideName}') has no input columns -- not supported"));
+                return null;
+            }
+            afterSortInput = sortInput;
+        }
+        else if (sortRequired)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"'{unionComponent.Name}''s input '{sideName}' is fed by '{producer?.Name ?? "(unresolved)"}' ({producer?.ComponentClassId ?? "?"}), not a Sort -- Merge requires sorted input, only [Source] -> [Data Conversion] -> Sort -> Merge is supported"));
+            return null;
+        }
+
+        // Same "check every column, not just the representative one" rule ResolveMergeJoinSide
+        // already established -- a Data Conversion's own converted column can sit anywhere in
+        // the buffer, not necessarily first.
+        PipelineComponentSpec? trueSource = null;
+        PipelineComponentSpec? dataConversion = null;
+        foreach (var col in afterSortInput.Columns)
+        {
+            var colProducer = FindProducerComponent(pipeline, col.LineageId);
+            if (colProducer is null) continue;
+            if (colProducer.ComponentClassId == "Microsoft.FlatFileSource" || SourceInfo.IsSqlSource(colProducer))
+                trueSource ??= colProducer;
+            else if (colProducer.ComponentClassId == "Microsoft.DataConvert")
+                dataConversion ??= colProducer;
+        }
+
+        // Data Conversion is detected (so a Merge/UnionAll side fed by one gets a precise gap
+        // naming it) but NOT resolved through -- unlike ResolveMergeJoinSide, which has real
+        // evidence for exactly this shape (RBC_Demo_ETL's own DFT_SortAndMergeJoin). No genuinely
+        // multi-independent-source Merge/UnionAll with a Data Conversion on either side has ever
+        // been evidenced or probed here -- a stated scope trim (see UnionPlan's own doc comment),
+        // not a guess.
+        if (dataConversion is not null)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"'{unionComponent.Name}''s input '{sideName}' is fed by a Data Conversion ('{dataConversion.Name}') -- not supported yet for a multi-independent-source Merge/UnionAll"));
+            return null;
+        }
+
+        if (trueSource is null || !SourceInfo.IsSqlSource(trueSource))
+        {
+            var viaLabel = sort is not null ? $"Sort '{sort.Name}'" : $"'{unionComponent.Name}''s input '{sideName}'";
+            gaps.Add(new GenerationGap(taskName,
+                $"{viaLabel} is not fed by a recognizable SQL source (OLE DB/ADO NET) -- only a SQL-sourced side is supported yet for a multi-independent-source Merge/UnionAll"));
+            return null;
+        }
+
+        SortKeyPlan? sortKey = null;
+        if (sort is not null)
+        {
+            var (keyHasGap, resolvedKey) = ResolveSortKeyForComponent(taskName, sort, gaps);
+            if (keyHasGap) return null; // ResolveSortKeyForComponent already added the gap
+            sortKey = resolvedKey;
+        }
+
+        return new UnionSideSource(trueSource, sort, dataConversion, sortKey);
     }
 
     /// <summary>Resolves a Merge Join's own two independent source chains (each walked BACKWARD
@@ -1780,6 +2294,26 @@ public static class PackagePlanner
                 return null;
             }
 
+            // Gated to Multicast only (added 2026-09-02, RBC_Demo_ETL's own
+            // DFT_LookupAndAggregate): a dead-end Microsoft.RowCount -- one with no outgoing
+            // path of its own -- is a valid, non-fatal branch terminus, not a gap. Confirmed
+            // real: the one evidenced instance (LKP_Country's Multicast, MCAST_Matched) fans a
+            // second output straight to a RowCount that writes User::MatchedRows, a package
+            // variable nothing else in the whole 5614-line package ever reads (grepped directly,
+            // not assumed). Deliberately NOT extended to Conditional Split -- its own "fatal for
+            // the whole flow if ANY branch fails" invariant stays exactly as documented, since
+            // this shape is unevidenced there and a split's branches are meant to be mutually
+            // exclusive routing decisions, not "some branches are just counters".
+            if (componentKind == "Multicast" && next.ComponentClassId == "Microsoft.RowCount"
+                && !pipeline.Paths.Any(p => next.Outputs.Any(o => o.RefId == p.StartId)))
+            {
+                var variableName = next.Properties.FirstOrDefault(p => p.Name == "VariableName")?.Value;
+                gaps.Add(new GenerationGap(taskName,
+                    $"{componentKind} '{splitComponent.Name}' output '{outputName}' counts rows into '{variableName ?? "(unknown variable)"}' via RowCount '{next.Name}', which nothing else in this package reads -- this count is not reproduced in generated code",
+                    IsBlocking: false));
+                return new ConditionalSplitBranchPlan(outputName, friendlyExpression, derivedColumns, Destination: null, Discarded: true);
+            }
+
             // Widened to include Flat File Destination for Multicast (added 2026-08-28): the real
             // evidenced shape (RBC_Demo_ETL's own DFT_FixedWidthImport) fans one Multicast to a
             // Flat File Destination AND an OLE DB Destination from the same component -- no
@@ -1788,7 +2322,18 @@ public static class PackagePlanner
             if (next.ComponentClassId is "Microsoft.OLEDBDestination" or "Microsoft.FlatFileDestination" || next.AdoNetDestination is not null)
                 return new ConditionalSplitBranchPlan(outputName, friendlyExpression, derivedColumns, next);
 
-            if (next.ComponentClassId is "Microsoft.DerivedColumn" or "Microsoft.UnionAll" or "Microsoft.Sort" or "Microsoft.Merge")
+            // "Microsoft.Aggregate" is gated to Multicast only, added 2026-09-02 alongside the
+            // discard recognition above -- purely structural (this walk doesn't inspect column
+            // identity, only where the chain eventually connects), so it's deliberately NOT added
+            // to derivedColumns the way a real passthrough is: an Aggregate changes the row shape
+            // entirely (fewer rows, a new column set), and that value-level resolution is handled
+            // entirely by the already-existing, independently-invoked PlanAggregate/
+            // AggregateRowEmitter/GenerateAggregateFlow machinery (reused directly by whichever
+            // Lookup/Aggregate composition consumes this Multicast -- see DataFlowPlan.Lookup's
+            // own doc comment), not reimplemented here. Safe to widen to Conditional Split too by
+            // the same reasoning, but kept Multicast-only since it is unevidenced there.
+            if (next.ComponentClassId is "Microsoft.DerivedColumn" or "Microsoft.UnionAll" or "Microsoft.Sort" or "Microsoft.Merge"
+                || (componentKind == "Multicast" && next.ComponentClassId == "Microsoft.Aggregate"))
             {
                 if (next.ComponentClassId == "Microsoft.DerivedColumn")
                     derivedColumns.Add(next);

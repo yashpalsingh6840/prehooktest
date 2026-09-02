@@ -5632,6 +5632,178 @@ target-type gaps. Cross-database Execute SQL Task routing, found and deferred ea
 session as "Bug 3", is now closed for the one evidenced shape (a task on a genuinely different
 database, with no `TransactionOption="Required"` anywhere to say otherwise).
 
+### Aggregate-inside-a-Multicast-branch + two-output Lookup routing -- the last real tool gap in the portfolio, closed (2026-09-02)
+
+`DFT_LookupAndAggregate` was the one remaining flow blocked by a genuine `ssisx generate`
+limitation rather than a hand-portable Script seam. Real topology, read directly from
+`Package_Transforms.dtsx` rather than assumed: `FF_SRC_Customers2 -> LKP_Country [CacheType=0;
+NoMatchBehavior=1 REDIRECT; join Country->CountryName; copies Region] --(Match)--> MCAST_Matched
+--(Output 1)--> AGG_ByRegion [GroupBy Region, Count(CustomerID)] --> OLEDST_RegionSummary`, with
+TWO dead branches alongside the one real path: `MCAST_Matched`'s own Output 2 and `LKP_Country`'s
+own No-Match output each feed a `Microsoft.RowCount` writing to a package variable
+(`User::MatchedRows`/`User::UnmatchedRows`) that nothing else in the whole 5614-line package ever
+reads (grepped directly, not assumed). **So only one branch in the entire flow is ever
+observably live** -- confirmed via `MCAST_Matched`'s own saved XML (`synchronousInputId` set, no
+separate `<outputColumns>` at all -- a pure fan-out that never assigns a fresh lineageId), which
+is also why `PackagePlanner.PlanAggregate`'s existing global-lineageId-based column resolution
+(built 2026-08-30) already resolved `AGG_ByRegion`'s own GroupBy/Count columns correctly straight
+through the Multicast -- the ONLY thing that ever blocked this flow was `PlanMulticast`/
+`ResolveBranch` treating a dead-end RowCount and an Aggregate mid-chain as unconditional gaps.
+
+**The design that fell out of this evidence was much smaller than "N-way Multicast fan-out with
+per-branch Aggregate buffering"**: recognize a dead-end `Microsoft.RowCount` (no outgoing path of
+its own) as a valid, non-fatal branch terminus -- discarded, with a non-blocking advisory gap
+naming the variable being dropped, never silent -- and recognize `Microsoft.Aggregate` as a valid
+structural pass-through hop for `ResolveBranch`'s own forward walk (purely structural, deliberately
+NOT added to `derivedColumns`, since value semantics stay entirely with the already-existing
+`PlanAggregate`/`AggregateRowEmitter`/`GenerateAggregateFlow` machinery). Both gated to
+`componentKind == "Multicast"` only -- Conditional Split's own "fatal for the whole flow if ANY
+branch fails" invariant is untouched, since this shape is unevidenced there.
+
+**`ConditionalSplitBranchPlan.Destination` became nullable** (`Discarded: bool = false` alongside
+it), which rippled into `GenerateConditionalSplitFlow`/`GenerateMulticastFlow` needing a
+null-forgiving `!` at each existing dereference (Conditional Split branches are never discarded,
+by construction) and `GenerateMulticastFlow` gaining a real, generically useful defensive addition:
+skip `Discarded` branches in its own per-branch loop. This is NOT the real motivating case --
+`GenerateAggregateFlow`/the new composed path always wins dispatch first whenever an Aggregate
+exists anywhere in the pipeline (`PackageGenerator.Generate`'s per-flow dispatch checks
+`flow.Aggregate` before Multicast) -- but it IS a direct, foreseeable consequence of relaxing
+`ResolveBranch`: a plain Multicast with one live branch and one discarded RowCount branch, no
+Lookup, no Aggregate, would otherwise reach `GenerateMulticastFlow` and crash dereferencing a null
+`Destination`. `PlanDataFlow`'s own destination selection (`multicast.Branches[^1].Destination`)
+also had to change to the first NON-null destination among branches -- for the one real evidenced
+shape, the discarded branch IS the last one Multicast declares, so `[^1]` alone would have picked
+the wrong, null one.
+
+**`GenerateLookupFlow`'s own classification was rewritten, not reused via `ResolveBranch`.** A
+Multicast is a genuine fan-out; teaching `ResolveBranch`'s single-linear-chain-per-hop walk to
+recurse into multiple branches mid-walk was unnecessary, because `flow.Multicast` is already
+fully resolved by planning time. Instead: classify each of the Lookup's own routed (non-error)
+outputs by a single explicit hop (discardable RowCount dead end -> advisory, continue; otherwise
+the one candidate LIVE output -- more than one is still a hard gap, the composed-shape boundary
+this round draws). The live output's own next hop then decides the shape: straight to the
+destination (today's original, unchanged path) or into `flow.Multicast` with exactly one live
+branch feeding `flow.Aggregate` (the new composed path, `GenerateLookupThenAggregateFlow`) --
+anything else (Multicast leading straight to a destination with no Aggregate, or more than one
+live Multicast branch) is unevidenced and gapped rather than guessed, a deliberate scope trim
+from this round's own original plan once building the "straight to destination" bonus case turned
+out to need its own new `FlowSourceSpec` variant rather than being free.
+
+**One new, small, generic `Etl.Core` primitive**: `Data/FilteringRowSource.cs`
+(`FilteringRowSource<TRow> : IRowSource<TRow>`, wraps another source, yields only rows matching a
+predicate) -- this is what expresses `NoMatchBehavior=1`: a Lookup miss is excluded from the row
+stream entirely, before anything downstream (the transform's own join indexer, or
+`AggregateRowSource<TSourceRow,TKey,TRow>`, which requires `TKey : notnull` and so can never
+safely group a miss under a null/sentinel key) ever sees it. No new push/flush Multicast-branch
+abstraction was needed at all -- a Multicast with only one live consumer needs no fan-out
+machinery; it degenerates to a plain 1:1 pass-through at runtime, so the composed flow is just
+`Lookup cache -> filter misses -> AggregateRowSource -> entity -> bulk insert`, no different in
+kind from the already-existing standalone Lookup and Aggregate flows, just composed.
+
+**A real, load-bearing design correction made mid-round: filtering and the GroupBy key selector
+are independent axes, not the same field.** A first draft coupled "wrap the source in
+`FilteringRowSource`" to "the GroupBy key reads through the lookup cache" (`AggregateLookupKeySpec`
+alone) -- wrong, because a plain PASSTHROUGH GroupBy column downstream of a redirect-on-miss
+Lookup would still need the miss filtered out even when the key itself needs no lookup at all.
+Fixed before it ever reached a fixture: `AggregateFlowSource` carries `LookupKey` (drives the key
+SELECTOR text) and a separately-settable `LookupFilter` (drives whether the source gets wrapped at
+all) as two independent optional fields, set independently by the caller -- the one real evidenced
+flow happens to set both, but nothing requires that.
+
+**`AggregateRowEmitter`'s reused `GenerateAggregateFlow` core was factored out, not
+duplicated** -- a new `EmitAggregateRowEntityAndTransform` helper (row type + entity + transform +
+table + auth resolution) takes an already-resolved `groupByClrType`/`innerSource` and an optional
+`lookupKey`/`lookupFilter`, called by both the standalone Aggregate path (both null) and the new
+composed path. `GenerateLookupThenAggregateFlow`'s own GroupBy-type resolution tries the Lookup's
+own reference-column type first (via `outputToReference`, the exact same dictionary the plain
+single-output Lookup path already builds from `CopyFromReferenceColumn`), falling back to the
+standalone path's raw-source-column resolution when the GroupBy value isn't Lookup-derived at all
+-- so a plain passthrough GroupBy downstream of this same Lookup would still resolve correctly.
+
+**Three real bugs were caught building this, all before a fixture ever ran, and one only by
+actually building the generated project** -- none guessed past:
+1. **`ProgramFlowSpec.Lookup` being non-null used to mean, unconditionally, "pass the cache to the
+   transform's constructor"** (`new {TransformClassName}({cacheVariable})`) -- true for the plain
+   single-output Lookup shape, where the transform's own `Map()` does the join itself, but WRONG
+   for the composed shape, whose transform is a plain parameterless `TrustAllPassthroughColumns`
+   mapping (the cache is already fully consumed upstream, inside `AggregateFlowSource`'s own key
+   selector/filter). Caught by actually building the generated project (`CS7036`/constructor
+   mismatch), not by a unit test. Fixed with a new `ProgramFlowSpec.TransformNeedsLookupCache`
+   flag (default `true`, so every existing Lookup flow is untouched), set `false` only by the new
+   composed path.
+2. **The emitted `FilteringRowSource<T>(...)` call was missing its own required `name` argument**
+   -- caught the same way, a real `CS7036` on the constructor. `FilteringRowSource`'s own
+   component-name literal was simply forgotten in the first emission pass.
+3. **A real, previously-unencountered `Microsoft.Aggregate` validation rule, found only via a real
+   `dtexec` probe, not guessed:** unlike a plain destination, Aggregate demands every one of its
+   OWN mapped input columns actually be referenced by some output's `AggregationColumnId` --
+   mapping every virtual input column as `UT_READONLY` (the pattern every earlier Aggregate/
+   Multicast/OLE DB Destination fixture in this file already uses safely, since their own upstream
+   components happen to expose only the columns actually needed) left "Country" declared-but-
+   unused this time (the Multicast passes through the Lookup's ENTIRE Match output, Country
+   included, and nothing downstream of the Aggregate needs it) -- `dtexec` failed validation with
+   `0xC0208218` ("input column ... is not referenced")/`VS_ISBROKEN`. Fixed in the fixture builder
+   by mapping only the two columns (`Region`, `CustomerID`) the Aggregate's own output columns
+   actually reference -- a real, generalizable fact about `Microsoft.Aggregate`'s own object-model
+   contract, not specific to this fixture.
+
+**Verified two ways, the strongest evidence tier this project's own philosophy asks for:**
+1. **A real `dtexec` probe against `.\SQLFORPOC_2022`, then the generated code run against the
+   exact same seed data, diffed row-for-row.** New fixture,
+   `tests/Ssis.Extract.Tests/Fixtures/SyntheticLookupThenAggregate.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `lookup-then-aggregate` mode): the real evidenced shape in
+   miniature -- OLE DB Source (Country, CustomerID) -> Lookup (CacheType=0, NoMatchBehavior=1,
+   Country->CountryName, copies Region) -> Multicast -> {Output 1 -> Aggregate (GroupBy Region,
+   Count CustomerID) -> OLE DB Destination, Output 2 -> dead-end RowCount}, Lookup's own No-Match
+   output -> a second dead-end RowCount. Seed data: Canada x2 + India x1, all matching the
+   reference table, plus one deliberately UNMATCHED row (`Atlantis`) to exercise the filter for
+   real. **`dtexec` result (real SSIS, `DTSER_SUCCESS`):** `Asia=1, North America=2` -- Atlantis's
+   row genuinely excluded, not grouped under a null Region and not counted anywhere.
+   **Generated, built against a copy of `Etl.Core` (0 warnings/0 errors), and actually RUN against
+   `.\SQLFORPOC_2022`:** **exact match**, `Asia=1, North America=2`, read back from the table
+   directly, not trusted from the exit code. A second, minimal fixture,
+   `SyntheticMulticastDiscard.dtsx` (`multicast-discard` mode: a plain Multicast, one live branch,
+   one discarded RowCount branch, no Lookup, no Aggregate at all), proves
+   `GenerateMulticastFlow`'s own defensive discard-skip independently -- generated, built (0/0),
+   and run against `.\SQLFORPOC_2022`, landing both real rows correctly with the discarded branch
+   contributing nothing.
+2. **The real motivating package.** Regenerating `Package_Transforms.dtsx`:
+   `DFT_LookupAndAggregate`'s own blocking gap is GONE entirely -- its only remaining gaps are the
+   two discarded-RowCount advisories named above plus the unavoidable Notification advisory, all
+   non-blocking. The WHOLE regenerated 5-package portfolio (`Package`, `Package_Advanced`,
+   `Package_Exports`, `Package_Legacy`, `Package_Transforms`, plus a copy of `Etl.Core`) builds with
+   **0 warnings/0 errors** in one shot. A full RUN against this real package was not attempted --
+   its own source data lives in the third party's own OneDrive path
+   (`D:\OneDrive\...\KT\RBC\SSIS\sample-data\Customers.csv`), genuinely unavailable in this
+   environment, the same honest limitation as the Merge Join/Flat File Destination rounds' own
+   real-package checks; the `ssisdemo-sqlserver` Docker container from the 2026-09-01 round is
+   still up and healthy, but this flow's own SOURCE is a Flat File, not the SQL data that container
+   holds, so it wouldn't have helped here regardless.
+
+Two new `PackagePlannerTests` (discard + Aggregate-passthrough resolution for the composed
+fixture, including the destination-selection fix; the plain Multicast-discard-only fixture, no
+Lookup/Aggregate) and two new `PackageGeneratorTests` (the full composed wiring --
+`FilteringRowSource`, the lookup-cache key selector, the parameterless transform registration --
+and the Multicast-only discard-skip). One pre-existing test's own wording assertion was updated,
+not its substance: `LookupFlowTests.Generate_UsesAConfirmedDecision_WhenThePackageDeclaresNoJoinKey`
+asserted the OLD flat "routes 2 outputs onward" gap text for `SyntheticLookupSplit.dtsx` (a
+DIFFERENT fixture whose No-Match output leads to a REAL destination, not a discardable RowCount
+dead end, so it's still correctly a hard gap -- just reworded to "routes more than one output to
+real downstream processing"). Regression: 218/218 in `Ssis.Extract.Codegen.Tests` (was 214), 149/149
+in `Ssis.Runtime.Expressions.Tests`, 61/61 in `Etl.Core.Tests` (was 56, 5 new --
+`FilteringRowSourceTests`), same 3 pre-existing unrelated failures in `Ssis.Extract.Tests`
+(someone else's in-progress SSDT edits to `SSIS/LoadReferenceData.dtsx`/`SSIS/SSIS.dtproj`, not
+this round's).
+
+**Remaining known gaps, updated -- this closes the last one this file has tracked since the
+2026-08-30 Aggregate/Row-Count round:** the conditional forms that fire on both paths (Completion,
+Expression-only, ExpressionOrConstraint -- unevidenced anywhere), chunk 4 (provenance/staleness for
+AI-assisted gap filling), and the pre-existing per-pairing numeric-coercion/Data-Conversion
+target-type gaps. `DFT_LookupAndAggregate` -- Aggregate-inside-a-Multicast-branch plus two-output
+Lookup routing -- is now closed. Every real, evidenced flow in the tracked `SSIS_From_Sandeep`
+portfolio either generates cleanly or is blocked only on `Package`'s own 8 hand-portable Script
+seams (Tier 2, already fillable via `--seams`/`ssisx apply-fills`, unrelated to this round).
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

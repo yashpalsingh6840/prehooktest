@@ -80,7 +80,7 @@
                   dataType="System.String"
                   description="The SQL command to be executed."
                   name="SqlCommand"
-                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor">SELECT * FROM [DripEligibility$] WHERE CustomerID > 5</property>
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor">SELECT CustomerID, ReviewedBy FROM [DripEligibility$]</property>
                 <property
                   dataType="System.String"
                   description="The variable that contains the SQL command to be executed."

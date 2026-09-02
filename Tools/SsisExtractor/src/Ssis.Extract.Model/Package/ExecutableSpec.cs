@@ -68,4 +68,6 @@ public sealed class ExecutableSpec
     public ScriptTaskPayload? ScriptTask { get; init; }
     public ForEachLoopPayload? ForEachLoop { get; init; }
     public FileSystemTaskPayload? FileSystemTask { get; init; }
+
+    public ExecutePackageTaskPayload? ExecutePackageTask { get; init; }
 }

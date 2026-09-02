@@ -30,8 +30,14 @@ public sealed class PipelineComponentSpec
     public required string Name { get; init; }
     public string? Description { get; init; }
 
-    /// <summary>e.g. "Microsoft.DerivedColumn", "Microsoft.FlatFileSource", "Microsoft.OLEDBDestination". Not normalized against the versioned/GUID forms older packages sometimes use (plan §4.7) -- not evidenced in this PoC, so not guessed at.</summary>
+    /// <summary>e.g. "Microsoft.DerivedColumn", "Microsoft.FlatFileSource", "Microsoft.OLEDBDestination". Always canonical -- a legacy-spelled SSIS 2005/2008-era ProgID (<c>DTSAdapter.X.N</c>/<c>DTSTransform.X.N</c>) or a known bare CLSID is normalized to this form by <c>LegacyComponentIds</c> before this spec is built; see <see cref="RawComponentClassId"/> for what was actually in the file.</summary>
     public required string ComponentClassId { get; init; }
+
+    /// <summary>Non-null only when <see cref="ComponentClassId"/> was normalized from a legacy spelling -- the verbatim value read from <c>componentClassID</c> before normalization, kept so extraction stays lossless. Null (not merely equal to <see cref="ComponentClassId"/>) whenever the file already used the canonical form -- the common case, kept null to avoid bloating every golden file with a redundant field.</summary>
+    public string? RawComponentClassId { get; init; }
+
+    /// <summary>True when the raw <c>componentClassID</c> is shaped like a bare CLSID (<c>{8-4-4-4-12}</c>) that <c>LegacyComponentIds</c> has no evidenced mapping for -- the honest "we genuinely don't know what this is" case, as opposed to a recognized legacy spelling (silently normalized) or an ordinary named third-party component (its own, separate <c>third-party-component</c> finding). See <c>RulesEngine</c>'s <c>unmapped-legacy-clsid</c> finding.</summary>
+    public bool IsUnresolvedLegacyClsid { get; init; }
 
     public string? ContactInfo { get; init; }
     public string? Version { get; init; }
@@ -104,6 +110,9 @@ public sealed class PipelineComponentSpec
     /// blocks the whole flow regardless of Aggregate support) -- <c>Microsoft.Aggregate</c>, see
     /// <see cref="AggregatePayload"/>'s own doc comment.</summary>
     public AggregatePayload? Aggregate { get; init; }
+
+    /// <summary><c>Microsoft.RowCount</c>, see <see cref="RowCountPayload"/>'s own doc comment.</summary>
+    public RowCountPayload? RowCount { get; init; }
 }
 
 /// <summary>A component's reference to a connection manager. <see cref="ConnectionManagerRefRaw"/> is the pipeline's own reference shape (a refId path, e.g. "Package.ConnectionManagers[CM_EmployeesCsv]") -- notably NOT the DTSID-GUID form Execute SQL Task uses (see <c>ExecuteSqlTaskPayload.ConnectionRefRaw</c>'s doc comment); resolved the same way, by matching against <c>ConnectionManagerSpec.RefId</c> this time instead of <c>DtsId</c>.</summary>

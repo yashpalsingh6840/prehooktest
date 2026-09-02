@@ -81,6 +81,71 @@ public sealed class FileSystemTaskPayload
 }
 
 /// <summary>
+/// <c>Microsoft.ExecutePackageTask</c> -- runs another package (project-reference or legacy
+/// file/MSDB reference) as a child of the one being extracted. Extraction-only for now:
+/// <c>ssisx generate</c> reports a named, honest structural gap for this task type rather than
+/// attempting to compose two generated projects together, a genuine architectural decision
+/// (in-process reference vs. shell-out vs. macro-flatten) deferred until a real client package
+/// using this task exists to decide it against -- see <c>PackagePlanner</c>'s own handling.
+///
+/// <b>Verified against the real SSIS 16.0/2022 object model on this machine</b> (a live
+/// build-and-save-XML round trip, not guessed from documentation alone -- the same "ask the
+/// runtime, don't guess" discipline as trap 12), because the two written specs disagree with
+/// each other in a way that matters: the older MS-DTSX open spec (an SSIS ~2008-era document)
+/// describes <c>ExecutableType="SSIS.ExecutePackageTask.2"</c>/<c>"STOCK:ExecutePackageTask"</c>
+/// and a <c>PackageID</c>/<c>VersionID</c>/<c>Connection</c>-keyed file/MSDB reference shape with
+/// no project-reference concept at all (that mode postdates the 2012 Project Deployment Model);
+/// Microsoft's own current property-grid docs describe a
+/// <c>PackageNameFromProjectReference</c> UI property that turned out NOT to be a real, separate
+/// persisted field. What is actually saved on this version: <c>ExecutableType</c>/
+/// <c>CreationName</c> are both literally <c>"Microsoft.ExecutePackageTask"</c>; the unqualified
+/// (no <c>DTS:</c> prefix) <c>&lt;ExecutePackageTask&gt;</c> wrapper element's children are
+/// present only when they differ from their schema default (same omit-the-default convention as
+/// <see cref="FileSystemTaskPayload.OperationRaw"/>): <c>&lt;ExecuteOutOfProcess&gt;</c>,
+/// <c>&lt;UseProjectReference&gt;</c> (present, "True", ONLY for project-reference mode -- absent,
+/// not "False", for the legacy mode), <c>&lt;PackageName&gt;</c> (the SAME element in BOTH modes
+/// -- a project-relative package name when <see cref="UseProjectReference"/> is true, or a
+/// literal/expression path in legacy mode; "PackageNameFromProjectReference" is purely an SSDT
+/// property-grid DISPLAY label for this same field, confirmed by reflecting the real
+/// <c>IDTSExecutePackage100</c> COM interface in <c>Microsoft.SqlServer.ExecPackageTaskWrap</c>,
+/// which has no such member at all), <c>&lt;PackageID&gt;</c>/<c>&lt;VersionID&gt;</c> (legacy
+/// mode only, unset in the probe so their real persisted shape when non-empty is still
+/// unconfirmed), and <c>&lt;Connection&gt;</c> (legacy mode only, a connection-manager DTSID
+/// reference, resolved the same way <see cref="ExecuteSqlTaskPayload.ConnectionRefRaw"/>/
+/// <c>ConnectionName</c> already are).
+///
+/// <b>Not modeled, deliberately</b>: project-reference parameter bindings
+/// (<c>ParameterAssignments</c>, real per Microsoft's own docs and the live object model's
+/// <c>IDTSParameterAssignments</c> interface, but never populated in this probe, so its real
+/// persisted XML shape is still unconfirmed) -- <see cref="DtsxPackageReader"/> reports
+/// <c>coverage.Unmapped</c> for any such element found rather than silently treating it as
+/// covered, so a real package using parameter bindings surfaces as a coverage regression
+/// instead of a silent gap, until a real example lets this be modeled for real.
+/// </summary>
+public sealed class ExecutePackageTaskPayload
+{
+    public bool? ExecuteOutOfProcess { get; init; }
+
+    /// <summary>Present ("True") only for project-reference mode; absent (not "False") for legacy file/MSDB-reference mode -- the real discriminator between the two shapes.</summary>
+    public bool? UseProjectReference { get; init; }
+
+    /// <summary>The child package's name -- project-relative (project-reference mode) or a literal/expression path (legacy mode). The SAME underlying field in both modes; see this type's own doc comment.</summary>
+    public string? PackageName { get; init; }
+
+    /// <summary>Legacy mode only. Raw GUID text, not resolved against anything -- this project has no catalog of package IDs to resolve it to.</summary>
+    public string? PackageIdRaw { get; init; }
+
+    /// <summary>Legacy mode only. Raw GUID text, not resolved against anything.</summary>
+    public string? VersionIdRaw { get; init; }
+
+    /// <summary>Legacy mode only. The connection manager's DTSID as referenced by this task, before resolution -- same raw-GUID reference shape as <see cref="ExecuteSqlTaskPayload.ConnectionRefRaw"/>.</summary>
+    public string? ConnectionRefRaw { get; init; }
+
+    /// <summary>Resolved from <see cref="ConnectionRefRaw"/> against this package's own connection managers by DtsId, same as <see cref="ExecuteSqlTaskPayload.ConnectionName"/>. Null if unresolvable or not in legacy mode.</summary>
+    public string? ConnectionName { get; init; }
+}
+
+/// <summary>
 /// <c>Microsoft.Pipeline</c> (Data Flow Task, plan §4.7). Slice 2 kept this as an opaque
 /// raw-XML marker; slice 3 parses it fully into <see cref="Pipeline"/> (every component,
 /// generically, plus bespoke semantics for the types this PoC has evidence for) and derives

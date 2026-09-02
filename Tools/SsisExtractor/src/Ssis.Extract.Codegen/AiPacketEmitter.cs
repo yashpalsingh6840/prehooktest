@@ -104,6 +104,7 @@ public static class AiPacketEmitter
         GapKind.LookupJoinKey => LookupContract,
         GapKind.ScriptTask => ScriptTaskContract,
         GapKind.ScriptComponentColumn => ScriptComponentContract,
+        GapKind.EncryptedConnectionManagerSecret => EncryptedSecretContract,
         _ => "_(no contract defined for this gap kind)_\n",
     };
 
@@ -193,6 +194,7 @@ public static class AiPacketEmitter
     private static string ResponseFormat(GenerationGap gap) => gap.Kind switch
     {
         GapKind.LookupJoinKey => LookupResponseFormat,
+        GapKind.EncryptedConnectionManagerSecret => EncryptedSecretResponseFormat,
         _ => CodeResponseFormat,
     };
 
@@ -210,6 +212,36 @@ public static class AiPacketEmitter
           "rationale": "one or two sentences"
         }
         ```
+        """;
+
+    private const string EncryptedSecretContract = """
+        Nothing to propose or write. There is no fact in this package an AI (or a human reading the
+        .dtsx) can recover here -- the value is DPAPI-encrypted and only ever decryptable by the
+        original author's own Windows account. What actually closes this:
+
+        1. Obtain the real credential from wherever it lives outside this package (a password vault,
+           the DBA, the target server's own connection-manager configuration, an existing deployment's
+           SSISDB environment variable, etc.) -- NOT by attempting to decrypt the ciphertext in the
+           .dtsx, which is not possible outside the original machine/account.
+        2. Set it via User Secrets in the generated package's own project directory, e.g.:
+           `dotnet user-secrets set "TargetDatabase:Password" "<the real password>"`
+           (or `SecondaryConnections:<connection manager name>:Password` -- see the gap's own reason
+           text and the generated appsettings.json for which key applies).
+        3. Record an acknowledgment -- NEVER the value itself -- in this package's
+           `fills/<Package>.decisions.json`, keyed by this gap's own id, with `ConfirmedBy` set. This
+           only silences the report; it changes nothing about what gets generated.
+
+        Do not put the real secret anywhere in a chat response, a work packet answer, or
+        `decisions.json`. This packet exists to make the requirement visible, not to collect the value.
+
+        """;
+
+    private const string EncryptedSecretResponseFormat = """
+
+        ## Respond with
+
+        Confirmation that steps 1-3 above were done (or an explanation of why they can't be, e.g. the
+        credential could not be recovered). Do NOT include the actual secret value in your response.
         """;
 
     private const string CodeResponseFormat = """
@@ -262,8 +294,25 @@ public static class AiPacketEmitter
         GapKind.ScriptTask => ScriptTaskEvidence(package, gap),
         GapKind.ScriptComponentColumn => ScriptComponentEvidence(package, gap),
         GapKind.LookupJoinKey => LookupEvidence(package, gap),
+        GapKind.EncryptedConnectionManagerSecret => EncryptedSecretEvidence(package, gap),
         _ => "_(no evidence builder for this gap kind)_\n",
     };
+
+    private static string EncryptedSecretEvidence(PackageSpec package, GenerationGap gap)
+    {
+        var cm = package.ConnectionManagers.FirstOrDefault(c => c.RefId == gap.EvidenceRefId);
+        if (cm is null)
+            return $"_Could not resolve the connection manager for refId `{gap.EvidenceRefId}` -- report this, it is a bug in AiPacketEmitter._\n";
+
+        var sb = new StringBuilder();
+        sb.Append($"- **Connection manager:** `{cm.ObjectName}`\n");
+        sb.Append($"- **Type:** `{cm.CreationName}`\n");
+        sb.Append($"- **Encrypted properties:** {FormatList(cm.EncryptedProperties)}\n");
+        if (cm.ConnectionString is not null)
+            sb.Append($"- **Connection string (redacted):** `{cm.ConnectionString}`\n");
+        sb.Append("\n_The ciphertext itself is never extracted -- there is nothing more to show here._\n");
+        return sb.ToString();
+    }
 
     private static string ScriptTaskEvidence(PackageSpec package, GenerationGap gap)
     {

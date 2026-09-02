@@ -23,6 +23,21 @@ public class RulesEngineTests
         ConnectionManagers = package.ConnectionManagers,
     };
 
+    private static PackageSpec WithConnectionManagers(PackageSpec package, List<ConnectionManagerSpec> connectionManagers) => new()
+    {
+        ObjectName = package.ObjectName,
+        SourceDtsxPath = package.SourceDtsxPath,
+        Sha256 = package.Sha256,
+        FileSizeBytes = package.FileSizeBytes,
+        LastWriteTimeUtc = package.LastWriteTimeUtc,
+        ProtectionLevelRaw = package.ProtectionLevelRaw,
+        ProtectionLevelName = package.ProtectionLevelName,
+        Coverage = package.Coverage,
+        Executables = package.Executables,
+        Variables = package.Variables,
+        ConnectionManagers = connectionManagers,
+    };
+
     [Fact]
     public void DisabledTask_ProducesFinding()
     {
@@ -43,6 +58,67 @@ public class RulesEngineTests
         var findings = RulesEngine.Evaluate(package);
 
         Assert.DoesNotContain(findings, f => f.RuleId == "disabled-task");
+    }
+
+    [Fact]
+    public void ConnectionManagerWithEncryptedProperty_ProducesErrorFinding()
+    {
+        var cm = new ConnectionManagerSpec
+        {
+            ObjectName = "CM_TargetDb",
+            CreationName = "OLEDB",
+            Scope = "Package",
+            WasRedacted = false,
+            EncryptedProperties = ["Password"],
+        };
+        var package = WithConnectionManagers(TestFixtures.MinimalPackage("P"), [cm]);
+
+        var findings = RulesEngine.Evaluate(package);
+
+        var finding = Assert.Single(findings, f => f.RuleId == "encrypted-connection-manager-secret");
+        Assert.Equal("Error", finding.Severity);
+        Assert.Equal("CM_TargetDb", finding.Location);
+        Assert.Contains("Password", finding.Message);
+    }
+
+    [Fact]
+    public void ConnectionManagerWithNoEncryptedProperty_ProducesNoEncryptedSecretFinding()
+    {
+        var cm = new ConnectionManagerSpec
+        {
+            ObjectName = "CM_Plain",
+            CreationName = "OLEDB",
+            Scope = "Package",
+            WasRedacted = false,
+        };
+        var package = WithConnectionManagers(TestFixtures.MinimalPackage("P"), [cm]);
+
+        var findings = RulesEngine.Evaluate(package);
+
+        Assert.DoesNotContain(findings, f => f.RuleId == "encrypted-connection-manager-secret");
+    }
+
+    [Fact]
+    public void ProtectionLevelEncryptSensitiveWithUserKey_ProducesFinding()
+    {
+        var package = TestFixtures.MinimalPackage("P");
+        var withProtection = new PackageSpec
+        {
+            ObjectName = package.ObjectName,
+            SourceDtsxPath = package.SourceDtsxPath,
+            Sha256 = package.Sha256,
+            FileSizeBytes = package.FileSizeBytes,
+            LastWriteTimeUtc = package.LastWriteTimeUtc,
+            ProtectionLevelRaw = package.ProtectionLevelRaw,
+            ProtectionLevelName = "EncryptSensitiveWithUserKey",
+            Coverage = package.Coverage,
+        };
+
+        var findings = RulesEngine.Evaluate(withProtection);
+
+        Assert.Contains(findings, f => f.RuleId == "protection-level-user-key-based");
+        // Never wrongly ALSO fires the password-based rule for the same protection level.
+        Assert.DoesNotContain(findings, f => f.RuleId == "protection-level-password-based");
     }
 
     [Fact]
@@ -134,6 +210,36 @@ public class RulesEngineTests
         var findings = RulesEngine.Evaluate(package);
 
         Assert.Contains(findings, f => f.RuleId == "third-party-component" && f.Category == "RewriteEffort");
+    }
+
+    [Fact]
+    public void UnresolvedLegacyClsid_IsFlaggedDistinctlyFromThirdPartyComponent()
+    {
+        var comp = new PipelineComponentSpec
+        {
+            RefId = "C1",
+            Name = "Comp",
+            ComponentClassId = "{00000000-0000-0000-0000-000000000000}",
+            ContactInfo = "Some Vendor;Some Product",
+            IsUnresolvedLegacyClsid = true,
+        };
+        var pipeline = new PipelineSpec { Components = [comp] };
+        var dft = new ExecutableSpec
+        {
+            RefId = "DFT1",
+            ExecutableType = "Microsoft.Pipeline",
+            DataFlowTask = new DataFlowTaskPayload { Pipeline = pipeline, Lineage = LineageBuilder.Build(pipeline) },
+        };
+        var package = WithExecutables(TestFixtures.MinimalPackage("P"), [dft]);
+
+        var findings = RulesEngine.Evaluate(package);
+
+        var finding = Assert.Single(findings, f => f.RuleId == "unmapped-legacy-clsid");
+        Assert.Equal("Warning", finding.Severity);
+        Assert.Contains("Some Vendor;Some Product", finding.Message);
+        // Never ALSO third-party-component for the same component -- a bare unresolved CLSID
+        // might well be a legitimate stock component under an old spelling, not a real vendor one.
+        Assert.DoesNotContain(findings, f => f.RuleId == "third-party-component");
     }
 
     [Fact]

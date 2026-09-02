@@ -19,8 +19,12 @@ public sealed record SqlFlowSource(string ComponentName, string CommandText) : F
 /// <summary>An Excel Source, added 2026-08-28 testing this tool against a real third-party
 /// portfolio (SSIS_From_Sandeep). Uses the same <see cref="FileSourceOptions"/>/FileSourceKey
 /// mechanism a <see cref="CsvFlowSource"/> does for its file path (a workbook is just another
-/// named folder/filename pair), plus the worksheet name and whether to skip its own header row.</summary>
-public sealed record ExcelFlowSource(string ComponentName, string FileSourceKey, string WorksheetName, bool HasHeaderRow) : FlowSourceSpec(ComponentName);
+/// named folder/filename pair), plus the worksheet name and whether to skip its own header row.
+/// <see cref="WhereFilter"/> (gap-audit Phase 3.4, 2026-09-02), when set, is a C# boolean
+/// expression referencing <c>row.{Column}</c> (see <see cref="ExcelWhereClauseTranslator"/>) --
+/// the underlying <c>ExcelRowSource{TRow}</c> is wrapped in a <c>FilteringRowSource{TRow}</c>
+/// rather than given any query capability of its own, since it never had one.</summary>
+public sealed record ExcelFlowSource(string ComponentName, string FileSourceKey, string WorksheetName, bool HasHeaderRow, string? WhereFilter = null) : FlowSourceSpec(ComponentName);
 
 /// <summary>A Merge Join: two independent underlying sources (each itself a
 /// <see cref="CsvFlowSource"/>/<see cref="SqlFlowSource"/>, resolved exactly like a
@@ -37,12 +41,48 @@ public sealed record MergeJoinFlowSource(
     string MapperClassName,
     string KeyClrType) : FlowSourceSpec(ComponentName);
 
-/// <summary>One Count column of an Aggregate flow -- <see cref="OutputPropertyName"/> on the
-/// destination-facing row, counting non-null values of <see cref="SourcePropertyName"/> on the
-/// flow's own raw SOURCE row (SSIS's own Count aggregation excludes NULL, confirmed via a real
-/// dtexec run -- see <c>PackagePlanner.AggregateCountSpec</c>'s own doc comment). Built
-/// speculatively 2026-08-30.</summary>
-public sealed record AggregateCountFieldSpec(string OutputPropertyName, string SourcePropertyName);
+/// <summary>A genuinely multi-independent-source <c>Microsoft.Merge</c>/<c>Microsoft.UnionAll</c>
+/// -- gap-audit Phase 3.6 (2026-09-02). Every side is itself a <see cref="FlowSourceSpec"/>
+/// (scoped to <see cref="SqlFlowSource"/> only this round -- see <c>UnionPlan</c>'s own doc
+/// comment), each built via its own local function, same shape
+/// <see cref="MergeJoinFlowSource"/>'s own two sides already use. All sides share ONE row type
+/// (<see cref="RowTypeName"/>) and ONE reader (<c>UnionEmitter.EmitReader</c>'s own output) --
+/// real SSIS enforces matching schemas across every Merge/UnionAll input, so there is no
+/// per-side row type the way a join's own Left/Right sides need. <see cref="IsSortedInterleave"/>
+/// picks the runtime type: <c>MergeInterleaveRowSource&lt;TRow,TKey&gt;</c> (Merge, exactly 2
+/// sides, dtexec-confirmed true interleave) or <c>ConcatenatingRowSource&lt;TRow&gt;</c>
+/// (UnionAll, any number of sides, plain concatenation -- not independently dtexec-confirmed,
+/// see that type's own doc comment). <see cref="KeyPropertyName"/>/<see cref="KeyClrType"/> are
+/// populated only for the Merge case.</summary>
+public sealed record UnionFlowSource(
+    string ComponentName,
+    bool IsSortedInterleave,
+    IReadOnlyList<FlowSourceSpec> Sides,
+    string RowTypeName,
+    string? KeyPropertyName = null,
+    string? KeyClrType = null) : FlowSourceSpec(ComponentName);
+
+/// <summary>One aggregated column of an Aggregate flow -- <see cref="OutputPropertyName"/> on the
+/// destination-facing row, computed from <see cref="SourcePropertyName"/> on the flow's own raw
+/// SOURCE row per <see cref="AggregationTypeRaw"/>'s own measured semantics (see
+/// <c>Ssis.Extract.Model.Pipeline.AggregatePayload</c>'s own doc comment for the full raw-value
+/// mapping -- 1=Count, 2=CountAll, 3=CountDistinct, 4=Sum, 5=Average, 6=Minimum, 7=Maximum).
+/// <see cref="SourcePropertyName"/> is null exactly for a column-less CountAll (2). Built
+/// speculatively 2026-08-30 (Count only), widened 2026-09-02 (gap-audit Phase 3.3).</summary>
+public sealed record AggregateFunctionFieldSpec(string OutputPropertyName, string? SourcePropertyName, int AggregationTypeRaw);
+
+/// <summary>When an Aggregate's own GroupBy value is a Lookup-copied reference column (RBC_Demo_
+/// ETL's own DFT_LookupAndAggregate: GroupBy Region, copied from LKP_Country's own reference
+/// table, not a plain buffer column) rather than a plain source-row property -- built 2026-09-02
+/// alongside the Lookup+Aggregate composed-flow round. <see cref="LookupVariableName"/> is the
+/// same top-level cache variable <c>LookupPreload</c> already loads before any DI registration;
+/// <see cref="JoinInputPropertyName"/> is the raw source row's own join-key property; the key
+/// selector becomes <c>row => {LookupVariableName}[row.{JoinInputPropertyName}].{ReferenceColumnName}</c>
+/// instead of the plain <c>row => row.{GroupByPropertyName}</c> every other Aggregate flow uses.
+/// Every row reaching this point is already guaranteed a cache hit (see
+/// <c>Etl.Core.Data.FilteringRowSource{TRow}</c>'s own doc comment), so the indexer never
+/// throws.</summary>
+public sealed record AggregateLookupKeySpec(string LookupVariableName, string JoinInputPropertyName, string ReferenceColumnName);
 
 /// <summary>A Microsoft.Aggregate flow (GroupBy + Count), built speculatively 2026-08-30 -- see
 /// <c>Ssis.Extract.Model.Pipeline.AggregatePayload</c>'s own doc comment for why (the one real
@@ -51,14 +91,27 @@ public sealed record AggregateCountFieldSpec(string OutputPropertyName, string S
 /// <c>Etl.Core.Data.AggregateRowSource&lt;TSourceRow,TKey,TRow&gt;</c> -- <see cref="SourceRowTypeName"/>
 /// is that raw source's own row type (TSourceRow); the outer <see cref="FlowSourceSpec.ComponentName"/>
 /// carries the Aggregate component's own name, used only for the wrapped IRowSource's own
-/// logging identity, matching <see cref="MergeJoinFlowSource"/>'s own convention.</summary>
+/// logging identity, matching <see cref="MergeJoinFlowSource"/>'s own convention.
+///
+/// <see cref="LookupKey"/>, when set (2026-09-02, the real evidenced Lookup+Aggregate composed
+/// shape), swaps the key selector to read through the Lookup cache instead of a plain row
+/// property -- see <see cref="AggregateLookupKeySpec"/>'s own doc comment. <see cref="LookupFilter"/>
+/// is a genuinely SEPARATE, independent axis: whenever the flow's own Lookup redirects a miss
+/// away (rather than failing the component), every row must be excluded from the aggregate
+/// entirely, regardless of whether the GroupBy value itself happens to come from the lookup
+/// cache or is a plain passthrough column -- so <see cref="LookupFilter"/> wraps
+/// <see cref="InnerSource"/> in a <c>FilteringRowSource&lt;TSourceRow&gt;</c> whenever a miss is
+/// possible, and <see cref="LookupKey"/> only ever affects how the key ITSELF is read. The two
+/// are set independently by the caller, though the one real evidenced flow sets both.</summary>
 public sealed record AggregateFlowSource(
     string ComponentName,
     FlowSourceSpec InnerSource,
     string SourceRowTypeName,
     string GroupByPropertyName,
     string GroupByKeyClrType,
-    List<AggregateCountFieldSpec> Counts) : FlowSourceSpec(ComponentName);
+    List<AggregateFunctionFieldSpec> Functions,
+    AggregateLookupKeySpec? LookupKey = null,
+    (string LookupVariableName, string JoinInputPropertyName)? LookupFilter = null) : FlowSourceSpec(ComponentName);
 
 /// <summary>One column's write-time layout, mirroring Etl.Core.Data.FlatFileColumnFormat's own
 /// constructor shape verbatim -- this project never references the Etl.Core assembly (it emits
@@ -86,7 +139,33 @@ public sealed record ProgramFlowSpec(
     string EntityName,
     string TransformClassName,
     FlowSinkSpec Sink,
-    LookupPreload? Lookup = null);
+    LookupPreload? Lookup = null,
+    // True for the original single-output Lookup shape, where the transform's own Map() does
+    // the join itself (via LookupJoinSpec) and so needs the cache as a constructor argument.
+    // False for the Lookup+Aggregate composed shape (2026-09-02): there the cache is already
+    // fully consumed by AggregateFlowSource's own key selector/filter, upstream of the
+    // transform entirely, so the transform is a plain parameterless TrustAllPassthroughColumns
+    // mapping -- passing the cache to its constructor there would be a build error (no such
+    // constructor exists).
+    bool TransformNeedsLookupCache = true,
+    /// <summary>Added 2026-09-02 (gap-audit Phase 3.2). Every package-variable name a
+    /// <c>Microsoft.RowCount</c> in this flow's own pipeline writes to -- <see cref="Etl.Core.Data.CountingRowSource{TRow}"/>
+    /// wraps <see cref="Source"/> once per entry (nested, if more than one) so the side effect a
+    /// plain passthrough-column resolution would otherwise silently drop is actually reproduced.
+    /// Null/empty for every flow with no RowCount, which is every flow before this round.</summary>
+    IReadOnlyList<string>? RowCountVariableNames = null,
+    /// <summary>Added 2026-09-02 (gap-audit Phase 3.5). A standalone Sort's own single ascending
+    /// key -- <see cref="Etl.Core.Data.SortingRowSource{TRow,TKey}"/> wraps <see cref="Source"/>
+    /// so the ordering a real SSIS Sort applies is actually reproduced (confirmed real, before
+    /// this field existed: a standalone Sort was silently invisible, see
+    /// <c>Ssis.Extract.Codegen.PackagePlanner.ResolveStandaloneSort</c>'s own doc comment). Null
+    /// for every flow with no standalone Sort, which is every flow before this round.</summary>
+    ProgramSortKeySpec? SortKey = null);
+
+/// <summary>See <see cref="ProgramFlowSpec.SortKey"/>. <see cref="KeyClrType"/> is the already-
+/// resolved CLR type NAME (e.g. "int"), not the whole <c>SsisPipelineType</c> -- this project's
+/// codegen layer, kept as a plain DTO independent of the model project it's derived from.</summary>
+public sealed record ProgramSortKeySpec(string KeyColumnName, string KeyClrType);
 
 /// <summary>
 /// A full-cache Lookup's reference table, loaded ONCE at Program.cs top level and captured by the
@@ -264,6 +343,7 @@ public static class ProgramEmitter
             allSources.Add(source);
             if (source is MergeJoinFlowSource mj) { allSources.Add(mj.LeftSource); allSources.Add(mj.RightSource); }
             if (source is AggregateFlowSource agg) allSources.Add(agg.InnerSource);
+            if (source is UnionFlowSource union) allSources.AddRange(union.Sides);
         }
         // A ForEach-Data-Flow-Loop step has no top-level FlowSourceSpec at all (its own source
         // is constructed fresh, inline, per iteration -- see ProgramForEachDataFlowLoopStep's
@@ -276,7 +356,7 @@ public static class ProgramEmitter
         // and MergeJoinRowSource<>/MergeJoinType both live in Etl.Core.Data/.Abstractions -- so a
         // Merge Join flow needs these usings even when BOTH its sides happen to be CSV-sourced
         // (the real evidenced case).
-        var usesSql = allSources.Any(s => s is SqlFlowSource or MergeJoinFlowSource or AggregateFlowSource);
+        var usesSql = allSources.Any(s => s is SqlFlowSource or MergeJoinFlowSource or AggregateFlowSource or UnionFlowSource);
         // A Lookup preload needs DatabaseOptions/SqlConnectionStringFactory (Etl.Core.Data, which
         // usesSql already covers when the SOURCE is SQL -- but a Lookup flow can be CSV-sourced)
         // plus IConfiguration.Get<T>() for the binder extension method.
@@ -288,6 +368,14 @@ public static class ProgramEmitter
         var secondaryConnectionNames = request.Steps.OfType<ProgramSecondaryConnectionSqlStep>()
             .Select(s => s.ConnectionManagerName).Distinct().ToList();
         var usesFlatFileSink = flows.Any(f => f.Sink is FlatFileFlowSink) || multicasts.Any(m => m.Branches.Any(b => b.Sink is FlatFileFlowSink));
+        // CountingRowSource<TRow> (2026-09-02, gap-audit Phase 3.2) also lives in Etl.Core.Data.
+        var usesRowCount = flows.Any(f => f.RowCountVariableNames is { Count: > 0 });
+        // An Excel Source's own WHERE clause (gap-audit Phase 3.4, 2026-09-02) wraps
+        // ExcelRowSource in a FilteringRowSource -- also Etl.Core.Data.
+        var usesExcelWhereFilter = allSources.Any(s => s is ExcelFlowSource { WhereFilter: not null });
+        // A standalone Sort (gap-audit Phase 3.5, 2026-09-02) wraps its own flow's row source in
+        // SortingRowSource<TRow,TKey> -- also Etl.Core.Data.
+        var usesStandaloneSort = flows.Any(f => f.SortKey is not null);
         // An OLE DB Command flow is the one flow shape with no IRowTransform/TransformEmitter
         // output at all -- a package whose ONLY flow is an OLE DB Command has no Mapping/
         // folder generated, so this using must be conditional (unlike Model, which always
@@ -298,7 +386,7 @@ public static class ProgramEmitter
 
         var lines = new List<string> { "using Etl.Core.Abstractions;" };
         if (usesCsv) lines.Add("using Etl.Core.Csv;");
-        if (usesSql || usesFlatFileSink || usesLookupPreload) lines.Add("using Etl.Core.Data;");
+        if (usesSql || usesFlatFileSink || usesLookupPreload || usesRowCount || usesExcelWhereFilter || usesStandaloneSort) lines.Add("using Etl.Core.Data;");
         if (usesExcel) lines.Add("using Etl.Core.Excel;");
         lines.Add("using Etl.Core.Hosting;");
         lines.Add("using Etl.Core.Notifications;");
@@ -378,7 +466,7 @@ public static class ProgramEmitter
         foreach (var flow in flows)
         {
             EmitRowSourceRegistration(lines, flow.RowTypeName, flow.Source);
-            if (flow.Lookup is { } flowLookup)
+            if (flow.Lookup is { } flowLookup && flow.TransformNeedsLookupCache)
             {
                 // Constructed directly rather than registered by type: the transform takes the
                 // preloaded cache, which is a local, not a DI service.
@@ -428,8 +516,13 @@ public static class ProgramEmitter
         // by a lifetime.
         // Also emitted when any step is GATED, not just when a Script Task exists: a conditional
         // precedence constraint's own condition reads variables from this same bag, and a package
-        // can have a gated step with no Script Task at all.
-        if (request.Steps.Any(step => step is ProgramScriptTaskStep || step.Guard is not null))
+        // can have a gated step with no Script Task at all. Also emitted when any flow has a
+        // RowCount to reproduce (2026-09-02, gap-audit Phase 3.2) -- CountingRowSource<TRow>
+        // needs the same shared bag, wrapped inline at the DataFlowStep construction site below
+        // (not via its own DI registration -- IRowSource<TRow> is registered earlier, in a
+        // separate factory that has no access to this lambda-scoped local).
+        if (request.Steps.Any(step => step is ProgramScriptTaskStep || step.Guard is not null
+            || (step is ProgramFlowStep { Flow.RowCountVariableNames.Count: > 0 })))
         {
             lines.Add("    var packageVariables = new PackageVariables();");
             foreach (var seed in request.VariableSeeds)
@@ -444,9 +537,22 @@ public static class ProgramEmitter
                 case ProgramFlowStep { Flow: var flow }:
                     var flowLocal = FlowLocalName(flow.EntityName);
                     orderedLocalNames.Add(flowLocal);
+                    // A RowCount's own count is only meaningful once the source is exhausted, so
+                    // it wraps the row source itself (nested, one CountingRowSource per RowCount)
+                    // rather than the sink -- every row still reaches the transform/sink exactly
+                    // as before, this only adds counting on the way through.
+                    var rowSourceExpr = $"sp.GetRequiredService<IRowSource<{flow.RowTypeName}>>()";
+                    // A standalone Sort's own ordering, applied closest to the raw source --
+                    // before RowCount, matching the one evidenced shape (a Sort with no RowCount
+                    // in the same flow; the two are mutually exclusive today, so ordering between
+                    // them is otherwise moot).
+                    if (flow.SortKey is { } sortKey)
+                        rowSourceExpr = $"new SortingRowSource<{flow.RowTypeName}, {sortKey.KeyClrType}>(\"{flow.StepName}.Sort\", {rowSourceExpr}, row => row.{sortKey.KeyColumnName}, Comparer<{sortKey.KeyClrType}>.Default)";
+                    foreach (var variableName in flow.RowCountVariableNames ?? [])
+                        rowSourceExpr = $"new CountingRowSource<{flow.RowTypeName}>(\"{flow.StepName}.RowCount\", {rowSourceExpr}, packageVariables, \"{variableName}\")";
                     lines.Add($"    var {flowLocal} = new DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>(");
                     lines.Add($"        \"{flow.StepName}\",");
-                    lines.Add($"        sp.GetRequiredService<IRowSource<{flow.RowTypeName}>>(),");
+                    lines.Add($"        {rowSourceExpr},");
                     lines.Add($"        sp.GetRequiredService<IRowTransform<{flow.RowTypeName}, {flow.EntityName}>>(),");
                     lines.Add($"        sp.GetRequiredService<IBulkSink<{flow.EntityName}>>(),");
                     lines.Add($"        sp.GetRequiredService<ILogger<DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>>>());");
@@ -708,6 +814,35 @@ public static class ProgramEmitter
             case AggregateFlowSource agg:
                 EmitSourceConstruction(lines, "    ", rowTypeName, agg);
                 break;
+            case UnionFlowSource union:
+                // Every side built via its own local function (still closing over the outer
+                // `sp`), same "no side's own IRowSource is independently useful" reasoning
+                // MergeJoinFlowSource's own Left/Right already established -- each exists only
+                // to feed the one MergeInterleaveRowSource/ConcatenatingRowSource below.
+                for (var i = 0; i < union.Sides.Count; i++)
+                {
+                    lines.Add($"    IRowSource<{union.RowTypeName}> BuildSide{i}()");
+                    lines.Add("    {");
+                    EmitSourceConstruction(lines, "        ", union.RowTypeName, union.Sides[i]);
+                    lines.Add("    }");
+                    lines.Add("");
+                }
+
+                if (union.IsSortedInterleave)
+                {
+                    // Microsoft.Merge is hard-capped at exactly 2 inputs -- PackagePlanner's own
+                    // PlanUnion already gapped out anything else, so BuildSide0()/BuildSide1()
+                    // are always both present here.
+                    lines.Add($"    return new MergeInterleaveRowSource<{union.RowTypeName}, {union.KeyClrType}>(");
+                    lines.Add($"        {CSharpStringLiteral(union.ComponentName)}, BuildSide0(), BuildSide1(),");
+                    lines.Add($"        row => row.{union.KeyPropertyName}, Comparer<{union.KeyClrType}>.Default);");
+                }
+                else
+                {
+                    var sideCalls = string.Join(", ", Enumerable.Range(0, union.Sides.Count).Select(i => $"BuildSide{i}()"));
+                    lines.Add($"    return new ConcatenatingRowSource<{union.RowTypeName}>({CSharpStringLiteral(union.ComponentName)}, [{sideCalls}]);");
+                }
+                break;
         }
         lines.Add("});");
         lines.Add("");
@@ -752,7 +887,14 @@ public static class ProgramEmitter
             case ExcelFlowSource excel:
                 lines.Add($"{indent}var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;");
                 lines.Add($"{indent}var excelOptions = new ExcelSourceOptions {{ FilePath = fileOptions[\"{excel.FileSourceKey}\"].ResolvedPath, WorksheetName = {CSharpStringLiteral(excel.WorksheetName)}, HasHeaderRow = {(excel.HasHeaderRow ? "true" : "false")} }};");
-                lines.Add($"{indent}return new ExcelRowSource<{rowTypeName}>(\"{excel.ComponentName}\", excelOptions, {rowTypeName}Reader.Read);");
+                if (excel.WhereFilter is { } whereFilter)
+                {
+                    lines.Add($"{indent}return new FilteringRowSource<{rowTypeName}>({CSharpStringLiteral(excel.ComponentName)}, new ExcelRowSource<{rowTypeName}>({CSharpStringLiteral(excel.ComponentName)}, excelOptions, {rowTypeName}Reader.Read), row => {whereFilter});");
+                }
+                else
+                {
+                    lines.Add($"{indent}return new ExcelRowSource<{rowTypeName}>({CSharpStringLiteral(excel.ComponentName)}, excelOptions, {rowTypeName}Reader.Read);");
+                }
                 break;
             case AggregateFlowSource agg:
                 // Same "build the inner source via a local function" shape MergeJoinFlowSource's
@@ -761,26 +903,71 @@ public static class ProgramEmitter
                 // AggregateRowSource. Built speculatively 2026-08-30.
                 lines.Add($"{indent}IRowSource<{agg.SourceRowTypeName}> BuildAggregateSource()");
                 lines.Add($"{indent}{{");
-                EmitSourceConstruction(lines, indent + "    ", agg.SourceRowTypeName, agg.InnerSource);
+                if (agg.LookupFilter is { } lookupFilter)
+                {
+                    // The real evidenced Lookup+Aggregate composed shape (2026-09-02): the raw
+                    // source is built via its own nested local function first, then wrapped so a
+                    // Lookup miss (NoMatchBehavior=1/redirect) never reaches grouping at all --
+                    // see FilteringRowSource's own doc comment for why filtering, not a null key,
+                    // is the only correct option here. Independent of LookupKey below -- a plain
+                    // passthrough GroupBy column downstream of a redirect-on-miss Lookup still
+                    // needs this filter even when the key selector itself needs no lookup at all.
+                    lines.Add($"{indent}    IRowSource<{agg.SourceRowTypeName}> BuildRawSource()");
+                    lines.Add($"{indent}    {{");
+                    EmitSourceConstruction(lines, indent + "        ", agg.SourceRowTypeName, agg.InnerSource);
+                    lines.Add($"{indent}    }}");
+                    lines.Add($"{indent}");
+                    lines.Add($"{indent}    return new FilteringRowSource<{agg.SourceRowTypeName}>({CSharpStringLiteral(agg.ComponentName)}, BuildRawSource(), row => {lookupFilter.LookupVariableName}.ContainsKey(row.{lookupFilter.JoinInputPropertyName}));");
+                }
+                else
+                {
+                    EmitSourceConstruction(lines, indent + "    ", agg.SourceRowTypeName, agg.InnerSource);
+                }
                 lines.Add($"{indent}}}");
                 lines.Add($"{indent}");
                 lines.Add($"{indent}return new AggregateRowSource<{agg.SourceRowTypeName}, {agg.GroupByKeyClrType}, {rowTypeName}>(");
                 lines.Add($"{indent}    {CSharpStringLiteral(agg.ComponentName)},");
                 lines.Add($"{indent}    BuildAggregateSource(),");
-                lines.Add($"{indent}    row => row.{agg.GroupByPropertyName},");
+                lines.Add(agg.LookupKey is { } lk
+                    ? $"{indent}    row => {lk.LookupVariableName}[row.{lk.JoinInputPropertyName}].{lk.ReferenceColumnName},"
+                    : $"{indent}    row => row.{agg.GroupByPropertyName},");
                 lines.Add($"{indent}    (key, rows) => new {rowTypeName}");
                 lines.Add($"{indent}    {{");
                 lines.Add($"{indent}        {agg.GroupByPropertyName} = key,");
-                for (var i = 0; i < agg.Counts.Count; i++)
+                for (var i = 0; i < agg.Functions.Count; i++)
                 {
-                    var count = agg.Counts[i];
-                    var comma = i < agg.Counts.Count - 1 ? "," : "";
-                    lines.Add($"{indent}        {count.OutputPropertyName} = rows.Count(r => r.{count.SourcePropertyName} != null){comma}");
+                    var fn = agg.Functions[i];
+                    var comma = i < agg.Functions.Count - 1 ? "," : "";
+                    var expr = EmitAggregateFunctionExpression(fn);
+                    lines.Add($"{indent}        {fn.OutputPropertyName} = {expr}{comma}");
                 }
                 lines.Add($"{indent}    }});");
                 break;
         }
     }
+
+    /// <summary>Renders one Aggregate function column's own LINQ expression over a group's
+    /// buffered <c>rows</c> -- raw-value mapping and every NULL-handling rule measured via a real
+    /// dtexec run, see <c>Ssis.Extract.Model.Pipeline.AggregatePayload</c>'s own doc comment.
+    /// Count(1)/CountDistinct(3)/CountAll(2) never null; Average(5)/Minimum(6)/Maximum(7) reuse
+    /// .NET's own nullable-sequence overloads UNCHANGED because they already return null for an
+    /// all-null/empty group, matching SSIS exactly -- confirmed by a dedicated probe, not
+    /// assumed. Sum(4) is the one exception: .NET's own <c>Enumerable.Sum</c> over a nullable
+    /// sequence returns 0 for an all-null/empty group (independently verified this same round,
+    /// NOT an SSIS behavior), so it needs an explicit guard to match SSIS's own NULL result.</summary>
+    private static string EmitAggregateFunctionExpression(AggregateFunctionFieldSpec fn) => fn.AggregationTypeRaw switch
+    {
+        1 => $"rows.Count(r => r.{fn.SourcePropertyName} != null)",
+        2 => "rows.Count",
+        3 => $"rows.Select(r => r.{fn.SourcePropertyName}).Where(v => v != null).Distinct().Count()",
+        4 => $"rows.All(r => r.{fn.SourcePropertyName} == null) ? null : rows.Sum(r => r.{fn.SourcePropertyName})",
+        5 => $"rows.Average(r => r.{fn.SourcePropertyName})",
+        6 => $"rows.Min(r => r.{fn.SourcePropertyName})",
+        7 => $"rows.Max(r => r.{fn.SourcePropertyName})",
+        // PackagePlanner.PlanAggregate already rejects any other raw value before this is ever
+        // reached -- this can only fire on a genuine internal inconsistency between the two.
+        _ => throw new InvalidOperationException($"unsupported AggregationType {fn.AggregationTypeRaw} reached ProgramEmitter -- PackagePlanner should have rejected this"),
+    };
 
     /// <summary>A Flat File Destination's own IBulkSink&lt;TEntity&gt; is constructed directly
     /// (same "construct directly, don't fight the DI container" pattern a Conditional Split

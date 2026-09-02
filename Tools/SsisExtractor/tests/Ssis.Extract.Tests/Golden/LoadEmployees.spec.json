@@ -12,6 +12,7 @@
       "DelayValidation": null,
       "Description": "Inbound employee CSV.",
       "DtsId": "{188C788D-455E-4D99-837E-917A2AFFC6A7}",
+      "EncryptedProperties": [],
       "FlatFileFormat": {
         "CodePage": 1252,
         "ColumnNamesInFirstDataRow": true,
@@ -170,6 +171,7 @@
       "DelayValidation": null,
       "Description": "Destination SQL Server database.",
       "DtsId": "{70233E54-8C4D-40ED-869F-10E2D1B14B44}",
+      "EncryptedProperties": [],
       "FlatFileFormat": null,
       "ObjectName": "CM_TargetDb",
       "Parsed": {
@@ -661,6 +663,7 @@
                   "TruncationRowDisposition": null
                 }
               ],
+              "IsUnresolvedLegacyClsid": false,
               "LocaleId": null,
               "Lookup": null,
               "MergeJoin": null,
@@ -875,7 +878,9 @@
                 }
               ],
               "Properties": [],
+              "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns",
+              "RowCount": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
@@ -950,6 +955,7 @@
                 "RetainNulls": false
               },
               "Inputs": [],
+              "IsUnresolvedLegacyClsid": false,
               "LocaleId": "1033",
               "Lookup": null,
               "MergeJoin": null,
@@ -1412,7 +1418,9 @@
                   "Value": ""
                 }
               ],
+              "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees",
+              "RowCount": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
@@ -1623,6 +1631,7 @@
                   "TruncationRowDisposition": null
                 }
               ],
+              "IsUnresolvedLegacyClsid": false,
               "LocaleId": null,
               "Lookup": null,
               "MergeJoin": null,
@@ -1824,7 +1833,9 @@
                   "Value": "2147483647"
                 }
               ],
+              "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee",
+              "RowCount": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
@@ -1855,6 +1866,7 @@
       "DtsId": "{26DD2E04-2F29-4376-81AE-F5A40FAD33CF}",
       "EventHandlers": [],
       "ExecutableType": "Microsoft.Pipeline",
+      "ExecutePackageTask": null,
       "ExecuteSqlTask": null,
       "FailPackageOnFailure": null,
       "FailParentOnFailure": null,
@@ -1887,6 +1899,7 @@
       "DtsId": "{851BCA54-52EF-4D51-9B15-33493955BAC1}",
       "EventHandlers": [],
       "ExecutableType": "Microsoft.ExecuteSQLTask",
+      "ExecutePackageTask": null,
       "ExecuteSqlTask": {
         "BypassPrepare": null,
         "CodePage": null,

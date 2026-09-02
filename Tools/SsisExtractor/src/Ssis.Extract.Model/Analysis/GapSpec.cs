@@ -38,6 +38,16 @@ public enum GapKind
     /// failure-handler position OUTSIDE the generated package transaction, which is one emitter feature
     /// -- not something a human should hand-patch per package.</summary>
     ConditionalConstraint,
+
+    /// <summary>
+    /// A connection manager's sensitive property (e.g. a Password) is DPAPI-encrypted in the saved
+    /// .dtsx (ProtectionLevel EncryptSensitiveWithUserKey/EncryptSensitiveWithPassword) and therefore
+    /// undecryptable outside the original author's Windows account. One missing DATUM -- the real
+    /// value -- everything else (the User Secrets slot itself) is already wired unconditionally. Unlike
+    /// <see cref="LookupJoinKey"/>, the "decision" here is an ACKNOWLEDGMENT, never a value: a secret
+    /// must never be written into a hand-maintained, tracked <c>decisions.json</c> file.
+    /// </summary>
+    EncryptedConnectionManagerSecret,
 }
 
 /// <summary>

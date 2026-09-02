@@ -63,6 +63,39 @@ public sealed class GapDecisions
     }
 
     /// <summary>
+    /// Resolves an ACKNOWLEDGMENT (not a value) for <paramref name="gapId"/> -- used only for
+    /// <see cref="GapKind.EncryptedConnectionManagerSecret"/>, where there is no fact to substitute
+    /// into the decision file: the real secret is supplied out of band (User Secrets), and a
+    /// confirmed entry here only records that a human is aware and has acted, so the gap stops
+    /// reporting as pending in future runs. <see cref="GapDecisionSpec.InputColumn"/>/
+    /// <see cref="GapDecisionSpec.ReferenceColumn"/> are deliberately ignored here -- an entry for
+    /// this gap kind must never carry secret material, so nothing about generated output changes
+    /// whether this returns true or false; only the report's own wording does.
+    /// </summary>
+    public bool ResolveEncryptedSecretAcknowledgment(string gapId, string? currentEvidenceSha256)
+    {
+        if (!_byGapId.TryGetValue(gapId, out var decision)) return false;
+
+        if (string.IsNullOrWhiteSpace(decision.ConfirmedBy))
+        {
+            Record(gapId, GapDecisionStatus.Unconfirmed, "no ConfirmedBy -- a proposal, not a decision");
+            return false;
+        }
+
+        if (decision.EvidenceSha256 is { Length: > 0 } recorded
+            && currentEvidenceSha256 is { Length: > 0 } current
+            && !string.Equals(recorded, current, StringComparison.OrdinalIgnoreCase))
+        {
+            Record(gapId, GapDecisionStatus.Stale,
+                $"acknowledged against evidence {recorded[..8]}..., package now hashes {current[..8]}... -- re-review before reuse");
+            return false;
+        }
+
+        Record(gapId, GapDecisionStatus.Applied, $"acknowledged by {decision.ConfirmedBy} -- value supplied out of band, never recorded here");
+        return true;
+    }
+
+    /// <summary>
     /// Decisions naming a GapId that never came up during generation. Same meaning, and the same
     /// reason for reporting it, as <c>ConformanceChecker</c>'s orphaned claims: the package
     /// changed underneath work someone already did, and silently dropping it would hide that.
