@@ -19,14 +19,27 @@ public class IspacReaderTests
     private static readonly string IspacPath = Path.GetFullPath(Path.Combine(
         Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "SSIS", "bin", "Development", "SSIS.ispac"));
 
+    /// <summary>
+    /// Deliberately does NOT pin an exact package count. It used to assert exactly 2 and had
+    /// been failing on committed state ever since the SSIS project legitimately grew to four
+    /// packages (ScriptTest.dtsx and SyntheticParallelShapes.dtsx, both intentional additions --
+    /// the latter lives in SSIS/ specifically so it appears in SSDT's Solution Explorer and can
+    /// be built and executed). An exact count makes this test fail every time someone adds a
+    /// package to the PoC project, which is the one thing that project exists to allow, and the
+    /// failure says nothing about the .ispac reader under test.
+    ///
+    /// What matters, and what is asserted: the reader opens a REAL deployed-project artifact,
+    /// every path it hands back exists, and the two packages this PoC is actually about are in
+    /// there.
+    /// </summary>
     [Fact]
-    public void OpensBuiltIspacAndFindsBothPackages()
+    public void OpensBuiltIspacAndFindsThePoCPackages()
     {
         if (!File.Exists(IspacPath)) return; // see class doc comment
 
         using var contents = IspacContents.Open(IspacPath);
 
-        Assert.Equal(2, contents.DtsxPaths.Count);
+        Assert.NotEmpty(contents.DtsxPaths);
         Assert.All(contents.DtsxPaths, p => Assert.True(File.Exists(p)));
         Assert.Contains(contents.DtsxPaths, p => Path.GetFileName(p) == "LoadEmployees.dtsx");
         Assert.Contains(contents.DtsxPaths, p => Path.GetFileName(p) == "LoadReferenceData.dtsx");

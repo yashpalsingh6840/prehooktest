@@ -45,11 +45,11 @@ public class ConditionalConstraintTests
 
         var gated = plan.Steps.OfType<SqlStep>().ToDictionary(s => s.TaskName);
         Assert.Equal(
-            "(v.Get<int>(\"User::Threshold\") == 0)",
+            "(v.GetRequired<int>(\"User::Threshold\") == 0)",
             gated["SQL_GateTrue"].Guard!.CSharpPredicate);
         Assert.Equal("@[User::Threshold] == 0", gated["SQL_GateTrue"].Guard!.SsisExpression);
         Assert.Equal(
-            "(v.Get<int>(\"User::RowsLoaded\") > 0)",
+            "(v.GetRequired<int>(\"User::RowsLoaded\") > 0)",
             gated["SQL_GateFromScript"].Guard!.CSharpPredicate);
 
         // The unconditional steps stay unguarded -- a guard applied to everything would pass this
@@ -83,7 +83,7 @@ public class ConditionalConstraintTests
 
         Assert.Contains("var sQL_GateTrueStepGated = new ConditionalStep(", program.Content);
         Assert.Contains("        sQL_GateTrueStep,", program.Content);
-        Assert.Contains("        v => (v.Get<int>(\"User::Threshold\") == 0),", program.Content);
+        Assert.Contains("        v => (v.GetRequired<int>(\"User::Threshold\") == 0),", program.Content);
         Assert.Contains("        sp.GetRequiredService<ILogger<ConditionalStep>>());", program.Content);
 
         // The GATED local is what reaches Steps, not the bare one -- getting this wrong would

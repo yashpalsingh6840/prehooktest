@@ -890,7 +890,12 @@ public static partial class PackageGenerator
         // just needs to stop rejecting the flow before that resolution ever runs.
         if (flow.DerivedColumn is null && flow.DataConversion is null && split.Branches.All(b => b.DerivedColumns.Count == 0))
         {
-            gaps.Add(new GenerationGap(flow.TaskName, "no Derived Column found in this Data Flow Task -- a direct-copy pipeline's transform is not generated yet, so this flow is not wired into Program.cs"));
+            // Wording matters here: the general "a direct-copy pipeline is not generated" gate was
+            // REMOVED from the single-destination path (Excel Source round), so a message saying
+            // that flatly is now misleading -- it reads as a tool-wide limitation when it is
+            // specific to the Conditional Split/Multicast path, which still has no evidenced
+            // direct-copy case to verify against.
+            gaps.Add(new GenerationGap(flow.TaskName, "this Conditional Split/Multicast flow has no Derived Column and no Data Conversion on any branch -- a pure column copy through a branching flow is not generated yet (single-destination flows DO support it), so this flow is not wired into Program.cs"));
             return null;
         }
 

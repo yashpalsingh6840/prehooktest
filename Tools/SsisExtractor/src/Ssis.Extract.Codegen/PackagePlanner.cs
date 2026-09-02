@@ -831,7 +831,12 @@ public static class PackagePlanner
     /// <summary>How a guard reads one variable. <c>v</c> is the predicate lambda's own parameter,
     /// named in exactly one place so the emitted lambda and this access can never disagree.</summary>
     private static string GuardVariableAccess(string ssisName, GuardVariable variable) =>
-        $"v.Get<{variable.ClrTypeName}>(\"{ssisName}\")";
+        // GetRequired, not Get: a guard decides whether a step RUNS, so a variable that is
+        // missing or holds a different type must fail loudly rather than fall back to default(T)
+        // and silently pick a branch -- e.g. a guard reading int against a value some ported
+        // Script Task stored as long would have seen 0 and skipped the step, reporting success.
+        // See PackageVariables.GetRequired.
+        $"v.GetRequired<{variable.ClrTypeName}>(\"{ssisName}\")";
 
     private sealed record GuardVariable(SsisType Type, string ClrTypeName, string CSharpLiteral);
 
