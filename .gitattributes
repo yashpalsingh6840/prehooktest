@@ -9,4 +9,5 @@
 *.dtsx -text
 *.dtproj -text
 Project.params -text
+*.dtsConfig -text
 Tools/SsisExtractor/tests/Ssis.Extract.Tests/Golden/*.json -text

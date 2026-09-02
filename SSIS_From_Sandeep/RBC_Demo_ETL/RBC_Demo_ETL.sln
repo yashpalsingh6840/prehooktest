@@ -1,0 +1,26 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.37502.11 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{C9674DCB-5085-4A16-B785-4C70DD1589BD}") = "RBC_Demo_ETL", "RBC_Demo_ETL\RBC_Demo_ETL.dtproj", "{952A9636-035F-827B-D557-6AD17D47B98A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Launcher", "..\launcher\Launcher.csproj", "{7C4E2B91-6F3A-4D58-9E10-2B5A8C71D004}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Development|Default = Development|Default
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{952A9636-035F-827B-D557-6AD17D47B98A}.Development|Default.ActiveCfg = Development
+		{952A9636-035F-827B-D557-6AD17D47B98A}.Development|Default.Build.0 = Development
+		{7C4E2B91-6F3A-4D58-9E10-2B5A8C71D004}.Development|Default.ActiveCfg = Debug|Any CPU
+		{7C4E2B91-6F3A-4D58-9E10-2B5A8C71D004}.Development|Default.Build.0 = Debug|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {A797F3EB-FBBF-4BC1-BB64-FC7B819B03C8}
+	EndGlobalSection
+EndGlobal

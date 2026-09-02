@@ -1,0 +1,11 @@
+CustomerID,FirstName,LastName,Email,Phone,SignupDate,Country
+1,John,Smith,john.smith@example.com,555-0101,2021-03-15,USA
+2,Priya,Patel, PRIYA.PATEL@example.com ,555-0102,2020-11-02,Canada
+3,Wei,Zhang,wei.zhang@example.com,555-0103,2022-01-20,Canada
+4,Maria,Garcia,maria.garcia@example.com,555-0104,2019-07-08,Mexico
+5, Ahmed ,Hassan,ahmed.hassan@example.com,555-0105,2023-02-14,UAE
+6,Sarah,O'Neil,sarah.oneil@example.com,555-0106,2021-09-30,Ireland
+7,Oskar,Lee,not-an-email,555-0107,2022-05-01,Singapore
+,Tom,Baker,tom.baker@example.com,555-0108,2020-12-25,UK
+9,Lena,Novak,lena.novak@example.com,555-0109,2021-04-11,Czech Republic
+10,Carlos,Diaz,carlos.diaz@example.com,555-0110,2023-08-19,Spain

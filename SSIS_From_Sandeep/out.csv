@@ -1,0 +1,70 @@
+﻿category,item,canonical,package,object_name,language,source_present,binary_present,vendor_contact,notes
+package,Package.Scripts.WORKING,,Package.Scripts.WORKING,,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package_Advanced,,Package_Advanced,,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=NotSupported
+package,Package_Exports,,Package_Exports,,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package_Legacy,,Package_Legacy,,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=yes; txn=Supported(default/none)
+package,Package_Transforms,,Package_Transforms,,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package_Advanced,,Package_Advanced,,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=NotSupported
+package,Package_Exports,,Package_Exports,,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package_Legacy,,Package_Legacy,,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=yes; txn=Supported(default/none)
+package,Package_Transforms,,Package_Transforms,,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+task_type,Microsoft.ExecuteSQLTask,,,,,,,,e.g. Package; Package.Scripts.WORKING; Package_Advanced; Package_Exports; Package_Legacy ; ...
+task_type,Microsoft.FileSystemTask,,,,,,,,e.g. Package_Advanced
+task_type,Microsoft.Package,,,,,,,,e.g. Package; Package.Scripts.WORKING; Package_Advanced; Package_Exports; Package_Legacy ; ...
+task_type,Microsoft.Pipeline,,,,,,,,e.g. Package; Package.Scripts.WORKING; Package_Advanced; Package_Exports; Package_Legacy ; ...
+task_type,Microsoft.ScriptTask,,,,,,,,e.g. Package; Package.Scripts.WORKING
+task_type,STOCK:FOREACHLOOP,,,,,,,,e.g. Package_Advanced
+task_type,STOCK:SEQUENCE,,,,,,,,e.g. Package_Advanced
+component_type,Microsoft.Aggregate,Microsoft.Aggregate,,,,,,,e.g. Package_Transforms
+component_type,Microsoft.ConditionalSplit,Microsoft.ConditionalSplit,,,,,,,e.g. Package_Transforms
+component_type,Microsoft.DataConvert,Microsoft.DataConvert,,,,,,,e.g. Package_Transforms
+component_type,Microsoft.DerivedColumn,Microsoft.DerivedColumn,,,,,,,e.g. Package_Transforms
+component_type,Microsoft.ExcelSource,Microsoft.ExcelSource,,,,,,,e.g. Package_Advanced
+component_type,Microsoft.FlatFileDestination,Microsoft.FlatFileDestination,,,,,,,e.g. Package_Exports; Package_Legacy
+component_type,Microsoft.FlatFileSource,Microsoft.FlatFileSource,,,,,,,e.g. Package; Package.Scripts.WORKING; Package_Legacy; Package_Transforms
+component_type,Microsoft.Lookup,Microsoft.Lookup,,,,,,,e.g. Package_Transforms
+component_type,Microsoft.Merge,Microsoft.Merge,,,,,,,e.g. Package_Transforms
+component_type,Microsoft.MergeJoin,Microsoft.MergeJoin,,,,,,,e.g. Package_Transforms
+component_type,Microsoft.Multicast,Microsoft.Multicast,,,,,,,e.g. Package_Legacy; Package_Transforms
+component_type,Microsoft.OLEDBCommand,Microsoft.OLEDBCommand,,,,,,,e.g. Package_Advanced
+component_type,Microsoft.OLEDBDestination,Microsoft.OLEDBDestination,,,,,,,e.g. Package; Package.Scripts.WORKING; Package_Advanced; Package_Legacy; Package_Transforms
+component_type,Microsoft.OLEDBSource,Microsoft.OLEDBSource,,,,,,,e.g. Package; Package.Scripts.WORKING; Package_Advanced; Package_Exports
+component_type,Microsoft.RowCount,Microsoft.RowCount,,,,,,,e.g. Package_Transforms
+component_type,Microsoft.ScriptComponentHost,Microsoft.ScriptComponentHost,,,,,,,e.g. Package; Package.Scripts.WORKING
+component_type,Microsoft.Sort,Microsoft.Sort,,,,,,,e.g. Package_Transforms
+component_type,Microsoft.UnionAll,Microsoft.UnionAll,,,,,,,e.g. Package_Transforms
+component_custom_managed,Microsoft.ADONETDestination,,,,,,,,NON-Microsoft managed component; e.g. Package_Exports
+component_custom_managed,Microsoft.DataReaderSourceAdapter,,,,,,,,NON-Microsoft managed component; e.g. Package_Exports
+connection_type,"ADO.NET:System.Data.SqlClient.SqlConnection, System.Data, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",,,,,,,,STOCK; e.g. Package; Package.Scripts.WORKING; Package_Exports
+connection_type,EXCEL,,,,,,,,STOCK; e.g. Package_Advanced
+connection_type,FILE,,,,,,,,STOCK; e.g. Package_Advanced; Package_Exports
+connection_type,FLATFILE,,,,,,,,STOCK; e.g. Package; Package.Scripts.WORKING; Package_Exports; Package_Legacy; Package_Transforms
+connection_type,OLEDB,,,,,,,,STOCK; e.g. Package; Package.Scripts.WORKING; Package_Advanced; Package_Exports; Package_Legacy ; ...
+script,ScriptComponent,,Package,SCR_CleanseCustomerRow,CSharp,yes,yes,,read=; readwrite=
+script,ScriptComponent,,Package,SCR_CleanseCustomerRow,CSharp,yes,yes,,read=; readwrite=
+script,ScriptComponent,,Package,SCR_ComputeCustomerTier,CSharp,yes,yes,,read=; readwrite=
+script,ScriptComponent,,Package,SCR_ComputeCustomerTier,CSharp,yes,yes,,read=; readwrite=
+script,ScriptTask,,Package,SCR_NotifyAndLogProgress,VisualBasic,yes,yes,,read=-; readwrite=-
+script,ScriptTask,,Package,SCR_NotifyAndLogProgress,VisualBasic,yes,yes,,read=-; readwrite=-
+script,ScriptTask,,Package,SCR_ValidateAndLogStart,CSharp,yes,yes,,read=-; readwrite=-
+script,ScriptTask,,Package,SCR_ValidateAndLogStart,CSharp,yes,yes,,read=-; readwrite=-
+script,ScriptComponent,,Package.Scripts.WORKING,SCR_CleanseCustomerRow,CSharp,yes,yes,,read=; readwrite=
+script,ScriptComponent,,Package.Scripts.WORKING,SCR_ComputeCustomerTier,CSharp,yes,yes,,read=; readwrite=
+script,ScriptTask,,Package.Scripts.WORKING,SCR_NotifyAndLogProgress,VisualBasic,yes,yes,,read=-; readwrite=-
+script,ScriptTask,,Package.Scripts.WORKING,SCR_ValidateAndLogStart,CSharp,yes,yes,,read=-; readwrite=-
+aggregate_op,Count,,,,,,,,
+aggregate_op,GroupBy,,,,,,,,
+lookup_cache_mode,FullCache,,,,,,,,
+lookup_join_key,join key declared,,,,,,,,
+precedence_constraint,EvalOp=Constraint(default) | Outcome=Failure,,,,,,,,
+precedence_constraint,EvalOp=Success AND expression | Outcome=Success(default),,,,,,,,
+expression_function,DATEDIFF,,,,,,,,
+expression_function,FINDSTRING,,,,,,,,
+expression_function,GETDATE,,,,,,,,
+expression_function,ISNULL,,,,,,,,
+expression_function,SUBSTRING,,,,,,,,
+expression_function,TRIM,,,,,,,,
+expression_function,VALUES,,,,,,,,
+expression_cast,DT_WSTR,,,,,,,,

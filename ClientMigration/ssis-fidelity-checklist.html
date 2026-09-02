@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html{color-scheme:light dark}
+  body{margin:0}
+  img{max-width:100%}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<title>SSIS Rewrite Fidelity Checklist</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<style>
+  :root{
+    --ground:#F6F7F9; --surface:#FFFFFF; --surface-2:#EDF1F4; --surface-3:#E4EAEF;
+    --ink:#161E27; --ink-2:#46555F; --ink-3:#76858E;
+    --line:#DCE3E8; --line-2:#C6D0D8;
+    --accent:#1F6C7B; --accent-soft:#E0EDEF; --accent-line:#9CC4CB;
+    --silent:#8A590C; --silent-soft:#FAEFD9; --silent-line:#E0BE7E;
+    --measure:#454A82; --measure-soft:#E8E9F5; --measure-line:#B4B7DF;
+    --done:#2C6449; --done-soft:#E2EFE7;
+    --shadow:0 1px 2px rgba(20,30,40,.05), 0 6px 18px -12px rgba(20,30,40,.22);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#0F1419; --surface:#171E25; --surface-2:#1E262E; --surface-3:#26313A;
+      --ink:#E8ECEF; --ink-2:#A6B3BC; --ink-3:#7B8992;
+      --line:#2A343C; --line-2:#3A4750;
+      --accent:#63B4C4; --accent-soft:#14313A; --accent-line:#2C5C68;
+      --silent:#E2A94C; --silent-soft:#302512; --silent-line:#5E4720;
+      --measure:#A0A2DE; --measure-soft:#20213A; --measure-line:#3E3F6A;
+      --done:#72C398; --done-soft:#16281F;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 22px -14px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0F1419; --surface:#171E25; --surface-2:#1E262E; --surface-3:#26313A;
+    --ink:#E8ECEF; --ink-2:#A6B3BC; --ink-3:#7B8992;
+    --line:#2A343C; --line-2:#3A4750;
+    --accent:#63B4C4; --accent-soft:#14313A; --accent-line:#2C5C68;
+    --silent:#E2A94C; --silent-soft:#302512; --silent-line:#5E4720;
+    --measure:#A0A2DE; --measure-soft:#20213A; --measure-line:#3E3F6A;
+    --done:#72C398; --done-soft:#16281F;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 22px -14px rgba(0,0,0,.7);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--ground); color:var(--ink);
+    font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased;
+  }
+  .shell{max-width:1240px; margin:0 auto; padding:34px 26px 90px;
+    display:grid; grid-template-columns:262px minmax(0,1fr); gap:38px; align-items:start}
+  @media (max-width:940px){ .shell{grid-template-columns:1fr; gap:22px; padding:22px 16px 70px} }
+
+  /* ---------- masthead ---------- */
+  .mast{grid-column:1/-1; border-bottom:1px solid var(--line); padding-bottom:22px; margin-bottom:4px}
+  .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:500;
+    letter-spacing:.13em; text-transform:uppercase; color:var(--accent); margin:0 0 10px}
+  h1{font-family:"IBM Plex Serif",Georgia,serif; font-weight:600; font-size:clamp(28px,4vw,40px);
+    line-height:1.12; letter-spacing:-.015em; margin:0 0 12px; text-wrap:balance}
+  .lede{margin:0; max-width:66ch; color:var(--ink-2); font-size:15.5px}
+  .facts{display:flex; flex-wrap:wrap; gap:8px; margin-top:18px}
+  .fact{font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--ink-2);
+    background:var(--surface-2); border:1px solid var(--line); border-radius:3px; padding:5px 9px}
+  .fact b{color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums}
+
+  /* ---------- rail ---------- */
+  .rail{position:sticky; top:20px; display:flex; flex-direction:column; gap:18px}
+  @media (max-width:940px){ .rail{position:static} }
+  .panel{background:var(--surface); border:1px solid var(--line); border-radius:6px;
+    padding:16px; box-shadow:var(--shadow)}
+  .panel h2{font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:600;
+    letter-spacing:.13em; text-transform:uppercase; color:var(--ink-3); margin:0 0 12px}
+
+  .bigcount{font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums;
+    font-size:30px; font-weight:600; line-height:1; letter-spacing:-.02em}
+  .bigcount span{font-size:15px; color:var(--ink-3); font-weight:400}
+  .bar{height:5px; background:var(--surface-3); border-radius:99px; overflow:hidden; margin:12px 0 4px}
+  .bar>i{display:block; height:100%; width:0; background:var(--accent); border-radius:99px;
+    transition:width .25s ease}
+  .rail-note{font-size:12.5px; color:var(--ink-3); margin:6px 0 0}
+
+  .tally{display:flex; flex-direction:column; gap:7px; margin-top:14px;
+    padding-top:14px; border-top:1px solid var(--line)}
+  .tally-row{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--ink-2)}
+  .tally-row b{margin-left:auto; font-family:"IBM Plex Mono",monospace;
+    font-variant-numeric:tabular-nums; font-weight:600; color:var(--ink)}
+  .dot{width:8px; height:8px; border-radius:2px; flex:none}
+  .dot.s{background:var(--silent)} .dot.m{background:var(--measure)}
+
+  nav ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:1px}
+  nav a{display:flex; align-items:baseline; gap:8px; text-decoration:none; color:var(--ink-2);
+    font-size:13.2px; padding:5px 7px; border-radius:4px; border-left:2px solid transparent}
+  nav a:hover{background:var(--surface-2); color:var(--ink)}
+  nav a:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  nav a .n{font-family:"IBM Plex Mono",monospace; font-size:10.5px; color:var(--ink-3);
+    font-variant-numeric:tabular-nums; margin-left:auto; flex:none}
+  nav a.complete{border-left-color:var(--done)}
+  nav a.complete .n{color:var(--done)}
+
+  .filters{display:flex; flex-direction:column; gap:5px}
+  .fbtn{font-family:inherit; font-size:13px; text-align:left; cursor:pointer;
+    background:transparent; color:var(--ink-2); border:1px solid var(--line);
+    border-radius:4px; padding:6px 9px}
+  .fbtn:hover{background:var(--surface-2); color:var(--ink)}
+  .fbtn[aria-pressed="true"]{background:var(--accent-soft); color:var(--accent);
+    border-color:var(--accent-line); font-weight:500}
+  .fbtn:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  .util{display:flex; gap:6px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line)}
+  .util .fbtn{flex:1; text-align:center; font-size:12px}
+
+  /* ---------- sections ---------- */
+  main{display:flex; flex-direction:column; gap:16px; min-width:0}
+  .sec{background:var(--surface); border:1px solid var(--line); border-radius:6px;
+    box-shadow:var(--shadow); overflow:hidden; scroll-margin-top:20px}
+  .sec.done{border-color:var(--done)}
+  .sec-head{display:flex; align-items:flex-start; gap:14px; padding:15px 18px;
+    cursor:pointer; background:none; border:0; width:100%; text-align:left;
+    font-family:inherit; color:inherit}
+  .sec-head:hover{background:var(--surface-2)}
+  .sec-head:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}
+  .chev{flex:none; margin-top:5px; color:var(--ink-3); transition:transform .2s ease}
+  .sec[data-open="false"] .chev{transform:rotate(-90deg)}
+  .sec-title{flex:1; min-width:0}
+  .sec-title h3{font-family:"IBM Plex Serif",Georgia,serif; font-size:18px; font-weight:600;
+    margin:0 0 3px; letter-spacing:-.01em}
+  .cadence{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink-3)}
+  .cadence b{color:var(--accent); font-weight:500}
+  .sec-count{flex:none; font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:500;
+    font-variant-numeric:tabular-nums; color:var(--ink-3); background:var(--surface-2);
+    border:1px solid var(--line); border-radius:99px; padding:3px 9px; margin-top:2px}
+  .sec.done .sec-count{color:var(--done); background:var(--done-soft); border-color:var(--done)}
+  .sec-body{border-top:1px solid var(--line)}
+  .sec[data-open="false"] .sec-body{display:none}
+  .sec-intro{padding:13px 18px; font-size:13.5px; color:var(--ink-2);
+    background:var(--surface-2); border-bottom:1px solid var(--line); margin:0}
+
+  ul.items{list-style:none; margin:0; padding:0}
+  li.item{display:grid; grid-template-columns:auto minmax(0,1fr); gap:11px;
+    padding:11px 18px; border-bottom:1px solid var(--line)}
+  li.item:last-child{border-bottom:0}
+  li.item.on{background:var(--surface-2)}
+  li.item.hide{display:none}
+  li.item.silent{box-shadow:inset 3px 0 0 var(--silent-line)}
+  input[type=checkbox]{appearance:none; -webkit-appearance:none; margin:3px 0 0; flex:none;
+    width:16px; height:16px; border:1.5px solid var(--line-2); border-radius:3px;
+    background:var(--surface); cursor:pointer; position:relative}
+  input[type=checkbox]:hover{border-color:var(--accent)}
+  input[type=checkbox]:checked{background:var(--done); border-color:var(--done)}
+  input[type=checkbox]:checked::after{content:""; position:absolute; left:4.5px; top:1.5px;
+    width:4px; height:8px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(42deg)}
+  input[type=checkbox]:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  .txt{min-width:0}
+  .req{margin:0; font-size:14.4px; line-height:1.5}
+  li.item.on .req{color:var(--ink-2)}
+  .why{margin:5px 0 0; font-size:13px; color:var(--ink-3); line-height:1.5; max-width:74ch}
+  .why code, .req code{font-family:"IBM Plex Mono",monospace; font-size:.9em;
+    background:var(--surface-3); border-radius:3px; padding:1px 4px; color:var(--ink-2)}
+  .tags{display:flex; flex-wrap:wrap; gap:5px; margin-top:7px}
+  .tag{font-family:"IBM Plex Mono",monospace; font-size:9.8px; font-weight:600;
+    letter-spacing:.09em; text-transform:uppercase; border-radius:2px; padding:2.5px 6px;
+    border:1px solid}
+  .tag.s{color:var(--silent); background:var(--silent-soft); border-color:var(--silent-line)}
+  .tag.m{color:var(--measure); background:var(--measure-soft); border-color:var(--measure-line)}
+
+  .legend{grid-column:1/-1; display:flex; flex-wrap:wrap; gap:22px; padding:15px 18px;
+    background:var(--surface); border:1px solid var(--line); border-radius:6px;
+    box-shadow:var(--shadow); margin-bottom:2px}
+  .leg{display:flex; gap:9px; align-items:flex-start; font-size:13px; color:var(--ink-2);
+    max-width:44ch}
+  .empty{padding:26px 18px; text-align:center; color:var(--ink-3); font-size:13.5px}
+
+  footer{grid-column:1/-1; margin-top:12px; padding-top:18px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--ink-3); max-width:78ch}
+
+  @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
+  @media print{
+    .rail,.util,.filters{display:none!important}
+    .shell{grid-template-columns:1fr; max-width:none; padding:0}
+    .sec-body{display:block!important} .sec{box-shadow:none; break-inside:avoid}
+    li.item.hide{display:grid!important}
+    body{background:#fff; color:#000; font-size:11px}
+  }
+</style>
+
+<div class="shell">
+  <header class="mast">
+    <p class="eyebrow">Migration control document</p>
+    <h1>SSIS Rewrite Fidelity Checklist</h1>
+    <p class="lede">Every item below is a place where SSIS does something a competent .NET
+      developer would not guess. Most of them fail <em>silently</em> &mdash; the rewrite builds,
+      runs, reports success, and writes subtly wrong data. Work through them by cadence, not
+      top to bottom.</p>
+    <div class="facts" id="facts"></div>
+  </header>
+
+  <div class="legend">
+    <div class="leg"><span class="tag s">Silent</span>
+      <span>Getting this wrong produces <strong>no error</strong> &mdash; just wrong data,
+      usually discovered by a reconciliation break months later.</span></div>
+    <div class="leg"><span class="tag m">Measure</span>
+      <span>Do not reason about this or ask an LLM. Run a probe package through real
+      <code>dtexec</code> and record what actually came out.</span></div>
+  </div>
+
+  <aside class="rail">
+    <div class="panel">
+      <h2>Progress</h2>
+      <div class="bigcount"><span id="pDone">0</span><span> / <span id="pTotal">0</span></span></div>
+      <div class="bar"><i id="pBar"></i></div>
+      <p class="rail-note" id="pPct">0% complete</p>
+      <div class="tally">
+        <div class="tally-row"><span class="dot s"></span> Silent risks open <b id="tSilent">0</b></div>
+        <div class="tally-row"><span class="dot m"></span> Awaiting measurement <b id="tMeasure">0</b></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Show</h2>
+      <div class="filters">
+        <button class="fbtn" data-filter="all" aria-pressed="true">Everything</button>
+        <button class="fbtn" data-filter="open" aria-pressed="false">Not yet done</button>
+        <button class="fbtn" data-filter="silent" aria-pressed="false">Silent risks only</button>
+        <button class="fbtn" data-filter="measure" aria-pressed="false">Needs measurement</button>
+      </div>
+      <div class="util">
+        <button class="fbtn" id="expandAll">Expand</button>
+        <button class="fbtn" id="collapseAll">Collapse</button>
+        <button class="fbtn" id="reset">Reset</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Sections</h2>
+      <nav><ol id="nav"></ol></nav>
+    </div>
+  </aside>
+
+  <main id="main"></main>
+
+  <footer>
+    Ticks are saved in this browser only &mdash; they are not shared between people or devices,
+    so treat this as your own working copy and track team-level status wherever you already track
+    the migration. Nothing here replaces the measured behaviour of the real packages: where an
+    item is tagged <span class="tag m">Measure</span>, the probe run is the source of truth and
+    this document is only the reminder to do it.
+  </footer>
+</div>
+
+<script>
+const FACTS = [
+  ["Distinct packages","73"], ["Data flow tasks","101"], ["Component types","~20"],
+  ["Script units","38"], ["Authored script LOC","~8,750"], ["Third-party components","0"],
+  ["Packages using transactions","0"]
+];
+
+const SECTIONS = [
+  {
+    id:"prep", name:"Portfolio prep", cadence:"Do <b>once</b>, before any code is written",
+    intro:"Five of these came directly out of scanning the real packages. They are cheap now and expensive later.",
+    items:[
+      {t:"Reconcile the 7 drifted packages and get written sign-off on which copy is production-current.",
+       why:"<code>balance</code>, <code>cpc2n600</code>, <code>cuvimport</code>, <code>fxrate_import</code>, <code>n600tosalesforce</code>, <code>position</code>, <code>robocashflow</code> exist in copies with different content. Migrating the stale copy is silent and unrecoverable without a re-do.", b:["s"]},
+      {t:"Confirm the real ProtectionLevel of the 22 packages where the attribute is absent.",
+       why:"If any resolve to <code>EncryptSensitiveWithUserKey</code>, they cannot be opened or built off the original author's Windows account. Get them re-saved as <code>DontSaveSensitive</code>."},
+      {t:"Point every scan, build and tool at the single canonical folder; exclude <code>.worktrees</code> and <code>- Copy</code> folders.",
+       why:"216 files on disk are only 73 real packages. Any metric computed over the raw folder tree is inflated roughly 3&times;."},
+      {t:"Manually inspect the 5 script units whose <code>SourceCode</code> array is not (name, encoding, content) triples.",
+       why:"<code>CUVImport</code>, <code>CPC2N600</code>, <code>PracticeAccBalance</code>, <code>PracticeAccHoldings</code>. The extractor had to guess at these; confirm the recovered source is coherent and not fragmented.", b:["s"]},
+      {t:"Stand up the probe VM: SQL Server Developer Edition + Visual Studio Community + the SSIS projects extension.",
+       why:"Both are free. Probes run on 5-row synthetic packages you write yourself &mdash; no client data, no client server, so no governance approval needed. Every Measure item below is blocked until this exists.", b:["m"]},
+      {t:"Inventory every <code>.dtsConfig</code>, package configuration, parameter and environment variable.",
+       why:"A design-time connection string in the XML may be overridden at runtime. The value you read from the file can be a lie.", b:["s"]},
+      {t:"Capture golden datasets (inputs, outputs, row counts) from real SSIS runs before anything is decommissioned.",
+       why:"This is a one-way door. Once a package is retired you cannot go back and ask it what it used to produce."},
+      {t:"Run the golden capture at verbose logging so per-stage row counts are recorded, not just final table state.",
+       why:"<code>OnPipelineRowsSent</code> only populates at a high enough LOGGING_LEVEL. Per-stage counts localise a divergence to one component instead of one package.", b:["m"]},
+      {t:"Capture at least one failure-path run per package where feasible.",
+       why:"Most divergence between SSIS and a rewrite shows up on the error path, which is also the path nobody tests."},
+      {t:"Record the exact SSIS runtime version and the OLE DB / ACE provider versions.",
+       why:"Coercion and rounding behaviour is version-specific and partly belongs to the provider, not to SSIS. A measurement is only valid for the version that produced it.", b:["m"]},
+      {t:"Decide and document the transaction model. Mirror per-task autocommit for phase 1.",
+       why:"Zero packages in this portfolio set <code>TransactionOption=Required</code>, so SSIS has been autocommitting per task. Introducing a package-wide transaction changes failure semantics everywhere and will light up your golden diff for reasons unrelated to the rewrite.", b:["s"]},
+      {t:"Check for SQL Agent jobs or external schedulers that invoke these packages.",
+       why:"The rewrite needs the same entry points, arguments and exit-code contract, or the orchestration breaks even when the ETL is perfect."},
+      {t:"Map any Execute Package Task parent/child chains.",
+       why:"Migration order has to respect them; a child migrated before its parent cannot be validated in isolation."},
+      {t:"Inventory event handlers (OnError, OnTaskFailed, OnPostExecute, &hellip;).",
+       why:"They are invisible in the designer's main canvas and routinely carry real logic &mdash; logging, cleanup, notification. Port them or declare them out of scope in writing.", b:["s"]},
+      {t:"Agree the burn-down metric: packages generating with zero gaps, out of 73, computed by tooling.",
+       why:"Self-reported percent-complete cannot be audited. A tool-derived count cannot be gamed and makes stalls visible early."},
+      {t:"Confirm whether a shadow / parallel-run window is available before cutover.",
+       why:"If the answer is no, that is the single largest residual risk in the programme and it belongs in front of a sponsor, not in an engineering backlog."}
+    ]
+  },
+  {
+    id:"expr", name:"Expression language", cadence:"Build <b>once</b> &mdash; used by every Derived Column and Conditional Split",
+    intro:"SSIS expressions are not C# and not T-SQL. The governing rule is that SSIS never implicitly coerces between types; almost everything else follows from that.",
+    items:[
+      {t:"No implicit type coercion. <code>1 + \"a\"</code>, <code>\"1\" + 1</code> and <code>LEN(123)</code> are errors in SSIS, not conversions.",
+       why:"A C# port will happily concatenate or auto-convert and produce a value where SSIS produced a failure.", b:["s"]},
+      {t:"<code>(DT_I4)</code> on a float rounds half-to-even. C#'s <code>(int)</code> cast truncates.",
+       why:"2.5 becomes 2 in both. 3.5 becomes 4 in SSIS and 3 in C#. Half your test values will agree, which is what makes this dangerous.", b:["s","m"]},
+      {t:"<code>(DT_I4)</code> of <code>TRUE</code> is <code>-1</code>, not <code>1</code>.",
+       why:"The old VB/COM Automation convention. Anything that casts a boolean to a number is affected."},
+      {t:"<code>(DT_WSTR,n)</code> overflow is a hard error, never silent truncation.",
+       why:"The opposite of a Flat File Destination, which truncates silently. Same portfolio, two opposite behaviours.", b:["s"]},
+      {t:"NULL comparisons are three-valued. <code>NULL == 1</code> is NULL, not false.",
+       why:"SQL semantics, not C# semantics. A NULL-producing comparison is neither true nor false and must not collapse to false.", b:["s"]},
+      {t:"<code>&amp;&amp;</code> and <code>||</code> follow Kleene logic: <code>FALSE &amp;&amp; NULL</code> is False, <code>TRUE || NULL</code> is True, <code>TRUE &amp;&amp; NULL</code> is NULL.",
+       why:"C#'s short-circuit operators cannot express the third state. Any condition combining a possibly-NULL operand needs explicit handling.", b:["s"]},
+      {t:"String <code>==</code> and <code>!=</code> are ordinal and case-sensitive.",
+       why:"Maps to <code>StringComparison.Ordinal</code>, not the default <code>string.Equals</code> overload chosen by habit.", b:["s"]},
+      {t:"String <code>&lt;</code> <code>&gt;</code> <code>&lt;=</code> <code>&gt;=</code> are culture-aware &mdash; a different comparer from equality.",
+       why:"Equality is ordinal but ordering is cultural, in the same expression language. Lowercase sorts before its own uppercase. Using one comparer for both is a classic silent bug.", b:["s"]},
+      {t:"<code>SUBSTRING</code> is 1-based; a start of 0 or negative is an error; an over-long length clamps to <code>\"\"</code>.",
+       why:"Off-by-one against <code>Substring()</code>, and the clamp-versus-throw asymmetry surprises people twice."},
+      {t:"<code>FINDSTRING</code> is 1-based, occurrence &lt; 1 is an error, and an empty search string never matches.",
+       why:"<code>IndexOf</code> returns 0-based and returns 0 for an empty needle. Both differences are live."},
+      {t:"<code>TOKEN</code> / <code>TOKENCOUNT</code> delimiters are a character set, not a substring, and an empty input is one token.",
+       why:"strtok-style. Passing the delimiter string to <code>Split()</code> gives different results the moment the delimiter is more than one character."},
+      {t:"<code>DATEDIFF(\"dd\", &hellip;)</code> counts calendar day-boundary crossings, not elapsed 24-hour periods.",
+       why:"23:00 to 01:00 the next day is 2 hours elapsed but 1 day difference. Same rule as T-SQL, opposite of a naive <code>TimeSpan.Days</code>.", b:["s"]},
+      {t:"<code>GETDATE()</code> / <code>GETUTCDATE()</code> columns are named and excluded from golden comparison.",
+       why:"Non-deterministic by construction. Excluding them silently by wildcard hides real differences in neighbouring columns &mdash; list them explicitly."},
+      {t:"Float arithmetic followed by a string cast can pad to a fixed decimal count that varies by expression shape.",
+       why:"An internal scale tracked through the expression compiler. Only reproducible by measuring the specific expression.", b:["m"]},
+      {t:"Every expression function actually present in the portfolio has a measured test case.",
+       why:"Take the function list from the scan CSV. Coverage against functions the portfolio does not use is wasted work; a gap on one it does use is a live defect.", b:["m"]},
+      {t:"The SSIS host locale is recorded, and anything locale-dependent is measured under it.",
+       why:"Date and number parsing inside expressions and Data Conversions can follow the host locale rather than an invariant culture.", b:["m"]}
+    ]
+  },
+  {
+    id:"src", name:"Sources and destinations", cadence:"Build <b>once per component type</b>",
+    intro:"Every one of these appears in the real portfolio. The destination side is where most silent data differences live, because coercion happens inside the provider rather than in SSIS.",
+    items:[
+      {t:"OLE DB Source: handle both <code>OpenRowset</code> and <code>SqlCommand</code> access modes.",
+       why:"In SqlCommand mode the result-set column names must line up with the pipeline buffer names, and the query text is the author's, not something to rewrite."},
+      {t:"A source and destination on different servers or databases needs two real connections.",
+       why:"Easy to collapse into one connection during a rewrite and only notice in an environment where the two happen to be the same host."},
+      {t:"Flat File Source: distinguish Delimited, FixedWidth and RaggedRight.",
+       why:"A fixed-width or ragged-right file cannot be read by a CSV parser at all. It needs positional reads, and a CSV library will silently produce one giant column or garbage.", b:["s"]},
+      {t:"Row delimiter (CRLF vs LF) matches the connection manager exactly.",
+       why:"A mismatch produces a silent zero-row read or one enormous row. No error, no warning.", b:["s"]},
+      {t:"<code>HeaderRowsToSkip</code> and <code>ColumnNamesInFirstDataRow</code> are handled as independent settings.",
+       why:"They are different things and a file can use either, both or neither. Conflating them shifts every row by one.", b:["s"]},
+      {t:"Text qualifier handling: is the qualifier stripped, and are embedded qualifiers doubled?",
+       why:"Quote handling differs between SSIS and most CSV libraries on the awkward cases &mdash; a qualifier mid-field, an unterminated qualifier."},
+      {t:"Code page and <code>DT_STR</code> vs <code>DT_WSTR</code> are preserved per column.",
+       why:"Non-Unicode columns carry a code page (often 1252); Unicode columns use 0. Reading a 1252 file as UTF-8 corrupts only the non-ASCII rows, which is the definition of a silent bug.", b:["s"]},
+      {t:"Check for a trailing synthetic column carrying the row terminator.",
+       why:"SSIS's fixed-width wizard adds one with no width of its own. It is an ordinary mapped column but it exists only to hold the CRLF."},
+      {t:"Excel Source: expect everything typed as double or string.",
+       why:"The ACE OLEDB provider has no narrower numeric type, so a business integer arrives as <code>r8</code> and every Excel flow implicitly narrows on the way to the table.", b:["s"]},
+      {t:"Excel worksheet names carry a trailing <code>$</code>; named ranges behave differently from sheets.",
+       why:"The <code>$</code> is the ADO/Jet convention marking a worksheet rather than a range."},
+      {t:"Excel <code>HDR=YES/NO</code> in Extended Properties controls header handling.",
+       why:"It sits inside the connection string's Extended Properties, not on the component."},
+      {t:"If the rewrite uses a portable Excel reader instead of ACE OLEDB, prove identical typing and row output.",
+       why:"ACE is Windows-only, so a portable reader is often the right call &mdash; but it is a different engine and must be diffed against the real one, not assumed equivalent.", b:["m"]},
+      {t:"ADO NET Source is discriminated by <code>UserComponentTypeName</code> = <code>Microsoft.DataReaderSourceAdapter</code>.",
+       why:"Not the symmetric name you would guess. Both ADO NET components host under the generic <code>Microsoft.ManagedComponentHost</code> class id."},
+      {t:"ADO NET table names are double-quoted, not bracketed.",
+       why:"<code>\"dbo\".\"Table\"</code> rather than <code>[dbo].[Table]</code>. Normalise before comparing to anything harvested from SQL text."},
+      {t:"OLE DB Destination: <code>FastLoadMaxInsertCommitSize = 0</code> means one transaction for the entire load.",
+       why:"A single bad row rolls back every other row in the batch. If the rewrite commits in chunks, a partial failure leaves data SSIS would never have left.", b:["s"]},
+      {t:"<code>KEEPNULLS</code> is honoured. Without it, a NULL becomes the column's DEFAULT, not NULL.",
+       why:"Probably the single most under-noticed silent difference in SSIS destinations. The table simply contains different values, with no error anywhere.", b:["s"]},
+      {t:"<code>FastLoadOptions</code>: TABLOCK, CHECK_CONSTRAINTS, FIRE_TRIGGERS are all reproduced.",
+       why:"Fast load may be bypassing constraint checks and triggers today. An ordinary <code>INSERT</code> in the rewrite will fire them, which can change data or fail loads that used to succeed.", b:["s"]},
+      {t:"Fast load resolves column metadata up front and needs SELECT permission even for insert-only.",
+       why:"A least-privilege service account with INSERT but not SELECT fails at validation with a misleading permissions error."},
+      {t:"Per-column error and truncation dispositions (FailComponent / IgnoreFailure / RedirectRow) are reproduced.",
+       why:"These decide whether a bad row kills the load, is silently altered, or is diverted. Three very different behaviours."},
+      {t:"Flat File Destination: fixed width silently truncates long values and right-pads short ones.",
+       why:"No error, no warning, no disposition to configure. Verified behaviour, not an assumption &mdash; and it means output width bugs never announce themselves.", b:["s"]},
+      {t:"Column order in a flat file comes from the connection manager, not from entity or property order.",
+       why:"Reordering properties in the C# class silently reorders the output file.", b:["s"]},
+      {t:"Header behaviour: a literal <code>Header</code> property is different from <code>ColumnNamesInFirstDataRow</code>.",
+       why:"Both produce a first line; only one of them is the column names."},
+      {t:"Encoding, byte-order mark and line endings match the original byte for byte.",
+       why:"Downstream consumers of these files are often brittle mainframe or vendor loaders that care about exactly this.", b:["s"]},
+      {t:"Overwrite vs append is reproduced.",
+       why:"Gets noticed on the second run, not the first."},
+      {t:"OLE DB Command runs once per row.",
+       why:"Not a set-based operation. Both the performance profile and the per-row failure semantics differ from a bulk operation."},
+      {t:"OLE DB Command <code>?</code> placeholders map positionally to input columns in declared order.",
+       why:"Unless <code>ParameterMapping</code> says otherwise. Get the order wrong and you write valid-looking rows with the values swapped.", b:["s"]}
+    ]
+  },
+  {
+    id:"tx", name:"Transforms", cadence:"Build <b>once per component type</b>",
+    intro:"The blocking transforms (Sort, Aggregate, full-cache Lookup) also change behaviour under memory pressure, so they need volume testing as well as correctness testing.",
+    items:[
+      {t:"Derived Column: distinguish replacing an existing column from adding a new one.",
+       why:"Replace-in-place keeps the original name and type constraints; add-new does not."},
+      {t:"Passthrough columns resolve by lineage id, not by walking the visible paths.",
+       why:"A synchronous transform's untouched columns are consumed downstream by matching lineage id against the true original producer. There is often no path drawn from the source to the destination for those columns, yet that is exactly where the value comes from.", b:["s"]},
+      {t:"Data Conversion with <code>IgnoreFailure</code> nulls the one failing column and keeps the row.",
+       why:"It does not drop the row and does not affect other columns on the same row. Measured behaviour.", b:["s","m"]},
+      {t:"<code>DT_WSTR</code> is the exception: it truncates rather than nulling.",
+       why:"Every other measured Data Conversion target nulls on failure. String-to-string has no real failure mode, so the truncation disposition is what actually applies.", b:["s","m"]},
+      {t:"Empty string converts to NULL for numeric and date targets, but stays empty for <code>DT_WSTR</code>.",
+       why:"NULL versus empty string is exactly the distinction a naive comparison misses.", b:["s"]},
+      {t:"Whitespace is trimmed before parsing, locale-neutrally.",
+       why:"<code>\" 2.5 \"</code> converts cleanly. A strict parser in the rewrite would reject it."},
+      {t:"<code>DT_BOOL</code> accepts <code>\"1\"</code> and <code>\"0\"</code> as well as <code>\"True\"</code>/<code>\"False\"</code>.",
+       why:"Wider than <code>bool.TryParse</code>, which rejects the numeric forms.", b:["s"]},
+      {t:"Conditional Split evaluates cases in declared order, first match wins, default is last.",
+       why:"Overlapping conditions give different results under a different evaluation order.", b:["s"]},
+      {t:"A NULL-producing condition does not match its case.",
+       why:"Three-valued logic again: not-true is not the same as false, but a row that matches nothing lands in the default output.", b:["s","m"]},
+      {t:"An unconnected Conditional Split output silently discards its rows.",
+       why:"Rows vanish with no error and no log entry. If the original relied on this, the rewrite must discard them too &mdash; deliberately and visibly.", b:["s"]},
+      {t:"Multicast sends the same buffer to every output with no copy; order is identical on all branches.",
+       why:"Branches see the same rows in the same order. If the rewrite materialises and re-reads, prove the order still holds."},
+      {t:"Ignore Multicast's dangling extra output.",
+       why:"The component auto-provisions a spare output the moment an existing one is connected, so the saved XML carries one more output than the designer shows. It is marked dangling and is not a branch."},
+      {t:"Lookup: the join key is persisted as <code>JoinToReferenceColumn</code> on the joining input column. Never guess it.",
+       why:"A guessed join key compiles, runs, and produces wrong joined data on every row. Refuse to generate rather than guess.", b:["s"]},
+      {t:"Copied columns carry <code>CopyFromReferenceColumn</code>.",
+       why:"That is what maps a reference-table column onto the output, including when the names differ."},
+      {t:"<code>NoMatchBehavior</code>: fail-on-no-match means a miss must throw, not pass a null downstream.",
+       why:"Turning a hard failure into a null is the most common Lookup porting error, and every downstream calculation then quietly operates on nulls.", b:["s"]},
+      {t:"Cache type full / partial / none are genuinely different semantics, not just performance settings.",
+       why:"Full cache reads the whole reference set before any row flows. Partial and none query per row and can see data committed mid-run."},
+      {t:"Full-cache matching is ordinal and case-sensitive, which may differ from the same join done in SQL.",
+       why:"An in-memory dictionary lookup does not honour the database collation. A case-insensitive collation joins rows that a full-cache Lookup does not.", b:["s","m"]},
+      {t:"If reference columns are read positionally, the reference query's SELECT order matters.",
+       why:"Reordering the SELECT list silently reassigns values to columns."},
+      {t:"Aggregate: <code>Count</code> is SQL <code>COUNT(column)</code> and excludes NULLs. It is not <code>COUNT(*)</code>.",
+       why:"Measured. A group containing NULLs returns a smaller count than the row count, and <code>rows.Count()</code> in the rewrite gives the wrong answer.", b:["s","m"]},
+      {t:"Aggregate is fully blocking &mdash; nothing flows until all input is consumed.",
+       why:"Matters for memory profile and for anything that assumed streaming behaviour."},
+      {t:"Group-by comparison flags (case, accent, kana, width) change how rows group.",
+       why:"Ignore-case grouping merges <code>ABC</code> and <code>abc</code> into one group. Different flags, different result set.", b:["s","m"]},
+      {t:"Aggregate output column types derive from the input column, not from external metadata.",
+       why:"A pure pipeline transform has no design-time external schema to read types from."},
+      {t:"Sort: the key designation lives on the <code>input</code> columns, not the output columns.",
+       why:"Output columns carry only a pointer back to their input. Reading key-ness off the output gives you nothing.", b:["s"]},
+      {t:"Sort comparison flags and per-key ascending/descending are reproduced.",
+       why:"Both affect output order, and output order is what a downstream Merge or Merge Join depends on."},
+      {t:"Sort's remove-duplicates option silently dedupes rows.",
+       why:"A checkbox that changes the row count with no other signal.", b:["s"]},
+      {t:"Merge Join trusts the upstream sorted flag &mdash; it does not verify it.",
+       why:"If the flag was set on data that is not actually sorted, SSIS produces silently wrong join output today. Determine whether the original depends on that before 'fixing' it in the rewrite.", b:["s"]},
+      {t:"Join type (Inner / Left / Full) and <code>TreatNullsAsEqual</code> are read from the component, not inferred.",
+       why:"The raw join-type value is not self-evident; infer it from the destination shape only as a cross-check, never as the source of truth.", b:["s","m"]},
+      {t:"Duplicate join keys produce a cross product, not a one-to-one pairing.",
+       why:"Standard sort-merge-join behaviour. A naive zip of the two sorted streams gives fewer rows and nobody notices until a count is off.", b:["s"]},
+      {t:"Merge requires sorted inputs; Union All does not.",
+       why:"They look interchangeable in the designer and are not."},
+      {t:"Union All takes its output column mapping from the first input; later inputs map by name explicitly.",
+       why:"An input whose columns do not line up by name needs its mapping honoured, or values land in the wrong columns.", b:["s"]},
+      {t:"Row Count writes to a package variable &mdash; check whether anything downstream actually reads it.",
+       why:"Frequently vestigial. Where it is read, the reader is often a Script Task or a conditional constraint, so it must be wired up rather than dropped."},
+      {t:"Script Component: synchronous vs asynchronous output (<code>SynchronousInputID</code>) are different shapes.",
+       why:"Asynchronous means the component creates its own buffer and emits its own rows &mdash; row counts in and out need not match. Porting it as a row-in-row-out transform is structurally wrong.", b:["s"]},
+      {t:"Columns a Script Component synthesises are not passthroughs and do not exist on the source row type.",
+       why:"Treating them as passthroughs generates code that references a column that was never produced &mdash; or worse, compiles by coincidence and emits a default value.", b:["s"]}
+    ]
+  },
+  {
+    id:"script", name:"Script porting", cadence:"Once <b>per script unit</b> &mdash; 38 of them, roughly half VB.NET",
+    intro:"About 8,750 lines of real authored logic. Half is VB.NET, which needs a genuine language translation on top of the framework move. This is the one area where an LLM is the right tool, and the one area where its output must land in front of a failing test.",
+    items:[
+      {t:"VB <code>CInt</code>/<code>CLng</code> round half-to-even; C#'s <code>(int)</code> truncates.",
+       why:"<code>CInt(2.5)</code> is 2 and <code>CInt(3.5)</code> is 4. The cast gives 2 and 3. Copilot translates this wrongly by default and the diff is one row in N.", b:["s"]},
+      {t:"VB <code>Mid</code>, <code>InStr</code>, <code>Left</code>, <code>Right</code> are 1-based; the C# equivalents are 0-based.",
+       why:"Off-by-one that often still returns a plausible-looking string, so review does not catch it.", b:["s"]},
+      {t:"<code>On Error Resume Next</code> and <code>On Error GoTo</code> have no C# equivalent.",
+       why:"A naive translation drops them, converting silently-swallowed errors into thrown exceptions &mdash; and a load that used to skip bad rows now aborts. Decide deliberately, per occurrence.", b:["s"]},
+      {t:"<code>Option Strict Off</code> implicit conversions are made explicit and checked.",
+       why:"VB will silently convert a string to a number at runtime. C# will not compile it, which is the good case &mdash; the bad case is a hand-inserted cast that rounds differently."},
+      {t:"<code>Nothing</code> vs <code>null</code> vs <code>default(T)</code> for value types.",
+       why:"<code>Nothing</code> assigned to an <code>Integer</code> is 0 in VB, not null. Translating it to <code>null</code> changes behaviour or fails to compile.", b:["s"]},
+      {t:"Integer division <code>\\</code> is not the same operator as <code>/</code>.",
+       why:"<code>7 / 2</code> is 3.5 in VB but <code>7 \\ 2</code> is 3. Both become <code>/</code> in careless translation.", b:["s"]},
+      {t:"<code>Option Compare Text</code> makes string comparison case-insensitive file-wide.",
+       why:"A file-level directive that silently changes the meaning of every <code>=</code> between strings in the file.", b:["s"]},
+      {t:"Date literals and any culture-dependent parsing are pinned to an explicit culture.",
+       why:"<code>#1/2/2020#</code> and <code>CDate(\"1/2/2020\")</code> can differ by locale between the SSIS host and the rewrite host.", b:["s"]},
+      {t:"<code>IsDBNull</code> vs <code>IsNothing</code> vs <code>== null</code> are distinguished.",
+       why:"Three different tests, routinely collapsed into one during translation."},
+      {t:"Row-level null handling is preserved: <code>Row.Col_IsNull</code> and <code>Row.SetColumnNull()</code>.",
+       why:"Null is explicit in the Script Component API and trivially lost in a port, turning nulls into zeros or empty strings.", b:["s"]},
+      {t:"Variable declarations are read correctly: comma-separated for Script Components, semicolon-separated for Script Tasks.",
+       why:"Two features that look identical in the UI use different delimiters for <code>ReadOnlyVariables</code>/<code>ReadWriteVariables</code>."},
+      {t:"A Script Component may only safely write <code>ReadWriteVariables</code> in <code>PostExecute</code>.",
+       why:"Writes from the per-row method are not reliably visible. If the original wrote per row, its actual effective behaviour was the last value, or nothing.", b:["s"]},
+      {t:"<code>PreExecute</code> and <code>PostExecute</code> bodies are ported, not just the per-row method.",
+       why:"Setup, connection acquisition, accumulator flushes and variable writes live there."},
+      {t:"<code>FireError</code> / <code>FireWarning</code> behaviour and their effect on MaximumErrorCount are reproduced.",
+       why:"A fired error counts toward the package's error budget and can flip an otherwise successful run to failure.", b:["s"]},
+      {t:"Connection managers acquired inside script code are accounted for.",
+       why:"A script can reach any connection in the package, and which ones it touches is only visible by reading the script text."},
+      {t:"Every ported script lands in a slot that already has a failing test seeded from measured SSIS output.",
+       why:"This is the mechanism that makes LLM assistance safe. Without it you have 38 plausible translations and no way to tell which are wrong &mdash; and they all look fine in review.", b:["s"]},
+      {t:"An unported script is a compile error, never a silently missing column.",
+       why:"Generate the surrounding pipeline plus an unimplemented member so the build refuses until a human fills it in. A dropped column that builds clean is the worst outcome available.", b:["s"]},
+      {t:"Every ported script is reviewed by a human who read the original.",
+       why:"Not 'the tests pass' and not 'Copilot said so'. The tests only cover the cases you thought to measure."}
+    ]
+  },
+  {
+    id:"cf", name:"Control flow", cadence:"Once <b>per package</b> &mdash; 73 of them",
+    intro:"Nine task types and simple, repetitive control flow, which is good news. The traps are in the edges between tasks rather than the tasks themselves.",
+    items:[
+      {t:"Precedence constraint outcome (Success / Failure / Completion) is honoured, not just the ordering.",
+       why:"A Failure-constrained successor must not run on a successful run. Treating every edge as ordering means failure-path logging fires on every clean run.", b:["s"]},
+      {t:"Conditional constraints (<code>EvalOp</code> plus <code>Expression</code>) are evaluated.",
+       why:"An expression-guarded edge that the rewrite treats as unconditional runs work SSIS skipped &mdash; or the reverse.", b:["s"]},
+      {t:"<code>LogicalAnd</code> across multiple incoming constraints is honoured (AND vs OR).",
+       why:"A task with two incoming edges behaves completely differently depending on this one flag.", b:["s"]},
+      {t:"A Failure-constrained successor runs and the package still fails.",
+       why:"The handler does not rescue the run. If the rewrite treats it as recovery, failures start reporting as successes.", b:["s"]},
+      {t:"Completion and expression-only constraints fire on both the success and failure paths.",
+       why:"Measured. These need the same task in two positions, which most rewrite step models cannot express without explicit handling.", b:["s"]},
+      {t:"Disabled executables are skipped but still satisfy precedence for their successors.",
+       why:"Everything ordered after a disabled task still runs. Generating a disabled task as if it were live makes the rewrite do work SSIS has not done in years.", b:["s"]},
+      {t:"Parallel branches: sequentialising is safe for data only if no two branches touch the same table.",
+       why:"SSIS ran unordered executables concurrently. Same data, different wall clock &mdash; unless two branches write the same target, in which case ordering suddenly matters.", b:["s"]},
+      {t:"MaximumErrorCount is reproduced.",
+       why:"A non-fatal error counts toward it, so an otherwise-successful run can flip to failure. This also means a spurious warning-level bug in the rewrite can change the run outcome.", b:["s"]},
+      {t:"ForEach Loop enumeration order is chosen and documented.",
+       why:"SSIS's file enumeration order is filesystem-dependent and not reproducible. Pick a stable order (ordinal by name) and write down that it is a deliberate change."},
+      {t:"ForEach variable mapping is honoured, and the loop body shape is identified.",
+       why:"A body that is a single SQL statement and a body that is a whole Data Flow Task are completely different amounts of work."},
+      {t:"Execute SQL Task result-set binding (none / single row / full result set / XML) and parameter mapping are reproduced.",
+       why:"A single-row binding writes into package variables that later tasks read. Dropping it breaks things far downstream."},
+      {t:"An Execute SQL Task on a different connection manager than the flow gets its own connection.",
+       why:"Cross-database tasks are easy to route through the package's primary connection, where the object simply does not exist &mdash; or worse, exists with different data.", b:["s"]},
+      {t:"File System Task operation type is read correctly &mdash; the default is omitted from the XML.",
+       why:"<code>CopyFile</code> is the schema default and so is absent from the file. Absence means copy, not 'no operation'.", b:["s"]},
+      {t:"Event handlers are ported or explicitly declared out of scope, in writing.",
+       why:"They carry logging, cleanup and notification, and they are invisible unless you go looking.", b:["s"]}
+    ]
+  },
+  {
+    id:"val", name:"Validation", cadence:"Once <b>per package</b> &mdash; the gate before 'done'",
+    intro:"Row counts matching is the weakest possible evidence. Everything here is about catching the difference that a count-only comparison hides.",
+    items:[
+      {t:"Row counts match per target table.",
+       why:"Necessary, nowhere near sufficient. Two datasets with the same row count can differ in every value."},
+      {t:"Row content is compared on a stable key, row by row.",
+       why:"Without a key you cannot attribute a difference to a row, and unordered comparison hides compensating errors.", b:["s"]},
+      {t:"Non-deterministic columns are excluded explicitly by name, and the exclusion list is itself reviewed.",
+       why:"A wildcard exclusion quietly suppresses real differences. And an exclusion test only proves anything if the excluded column genuinely differs between the two runs.", b:["s"]},
+      {t:"Numeric columns are reconciled by SUM as well as row by row.",
+       why:"Catches rounding drift that per-row tolerance comparison lets through, and catches it in aggregate where the business will notice it.", b:["s"]},
+      {t:"Flat file outputs are compared byte for byte.",
+       why:"Padding, encoding, BOM and line endings are all part of the contract with whatever consumes the file, and none of them show up in a row-level comparison.", b:["s"]},
+      {t:"NULL, empty string and column-default are distinguished in the comparison.",
+       why:"The KEEPNULLS and Data Conversion behaviours above produce exactly these three-way differences. A comparison that treats them as equal cannot see the bug.", b:["s"]},
+      {t:"The failure path is tested, not only the happy path.",
+       why:"Transaction scope, partial loads and error-row routing all only manifest on failure."},
+      {t:"Per-stage row counts are compared, not just final table state.",
+       why:"Localises a divergence to one component. Without it you know the package is wrong but not where."},
+      {t:"Tested at production data volume.",
+       why:"Sort, Aggregate and full-cache Lookup are blocking and change behaviour under memory pressure. A 100-row test proves nothing about a 10-million-row run.", b:["s"]},
+      {t:"Tested with production data shape: NULLs, empty strings, whitespace padding, out-of-range values, duplicate keys, non-ASCII.",
+       why:"Every silent behaviour in this document needs one of these to trigger. Clean sample data is guaranteed to pass and guaranteed to prove nothing.", b:["s"]},
+      {t:"Re-run behaviour matches (truncate-and-load vs append vs upsert).",
+       why:"Shows up on the second run of the day, typically in production."},
+      {t:"Exit codes and failure signalling match what the scheduler expects.",
+       why:"A rewrite that fails correctly but reports success to SQL Agent has converted a loud failure into a silent one.", b:["s"]}
+    ]
+  },
+  {
+    id:"gate", name:"Release gates", cadence:"<b>Portfolio-level</b> &mdash; the go / no-go rules",
+    intro:"These are the rules that keep the programme honest when it is under schedule pressure. They are worth agreeing in advance, while nothing is late yet.",
+    items:[
+      {t:"No component type ships in any package until its semantics have been measured on the probe VM.",
+       why:"Measure once, reuse across all 73 packages. Skipping it does not save time, it defers an unbounded number of silent defects.", b:["m"]},
+      {t:"Zero silently-guessed values anywhere in the generated output.",
+       why:"Every unknown is a visible, named gap. This is the property that makes the whole approach trustworthy; without it the generated code's cleanliness is meaningless."},
+      {t:"'Packages generating with zero gaps, out of 73' is published weekly and derived by tooling.",
+       why:"It starts at zero and it cannot be gamed. Any other progress metric will drift from reality."},
+      {t:"Golden comparison is green before a package is called done.",
+       why:"'It builds and runs' is not a completion criterion for an ETL rewrite."},
+      {t:"Shadow run is clean for an agreed number of cycles before cutover.",
+       why:"Month-end and quarter-end behaviour is not exercised by a week of daily runs."},
+      {t:"The original SSIS package can still run until the shadow period passes.",
+       why:"The rollback plan. Decommission is a separate, later, deliberate decision."}
+    ]
+  }
+];
+
+/* ---------- render ---------- */
+const KEY = "ssis-fidelity-v1";
+let state = {};
+try { state = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { state = {}; }
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+
+document.getElementById("facts").innerHTML = FACTS
+  .map(([k,v]) => '<span class="fact">' + k + ' <b>' + v + '</b></span>').join("");
+
+const main = document.getElementById("main");
+const nav  = document.getElementById("nav");
+let TOTAL = 0;
+
+SECTIONS.forEach(sec => {
+  TOTAL += sec.items.length;
+
+  const el = document.createElement("section");
+  el.className = "sec";
+  el.id = sec.id;
+  el.dataset.open = "true";
+
+  const items = sec.items.map((it, i) => {
+    const id = sec.id + "-" + i;
+    const badges = (it.b || []).map(b =>
+      b === "s" ? '<span class="tag s">Silent</span>' : '<span class="tag m">Measure</span>'
+    ).join("");
+    return '<li class="item' + ((it.b || []).includes("s") ? " silent" : "") + '"' +
+      ' data-id="' + id + '"' +
+      ' data-silent="' + ((it.b || []).includes("s") ? "1" : "0") + '"' +
+      ' data-measure="' + ((it.b || []).includes("m") ? "1" : "0") + '">' +
+      '<input type="checkbox" id="' + id + '" aria-labelledby="' + id + '-l">' +
+      '<div class="txt"><p class="req" id="' + id + '-l">' + it.t + '</p>' +
+      (it.why ? '<p class="why">' + it.why + '</p>' : "") +
+      (badges ? '<div class="tags">' + badges + '</div>' : "") +
+      '</div></li>';
+  }).join("");
+
+  el.innerHTML =
+    '<button class="sec-head" aria-expanded="true" aria-controls="' + sec.id + '-body">' +
+      '<svg class="chev" width="11" height="11" viewBox="0 0 11 11" aria-hidden="true">' +
+        '<path d="M1.5 3 5.5 7.5 9.5 3" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+        'stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+      '<span class="sec-title"><h3>' + sec.name + '</h3>' +
+        '<span class="cadence">' + sec.cadence + '</span></span>' +
+      '<span class="sec-count" data-count="' + sec.id + '">0/' + sec.items.length + '</span>' +
+    '</button>' +
+    '<div class="sec-body" id="' + sec.id + '-body">' +
+      '<p class="sec-intro">' + sec.intro + '</p>' +
+      '<ul class="items">' + items + '</ul>' +
+      '<p class="empty" hidden>Nothing in this section matches the current filter.</p>' +
+    '</div>';
+
+  main.appendChild(el);
+
+  const li = document.createElement("li");
+  li.innerHTML = '<a href="#' + sec.id + '" data-navfor="' + sec.id + '">' +
+    '<span>' + sec.name + '</span><span class="n">0/' + sec.items.length + '</span></a>';
+  nav.appendChild(li);
+});
+
+document.getElementById("pTotal").textContent = TOTAL;
+
+/* restore ticks */
+document.querySelectorAll("li.item").forEach(li => {
+  const cb = li.querySelector("input");
+  if (state[li.dataset.id]) { cb.checked = true; li.classList.add("on"); }
+});
+
+let filter = "all";
+
+function applyFilter(){
+  document.querySelectorAll(".sec").forEach(sec => {
+    let shown = 0;
+    sec.querySelectorAll("li.item").forEach(li => {
+      const done = li.querySelector("input").checked;
+      let vis = true;
+      if (filter === "open")    vis = !done;
+      if (filter === "silent")  vis = li.dataset.silent === "1";
+      if (filter === "measure") vis = li.dataset.measure === "1";
+      li.classList.toggle("hide", !vis);
+      if (vis) shown++;
+    });
+    sec.querySelector(".empty").hidden = shown > 0;
+  });
+}
+
+function refresh(){
+  let done = 0, silentOpen = 0, measureOpen = 0;
+  SECTIONS.forEach(sec => {
+    const el = document.getElementById(sec.id);
+    let d = 0;
+    el.querySelectorAll("li.item").forEach(li => {
+      const on = li.querySelector("input").checked;
+      if (on) d++;
+      else {
+        if (li.dataset.silent === "1")  silentOpen++;
+        if (li.dataset.measure === "1") measureOpen++;
+      }
+    });
+    done += d;
+    const label = d + "/" + sec.items.length;
+    el.querySelector('[data-count="' + sec.id + '"]').textContent = label;
+    el.classList.toggle("done", d === sec.items.length);
+    const a = nav.querySelector('[data-navfor="' + sec.id + '"]');
+    a.querySelector(".n").textContent = label;
+    a.classList.toggle("complete", d === sec.items.length);
+  });
+
+  document.getElementById("pDone").textContent = done;
+  document.getElementById("tSilent").textContent = silentOpen;
+  document.getElementById("tMeasure").textContent = measureOpen;
+  const pct = TOTAL ? Math.round(done / TOTAL * 100) : 0;
+  document.getElementById("pBar").style.width = pct + "%";
+  document.getElementById("pPct").textContent = pct + "% complete";
+}
+
+main.addEventListener("change", e => {
+  const cb = e.target;
+  if (cb.type !== "checkbox") return;
+  const li = cb.closest("li.item");
+  li.classList.toggle("on", cb.checked);
+  if (cb.checked) state[li.dataset.id] = 1; else delete state[li.dataset.id];
+  save(); refresh();
+  if (filter === "open") applyFilter();
+});
+
+main.addEventListener("click", e => {
+  const head = e.target.closest(".sec-head");
+  if (!head) return;
+  const sec = head.closest(".sec");
+  const open = sec.dataset.open === "true";
+  sec.dataset.open = open ? "false" : "true";
+  head.setAttribute("aria-expanded", String(!open));
+});
+
+document.querySelectorAll(".fbtn[data-filter]").forEach(b => {
+  b.addEventListener("click", () => {
+    filter = b.dataset.filter;
+    document.querySelectorAll(".fbtn[data-filter]").forEach(o =>
+      o.setAttribute("aria-pressed", String(o === b)));
+    if (filter !== "all") document.querySelectorAll(".sec").forEach(s => {
+      s.dataset.open = "true";
+      s.querySelector(".sec-head").setAttribute("aria-expanded", "true");
+    });
+    applyFilter();
+  });
+});
+
+document.getElementById("expandAll").addEventListener("click", () => {
+  document.querySelectorAll(".sec").forEach(s => {
+    s.dataset.open = "true";
+    s.querySelector(".sec-head").setAttribute("aria-expanded", "true");
+  });
+});
+document.getElementById("collapseAll").addEventListener("click", () => {
+  document.querySelectorAll(".sec").forEach(s => {
+    s.dataset.open = "false";
+    s.querySelector(".sec-head").setAttribute("aria-expanded", "false");
+  });
+});
+document.getElementById("reset").addEventListener("click", () => {
+  if (!confirm("Clear every tick on this checklist?")) return;
+  state = {}; save();
+  document.querySelectorAll("li.item").forEach(li => {
+    li.querySelector("input").checked = false;
+    li.classList.remove("on");
+  });
+  refresh(); applyFilter();
+});
+
+refresh();
+applyFilter();
+</script>
+</body>
+</html>

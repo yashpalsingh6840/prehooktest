@@ -1,0 +1,45 @@
+C# Script Component (row level)  ->  SCR_CleanseCustomerRow, inside DFT_LoadCustomers
+=====================================================================================
+
+DO NOT paste a whole file and DO NOT change the namespace / class declaration that
+VSTA generated. Only replace the body of Input0_ProcessInputRow.
+
+Before editing the script, configure the component:
+  Input Columns  : tick CustomerID, FirstName, LastName, Email   (Usage Type = ReadOnly)
+  Inputs and Outputs -> Output 0 -> Output Columns -> add:
+      FullName          Unicode string [DT_WSTR]   length 200
+      CleanEmail        Unicode string [DT_WSTR]   length 200
+      IsValidRow        Boolean [DT_BOOL]
+      LoadDateTime      database timestamp [DT_DBTIMESTAMP]
+
+
+STEP 1 - the generated main.cs already has the using directives it needs.
+------------------------------------------------------------------------------------
+
+
+STEP 2 - replace the body of Input0_ProcessInputRow with this
+------------------------------------------------------------------------------------
+        string firstName = Row.FirstName_IsNull ? string.Empty : Row.FirstName.Trim();
+        string lastName = Row.LastName_IsNull ? string.Empty : Row.LastName.Trim();
+        string email = Row.Email_IsNull ? string.Empty : Row.Email.Trim();
+        string customerId = Row.CustomerID_IsNull ? string.Empty : Row.CustomerID.Trim();
+
+        Row.FullName = (firstName + " " + lastName).Trim();
+
+        string cleanEmail = email.ToLowerInvariant();
+        Row.CleanEmail = cleanEmail;
+
+        int parsedId;
+        bool validId = int.TryParse(customerId, out parsedId);
+        bool validEmail = cleanEmail.Contains("@") && cleanEmail.Contains(".");
+
+        // Bad rows are flagged rather than dropped, so they still land in
+        // dbo.StagingCustomers with IsValidRow = 0 and can be reviewed.
+        Row.IsValidRow = validId && validEmail && firstName.Length > 0;
+        Row.LoadDateTime = DateTime.Now;
+
+
+AFTER closing the script editor
+------------------------------------------------------------------------------------
+Open OLEDST_StagingCustomers -> Mappings and map the four new columns to
+FullName, CleanEmail, IsValidRow, LoadDateTime.

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-16" standalone="yes"?>
+<c:Project xmlns:c="http://schemas.microsoft.com/codeprojectml/2010/08/main" xmlns:msb="http://schemas.microsoft.com/developer/msbuild/2003" runtimeVersion="4.0" schemaVersion="1.0">
+	<msb:PropertyGroup>
+		<msb:CodeName>ST_8d84581b262c4e39a00b720e2c6678e0</msb:CodeName>
+		<msb:Language>msBuild</msb:Language>
+		<msb:DisplayName>ST_8d84581b262c4e39a00b720e2c6678e0</msb:DisplayName>
+		<msb:ProjectId>{DFBA5CDA-AC14-4D02-968E-E5C1EA2B4759}</msb:ProjectId>
+	</msb:PropertyGroup>
+	<msb:ItemGroup>
+		<msb:Project Include="ST_8d84581b262c4e39a00b720e2c6678e0.csproj"/>
+		<msb:File Include="Properties\Settings.settings"/>
+		<msb:File Include="Properties\AssemblyInfo.cs"/>
+		<msb:File Include="Properties\Resources.resx"/>
+		<msb:File Include="Properties\Resources.Designer.cs"/>
+		<msb:File Include="Properties\Settings.Designer.cs"/>
+		<msb:File Include="ScriptMain.cs"/>
+	</msb:ItemGroup>
+</c:Project>
