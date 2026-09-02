@@ -465,18 +465,31 @@ internal static class PipelineReader
         TruncationRowDisposition = inputEl.Attr("truncationRowDisposition"),
         HasSideEffects = inputEl.AttrBool("hasSideEffects"),
         Columns = (inputEl.Element("inputColumns")?.Elements("inputColumn") ?? [])
-            .Select(c => new PipelineInputColumnSpec
+            .Select(c =>
             {
-                RefId = c.Attr("refId") ?? "",
-                CachedName = c.Attr("cachedName") ?? "",
-                CachedDataType = c.Attr("cachedDataType"),
-                CachedLength = c.AttrInt("cachedLength"),
-                CachedPrecision = c.AttrInt("cachedPrecision"),
-                CachedScale = c.AttrInt("cachedScale"),
-                CachedCodePage = c.AttrInt("cachedCodePage"),
-                LineageId = c.Attr("lineageId") ?? "",
-                ExternalMetadataColumnId = c.Attr("externalMetadataColumnId"),
-                Properties = ReadProperties(c.Element("properties")),
+                // Read the property bag once and promote Expression/FriendlyExpression off it,
+                // exactly as ReadOutput does for an output column. An in-place ("Replace
+                // <column>") Derived Column persists its expression HERE, on the readWrite input
+                // column, and declares no output column at all -- so leaving these unpromoted
+                // made the whole transformation invisible to codegen, conformance, testgen, the
+                // expression inventory and the non-determinism manifest at once.
+                var props = ReadProperties(c.Element("properties"));
+                return new PipelineInputColumnSpec
+                {
+                    RefId = c.Attr("refId") ?? "",
+                    CachedName = c.Attr("cachedName") ?? "",
+                    CachedDataType = c.Attr("cachedDataType"),
+                    CachedLength = c.AttrInt("cachedLength"),
+                    CachedPrecision = c.AttrInt("cachedPrecision"),
+                    CachedScale = c.AttrInt("cachedScale"),
+                    CachedCodePage = c.AttrInt("cachedCodePage"),
+                    LineageId = c.Attr("lineageId") ?? "",
+                    ExternalMetadataColumnId = c.Attr("externalMetadataColumnId"),
+                    UsageType = c.Attr("usageType"),
+                    Expression = GetProperty(props, "Expression"),
+                    FriendlyExpression = GetProperty(props, "FriendlyExpression"),
+                    Properties = props,
+                };
             })
             .ToList(),
         ExternalMetadataColumns = ReadExternalMetadataColumns(inputEl.Element("externalMetadataColumns")),

@@ -587,10 +587,13 @@
                       "CachedName": "FirstName",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[FirstName]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[FirstName]"
+                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[FirstName]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -599,10 +602,13 @@
                       "CachedName": "LastName",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[LastName]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[LastName]"
+                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[LastName]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -611,10 +617,13 @@
                       "CachedName": "City",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[City]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[City]"
+                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[City]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -623,10 +632,13 @@
                       "CachedName": "State",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[State]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[State]"
+                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[State]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -635,10 +647,13 @@
                       "CachedName": "Department",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[Department]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[Department]"
+                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[Department]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -647,10 +662,13 @@
                       "CachedName": "EmployeeID",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[EmployeeID]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[EmployeeID]"
+                      "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input].Columns[EmployeeID]",
+                      "UsageType": null
                     }
                   ],
                   "Description": "Input to the Derived Column Transformation",
@@ -1458,10 +1476,13 @@
                       "CachedName": "EmployeeID",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[EmployeeID]",
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[EmployeeID]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[EmployeeID]"
+                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[EmployeeID]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -1470,10 +1491,13 @@
                       "CachedName": "Department",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[Department]",
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[Department]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[Department]"
+                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[Department]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -1482,10 +1506,13 @@
                       "CachedName": "HireDate",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[HireDate]",
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[HireDate]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[HireDate]"
+                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[HireDate]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -1494,10 +1521,13 @@
                       "CachedName": "Salary",
                       "CachedPrecision": 18,
                       "CachedScale": 2,
+                      "Expression": null,
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[Salary]",
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees.Outputs[Flat File Source Output].Columns[Salary]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[Salary]"
+                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[Salary]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -1506,10 +1536,13 @@
                       "CachedName": "FullName",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[FullName]",
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Outputs[Derived Column Output].Columns[FullName]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[FullName]"
+                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[FullName]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -1518,10 +1551,13 @@
                       "CachedName": "Location",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[Location]",
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Outputs[Derived Column Output].Columns[Location]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[Location]"
+                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[Location]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -1530,10 +1566,13 @@
                       "CachedName": "EmployeeKey",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[EmployeeKey]",
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Outputs[Derived Column Output].Columns[EmployeeKey]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[EmployeeKey]"
+                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[EmployeeKey]",
+                      "UsageType": null
                     },
                     {
                       "CachedCodePage": null,
@@ -1542,10 +1581,13 @@
                       "CachedName": "LoadedAtUtc",
                       "CachedPrecision": null,
                       "CachedScale": null,
+                      "Expression": null,
                       "ExternalMetadataColumnId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].ExternalColumns[LoadedAtUtc]",
+                      "FriendlyExpression": null,
                       "LineageId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
                       "Properties": [],
-                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[LoadedAtUtc]"
+                      "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input].Columns[LoadedAtUtc]",
+                      "UsageType": null
                     }
                   ],
                   "Description": null,

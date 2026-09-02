@@ -44,6 +44,24 @@ public static partial class LineageBuilder
                     consumedLineageIds.Add(col.LineageId);
                     var to = new ColumnRef(comp.RefId, comp.Name, col.RefId, col.CachedName, col.LineageId);
                     edges.Add(MakeEdge(producers, col.LineageId, to, kind: "PathFlow", expression: null));
+
+                    // An IN-PLACE modification (Derived Column's "Replace <column>" mode) keeps
+                    // the upstream lineageId and declares no output column, so the PathFlow edge
+                    // above is the only thing that used to exist for it -- and PathFlow says
+                    // "this value arrived here", not "this value was rewritten here". Emit the
+                    // same ExpressionDerived edges the output-column walk below emits, so every
+                    // lineage consumer sees the transformation. Without this a replaced column
+                    // is indistinguishable from a plain passthrough.
+                    if (col.Expression is null) continue;
+                    var inPlaceRefs = LineageRefPattern().Matches(col.Expression).Select(m => m.Groups[1].Value).ToList();
+                    if (inPlaceRefs.Count == 0) continue;
+
+                    var inPlaceText = col.FriendlyExpression ?? col.Expression;
+                    foreach (var refLineageId in inPlaceRefs)
+                    {
+                        consumedLineageIds.Add(refLineageId);
+                        edges.Add(MakeEdge(producers, refLineageId, to, kind: "ExpressionDerived", expression: inPlaceText));
+                    }
                 }
             }
 

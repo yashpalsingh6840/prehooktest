@@ -29,6 +29,28 @@ public sealed class PipelineInputColumnSpec
     public required string LineageId { get; init; }
     public string? ExternalMetadataColumnId { get; init; }
     public List<PipelinePropertySpec> Properties { get; init; } = [];
+
+    /// <summary><c>usageType</c> -- <c>readOnly</c>, <c>readWrite</c> or absent. <b>readWrite is
+    /// the marker for IN-PLACE COLUMN MODIFICATION</b>, the structural case this whole tool was
+    /// blind to before 2026-09-02: a component that rewrites an existing column rather than
+    /// adding a new one declares NO output column at all, so every output-column-based safety
+    /// net here (computedByName, the unrecognized-producer gate, the expression harvest, the
+    /// non-determinism manifest) saw nothing and generated a plain passthrough of the RAW
+    /// upstream value. Derived Column's "Replace &lt;column&gt;" mode and Character Map's
+    /// in-place mode are both this shape.</summary>
+    public string? UsageType { get; init; }
+
+    /// <summary>Raw <c>Expression</c> promoted off this input column's own properties, with
+    /// <c>#{lineageId}</c> references intact -- the mirror of
+    /// <see cref="PipelineOutputColumnSpec.Expression"/>, but for a Derived Column operating in
+    /// "Replace &lt;column&gt;" mode, where the expression is persisted HERE (on the readWrite
+    /// input column) and the column keeps its upstream lineageId. Null for an ordinary
+    /// read-only input column, which is almost all of them.</summary>
+    public string? Expression { get; init; }
+
+    /// <summary>Human-readable form of <see cref="Expression"/> (e.g. <c>UPPER(Name)</c>), same
+    /// pairing as <see cref="PipelineOutputColumnSpec.FriendlyExpression"/>.</summary>
+    public string? FriendlyExpression { get; init; }
 }
 
 /// <summary>One &lt;output&gt;. <see cref="SynchronousInputId"/> present means this output shares its buffer with that input (a synchronous transform, e.g. Derived Column) -- absent means asynchronous (a blocking/semi-blocking memory consumer, a performance-relevant fact per plan §4.7). Neither of this PoC's slice-3 components was asynchronous (Sort/Aggregate/Union All etc. are all "(nP)" in the plan), so this field was evidenced as "always present here" but the null case was always real schema, not a guess -- and the synthetic Lookup/Conditional Split fixtures (component-coverage pass, see docs/report-schema.md) confirm both stay synchronous too.</summary>

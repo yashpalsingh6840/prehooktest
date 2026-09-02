@@ -84,9 +84,22 @@ internal static class TestGenCommand
 
                 foreach (var comp in pipeline.Components)
                 {
-                    foreach (var output in comp.Outputs)
+                    // Newly computed OUTPUT columns, plus in-place ("Replace <column>") rewrites,
+                    // which live on a readWrite INPUT column and declare no output column -- see
+                    // GenerateClass's own doc comment for why walking outputs alone left gate 2
+                    // blank for them.
+                    var expressionColumns =
+                        comp.Outputs
+                            .SelectMany(o => o.Columns)
+                            .Where(c => c.Expression is not null)
+                            .Select(c => (c.Name, c.RefId, c.Expression, c.FriendlyExpression))
+                        .Concat(comp.Inputs
+                            .SelectMany(i => i.Columns)
+                            .Where(c => c.Expression is not null)
+                            .Select(c => (Name: c.CachedName, c.RefId, c.Expression, c.FriendlyExpression)));
+
                     {
-                        foreach (var col in output.Columns.Where(c => c.Expression is not null))
+                        foreach (var col in expressionColumns)
                         {
                             var location = $"{ex.RefId}/{comp.Name}";
                             if (!harvested.TryGetValue((location, col.Name), out var harvest))
@@ -125,8 +138,17 @@ internal static class TestGenCommand
 
     private sealed record GenResult(string? ClassSource, int CaseCount, string? Error);
 
+    /// <summary>
+    /// <paramref name="col"/> is a tuple rather than a <c>PipelineOutputColumnSpec</c> so that an
+    /// in-place ("Replace &lt;column&gt;") Derived Column can generate tests too: that shape
+    /// persists its expression on the component's own readWrite INPUT column and declares no
+    /// output column at all, so an outputs-only walk generated no boundary test for it -- gate 2
+    /// was silently blank for exactly the transformations most likely to be mistranslated. These
+    /// are the only three members this method ever needed.
+    /// </summary>
     private static GenResult GenerateClass(
-        string packageName, string componentName, PipelineOutputColumnSpec col, HarvestedExpressionSpec harvest,
+        string packageName, string componentName, (string Name, string RefId, string? Expression, string? FriendlyExpression) col,
+        HarvestedExpressionSpec harvest,
         LineageSpec lineage, Dictionary<string, PipelineOutputColumnSpec> columnTypes)
     {
         if (harvest.Functions.Any(f => f is "GETUTCDATE" or "GETDATE"))

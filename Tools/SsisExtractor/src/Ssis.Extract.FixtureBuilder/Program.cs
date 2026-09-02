@@ -80,7 +80,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources]");
             return 2;
         }
 
@@ -148,6 +148,14 @@ internal static class Program
         if (fixtureName == "merge-join")
         {
             return BuildMergeJoinFixture(args[0]);
+        }
+        if (fixtureName == "derived-column-replace")
+        {
+            return BuildDerivedColumnReplaceFixture(args[0]);
+        }
+        if (fixtureName == "character-map-inplace")
+        {
+            return BuildCharacterMapInPlaceFixture(args[0]);
         }
         if (fixtureName == "sort-merge-remerge")
         {
@@ -2284,6 +2292,182 @@ internal static class Program
     /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-merge-join-tables.sql</c> already created
     /// and seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
     /// </summary>
+    /// <summary>
+    /// Flat File Source -&gt; Derived Column in <b>"Replace &lt;column&gt;" mode</b>
+    /// (<c>Name &lt;- UPPER(Name)</c>, in place) -&gt; OLE DB Destination.
+    ///
+    /// <para>This is the fixture for the structural blind spot found by the 2026-09-02 gap audit
+    /// and closed in Phase 2. An in-place Derived Column persists its expression on its own
+    /// readWrite INPUT column and declares <b>no output column at all</b>, and the column keeps
+    /// its upstream lineageId -- so every output-column-based mechanism in this tool saw nothing:
+    /// codegen emitted <c>Name = row.Name</c> (the RAW value) where SSIS computes
+    /// <c>UPPER(Name)</c>, with 0 blocking gaps, 100% extraction coverage, nothing unmapped, and
+    /// the expression absent from expressions.csv. Silently wrong data, reported as success.</para>
+    ///
+    /// <para>Deliberately has <b>no</b> post-load SQL and <b>no</b> second transform. An earlier
+    /// attempt reused SyntheticPostFlowSql.dtsx, whose own SQL_PostLoad runs
+    /// <c>UPDATE ... SET Name = UPPER(Name)</c> -- under which a working and a broken Derived
+    /// Column produce identical rows, so the fixture could not have detected the bug it exists
+    /// for. The Derived Column is the ONLY thing here that can change a value. Seed data is
+    /// lowercase and mixed-case (see synthetic-derived-column-replace-tables.sql).</para>
+    /// </summary>
+    private static int BuildDerivedColumnReplaceFixture(string outputPath)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-derived-column-replace-csv", "SyntheticDerivedColumnReplace.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticDerivedColumnReplace" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_ReplaceCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 50, 0, 0));
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddFlatFileSource(pipe, csvCm);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+
+        var dcMeta = AddInPlaceTransform(pipe, "DER_Replace", "Microsoft.DerivedColumn", srcOutput, "Name",
+            (inst, inputId, columnId) =>
+            {
+                inst.SetInputColumnProperty(inputId, columnId, "Expression", "UPPER(Name)");
+                inst.SetInputColumnProperty(inputId, columnId, "FriendlyExpression", "UPPER(Name)");
+            });
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticDerivedColumnReplaceTarget]");
+        AttachPath(pipe, dcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut), destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Flat File Source -&gt; <c>Microsoft.CharacterMap</c> operating IN PLACE
+    /// (<c>MapFlags = 8</c>, uppercase, on a readWrite input column) -&gt; OLE DB Destination.
+    ///
+    /// <para>The same structural shape as <see cref="BuildDerivedColumnReplaceFixture"/> -- no
+    /// output column, upstream lineageId retained -- which is what makes in-place modification a
+    /// CLASS of bug rather than a Derived Column quirk. Unlike the Derived Column case this one
+    /// is deliberately NOT translated: the ~20 MapFlags values have never been measured against
+    /// real SSIS, and guessing that 8 means "uppercase" from the flag name is exactly the kind of
+    /// unmeasured inference that produced the Merge Join JoinType bug. So this fixture's expected
+    /// outcome is a precise GAP naming the column, not generated code.</para>
+    /// </summary>
+    private static int BuildCharacterMapInPlaceFixture(string outputPath)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-character-map-csv", "SyntheticCharacterMap.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticCharacterMap" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_CharacterMapCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 50, 0, 0));
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddFlatFileSource(pipe, csvCm);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+
+        var cmapMeta = AddInPlaceTransform(pipe, "CMAP_UpperName", "Microsoft.CharacterMap", srcOutput, "Name",
+            (inst, inputId, columnId) => inst.SetInputColumnProperty(inputId, columnId, "MapFlags", 8));
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticCharacterMapTarget]");
+        AttachPath(pipe, cmapMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut), destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>A plain Flat File Source resolved against its connection manager's real schema.
+    /// Factored out of <see cref="BuildFlatFileToOleDbLoad"/>'s own inline copy so the two
+    /// in-place fixtures can build a source without also getting that helper's Derived Column.
+    /// </summary>
+    private static IDTSComponentMetaData100 AddFlatFileSource(MainPipe pipe, ConnectionManager srcCm)
+    {
+        var srcMeta = pipe.ComponentMetaDataCollection.New();
+        srcMeta.ComponentClassID = "Microsoft.FlatFileSource";
+        var srcInst = srcMeta.Instantiate();
+        srcInst.ProvideComponentProperties(); // resets Name -- must set Name after, see AddOleDbComponent
+        srcMeta.Name = "Flat File Source";
+        var srcConn = srcMeta.RuntimeConnectionCollection[0];
+        srcConn.ConnectionManagerID = srcCm.ID;
+        srcConn.ConnectionManager = DtsConvert.GetExtendedInterface(srcCm);
+        srcInst.AcquireConnections(null);
+        srcInst.ReinitializeMetaData();
+        srcInst.ReleaseConnections();
+        return srcMeta;
+    }
+
+    /// <summary>
+    /// Adds a synchronous transform that MODIFIES one upstream column IN PLACE: every column is
+    /// marked used, and <paramref name="inPlaceColumnName"/> specifically is marked
+    /// <c>UT_READWRITE</c> before <paramref name="configure"/> sets whatever property carries the
+    /// in-place semantics (a Derived Column's <c>Expression</c>, a Character Map's
+    /// <c>MapFlags</c>).
+    ///
+    /// <para>The readWrite usage type is the whole point: it is the ONLY marker in the saved XML
+    /// that a column was rewritten, because such a component declares no output column for it and
+    /// the column keeps its upstream lineageId.</para>
+    /// </summary>
+    private static IDTSComponentMetaData100 AddInPlaceTransform(
+        MainPipe pipe, string name, string componentClassId, IDTSOutput100 upstreamOutput,
+        string inPlaceColumnName, Action<IDTSDesigntimeComponent100, int, int> configure)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = componentClassId;
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties(); // resets Name -- must set Name after, see AddOleDbComponent
+        meta.Name = name;
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vCol in virtualInput.VirtualInputColumnCollection)
+        {
+            var isInPlace = string.Equals(vCol.Name, inPlaceColumnName, StringComparison.Ordinal);
+            var mapped = inst.SetUsageType(input.ID, virtualInput, vCol.LineageID,
+                isInPlace ? DTSUsageType.UT_READWRITE : DTSUsageType.UT_READONLY);
+            if (isInPlace) configure(inst, input.ID, mapped.ID);
+        }
+
+        return meta;
+    }
+
     private static int BuildMergeJoinFixture(string outputPath)
     {
         var pkg = new RtPackage { Name = "SyntheticMergeJoin" };

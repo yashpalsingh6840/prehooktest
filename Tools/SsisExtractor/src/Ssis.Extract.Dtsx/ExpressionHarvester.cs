@@ -67,6 +67,20 @@ public static partial class ExpressionHarvester
                         results.Add(Build(package.ObjectName, "DerivedColumn", $"{ex.RefId}/{comp.Name}", col.Name, col.Expression!, col.FriendlyExpression));
                     }
                 }
+
+                // An in-place ("Replace <column>") Derived Column persists its expression on the
+                // readWrite INPUT column and declares no output column, so walking outputs alone
+                // missed the transformation entirely -- and everything downstream of this harvest
+                // inherited the omission: the conformance obligations (gate 1), the generated
+                // boundary tests (gate 2), expressions.csv, and the non-determinism manifest that
+                // feeds gate 3's ExcludedColumns.
+                foreach (var input in comp.Inputs)
+                {
+                    foreach (var col in input.Columns.Where(c => c.Expression is not null))
+                    {
+                        results.Add(Build(package.ObjectName, "DerivedColumn", $"{ex.RefId}/{comp.Name}", col.CachedName, col.Expression!, col.FriendlyExpression));
+                    }
+                }
             }
         }
 

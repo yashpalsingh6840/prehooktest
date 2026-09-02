@@ -83,7 +83,8 @@ public static class TransformEmitter
         var lineage = LineageBuilder.Build(request.Pipeline);
         var columnTypes = BuildColumnTypeLookup(request.Pipeline);
 
-        var computedByName = new Dictionary<string, PipelineOutputColumnSpec>();
+        var computedByName = new Dictionary<string, DerivedExpression>();
+        var replacedByName = new Dictionary<string, DerivedExpression>();
         foreach (var derivedColumn in request.DerivedColumns)
         {
             foreach (var column in derivedColumn.Outputs
@@ -91,7 +92,19 @@ public static class TransformEmitter
                 .SelectMany(o => o.Columns)
                 .Where(c => c.Expression is not null))
             {
-                computedByName.TryAdd(column.Name, column);
+                computedByName.TryAdd(column.Name, new DerivedExpression(column.Name, column.RefId, column.Expression, column.FriendlyExpression));
+            }
+
+            // "Replace <column>" mode: the expression lives on the readWrite INPUT column and no
+            // output column is declared, so the column keeps its upstream lineageId and used to
+            // resolve straight back to the true source -- generating a plain passthrough of the
+            // RAW value while real SSIS applied the expression. Silently wrong data, zero gaps.
+            foreach (var input in derivedColumn.Inputs)
+            {
+                foreach (var column in input.Columns.Where(c => c.Expression is not null))
+                {
+                    replacedByName.TryAdd(column.CachedName, new DerivedExpression(column.CachedName, column.RefId, column.Expression, column.FriendlyExpression));
+                }
             }
         }
 
@@ -238,6 +251,21 @@ public static class TransformEmitter
                 foreach (var output in comp.Outputs.Where(o => o.IsErrorOut != true))
                     foreach (var col in output.Columns)
                         unrecognizedComponentColumns.TryAdd(col.Name, comp);
+
+                // IN-PLACE MODIFICATION, the structural blind spot this gate was missing. A
+                // component that REWRITES an existing column declares no output column for it --
+                // it marks its own input column usageType="readWrite" and the column keeps its
+                // upstream lineageId. Collecting only output columns above therefore left such a
+                // column looking exactly like an untouched passthrough. Any readWrite input
+                // column on a component this tool does not understand is now named as a gap.
+                // Derived Column is excluded because replacedByName resolves it properly (it is
+                // not in RecognizedPassthroughComponentClassIds, so it would otherwise land
+                // here); Character Map and anything else unmodelled correctly does land here,
+                // because no MapFlags semantics have ever been measured.
+                if (comp.ComponentClassId == "Microsoft.DerivedColumn") continue;
+                foreach (var input in comp.Inputs)
+                    foreach (var col in input.Columns.Where(c => string.Equals(c.UsageType, "readWrite", StringComparison.OrdinalIgnoreCase)))
+                        unrecognizedComponentColumns.TryAdd(col.CachedName, comp);
             }
         }
 
@@ -247,7 +275,10 @@ public static class TransformEmitter
         var seams = new List<string>();
         foreach (var column in resolved.Columns)
         {
-            if (computedByName.TryGetValue(column.PipelineColumnName, out var derivedColumn))
+            // A replaced column has the SAME name as the upstream column it rewrites, whereas a
+            // computed one introduces a new name, so these two lookups cannot collide.
+            if (computedByName.TryGetValue(column.PipelineColumnName, out var derivedColumn) ||
+                replacedByName.TryGetValue(column.PipelineColumnName, out derivedColumn))
             {
                 var translated = TranslateDerivedColumn(derivedColumn, request.EntityName, column.ExternalColumnName, lineage, columnTypes, request.NullableColumnNames, convertedByName);
                 if (translated is NotTranslatable notTranslatable)
@@ -430,8 +461,14 @@ public static class TransformEmitter
         return lines;
     }
 
+    /// <summary>The three things <see cref="TranslateDerivedColumn"/> actually needs from a
+    /// Derived Column column, so that an OUTPUT column (a newly computed column) and a readWrite
+    /// INPUT column (a "Replace &lt;column&gt;" in-place rewrite) can share one translation path
+    /// instead of the in-place case having none at all.</summary>
+    private readonly record struct DerivedExpression(string Name, string RefId, string? Expression, string? FriendlyExpression);
+
     private static TranslatedExpression TranslateDerivedColumn(
-        PipelineOutputColumnSpec derivedColumn, string entityName, string destinationColumnName,
+        DerivedExpression derivedColumn, string entityName, string destinationColumnName,
         LineageSpec lineage, Dictionary<string, PipelineOutputColumnSpec> columnTypes,
         IReadOnlySet<string>? nullableColumnNames, Dictionary<string, DataConversionColumnSpec> convertedByName)
     {
