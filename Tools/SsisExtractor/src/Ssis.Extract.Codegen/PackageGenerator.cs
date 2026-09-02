@@ -1351,6 +1351,57 @@ public static partial class PackageGenerator
             return null;
         }
 
+        // What the generated code does on a lookup MISS is decided entirely by needsFiltering:
+        // with it, FilteringRowSource drops the row before the transform ever sees it; without
+        // it, the transform indexes the cache (lookup[key]) and therefore THROWS. Neither is
+        // right for every setting, and nothing here used to check which setting is in force --
+        // NoMatchBehaviorRaw had no reader anywhere in this project.
+        //
+        // Measured/evidenced meanings:
+        //   0  fail the component on a miss. Measured via dtexec: the package returns
+        //      DTSER_FAILURE and loads nothing once one unmatched row is present. A throwing
+        //      indexer is the faithful translation.
+        //   1  redirect misses to the No Match output. Evidenced on every real routed-no-match
+        //      Lookup in the tracked corpus, including the third-party Package_Transforms.
+        //      Faithful ONLY when those misses are provably excluded from the row stream.
+        //   2  ignore the failure and pass NULLs for the looked-up columns. Unevidenced
+        //      anywhere, and not reproducible here: it needs every Lookup-added column made
+        //      nullable, which is a real feature, not a mapping.
+        var noMatch = lookup.Lookup?.NoMatchBehaviorRaw;
+        switch (noMatch)
+        {
+            case 0 when needsFiltering:
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"Lookup '{lookup.Name}' has NoMatchBehavior=0 (fail on no match), so SSIS fails the package on a miss -- but this flow's no-match output is a discarded dead end, which would make generated code silently DROP those rows instead. Refusing rather than changing failure into data loss."));
+                return null;
+
+            case 0:
+                break; // throwing indexer == SSIS failing the component
+
+            case 1 when needsFiltering:
+                break; // misses provably excluded from the stream
+
+            case 1:
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"Lookup '{lookup.Name}' has NoMatchBehavior=1 (redirect no-match rows), but this flow gives no route for them that generated code can reproduce -- so a miss would THROW where SSIS quietly redirects it. Connect the no-match output, or expect this gap."));
+                return null;
+
+            default:
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"Lookup '{lookup.Name}' has NoMatchBehavior={(noMatch?.ToString() ?? "(absent)")}. Only 0 (fail) and 1 (redirect) are evidenced and measured; 2 (ignore failure, pass NULLs) would need every Lookup-added column made nullable, and generated code would instead throw on the first miss."));
+                return null;
+        }
+
+        // The generated cache cannot error on a duplicated reference key -- it keeps the first
+        // occurrence, matching measured SSIS behaviour for TreatDuplicateKeysAsError=false. If a
+        // package asks for the error, say so instead of ignoring the request.
+        if (lookup.Lookup?.TreatDuplicateKeysAsError == true)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Lookup '{lookup.Name}' sets TreatDuplicateKeysAsError=true, but the generated reference cache cannot fail on a duplicated key -- it keeps the first occurrence (the measured behaviour when this setting is false). Not supported."));
+            return null;
+        }
+
         // The join key column has to exist on the Lookup's own input, or the confirmed decision
         // does not describe this package -- a stale decision reaching generation is exactly what
         // must fail loudly rather than produce code referencing a column that isn't there.

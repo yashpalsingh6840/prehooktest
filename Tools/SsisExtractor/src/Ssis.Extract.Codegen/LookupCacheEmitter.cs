@@ -114,7 +114,13 @@ public static class LookupCacheEmitter
         lines.Add("            {");
         lines.AddRange(readerLines);
         lines.Add("            };");
-        lines.Add("            result[keySelector(row)] = row;");
+        // FIRST duplicate wins, and this is MEASURED against real SSIS (2026-09-02), not
+        // assumed: a full-cache Lookup whose reference query returned Canada twice
+        // (CountryCode CA then CA-DUP) resolved every matching row to CA. This line used to be
+        // "result[keySelector(row)] = row", i.e. LAST wins, which would have produced CA-DUP on
+        // that same data -- silently different joined values on every duplicated key, with no
+        // error and no gap.
+        lines.Add("            result.TryAdd(keySelector(row), row);");
         lines.Add("        }");
         lines.Add("        return result;");
         lines.Add("    }");

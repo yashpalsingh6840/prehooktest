@@ -253,6 +253,7 @@ internal static class PipelineReader
                 ConnectionName = connectionName,
                 SqlCommand = NullIfEmpty(GetProperty(properties, "SqlCommand")),
                 NoMatchBehaviorRaw = ParseInt(GetProperty(properties, "NoMatchBehavior")),
+                TreatDuplicateKeysAsError = ParseBool(GetProperty(properties, "TreatDuplicateKeysAsError")),
                 CacheTypeRaw = ParseInt(GetProperty(properties, "CacheType")),
                 MatchOutputName = matchOutput?.Name,
                 NoMatchOutputName = noMatchOutput?.Name,

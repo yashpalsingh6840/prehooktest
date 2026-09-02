@@ -289,6 +289,16 @@ public sealed class LookupPayload
     /// <summary>Raw <c>CacheType</c> integer (0 = Full cache on the synthetic fixture's default).</summary>
     public int? CacheTypeRaw { get; init; }
 
+    /// <summary>
+    /// <c>TreatDuplicateKeysAsError</c>. <c>false</c> on every Lookup evidenced anywhere in the
+    /// tracked portfolio and fixtures, and that is the case whose behaviour is MEASURED: with it
+    /// false, a full-cache Lookup whose reference query returns a duplicated key does not error
+    /// and resolves matches to the FIRST occurrence (see <c>LookupCacheEmitter</c>). <c>true</c>
+    /// is unevidenced and unmeasured -- the generated cache cannot error on a duplicate at all,
+    /// so codegen gaps rather than silently ignoring the setting.
+    /// </summary>
+    public bool? TreatDuplicateKeysAsError { get; init; }
+
     public string? MatchOutputName { get; init; }
     public string? NoMatchOutputName { get; init; }
 
