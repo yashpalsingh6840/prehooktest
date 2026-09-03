@@ -39,35 +39,36 @@ set SSISX=SsisExtractor\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe
 REM 1. See what's there and how ready it is (no client SSISDB/SSIS install access needed)
 %SSISX% report --input C:\client-packages --out out --recursive
 
-REM 2. Generate C# -- for ONE package (the normal case on a real portfolio)
-%SSISX% generate --input C:\client-packages --out out --recursive --package LoadEmployees
+REM 2. Generate C# -- for ONE package (the normal case on a real portfolio). --etl-core
+REM    copies the runtime library into out\generate\Etl.Core AS PART OF THIS COMMAND, and
+REM    --fills fills-library points every Tier-1/2 answer at the DURABLE fills library
+REM    (a folder at the Tools\ root, tracked in git -- NOT out\fills, which is disposable).
+REM    Pass BOTH flags every time, or the generated solution won't build (--etl-core) and any
+REM    hand-ported Tier-2 work you write later will be lost the next time out\ is regenerated
+REM    (--fills) -- see "If a work packet or a fill seems missing" below.
+%SSISX% generate --input C:\client-packages --out out --recursive --package LoadEmployees --etl-core Etl.Core --fills fills-library
 
 REM 2b. ...or a named handful in one call (comma-separated, no spaces around the commas)
-%SSISX% generate --input C:\client-packages --out out --recursive --package LoadEmployees,LoadReferenceData
+%SSISX% generate --input C:\client-packages --out out --recursive --package LoadEmployees,LoadReferenceData --etl-core Etl.Core --fills fills-library
 
 REM 2c. ...or literally everything, only when that's actually what's wanted
-%SSISX% generate --input C:\client-packages --out out --recursive
+%SSISX% generate --input C:\client-packages --out out --recursive --etl-core Etl.Core --fills fills-library
 
-REM 3. Copy the runtime library alongside the generated output (robocopy works the same in
-REM    cmd.exe and PowerShell -- /E copies subfolders including empty ones, /XD excludes any
-REM    bin/obj that may exist under the source copy)
-robocopy Etl.Core out\generate\Etl.Core /E /XD bin obj
-
-REM 4. Build the generated solution to confirm it compiles
+REM 3. Build the generated solution to confirm it compiles
 dotnet build out\generate\Generated.slnx
 ```
 
 Replace `C:\client-packages` with the real folder holding the client's `.dtsx` files, and
 `LoadEmployees`/`LoadReferenceData` with real package names from that portfolio (run step 1
 first if you don't know them -- they're listed in `out\inventory.csv` and the console output).
+`Etl.Core`/`fills-library` above are relative paths from wherever you're running the command
+(this example assumes you're in `Tools\`, same folder as both `Etl.Core\` and `fills-library\`,
+per the one-time setup above).
 
-**Two `cmd.exe`-specific gotchas, both confirmed by actually running these commands, not
-assumed:** each line above must stay on its own line (or its own line in a `.bat` file) -- a
+**A `cmd.exe`-specific gotcha, confirmed by actually running these commands, not assumed:**
+each line above must stay on its own line (or its own line in a `.bat` file) -- a
 `set X=Y && %X%` chained onto ONE line silently fails, because `cmd.exe` expands `%X%` at
-parse time, before `set` has run; typed as separate lines (as above), it works correctly.
-Separately, `robocopy`'s own success exit code is `1` ("files copied"), not `0` -- harmless as
-written above (nothing here chains it with `&&`), but don't wire it into a script that checks
-`if errorlevel 0` expecting the usual convention.
+parse time, before `set` has run. Typed as separate lines (as above), it works correctly.
 
 ### Sample commands -- PowerShell (equivalent to the above)
 
@@ -75,22 +76,68 @@ written above (nothing here chains it with `&&`), but don't wire it into a scrip
 $ssisx = "SsisExtractor\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe"
 
 & $ssisx report --input C:\client-packages --out out --recursive
-& $ssisx generate --input C:\client-packages --out out --recursive --package LoadEmployees
-& $ssisx generate --input C:\client-packages --out out --recursive --package LoadEmployees,LoadReferenceData
-& $ssisx generate --input C:\client-packages --out out --recursive
+& $ssisx generate --input C:\client-packages --out out --recursive --package LoadEmployees --etl-core Etl.Core --fills fills-library
+& $ssisx generate --input C:\client-packages --out out --recursive --package LoadEmployees,LoadReferenceData --etl-core Etl.Core --fills fills-library
+& $ssisx generate --input C:\client-packages --out out --recursive --etl-core Etl.Core --fills fills-library
 
-Copy-Item Etl.Core out\generate\Etl.Core -Recurse -Exclude bin,obj
 dotnet build out\generate\Generated.slnx
+
+# After writing/editing a Tier-2 fill under fills-library\<Package>\*.cs (never out\fills\):
+& $ssisx apply-fills --out out --fills fills-library
 ```
 
-`SsisExtractor\scripts\Verify-GeneratedBuild.ps1` does the generate + Etl.Core-copy + build
-steps in one command (`-EtlCorePath ..\..\Etl.Core` from inside `SsisExtractor\scripts\`), for
-whichever packages are already under a given `--input` -- PowerShell only, no `cmd.exe` twin
-exists for it today (ask if one's needed).
+`SsisExtractor\scripts\Verify-GeneratedBuild.ps1` does the generate + build steps in one
+command (`-EtlCorePath ..\..\Etl.Core` from inside `SsisExtractor\scripts\`), for whichever
+packages are already under a given `--input` -- PowerShell only, no `cmd.exe` twin exists for
+it today (ask if one's needed).
+
+**Targeting .NET 8 instead of .NET 10:** add `--framework net8.0` to any `generate` call above.
+This is not just a TargetFramework swap -- Etl.Core's EF Core SqlServer provider (10.0.11)
+only targets net10.0, so `--framework net8.0` also pins a different EF Core MAJOR version
+(9.0.15, the newest that still targets net8.0) for that run. `--etl-core` still copies the
+runtime library in, and now also rewrites its two props files to match whichever `--framework`
+you asked for, so the copied `Etl.Core` and the generated packages always agree. Verified
+end-to-end (not just "it compiles the flag"): generated + built real packages against
+net8.0/EF Core 9.0.15 -- including Excel Source, fixed-width flat files, and a secondary
+database connection -- 0 warnings/0 errors, same as the net10.0 default. Omitting `--framework`
+changes nothing; net10.0 stays the default.
+
+```
+%SSISX% generate --input C:\client-packages --out out --recursive --package LoadEmployees --etl-core Etl.Core --fills fills-library --framework net8.0
+```
 
 Every `generate` call above exits `3` when it wrote code but there are gaps to review (normal,
 not a failure -- read `out\generate-report.md`), `0` when everything generated with zero gaps,
-and `2` on a usage error, including a `--package` name that matched nothing.
+and `2` on a usage error, including a `--package` name that matched nothing. **If `--etl-core`
+itself is missing or wrong**, that's also reported as a gap in `generate-report.md` (search for
+`Etl.Core`) rather than failing silently -- if you ever see "Etl.Core (not found)" in an IDE's
+Solution Explorer after generating, it means either `--etl-core` was omitted or its path was
+wrong; check the report, not the IDE, to find out which.
+
+### If a work packet or a fill seems missing -- two different folders, in two different places
+
+- **`out\gaps\<Package>\*.md`** -- auto-generated, every `generate` run, one file per Tier-1/2
+  gap, INSIDE the disposable `out\` folder. If these are missing for a package that has gaps,
+  something is actually wrong (an old `ssisx.exe` build, or a `--package` name that didn't
+  match) -- check `out\gaps.json` and `out\generate-report.md` first.
+- **`fills-library\<Package>\*.cs`** and **`fills-library\<Package>.decisions.json`** -- at the
+  `Tools\` root, a sibling of `out\`, tracked in git. These are **never** written by `ssisx`.
+  They start out genuinely empty, and stay empty until a human (or Copilot, working from a
+  `gaps\` work packet) writes into them. `ssisx apply-fills --out out --fills fills-library`
+  reporting "0 fills applied" the first time you run it is the **expected, correct** result of
+  nobody having answered a packet yet -- not a bug, and not something `--etl-core`-style
+  automation should try to paper over, since a Tier-1/2 gap is real work someone has to do.
+
+**Why `fills-library\` is a separate top-level folder and not `out\fills\`:** it used to be
+`out\fills\`, and that caused real, already-verified Tier-2 work to be silently lost more than
+once, because `out\` is gitignored and gets deleted/regenerated freely across sessions -- there
+was no durable trace of the fills left once that happened, and the only symptom was a confusing
+`CS8795` build error much later with no obvious link back to a missing folder. Moving fills
+outside `out\` means the entire `out\` folder is now genuinely, unconditionally disposable --
+delete it and regenerate freely, as long as every `generate`/`apply-fills` call still includes
+`--fills fills-library`. **Commit `fills-library\` to git** once a fill is confirmed working
+(`git add fills-library && git commit`) -- that is what makes it permanent, not just "outside
+`out\`."
 
 **`generate`'s job ends at writing buildable C# source.** There is no client database or real
 source data available in this environment, so nothing here builds, runs, or verifies the
@@ -102,28 +149,48 @@ not the goal and should not be attempted.
 
 ## Running this with GitHub Copilot
 
-Two files exist for this, both under `Tools\` (this folder), neither at the repo root above it:
+Three files exist for this -- two under `Tools\` itself, and one written FRESH into every
+`--out` folder by `generate`, specifically so it's visible from wherever the generated output
+actually gets opened later, not just from `Tools\`:
 
 | File | What it is | How it reaches Copilot |
 |---|---|---|
-| [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | Short hard rules (don't re-implement the tool, don't generate the whole portfolio unless asked, don't invent a verification step, don't guess at a gap, don't read this repo's own dev-history docs) | **Auto-loaded** by GitHub Copilot Chat for every message, but only when the IDE's open workspace/folder ROOT is `Tools\` itself -- see "Where to open it" below. |
-| [`COPILOT_GUIDE.md`](COPILOT_GUIDE.md) | Full command reference, the `--package` workflow, and a library of ready-to-paste prompts | **Not** auto-loaded -- Copilot reads it when told to, or when a prompt below references it. |
+| [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | Short hard rules (don't re-implement the tool, don't generate the whole portfolio unless asked, always pass `--etl-core`, don't invent a verification step, don't confuse `gaps/` with `fills/`, don't read this repo's own dev-history docs) | **Auto-loaded**, but only when the IDE's open workspace root is `Tools\` itself -- see "Where to open it" below. Least reliable of the three in practice. |
+| [`COPILOT_GUIDE.md`](COPILOT_GUIDE.md) | Full command reference, the `--package`/`--etl-core` workflow, and a library of ready-to-paste prompts | **Not** auto-loaded -- Copilot reads it when told to. |
+| **`<out>\HOW-TO-FILL-GAPS.md`** | Self-contained -- lists every open Tier-1/2 gap with its exact `GapId` and packet path, and the exact procedure to answer each, with nothing assumed about what else is in view | Written by every `generate` run, at the OUTPUT ROOT -- sits right next to `generate\`, `gaps\`, `fills\`. **This is the one to point Copilot at when working from the generated solution itself, e.g. in Visual Studio.** |
 
-### Where to open it (this is the part that actually matters)
+### If you're working from Visual Studio (or opened the generated `.slnx` directly)
+
+**This is very likely what actually happened if gap-filling "isn't working": the generated
+solution (`Generated.slnx`) doesn't contain `Tools\.github\copilot-instructions.md` at all** --
+it's a separate folder tree, and a `.slnx`/Solution Explorer only shows `.csproj`-referenced
+files, so `gaps\` and `fills\` (plain folders, not part of any project) don't even appear in
+Solution Explorer by default. Auto-loaded instructions never had a chance to apply here, and
+Copilot has no reason to know those folders exist unless told.
+
+**Fix: open `<out>\HOW-TO-FILL-GAPS.md` yourself (File > Open > File, or drag it into the Copilot
+Chat panel) and tell Copilot to work from it.** It names every open gap, exactly where its work
+packet is, and exactly what to write and where -- self-contained, no dependency on `Tools\`
+being in view at all. A good first message in that chat:
+
+> Read `HOW-TO-FILL-GAPS.md` (in this same output folder). Pick the first gap in its table, open
+> its work packet, and tell me what it's asking for before writing anything.
+
+### Where to open it, for the other two files (this is the part that actually matters there)
 
 `.github/copilot-instructions.md` only auto-loads when it sits at the root of whatever folder
 your IDE has open as its workspace. **Open `Tools\` itself as the workspace/folder** --
 in VS Code: `File > Open Folder... > D:\PoC\SSIS\Tools` (or wherever this folder ends up on the
-client machine) -- not a parent folder containing `Tools\` as a subfolder. If a parent folder
-is opened instead, Copilot looks for `.github/copilot-instructions.md` at THAT root, won't find
-it, and silently skips it -- no error, it just won't know the rules above.
+client machine) -- not a parent folder containing `Tools\` as a subfolder, and not the generated
+solution either (see above). If a parent folder is opened instead, Copilot looks for
+`.github/copilot-instructions.md` at THAT root, won't find it, and silently skips it -- no
+error, it just won't know the rules above.
 
-If you can't change what's open as the workspace root (e.g. Copilot is already running against
-the whole client repo, with `Tools\` as one subfolder among others), tell Copilot to read the
-file explicitly instead -- either paste its content, drag the file into the chat panel, or (VS
-Code Copilot Chat) reference it by typing `#file:Tools/.github/copilot-instructions.md` in your
-first message. Either way, **say so in your very first message of the session** -- it does not
-carry over from an earlier chat/session automatically the way auto-loaded instructions do.
+If you can't change what's open as the workspace root, tell Copilot to read the file explicitly
+instead -- either paste its content, drag the file into the chat panel, or (VS Code Copilot
+Chat) reference it by typing `#file:Tools/.github/copilot-instructions.md` in your first
+message. Either way, **say so in your very first message of the session** -- it does not carry
+over from an earlier chat/session automatically the way auto-loaded instructions do.
 
 ### Getting started
 

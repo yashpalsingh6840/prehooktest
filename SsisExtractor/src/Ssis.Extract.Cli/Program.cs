@@ -142,14 +142,20 @@ internal static class Program
 
               ssisx generate --input <dir|file.dtsx|file.dtproj|file.ispac> --out <dir>
                               [--recursive] [--package <name>] [--namespace-prefix <prefix>]
-                              [--unsafe-skip-seams] [--fills <dir>]
+                              [--unsafe-skip-seams] [--fills <dir>] [--etl-core <path>]
+                              [--framework net8.0|net10.0]
 
             generate options: turns a package into a runnable C# ETL project -- entity,
             DbContext, CSV row + ClassMap, Derived Column transform, the oracle-verified
             SsisFn primitives it actually uses, Program.cs, and .csproj/appsettings.json --
             under <out>/generate/<Package>/, calling Etl.Core (shipped alongside this tool
-            at Tools/Etl.Core -- copy it to <out>/generate/Etl.Core/ before building) for
-            plumbing: SqlBulkCopy, CSV reading, email notification. NO verification runs
+            at Tools/Etl.Core) for plumbing: SqlBulkCopy, CSV reading, email notification.
+            --etl-core <path> copies that folder into <out>/generate/Etl.Core/ as part of
+            THIS command (e.g. --etl-core Tools/Etl.Core, or a relative ../Etl.Core if you're
+            already inside Tools/SsisExtractor) -- do this every time unless you have a
+            reason not to: without it, the generated solution will not build at all (every
+            project references Etl.Core.csproj), and forgetting the copy as a separate manual
+            step is an easy, real mistake to make. NO verification runs
             against a client's real data or database -- this tool has neither, and does not
             expect them. It only writes source code; building/running the result, and any
             comparison against the original package's real behavior, is the caller's own
@@ -162,6 +168,13 @@ internal static class Program
             expression) degrades that one piece to a GenerationGap rather than a guess --
             every gap, with its reason, is listed in generate-report.md alongside how many
             files each package produced.
+            --framework selects the generated solution's target framework -- net10.0
+            (default, unchanged) or net8.0. This is not just a TargetFramework string: Etl.Core's
+            EF Core SqlServer provider (10.0.11) targets net10.0 ONLY, so net8.0 pins a
+            different EF Core MAJOR VERSION (9.0.15, the newest that still targets net8.0)
+            instead. --etl-core copies the matching Directory.Build.props/Directory.Packages.props
+            into the copied Etl.Core too, so the two always agree -- pass --framework net8.0
+            on every generate call for a client stuck on .NET 8, not just once.
             --namespace-prefix roots every generated namespace under a prefix (e.g.
             "Contoso.Etl") instead of just the package name. Generated code under
             <out>/generate/ has no hand-editing expectation -- rerun freely.

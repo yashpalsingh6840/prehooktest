@@ -37,7 +37,17 @@ internal static class GenerateCommand
         // accepted no-op so any script/doc still passing it explicitly keeps working.
         var seams = true;
         string? fillsDir = null;
+        string? etlCorePath = null;
         var packageNames = new List<string>();
+        // net10.0 stays the default -- omitting --framework changes nothing for an existing
+        // caller. net8.0 exists because Etl.Core's own EF Core SqlServer provider (10.0.11)
+        // targets net10.0 ONLY (confirmed against the real published package, not assumed);
+        // the only way to build against net8.0 at all is a DIFFERENT EF Core major version
+        // (9.0.15, the newest that still targets net8.0), so this flag has to pick a package
+        // version, not just a TFM string. Everything else (Microsoft.Extensions.Hosting/
+        // Configuration.UserSecrets, System.Text.Encoding.CodePages, all pinned at 10.0.11)
+        // already multi-targets net8.0 for real and stays unchanged either way.
+        var framework = "net10.0";
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -66,6 +76,21 @@ internal static class GenerateCommand
                     // --help.
                     case "--unsafe-skip-seams": seams = false; break;
                     case "--fills": fillsDir = RequireValue(args, ref i, "--fills"); break;
+                    // Folds the "copy Etl.Core alongside the generated output" step into this
+                    // command instead of leaving it as a separate manual step someone (a human,
+                    // or an AI assistant with limited budget/attention) can forget -- exactly
+                    // what happened running this through GitHub Copilot: the tool correctly
+                    // reported the gap, but nothing forced the follow-up copy to actually run.
+                    case "--etl-core": etlCorePath = RequireValue(args, ref i, "--etl-core"); break;
+                    case "--framework":
+                        var fw = RequireValue(args, ref i, "--framework");
+                        if (!SupportedFrameworks.Contains(fw))
+                        {
+                            Console.Error.WriteLine($"error: --framework '{fw}' is not supported. Supported values: {string.Join(", ", SupportedFrameworks.OrderBy(f => f, StringComparer.Ordinal))}.");
+                            return 2;
+                        }
+                        framework = fw;
+                        break;
                     default:
                         Console.Error.WriteLine($"error: unknown generate option '{args[i]}'");
                         return 2;
@@ -143,13 +168,22 @@ internal static class GenerateCommand
             }
         }
 
-        var fixedFileGaps = WriteFixedFiles(generateDir, loaded.Packages, results);
+        var fixedFileGaps = WriteFixedFiles(generateDir, loaded.Packages, results, etlCorePath, framework);
 
         var gapsPath = Path.Combine(outDir, "gaps.json");
         StableJsonWriter.WriteToFile(allGaps, gapsPath);
 
         var reportPath = Path.Combine(outDir, "generate-report.md");
         WriteReport(reportPath, results, loaded.Failures, fixedFileGaps, allGaps, decisionOutcomes);
+
+        // Written unconditionally, at the --out ROOT (not inside generate/, not inside gaps/)
+        // specifically so it is the first thing visible to anyone -- a person or an AI coding
+        // assistant -- who opens this output folder directly, regardless of which repo/workspace
+        // root their tool auto-loaded instructions from (or didn't). This exists because relying
+        // solely on Tools/.github/copilot-instructions.md failed in practice: a caller who opens
+        // the GENERATED solution on its own (e.g. Generated.slnx directly in an IDE) never has
+        // Tools/ in view at all, so nothing there was ever going to be picked up automatically.
+        WriteAiAssistantGuide(Path.Combine(outDir, "HOW-TO-FILL-GAPS.md"), allGaps, fillsDir, outDir);
 
         var totalFiles = results.Sum(r => r.Files.Count);
         var totalGaps = results.Sum(r => r.Gaps.Count) + fixedFileGaps.Count;
@@ -194,63 +228,88 @@ internal static class GenerateCommand
         AllowTrailingCommas = true,
     };
 
+    private static readonly HashSet<string> SupportedFrameworks = new(StringComparer.Ordinal) { "net8.0", "net10.0" };
+
+    /// <summary>
+    /// The one package version that actually depends on <paramref name="framework"/> --
+    /// Microsoft.EntityFrameworkCore.SqlServer 10.0.11 targets net10.0 ONLY (confirmed against
+    /// the real published package), so net8.0 needs a different EF Core MAJOR VERSION (9.0.15,
+    /// the newest 9.x that still targets net8.0), not just a different TargetFramework string.
+    /// Every other pinned package (Microsoft.Extensions.Hosting/Configuration.UserSecrets,
+    /// System.Text.Encoding.CodePages, all at 10.0.11) already multi-targets net8.0 for real
+    /// and is unaffected -- confirmed the same way, not assumed by analogy with this one.
+    /// </summary>
+    private static string EfCoreSqlServerVersionFor(string framework) => framework switch
+    {
+        "net8.0" => "9.0.15",
+        "net10.0" => "10.0.11",
+        _ => throw new ArgumentOutOfRangeException(nameof(framework), framework, $"unsupported framework -- expected one of: {string.Join(", ", SupportedFrameworks.OrderBy(f => f, StringComparer.Ordinal))}"),
+    };
+
+    private static string[] BuildDirectoryBuildProps(string framework) =>
+    [
+        "<Project>",
+        "",
+        "  <PropertyGroup>",
+        $"    <TargetFramework>{framework}</TargetFramework>",
+        "    <LangVersion>latest</LangVersion>",
+        "    <Nullable>enable</Nullable>",
+        "    <ImplicitUsings>enable</ImplicitUsings>",
+        "    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>",
+        "    <InvariantGlobalization>false</InvariantGlobalization>",
+        "  </PropertyGroup>",
+        "",
+        "</Project>",
+    ];
+
+    private static string[] BuildDirectoryPackagesProps(string framework) =>
+    [
+        "<Project>",
+        "",
+        "  <PropertyGroup>",
+        "    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>",
+        "    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>",
+        "  </PropertyGroup>",
+        "",
+        "  <ItemGroup>",
+        "    <PackageVersion Include=\"CsvHelper\" Version=\"33.1.0\" />",
+        "    <PackageVersion Include=\"ExcelDataReader\" Version=\"3.7.0\" />",
+        "    <PackageVersion Include=\"MailKit\" Version=\"4.17.0\" />",
+        $"    <PackageVersion Include=\"Microsoft.EntityFrameworkCore.SqlServer\" Version=\"{EfCoreSqlServerVersionFor(framework)}\" />",
+        "    <PackageVersion Include=\"Microsoft.Extensions.Hosting\" Version=\"10.0.11\" />",
+        "    <PackageVersion Include=\"Microsoft.Extensions.Configuration.UserSecrets\" Version=\"10.0.11\" />",
+        "    <PackageVersion Include=\"System.Text.Encoding.CodePages\" Version=\"10.0.11\" />",
+        "  </ItemGroup>",
+        "",
+        "</Project>",
+    ];
+
     /// <summary>
     /// Files written once per --out directory, not per package: Directory.Build.props /
-    /// Directory.Packages.props (fixed content -- the exact contract Etl.Core and every
-    /// generated .csproj already assume, see Tools/Etl.Core's own copies alongside this tool)
-    /// and Shared/appsettings.Shared.json (TargetDatabase.Server/Database filled in from
-    /// whichever generated package resolved one -- see ResolveDatabaseAuth's caller).
+    /// Directory.Packages.props (content driven by <paramref name="framework"/> -- see
+    /// BuildDirectoryBuildProps/BuildDirectoryPackagesProps below, and Tools/Etl.Core's own
+    /// copies alongside this tool, which must match whatever this method would emit for
+    /// net10.0) and Shared/appsettings.Shared.json (TargetDatabase.Server/Database filled in
+    /// from whichever generated package resolved one -- see ResolveDatabaseAuth's caller).
     ///
-    /// Deliberately does NOT copy Etl.Core itself: that library is hand-written, "written
-    /// once" runtime plumbing (see the generate plan's own context table), not something
-    /// derivable from a .dtsx the way every file above it is. This is why a portable copy
-    /// ships alongside this tool at Tools/Etl.Core (sibling of Tools/SsisExtractor) rather
-    /// than the generator hardcoding a path to this PoC's own development repo -- a client
-    /// site running this tool against its own 50 packages gets the same Etl.Core/ folder
-    /// that ships with ssisx, not a dead reference to a repo that only exists here. The
-    /// report says so plainly rather than silently producing an output that can't build.
+    /// Does NOT copy Etl.Core itself UNLESS <paramref name="etlCorePath"/> is given: that
+    /// library is hand-written, "written once" runtime plumbing (see the generate plan's own
+    /// context table), not something derivable from a .dtsx the way every file above it is --
+    /// this generator has no business assuming where a caller's copy lives, or that one even
+    /// exists at all (a caller may only want to inspect the generated source, never build it).
+    /// When --etl-core IS given, though, copying it here rather than leaving it as a separate
+    /// step is worth doing: a manual follow-up copy is exactly the kind of thing that gets
+    /// silently skipped by an agent (or a person) moving fast through a checklist -- confirmed
+    /// in practice, not hypothetically, running this through GitHub Copilot. See "Sensitive
+    /// credential"-style reasoning elsewhere in this tool for why a MISSING step should fail
+    /// loudly rather than be assumed done.
     /// </summary>
-    private static List<GenerationGap> WriteFixedFiles(string generateDir, List<PackageSpec> packages, List<PackageGenerateResult> results)
+    private static List<GenerationGap> WriteFixedFiles(string generateDir, List<PackageSpec> packages, List<PackageGenerateResult> results, string? etlCorePath, string framework)
     {
         Directory.CreateDirectory(generateDir);
 
-        File.WriteAllText(Path.Combine(generateDir, "Directory.Build.props"), JoinLines(
-        [
-            "<Project>",
-            "",
-            "  <PropertyGroup>",
-            "    <TargetFramework>net10.0</TargetFramework>",
-            "    <LangVersion>latest</LangVersion>",
-            "    <Nullable>enable</Nullable>",
-            "    <ImplicitUsings>enable</ImplicitUsings>",
-            "    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>",
-            "    <InvariantGlobalization>false</InvariantGlobalization>",
-            "  </PropertyGroup>",
-            "",
-            "</Project>",
-        ]));
-
-        File.WriteAllText(Path.Combine(generateDir, "Directory.Packages.props"), JoinLines(
-        [
-            "<Project>",
-            "",
-            "  <PropertyGroup>",
-            "    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>",
-            "    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>",
-            "  </PropertyGroup>",
-            "",
-            "  <ItemGroup>",
-            "    <PackageVersion Include=\"CsvHelper\" Version=\"33.1.0\" />",
-            "    <PackageVersion Include=\"ExcelDataReader\" Version=\"3.7.0\" />",
-            "    <PackageVersion Include=\"MailKit\" Version=\"4.17.0\" />",
-            "    <PackageVersion Include=\"Microsoft.EntityFrameworkCore.SqlServer\" Version=\"10.0.11\" />",
-            "    <PackageVersion Include=\"Microsoft.Extensions.Hosting\" Version=\"10.0.11\" />",
-            "    <PackageVersion Include=\"Microsoft.Extensions.Configuration.UserSecrets\" Version=\"10.0.11\" />",
-            "    <PackageVersion Include=\"System.Text.Encoding.CodePages\" Version=\"10.0.11\" />",
-            "  </ItemGroup>",
-            "",
-            "</Project>",
-        ]));
+        File.WriteAllText(Path.Combine(generateDir, "Directory.Build.props"), JoinLines(BuildDirectoryBuildProps(framework)));
+        File.WriteAllText(Path.Combine(generateDir, "Directory.Packages.props"), JoinLines(BuildDirectoryPackagesProps(framework)));
 
         var gaps = new List<GenerationGap>();
         var resolved = results.FirstOrDefault(r => r.TargetServer is not null);
@@ -304,9 +363,68 @@ internal static class GenerateCommand
         slnLines.Add("</Solution>");
         File.WriteAllText(Path.Combine(generateDir, "Generated.slnx"), JoinLines(slnLines));
 
-        gaps.Add(new GenerationGap("Etl.Core", "this generator does not produce Etl.Core -- it is hand-written shared plumbing (SqlBulkCopy wrapper, CSV reader, host, email notifier), not derivable from any .dtsx. Copy the Etl.Core folder shipped alongside this tool (Tools/Etl.Core, a sibling of Tools/SsisExtractor) to generate/Etl.Core/ before building."));
+        if (etlCorePath is null)
+        {
+            gaps.Add(new GenerationGap("Etl.Core", "this generator does not produce Etl.Core -- it is hand-written shared plumbing (SqlBulkCopy wrapper, CSV reader, host, email notifier), not derivable from any .dtsx. Pass --etl-core <path> to copy it in as part of this command, or copy the Etl.Core folder shipped alongside this tool (Tools/Etl.Core, a sibling of Tools/SsisExtractor) to generate/Etl.Core/ by hand before building."));
+        }
+        else
+        {
+            try
+            {
+                var etlCoreDest = Path.Combine(generateDir, "Etl.Core");
+                var copied = CopyDirectoryExcludingBuildOutput(etlCorePath, etlCoreDest);
+                // Overwrite the copied Etl.Core's own two props files with the SAME
+                // framework-matched content just written above, regardless of what the source
+                // copy's own committed props say -- these two files are the one place
+                // Tools/Etl.Core and every generated .csproj must agree byte-for-byte (each
+                // side's own doc comment already says "keep in sync"; this makes the OUTPUT
+                // side of that promise unconditional rather than trusting a second, manually
+                // maintained copy to have been kept current).
+                File.WriteAllText(Path.Combine(etlCoreDest, "Directory.Build.props"), JoinLines(BuildDirectoryBuildProps(framework)));
+                File.WriteAllText(Path.Combine(etlCoreDest, "Directory.Packages.props"), JoinLines(BuildDirectoryPackagesProps(framework)));
+                Console.WriteLine($"copied Etl.Core ({copied} file(s)) from {Path.GetFullPath(etlCorePath)} -> {etlCoreDest} (targeting {framework})");
+            }
+            catch (Exception ex)
+            {
+                // A failed copy must still show up as a gap -- the alternative is a Generated.slnx
+                // that references a project directory nothing put there, discovered only much
+                // later as "Etl.Core (not found)" in an IDE's Solution Explorer.
+                gaps.Add(new GenerationGap("Etl.Core", $"--etl-core '{etlCorePath}' could not be copied: {ex.Message}. Copy the Etl.Core folder shipped alongside this tool (Tools/Etl.Core, a sibling of Tools/SsisExtractor) to generate/Etl.Core/ by hand before building."));
+            }
+        }
 
         return gaps;
+    }
+
+    /// <summary>Plain recursive file copy, skipping any bin/obj directory found anywhere under
+    /// the source -- the same exclusion <c>robocopy /XD bin obj</c> gives, reimplemented here
+    /// (rather than shelling out to robocopy) so this stays a pure .NET dependency, portable to
+    /// whatever OS this CLI itself runs on.</summary>
+    private static int CopyDirectoryExcludingBuildOutput(string sourceDir, string destDir)
+    {
+        if (!Directory.Exists(sourceDir))
+        {
+            throw new DirectoryNotFoundException($"source directory not found: {Path.GetFullPath(sourceDir)}");
+        }
+
+        var fullSource = Path.GetFullPath(sourceDir);
+        var copied = 0;
+        foreach (var file in Directory.EnumerateFiles(fullSource, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(fullSource, file);
+            var segments = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (segments.Any(s => s.Equals("bin", StringComparison.OrdinalIgnoreCase) || s.Equals("obj", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            var destPath = Path.Combine(destDir, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+            File.Copy(file, destPath, overwrite: true);
+            copied++;
+        }
+
+        return copied;
     }
 
     private static void WriteReport(string path, List<PackageGenerateResult> results, List<PackageLoader.LoadFailure> loadFailures, List<GenerationGap> fixedFileGaps, List<GapSpec> allGaps, List<(string Package, GapDecisionOutcome Outcome)> decisionOutcomes)
@@ -381,6 +499,152 @@ internal static class GenerateCommand
             foreach (var f in loadFailures)
                 sb.AppendLine($"| {f.Path} | {f.Kind} | {f.Reason} |");
         }
+
+        File.WriteAllText(path, sb.ToString());
+    }
+
+    /// <summary>
+    /// A short, fully self-contained gap-filling guide, written at the --out ROOT every run.
+    /// Deliberately duplicates (rather than just linking to) the handful of facts a reader
+    /// actually needs -- this file's whole reason to exist is surviving a context where nothing
+    /// else this tool ships (Tools/COPILOT_GUIDE.md, Tools/.github/copilot-instructions.md) is
+    /// anywhere in view, e.g. someone opened generate/Generated.slnx directly in an IDE with no
+    /// idea Tools/ even exists. See GenerateCommand's own call site for the concrete failure
+    /// this was built to close.
+    ///
+    /// <paramref name="fillsDir"/> is the ACTUAL resolved fills directory for this run (already
+    /// an absolute path by the time this is called -- see the call site). Printing the real path
+    /// here, rather than a generic "fills/" reference, is itself a fix for a real, repeated
+    /// incident: earlier versions of this file always said "fills/" as if that were always
+    /// `&lt;out&gt;/fills/`, which is exactly the disposable-by-default location whose contents
+    /// were silently lost more than once across sessions. If a caller passed a durable `--fills`
+    /// path outside `--out` (the recommended pattern -- see the warning below when they didn't),
+    /// this file now says so explicitly and gives the exact command to use, so a reader has no
+    /// way to fall back to the wrong default by omission.
+    /// </summary>
+    private static void WriteAiAssistantGuide(string path, List<GapSpec> allGaps, string fillsDir, string outDir)
+    {
+        var fillable = allGaps.Where(g => g.Tier is GapTier.MissingDatum or GapTier.MissingLogic).ToList();
+        var defaultFillsDir = Path.GetFullPath(Path.Combine(outDir, "fills"));
+        var fillsIsDefault = string.Equals(
+            fillsDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            defaultFillsDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        var applyFillsCommand = $"ssisx apply-fills --out <this folder> --fills \"{fillsDir}\"";
+
+        var sb = new StringBuilder();
+        sb.AppendLine("# How to fill the gaps in this generated output");
+        sb.AppendLine();
+        sb.AppendLine("Read this before touching anything under `generate/`. This file was written by");
+        sb.AppendLine("`ssisx generate` itself, fresh, every run -- it will be overwritten next time, same as");
+        sb.AppendLine($"everything else under this output folder except the fills directory (see below).");
+        sb.AppendLine();
+        sb.AppendLine("## The fills directory for THIS run -- read this even if you've done this before");
+        sb.AppendLine();
+        sb.AppendLine($"`--fills` was resolved to:");
+        sb.AppendLine();
+        sb.AppendLine($"    {fillsDir}");
+        sb.AppendLine();
+        if (fillsIsDefault)
+        {
+            sb.AppendLine("**This is the DEFAULT location, and it is INSIDE this disposable `--out` folder.**");
+            sb.AppendLine("Anything you write here (a Tier-2 `.cs` fill, a Tier-1 `.decisions.json`) will be");
+            sb.AppendLine("permanently lost the next time someone deletes or regenerates this `--out` folder from");
+            sb.AppendLine("scratch -- this has already happened for real, more than once, and is exactly why this");
+            sb.AppendLine("warning exists. **Before writing any fill, re-run `generate` with an explicit `--fills`");
+            sb.AppendLine("pointing OUTSIDE this `--out` folder** -- e.g. `--fills ..\\fills-library` (a sibling of");
+            sb.AppendLine("`--out`, not inside it), or ask where the durable fills location for this engagement is");
+            sb.AppendLine("if you don't know. Do not write fills into the path above as-is.");
+        }
+        else
+        {
+            sb.AppendLine("Good -- this is OUTSIDE the disposable `--out` folder, so it survives `--out` being");
+            sb.AppendLine("deleted or regenerated from scratch. Keep using this exact `--fills` path on every");
+            sb.AppendLine("`generate`/`apply-fills` call for this engagement, and make sure it's committed to git");
+            sb.AppendLine("once a fill is confirmed working (`git add` + `git commit` on that folder) -- an");
+            sb.AppendLine("uncommitted fill is still one accidental delete away from being lost.");
+        }
+        sb.AppendLine();
+        sb.AppendLine("## Where things are, relative to THIS file");
+        sb.AppendLine();
+        sb.AppendLine("- `gaps/<Package>/<GapId>.md` -- auto-generated work packets, one per open gap. Read the");
+        sb.AppendLine("  exact one you're working on before writing anything -- it has the real question or the");
+        sb.AppendLine("  real script source, not a paraphrase.");
+        sb.AppendLine($"- `{fillsDir}\\<Package>\\*.cs` and `{fillsDir}\\<Package>.decisions.json` -- where YOUR");
+        sb.AppendLine("  answer goes (the exact path printed above, not a generic `fills/`). **These are empty");
+        sb.AppendLine("  right now on purpose.** `ssisx` never writes here, ever -- so an empty folder, or");
+        sb.AppendLine("  `apply-fills` reporting \"0 fills applied\", means nobody has answered a packet yet. It");
+        sb.AppendLine("  does not mean the packets are missing -- check `gaps/`. If files you expect to be here");
+        sb.AppendLine("  are genuinely gone, do NOT re-port everything from scratch before checking whether they");
+        sb.AppendLine("  still exist somewhere else (e.g. committed in git, or under an old `--out`'s own");
+        sb.AppendLine("  `fills/` from before this path was made explicit).");
+        sb.AppendLine("- `generate/<Package>/` -- the generated C# project. **Never hand-edit files here** --");
+        sb.AppendLine("  regenerated/overwritten on every `ssisx generate` run. A Script Task/Component's unfilled");
+        sb.AppendLine("  logic shows up here as an unimplemented `partial` method (`Fill_<Column>` or");
+        sb.AppendLine("  `RunScriptAsync`) that deliberately fails to build (`CS8795`) until you supply the other");
+        sb.AppendLine("  half in the fills directory above -- that failure is intentional, not something to patch");
+        sb.AppendLine("  around here.");
+        sb.AppendLine("- `generate-report.md` / `gaps.json` -- the full gap list, with every `GapId` and tier.");
+        sb.AppendLine();
+
+        if (fillable.Count == 0)
+        {
+            sb.AppendLine("## Nothing to fill right now");
+            sb.AppendLine();
+            sb.AppendLine("No Tier-1/2 gaps exist in this output -- either everything generated clean, or every");
+            sb.AppendLine("remaining gap is Tier 3 (missing tool support, not something to fill in by hand; see");
+            sb.AppendLine("`generate-report.md` for those). If a build still fails with `CS8795`, re-run");
+            sb.AppendLine("`ssisx generate` for this package -- something changed since this file was written.");
+        }
+        else
+        {
+            sb.AppendLine($"## {fillable.Count} gap(s) waiting for an answer, right now");
+            sb.AppendLine();
+            sb.AppendLine("| Package | Tier | GapId | Work packet |");
+            sb.AppendLine("|---|---|---|---|");
+            foreach (var g in fillable.OrderBy(g => g.Package, StringComparer.Ordinal).ThenBy(g => g.GapId, StringComparer.Ordinal))
+            {
+                var packetRef = g.PacketPath is not null ? $"`{g.PacketPath}`" : "_(none)_";
+                sb.AppendLine($"| {g.Package} | {(g.Tier == GapTier.MissingDatum ? "1 -- datum" : "2 -- logic")} | `{g.GapId}` | {packetRef} |");
+            }
+            sb.AppendLine();
+            sb.AppendLine("## What to actually do for each tier");
+            sb.AppendLine();
+            sb.AppendLine("**Tier 1 (a missing datum, e.g. an unresolvable Lookup join key):** open the work");
+            sb.AppendLine("packet, read its exact question, do **not** guess a confident-sounding answer -- confirm");
+            sb.AppendLine("it with a human if you're not certain. Write the answer into");
+            sb.AppendLine($"`{fillsDir}\\<Package>.decisions.json`, in the exact JSON shape the packet shows, with a");
+            sb.AppendLine("real `ConfirmedBy`.");
+            sb.AppendLine();
+            sb.AppendLine("**Tier 2 (a Script Task/Component whose real source IS in the packet, just needs");
+            sb.AppendLine("porting to C#):** read the packet -- it includes the actual original script text and the");
+            sb.AppendLine("exact seam signature you must match (do not rename or reshape it). Write the `.cs` file it");
+            sb.AppendLine($"describes under `{fillsDir}\\<Package>\\`, with this comment immediately above the seam,");
+            sb.AppendLine("copying `EvidenceSha256` from the packet verbatim:");
+            sb.AppendLine();
+            sb.AppendLine("```");
+            sb.AppendLine("// ssisx-fill: GapId=<exact GapId from the table above> Author=<you> Date=<yyyy-mm-dd> EvidenceSha256=<from the packet>");
+            sb.AppendLine("```");
+            sb.AppendLine();
+            sb.AppendLine("## After writing a fill");
+            sb.AppendLine();
+            sb.AppendLine($"Run `{applyFillsCommand}` -- the `--fills` value MUST match the path printed above");
+            sb.AppendLine("exactly, or your fill will not be found. This validates and copies your fill into");
+            sb.AppendLine("`generate/<Package>/Fills/`, and reports anything still outstanding or stale. `ssisx.exe`");
+            sb.AppendLine("lives under `Tools/SsisExtractor/src/Ssis.Extract.Cli/bin/Debug/net8.0/` relative to");
+            sb.AppendLine("wherever this was generated FROM -- if you're working from this output folder alone and");
+            sb.AppendLine("don't have that path, ask where the `Tools/` folder is before assuming it isn't");
+            sb.AppendLine("available; do not skip `apply-fills` and hand-copy a file into `generate/` instead, since");
+            sb.AppendLine("that bypasses the staleness/provenance check it exists to provide.");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("## One rule that applies regardless of tier");
+        sb.AppendLine();
+        sb.AppendLine("Do not attempt to build/run this project against a real database or real source data to");
+        sb.AppendLine("\"verify\" a fill -- none is available in this environment, and inventing one (a throwaway");
+        sb.AppendLine("connection string, sample files) is out of scope. `dotnet build` succeeding is the expected");
+        sb.AppendLine("extent of checking here.");
 
         File.WriteAllText(path, sb.ToString());
     }
