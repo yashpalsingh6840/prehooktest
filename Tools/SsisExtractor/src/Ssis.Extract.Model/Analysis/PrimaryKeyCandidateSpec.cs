@@ -3,7 +3,7 @@ namespace Ssis.Extract.Model.Analysis;
 /// <summary>
 /// A best-effort primary-key guess for one OLE DB Destination's target table, derived by
 /// <c>Ssis.Extract.Dtsx.PrimaryKeyInference</c>. Closes a real gap named in
-/// <c>Tools/Validation/docs/gate3-harness.md</c>: the gate-3 harness's per-table
+/// <c>Validation/docs/gate3-harness.md</c>: the gate-3 harness's per-table
 /// <c>KeyColumn</c> had to be hand-filled because nothing detected it.
 ///
 /// <b>Why this can only ever be a heuristic, not a fact:</b> a `.dtsx` file carries no

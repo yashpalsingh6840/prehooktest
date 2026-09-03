@@ -5,7 +5,7 @@ namespace Ssis.Extract.Model.Analysis;
 /// procedure invoked, or a task whose effects this tool cannot characterize at all.
 ///
 /// <para><b>Why this exists, and why it is deliberately pessimistic.</b> The gate-3 harness
-/// (<c>Tools/Validation</c>) compares SQL table rows and nothing else. That was adequate for
+/// (<c>Validation</c>) compares SQL table rows and nothing else. That was adequate for
 /// the two packages it was built against, both of which end in a table -- but a package whose
 /// real output is an email, an SFTP drop, or a queue message would be compared against
 /// <i>nothing</i> and still report PASS. A partial check that reads as a full pass is worse

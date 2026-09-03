@@ -7,7 +7,7 @@ namespace Ssis.Extract.Tests;
 
 /// <summary>
 /// <see cref="ObservableEffectsBuilder"/> -- built to close a real gap: the gate-3 harness
-/// (<c>Tools/Validation</c>) only ever compared SQL table rows, so a package whose real
+/// (<c>Validation</c>) only ever compared SQL table rows, so a package whose real
 /// output is a file, an email, or anything this extractor has no semantic model for could
 /// report PASS having verified nothing. These tests pin the two properties that matter most:
 /// a straight-line table-only package reports every effect Verifiable (no false alarms), and

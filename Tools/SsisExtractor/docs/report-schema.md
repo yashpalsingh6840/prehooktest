@@ -138,7 +138,7 @@ schema, a later-slice concern (plan §5.3/§6's `enrich`).
 
 `primary-keys.json`/`.md` -- a best-effort `PrimaryKeyCandidateSpec` per OLE DB Destination,
 built by `Ssis.Extract.Dtsx.PrimaryKeyInference`. Closes a gap named in
-`Tools/Validation/docs/gate3-harness.md`: gate 3's per-table `KeyColumn` used to be entirely
+`Validation/docs/gate3-harness.md`: gate 3's per-table `KeyColumn` used to be entirely
 hand-filled because nothing detected it.
 
 **Why this can only ever be a heuristic:** confirmed by reading this PoC's own real
@@ -161,14 +161,14 @@ only signals available are:
 candidates (`Employee.EmployeeID`, `Department.DepartmentID`, `Designation.DesignationID`)
 were cross-checked against `.\SQLFORPOC`'s actual `PRIMARY KEY` constraints via
 `sys.indexes`/`sys.index_columns` -- exact matches, all three. Feeding the same output into
-`Tools/Validation`'s `ConfigGenerator` (via `--primary-keys-json`) reproduces byte-identical
+`Validation`'s `ConfigGenerator` (via `--primary-keys-json`) reproduces byte-identical
 `KeyColumn` values to the ones a human had already hand-filled in an earlier session.
 
 ## Observable effects (added 2026-08-20 -- closes a false-green risk in gate 3)
 
 `effects.json`/`effects.md` -- one `Ssis.Extract.Model.Analysis.ObservableEffectSpec` per
 real-world thing a package changes, built by `Ssis.Extract.Dtsx.ObservableEffectsBuilder`.
-Exists because `Tools/Validation`'s gate-3 harness only ever compared SQL table rows -- true
+Exists because `Validation`'s gate-3 harness only ever compared SQL table rows -- true
 for both of this PoC's packages, since both happen to end in a table, but not a general fact
 about SSIS packages. A package whose real output is a file drop, an email, or a queue message
 would have zero configured target tables, nothing to diff, and the harness would still print
@@ -204,14 +204,14 @@ quiet on packages without one. Pinned by `tests/Ssis.Extract.Tests/ObservableEff
 including a Script-Component-specific fixture proving the "lives inside an allowlisted
 executable" case doesn't slip through.
 
-**`Tools/Validation`'s `ConfigGenerator`** (`--effects-json`) folds this into each package's
+**`Validation`'s `ConfigGenerator`** (`--effects-json`) folds this into each package's
 `PackageConfig.DeclaredEffects` -- every effect NOT covered by `--tables`, including a
 `SqlTable` effect that *is* real but was left off `--tables` (the "wrote to a table nobody
 configured for comparison" gap, not just the non-table-effect case). `GateRunner.Run` then
 computes a three-way `Outcome` instead of a boolean: `Pass` only when every table matched
 *and* every declared effect is `Verifiable`; `Incomplete` when tables matched but a real
 effect has no checker (exit code 3, never collapsed into `Pass`); `Fail` otherwise. See
-`Tools/Validation/docs/gate3-harness.md`'s own section on this.
+`Validation/docs/gate3-harness.md`'s own section on this.
 
 **A real bug was caught wiring this into `ssisx conformance`'s `TargetSchema` evidence, not
 shipped:** the synthetic Lookup/Conditional Split fixture has three OLE DB Destinations all
