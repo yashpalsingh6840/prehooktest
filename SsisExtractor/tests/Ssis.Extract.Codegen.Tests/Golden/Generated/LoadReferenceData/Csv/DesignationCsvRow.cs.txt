@@ -1,0 +1,19 @@
+using Etl.Core.Ssis;
+
+namespace LoadReferenceData.Csv;
+
+public sealed class DesignationCsvRow
+{
+    public int DesignationID { get; set; }
+
+    [SsisWidth(10)]
+    public string DesignationCode { get; set; } = "";
+
+    [SsisWidth(50)]
+    public string Title { get; set; } = "";
+
+    public int JobLevel { get; set; }
+
+    [SsisWidth(5)]
+    public string Band { get; set; } = "";
+}

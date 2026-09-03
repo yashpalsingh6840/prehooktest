@@ -1,0 +1,19 @@
+using Etl.Core.Ssis;
+
+namespace LoadReferenceData.Csv;
+
+public sealed class DepartmentCsvRow
+{
+    public int DepartmentID { get; set; }
+
+    [SsisWidth(10)]
+    public string DepartmentCode { get; set; } = "";
+
+    [SsisWidth(50)]
+    public string DepartmentName { get; set; } = "";
+
+    [SsisWidth(20)]
+    public string CostCenter { get; set; } = "";
+
+    public int HeadCount { get; set; }
+}

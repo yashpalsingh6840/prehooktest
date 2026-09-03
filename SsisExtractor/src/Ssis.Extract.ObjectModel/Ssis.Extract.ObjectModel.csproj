@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <!-- Microsoft.SqlServer.DTSRuntimeWrap is GAC_64 only (CLAUDE.md environment note),
+         so anything referencing it must build/run as x64, not AnyCPU/x86. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>Ssis.Extract.ObjectModel</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    Windows-only, optional (plan §7.3): loads a package via the real SSIS object model as a
+    test oracle, deliberately kept out of the main extraction path (Ssis.Extract.Dtsx parses
+    raw XML instead, per plan §2.1: no GAC/Windows dependency on the main path).
+
+    The GAC references come from Build/Ssis.Gac.props, which detects the installed SSIS
+    version rather than pinning one - see that file's header for why, and for how to pin a
+    version deliberately.
+  -->
+  <Import Project="..\..\..\..\Build\Ssis.Gac.props" />
+
+</Project>

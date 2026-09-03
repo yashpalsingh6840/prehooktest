@@ -1,0 +1,107 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:refId="Package"
+  DTS:CreationDate="8/14/2026 11:25:21 AM"
+  DTS:CreationName="Microsoft.Package"
+  DTS:CreatorComputerName="IRIS-CSG-7247"
+  DTS:CreatorName="IRISSOFTWARE\yashpal.singh01"
+  DTS:Description="Synthetic fixture: ForEach File Enumerator wrapping a Script Task (extractor component-coverage test, not a real workload)."
+  DTS:DTSID="{F7CCEBCA-C995-4FE8-A997-B50EF0578C13}"
+  DTS:ExecutableType="Microsoft.Package"
+  DTS:LastModifiedProductVersion="17.0.1000.7"
+  DTS:LocaleID="1033"
+  DTS:ObjectName="SyntheticForEachScript"
+  DTS:VersionGUID="{F6F4D7F3-6581-458A-924A-4A5727246AF7}">
+  <DTS:Property
+    DTS:Name="PackageFormatVersion">8</DTS:Property>
+  <DTS:Variables>
+    <DTS:Variable
+      DTS:CreationName=""
+      DTS:DTSID="{17D7CC01-26CF-4FED-B2A9-2A67598B6CD2}"
+      DTS:IncludeInDebugDump="2345"
+      DTS:Namespace="User"
+      DTS:ObjectName="CurrentFile">
+      <DTS:VariableValue
+        DTS:DataType="8"
+        xml:space="preserve"></DTS:VariableValue>
+    </DTS:Variable>
+    <DTS:Variable
+      DTS:CreationName=""
+      DTS:DTSID="{A38B9CA1-B794-44EF-A34D-87AB1849B248}"
+      DTS:IncludeInDebugDump="2345"
+      DTS:Namespace="User"
+      DTS:ObjectName="FolderPath">
+      <DTS:VariableValue
+        DTS:DataType="8">C:\Temp\SsisPoC</DTS:VariableValue>
+    </DTS:Variable>
+  </DTS:Variables>
+  <DTS:Executables>
+    <DTS:Executable
+      DTS:refId="Package\FELC_Files"
+      DTS:CreationName="STOCK:FOREACHLOOP"
+      DTS:Description="Iterates every CSV in FolderPath"
+      DTS:DTSID="{DFF48DC2-D0B8-4ABC-8E9B-DE12874439B8}"
+      DTS:ExecutableType="STOCK:FOREACHLOOP"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="FELC_Files">
+      <DTS:ForEachEnumerator
+        DTS:CreationName="Microsoft.ForEachFileEnumerator"
+        DTS:DTSID="{E6E3624B-C353-4924-A31E-FEF7315D2F90}"
+        DTS:ObjectName="{E6E3624B-C353-4924-A31E-FEF7315D2F90}">
+        <DTS:ObjectData>
+          <ForEachFileEnumeratorProperties>
+            <FEFEProperty
+              Folder="C:\Temp\SsisPoC" />
+            <FEFEProperty
+              FileSpec="*.csv" />
+            <FEFEProperty
+              FileNameRetrievalType="0" />
+            <FEFEProperty
+              Recurse="0" />
+          </ForEachFileEnumeratorProperties>
+        </DTS:ObjectData>
+      </DTS:ForEachEnumerator>
+      <DTS:Variables />
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:refId="Package\FELC_Files\SCR_LogFile"
+          DTS:CreationName="Microsoft.ScriptTask"
+          DTS:Description="Logs the current file name (synthetic fixture for the extractor)"
+          DTS:DTSID="{626C66F0-E53A-49FC-9F26-0E71B33D533E}"
+          DTS:ExecutableType="Microsoft.ScriptTask"
+          DTS:LocaleID="-1"
+          DTS:ObjectName="SCR_LogFile"
+          DTS:ThreadHint="0">
+          <DTS:Variables />
+          <DTS:ObjectData>
+            <ScriptProject
+              Name="ST_d94303efd87041348059ee651fec5022"
+              VSTAMajorVersion="17"
+              VSTAMinorVersion="0"
+              Language="VisualBasic"
+              ReadOnlyVariables="User::CurrentFile">
+              <ProjectItem
+                Name="ScriptMain.vb"
+                Encoding="UTF8"><![CDATA[Public Class ScriptMain
+    Public Sub Main()
+        Dts.Events.FireInformation(0, "SCR_LogFile", "Current file: " & Dts.Variables("User::CurrentFile").Value.ToString(), "", 0, True)
+        Dts.TaskResult = ScriptResults.Success
+    End Sub
+End Class]]></ProjectItem>
+              <BinaryItem
+                Name="ST_d94303efd87041348059ee651fec5022.dll">TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</BinaryItem>
+            </ScriptProject>
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+      <DTS:ForEachVariableMappings>
+        <DTS:ForEachVariableMapping
+          DTS:CreationName=""
+          DTS:DTSID="{7B61FBD4-670F-4FC4-9292-939175B135EE}"
+          DTS:ObjectName="{7B61FBD4-670F-4FC4-9292-939175B135EE}"
+          DTS:ValueIndex="0"
+          DTS:VariableName="User::CurrentFile" />
+      </DTS:ForEachVariableMappings>
+    </DTS:Executable>
+  </DTS:Executables>
+</DTS:Executable>

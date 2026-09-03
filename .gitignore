@@ -1,0 +1,89 @@
+# ---------------------------------------------------------------------------
+# Repo root .gitignore. SsisExtractor/.gitignore adds the rules specific to that
+# subtree (out/, scripts/ publish output); this file covers everything global.
+# ---------------------------------------------------------------------------
+
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+artifacts/
+publish/
+*.pdb
+*.cache
+*.tlog
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+.nuget/
+project.lock.json
+project.assets.json
+
+# Test / coverage output
+[Tt]est[Rr]esult*/
+TestResults/
+coverage*.json
+coverage*.xml
+coverage*.info
+*.coverage
+*.coveragexml
+*.trx
+BenchmarkDotNet.Artifacts/
+
+# Visual Studio / Rider / VS Code user state
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# Local machine / secret config -- never commit connection strings or
+# environment-specific overrides for generated packages.
+appsettings.*.local.json
+appsettings.Development.json
+*.local.json
+secrets.json
+.env
+.env.*
+
+# Client migration inputs and outputs. Real .dtsx/.dtproj files and anything
+# ssisx writes about them are engagement data, not source -- keep them out of
+# this repo entirely. (The test fixtures under SsisExtractor/tests are checked
+# in deliberately and re-included below.)
+*.dtsx
+*.dtproj
+*.ispac
+*.conmgr
+*.params
+!SsisExtractor/tests/**/*.dtsx
+!SsisExtractor/tests/**/*.dtproj
+
+# Root-anchored only: SsisExtractor/.gitignore deliberately re-includes
+# out/conformance/claims/, and git cannot un-exclude a path whose parent
+# directory was excluded by a broader rule here.
+/out/
+/out-*/
+
+# OS / editor cruft
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+*.swp
+*~

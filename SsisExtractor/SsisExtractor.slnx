@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Ssis.Extract.Cli/Ssis.Extract.Cli.csproj" />
+    <Project Path="src/Ssis.Extract.Codegen/Ssis.Extract.Codegen.csproj" />
+    <Project Path="src/Ssis.Extract.Dtsx/Ssis.Extract.Dtsx.csproj" />
+    <Project Path="src/Ssis.Extract.Model/Ssis.Extract.Model.csproj" />
+    <Project Path="src/Ssis.Extract.Sql/Ssis.Extract.Sql.csproj" />
+    <Project Path="src/Ssis.Runtime.Expressions/Ssis.Runtime.Expressions.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Ssis.Extract.Cli.Tests/Ssis.Extract.Cli.Tests.csproj" />
+    <Project Path="tests/Ssis.Extract.Codegen.Tests/Ssis.Extract.Codegen.Tests.csproj" />
+    <Project Path="tests/Ssis.Extract.Tests/Ssis.Extract.Tests.csproj" />
+    <Project Path="tests/Ssis.Runtime.Expressions.Tests/Ssis.Runtime.Expressions.Tests.csproj" />
+  </Folder>
+</Solution>

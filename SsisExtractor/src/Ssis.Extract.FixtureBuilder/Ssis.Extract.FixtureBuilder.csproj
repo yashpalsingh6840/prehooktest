@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <!-- Microsoft.SqlServer.DTSRuntimeWrap is GAC_64 only (CLAUDE.md environment note),
+         so anything referencing it must build/run as x64, not AnyCPU/x86. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>ssis-fixture-builder</AssemblyName>
+    <RootNamespace>Ssis.Extract.FixtureBuilder</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    Windows-only, builds synthetic .dtsx fixtures via the REAL SSIS object model rather than
+    hand-written XML: the same "ask the runtime, don't guess" discipline as
+    Ssis.Expression.Oracle and Ssis.Extract.ObjectModel (CLAUDE.md trap 12, extended from
+    single-property probing to whole-package construction).
+
+    Deliberately checked in, unlike the builders behind the FIRST three synthetic fixtures
+    (SyntheticForEachScript / SyntheticLookupSplit / SyntheticScriptComponent), which were
+    built in a throwaway PowerShell session and only their .dtsx output kept, confirmed via
+    a git log search for the file's own add-commit: no builder was ever committed. That means those
+    three cannot be regenerated or extended without re-deriving the object-model calls from
+    scratch. This project exists so the next fixture (and any edit to this one) doesn't repeat
+    that loss.
+
+    The GAC references come from Build/Ssis.Gac.props, which detects the installed SSIS
+    version rather than pinning one - see that file's header for why, and for how to pin a
+    version deliberately.
+  -->
+  <Import Project="..\..\..\..\Build\Ssis.Gac.props" />
+
+  <!--
+    Microsoft.SqlServer.FileSystemTask - the managed implementation of Microsoft.FileSystemTask
+    (confirmed via a live probe: a File System Task's own InnerObject.GetType().Assembly),
+    not one of the three general-purpose assemblies Ssis.Gac.props already provides. Reuses that
+    file's own $(SsisGacVersion)/$(_SsisGacMsil) probe results rather than re-deriving them, so
+    this reference tracks the same detected version automatically.
+  -->
+  <ItemGroup Condition="'$(SsisGacVersion)' != ''">
+    <Reference Include="Microsoft.SqlServer.FileSystemTask">
+      <HintPath>$(_SsisGacMsil)\Microsoft.SqlServer.FileSystemTask\$(_SsisVerDir)\Microsoft.SqlServer.FileSystemTask.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

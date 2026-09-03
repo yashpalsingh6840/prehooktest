@@ -1,0 +1,18 @@
+namespace LoadReferenceData.Model;
+
+public sealed class Designation
+{
+    public int DesignationID { get; set; }
+
+    public string DesignationCode { get; set; } = "";
+
+    public string Title { get; set; } = "";
+
+    public int JobLevel { get; set; }
+
+    public string Band { get; set; } = "";
+
+    public string DesignationKey { get; set; } = "";
+
+    public DateTime LoadedAtUtc { get; set; }
+}

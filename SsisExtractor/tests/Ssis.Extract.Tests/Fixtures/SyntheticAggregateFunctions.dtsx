@@ -1,0 +1,628 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:refId="Package"
+  DTS:CreationDate="9/2/2026 8:03:54 PM"
+  DTS:CreationName="Microsoft.Package"
+  DTS:CreatorComputerName="IRIS-CSG-8214"
+  DTS:CreatorName="IRISSOFTWARE\yashpal.singh01"
+  DTS:DTSID="{714F615D-7D29-40AF-B3B6-ED338264BBEB}"
+  DTS:ExecutableType="Microsoft.Package"
+  DTS:LastModifiedProductVersion="16.0.1000.6"
+  DTS:LocaleID="1033"
+  DTS:ObjectName="SyntheticAggregateFunctions"
+  DTS:ProtectionLevel="0"
+  DTS:VersionGUID="{F4F240BA-F089-427C-81EB-EE943589F4BE}">
+  <DTS:Property
+    DTS:Name="PackageFormatVersion">8</DTS:Property>
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_Sql]"
+      DTS:CreationName="OLEDB"
+      DTS:DTSID="{73563347-FD5D-40E5-B33B-0CAF449DFBAC}"
+      DTS:ObjectName="CM_Sql">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectRetryCount="1"
+          DTS:ConnectRetryInterval="5"
+          DTS:ConnectionString="Data Source=.\SQLFORPOC_2022;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Variables />
+  <DTS:Executables>
+    <DTS:Executable
+      DTS:refId="Package\DFT_AggregateFunctions"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:DTSID="{7A3ABA9C-CDB6-4139-AD67-9DA837D3E377}"
+      DTS:ExecutableType="Microsoft.Pipeline"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="DFT_AggregateFunctions"
+      DTS:TaskContact="Performs high-performance data extraction, transformation and loading;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <pipeline
+          version="1">
+          <components>
+            <component
+              refId="Package\DFT_AggregateFunctions\AGG_Functions"
+              componentClassID="Microsoft.Aggregate"
+              contactInfo="Aggregate;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;3"
+              description="Aggregates data with functions such as Average, Sum, Count, Max, and Min. For example, group data to compute the sum of sales per product or the average visits per day."
+              name="AGG_Functions"
+              version="3">
+              <properties>
+                <property
+                  dataType="System.UInt32"
+                  description="Specifies the approximate number of group by keys that the aggregation produces. Low indicates 500,000 key values, Medium indicates 5 million key values, and High indicates more than 25 million key values. Unspecified indicates no KeyScale value is used."
+                  name="KeyScale"
+                  typeConverter="KeyScaleType">0</property>
+                <property
+                  dataType="System.Null"
+                  description="Specifies the exact number of group by keys that the aggregation produces. If a KeyScale value is specified, the value in Keys takes precedence."
+                  name="Keys" />
+                <property
+                  dataType="System.UInt32"
+                  description="Specifies the approximate number of distinct values in a column that the aggregation counts distinctly. Low indicates 500,000 key values, Medium indicates 5 million key values, and High indicates more than 25 million key values. Unspecified indicates no CountDistinctScale value is used."
+                  name="CountDistinctScale"
+                  typeConverter="KeyScaleType">0</property>
+                <property
+                  dataType="System.Null"
+                  description="Specifies the exact number of distinct values in a column that the aggregation counts distinctly. If a CountDistinctScale value is specified, the value in CountDistinctKeys takes precedence."
+                  name="CountDistinctKeys" />
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the percentage by which memory can be extended during the aggregation. Valid values are between 1 and 100."
+                  name="AutoExtendFactor">25</property>
+              </properties>
+              <inputs>
+                <input
+                  refId="Package\DFT_AggregateFunctions\AGG_Functions.Inputs[Aggregate Input 1]"
+                  name="Aggregate Input 1">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_AggregateFunctions\AGG_Functions.Inputs[Aggregate Input 1].Columns[Region]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="Region"
+                      lineageId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Region]" />
+                    <inputColumn
+                      refId="Package\DFT_AggregateFunctions\AGG_Functions.Inputs[Aggregate Input 1].Columns[Amount]"
+                      cachedDataType="r8"
+                      cachedName="Amount"
+                      lineageId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Amount]" />
+                  </inputColumns>
+                  <externalMetadataColumns />
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1]"
+                  name="Aggregate Output 1">
+                  <properties>
+                    <property
+                      dataType="System.UInt32"
+                      description="Specifies the approximate number of group by keys that the aggregation produces. Low indicates 500,000 key values, Medium indicates 5 million key values, and High indicates more than 25 million key values. Unspecified indicates no KeyScale value is used."
+                      name="KeyScale"
+                      typeConverter="KeyScaleType">0</property>
+                    <property
+                      dataType="System.Null"
+                      description="Specifies the exact number of group by keys that the aggregation produces. If a KeyScale value is specified, the value in Keys takes precedence."
+                      name="Keys" />
+                  </properties>
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[Region]"
+                      dataType="wstr"
+                      length="50"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[Region]"
+                      name="Region">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Specifies the ID of the input column used in the aggregation."
+                          name="AggregationColumnId">#{Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Region]}</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the type of aggregation."
+                          name="AggregationType"
+                          typeConverter="AggregationType">0</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Indicates whether the column requires special handling because it may contain oversized data or it requires precision beyond a float data type."
+                          name="IsBig">1</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the string comparison options."
+                          name="AggregationComparisonFlags">0</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[TotalRows]"
+                      dataType="ui8"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[TotalRows]"
+                      name="TotalRows">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Specifies the ID of the input column used in the aggregation."
+                          name="AggregationColumnId">#{Package\DFT_AggregateFunctions\0:invalid}</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the type of aggregation."
+                          name="AggregationType"
+                          typeConverter="AggregationType">2</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Indicates whether the column requires special handling because it may contain oversized data or it requires precision beyond a float data type."
+                          name="IsBig">1</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the string comparison options."
+                          name="AggregationComparisonFlags">0</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[DistinctAmounts]"
+                      dataType="ui4"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[DistinctAmounts]"
+                      name="DistinctAmounts">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Specifies the ID of the input column used in the aggregation."
+                          name="AggregationColumnId">#{Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Amount]}</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the type of aggregation."
+                          name="AggregationType"
+                          typeConverter="AggregationType">3</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Indicates whether the column requires special handling because it may contain oversized data or it requires precision beyond a float data type."
+                          name="IsBig">1</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the string comparison options."
+                          name="AggregationComparisonFlags">0</property>
+                        <property
+                          dataType="System.UInt32"
+                          description="Specifies the approximate number of distinct values in a column that the aggregation counts distinctly. Low indicates 500,000 key values, Medium indicates 5 million key values, and High indicates more than 25 million key values. Unspecified indicates no CountDistinctScale value is used."
+                          name="CountDistinctScale">0</property>
+                        <property
+                          dataType="System.Null"
+                          description="Specifies the exact number of distinct values in a column that the aggregation counts distinctly. If a CountDistinctScale value is specified, the value in CountDistinctKeys takes precedence."
+                          name="CountDistinctKeys" />
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[SumAmount]"
+                      dataType="r8"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[SumAmount]"
+                      name="SumAmount">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Specifies the ID of the input column used in the aggregation."
+                          name="AggregationColumnId">#{Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Amount]}</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the type of aggregation."
+                          name="AggregationType"
+                          typeConverter="AggregationType">4</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Indicates whether the column requires special handling because it may contain oversized data or it requires precision beyond a float data type."
+                          name="IsBig">1</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the string comparison options."
+                          name="AggregationComparisonFlags">0</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[AverageAmount]"
+                      dataType="r8"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[AverageAmount]"
+                      name="AverageAmount">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Specifies the ID of the input column used in the aggregation."
+                          name="AggregationColumnId">#{Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Amount]}</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the type of aggregation."
+                          name="AggregationType"
+                          typeConverter="AggregationType">5</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Indicates whether the column requires special handling because it may contain oversized data or it requires precision beyond a float data type."
+                          name="IsBig">1</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the string comparison options."
+                          name="AggregationComparisonFlags">0</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[MinAmount]"
+                      dataType="r8"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[MinAmount]"
+                      name="MinAmount">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Specifies the ID of the input column used in the aggregation."
+                          name="AggregationColumnId">#{Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Amount]}</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the type of aggregation."
+                          name="AggregationType"
+                          typeConverter="AggregationType">6</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Indicates whether the column requires special handling because it may contain oversized data or it requires precision beyond a float data type."
+                          name="IsBig">1</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the string comparison options."
+                          name="AggregationComparisonFlags">0</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[MaxAmount]"
+                      dataType="r8"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[MaxAmount]"
+                      name="MaxAmount">
+                      <properties>
+                        <property
+                          containsID="true"
+                          dataType="System.Int32"
+                          description="Specifies the ID of the input column used in the aggregation."
+                          name="AggregationColumnId">#{Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Amount]}</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the type of aggregation."
+                          name="AggregationType"
+                          typeConverter="AggregationType">7</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Indicates whether the column requires special handling because it may contain oversized data or it requires precision beyond a float data type."
+                          name="IsBig">1</property>
+                        <property
+                          dataType="System.Int32"
+                          description="Specifies the string comparison options."
+                          name="AggregationComparisonFlags">0</property>
+                      </properties>
+                    </outputColumn>
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_AggregateFunctions\OLE DB Destination"
+              componentClassID="Microsoft.OLEDBDestination"
+              contactInfo="OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4"
+              description="OLE DB Destination"
+              name="OLE DB Destination"
+              usesDispositions="true"
+              version="4">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset">[dbo].[SyntheticAggregateFunctionsTarget]</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Forces the use of the DefaultCodePage property value when describing character data."
+                  name="AlwaysUseDefaultCodePage">false</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">3</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the values supplied for identity columns will be copied to the destination. If false, values for identity columns will be auto-generated at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepIdentity">false</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the columns containing null will have null inserted in the destination. If false, columns containing null will have their default values inserted at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepNulls">false</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies options to be used with fast load.  Applies only if fast load is turned on."
+                  name="FastLoadOptions"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies when commits are issued during data insertion.  A value of 0 specifies that one commit will be issued at the end of data insertion.  Applies only if fast load is turned on."
+                  name="FastLoadMaxInsertCommitSize">2147483647</property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_AggregateFunctions\OLE DB Destination.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_Sql]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_Sql]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <inputs>
+                <input
+                  refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input]"
+                  errorOrTruncationOperation="Insert"
+                  errorRowDisposition="FailComponent"
+                  hasSideEffects="true"
+                  name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[Region]"
+                      cachedDataType="wstr"
+                      cachedLength="50"
+                      cachedName="Region"
+                      externalMetadataColumnId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[Region]"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[Region]" />
+                    <inputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[TotalRows]"
+                      cachedDataType="ui8"
+                      cachedName="TotalRows"
+                      externalMetadataColumnId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[TotalRows]"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[TotalRows]" />
+                    <inputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[DistinctAmounts]"
+                      cachedDataType="ui4"
+                      cachedName="DistinctAmounts"
+                      externalMetadataColumnId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[DistinctAmounts]"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[DistinctAmounts]" />
+                    <inputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[SumAmount]"
+                      cachedDataType="r8"
+                      cachedName="SumAmount"
+                      externalMetadataColumnId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[SumAmount]"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[SumAmount]" />
+                    <inputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[AverageAmount]"
+                      cachedDataType="r8"
+                      cachedName="AverageAmount"
+                      externalMetadataColumnId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[AverageAmount]"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[AverageAmount]" />
+                    <inputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[MinAmount]"
+                      cachedDataType="r8"
+                      cachedName="MinAmount"
+                      externalMetadataColumnId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[MinAmount]"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[MinAmount]" />
+                    <inputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[MaxAmount]"
+                      cachedDataType="r8"
+                      cachedName="MaxAmount"
+                      externalMetadataColumnId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[MaxAmount]"
+                      lineageId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1].Columns[MaxAmount]" />
+                  </inputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[Region]"
+                      dataType="wstr"
+                      length="50"
+                      name="Region" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[TotalRows]"
+                      dataType="i8"
+                      name="TotalRows" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[DistinctAmounts]"
+                      dataType="i8"
+                      name="DistinctAmounts" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[SumAmount]"
+                      dataType="r8"
+                      name="SumAmount" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[AverageAmount]"
+                      dataType="r8"
+                      name="AverageAmount" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[MinAmount]"
+                      dataType="r8"
+                      name="MinAmount" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[MaxAmount]"
+                      dataType="r8"
+                      name="MaxAmount" />
+                  </externalMetadataColumns>
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_AggregateFunctions\OLE DB Destination.Outputs[OLE DB Destination Error Output]"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="OLE DB Destination Error Output"
+                  synchronousInputId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_AggregateFunctions\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_AggregateFunctions\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_AggregateFunctions\OLE DB Source"
+              componentClassID="Microsoft.OLEDBSource"
+              contactInfo="OLE DB Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;7"
+              description="OLE DB Source"
+              name="OLE DB Source"
+              usesDispositions="true"
+              version="7">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset"></property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor">SELECT Region, Amount FROM dbo.SyntheticAggregateFunctionsSource</property>
+                <property
+                  dataType="System.String"
+                  description="The variable that contains the SQL command to be executed."
+                  name="SqlCommandVariable"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Forces the use of the DefaultCodePage property value when describing character data."
+                  name="AlwaysUseDefaultCodePage">false</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">2</property>
+                <property
+                  dataType="System.String"
+                  description="The mappings between the parameters in the SQL command and variables."
+                  name="ParameterMapping"></property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_AggregateFunctions\OLE DB Source.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_Sql]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_Sql]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <outputs>
+                <output
+                  refId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output]"
+                  name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Region]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[Region]"
+                      length="50"
+                      lineageId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Region]"
+                      name="Region"
+                      truncationRowDisposition="FailComponent" />
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Amount]"
+                      dataType="r8"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[Amount]"
+                      lineageId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].Columns[Amount]"
+                      name="Amount"
+                      truncationRowDisposition="FailComponent" />
+                  </outputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[Region]"
+                      dataType="wstr"
+                      length="50"
+                      name="Region" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[Amount]"
+                      dataType="r8"
+                      name="Amount" />
+                  </externalMetadataColumns>
+                </output>
+                <output
+                  refId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Error Output]"
+                  isErrorOut="true"
+                  name="OLE DB Source Error Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[Region]"
+                      dataType="wstr"
+                      length="50"
+                      lineageId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[Region]"
+                      name="Region" />
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[Amount]"
+                      dataType="r8"
+                      lineageId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[Amount]"
+                      name="Amount" />
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+          </components>
+          <paths>
+            <path
+              refId="Package\DFT_AggregateFunctions.Paths[Aggregate Output 1]"
+              endId="Package\DFT_AggregateFunctions\OLE DB Destination.Inputs[OLE DB Destination Input]"
+              name="Aggregate Output 1"
+              startId="Package\DFT_AggregateFunctions\AGG_Functions.Outputs[Aggregate Output 1]" />
+            <path
+              refId="Package\DFT_AggregateFunctions.Paths[OLE DB Source Output]"
+              endId="Package\DFT_AggregateFunctions\AGG_Functions.Inputs[Aggregate Input 1]"
+              name="OLE DB Source Output"
+              startId="Package\DFT_AggregateFunctions\OLE DB Source.Outputs[OLE DB Source Output]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+</DTS:Executable>

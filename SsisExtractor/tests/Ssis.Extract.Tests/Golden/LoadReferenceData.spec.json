@@ -1,0 +1,3083 @@
+{
+  "Checkpoints": {
+    "CheckpointFileName": null,
+    "CheckpointUsage": null,
+    "SaveCheckpoints": null
+  },
+  "Configurations": [],
+  "ConnectionManagers": [
+    {
+      "ConnectionString": "D:\\PoC\\SSIS\\Data\\Input\\Department\\Departments.csv",
+      "CreationName": "FLATFILE",
+      "DelayValidation": null,
+      "Description": "Inbound department CSV.",
+      "DtsId": "{40D1AAA6-9E5B-4382-A94E-623D0F35D399}",
+      "EncryptedProperties": [],
+      "FlatFileFormat": {
+        "CodePage": 1252,
+        "ColumnNamesInFirstDataRow": true,
+        "Columns": [
+          {
+            "ColumnDelimiterDecoded": ",",
+            "ColumnDelimiterDisplay": ",",
+            "ColumnDelimiterRaw": "_x002C_",
+            "ColumnType": "Delimited",
+            "DataPrecision": null,
+            "DataScale": null,
+            "DataTypeName": "DT_I4",
+            "DataTypeRaw": 3,
+            "DtsId": "{8D7E15CC-3054-4009-BAED-9C4824754D88}",
+            "MaximumWidth": null,
+            "ObjectName": "DepartmentID",
+            "TextQualified": true
+          },
+          {
+            "ColumnDelimiterDecoded": ",",
+            "ColumnDelimiterDisplay": ",",
+            "ColumnDelimiterRaw": "_x002C_",
+            "ColumnType": "Delimited",
+            "DataPrecision": null,
+            "DataScale": null,
+            "DataTypeName": "DT_WSTR",
+            "DataTypeRaw": 130,
+            "DtsId": "{B69F8ED6-8A91-454E-8FE6-1C75DDC45BF3}",
+            "MaximumWidth": 10,
+            "ObjectName": "DepartmentCode",
+            "TextQualified": true
+          },
+          {
+            "ColumnDelimiterDecoded": ",",
+            "ColumnDelimiterDisplay": ",",
+            "ColumnDelimiterRaw": "_x002C_",
+            "ColumnType": "Delimited",
+            "DataPrecision": null,
+            "DataScale": null,
+            "DataTypeName": "DT_WSTR",
+            "DataTypeRaw": 130,
+            "DtsId": "{3A628F9D-1543-4DDF-9271-3FEB31A43E7B}",
+            "MaximumWidth": 50,
+            "ObjectName": "DepartmentName",
+            "TextQualified": true
+          },
+          {
+            "ColumnDelimiterDecoded": ",",
+            "ColumnDelimiterDisplay": ",",
+            "ColumnDelimiterRaw": "_x002C_",
+            "ColumnType": "Delimited",
+            "DataPrecision": null,
+            "DataScale": null,
+            "DataTypeName": "DT_WSTR",
+            "DataTypeRaw": 130,
+            "DtsId": "{6F6A87F6-A081-477C-81AB-94382F311761}",
+            "MaximumWidth": 20,
+            "ObjectName": "CostCenter",
+            "TextQualified": true
+          },
+          {
+            "ColumnDelimiterDecoded": "\r\n",
+            "ColumnDelimiterDisplay": "\\r\\n",
+            "ColumnDelimiterRaw": "_x000D__x000A_",
+            "ColumnType": "Delimited",
+            "DataPrecision": null,
+            "DataScale": null,
+            "DataTypeName": "DT_I4",
+            "DataTypeRaw": 3,
+            "DtsId": "{610A2015-87F1-482B-929A-A79BD178C63D}",
+            "MaximumWidth": null,
+            "ObjectName": "HeadCount",
+            "TextQualified": true
+          }
+        ],
+        "Format": "Delimited",
+        "HeaderRowDelimiterDecoded": "\r\n",
+        "HeaderRowDelimiterDisplay": "\\r\\n",
+        "HeaderRowDelimiterRaw": "_x000D__x000A_",
+        "HeaderRowsToSkip": null,
+        "LocaleId": "1033",
+        "RowDelimiterDecoded": "",
+        "RowDelimiterDisplay": "",
+        "RowDelimiterRaw": "",
+        "TextQualifierDecoded": "\u0022",
+        "TextQualifierRaw": "_x0022_",
+        "Unicode": null
+      },
+      "ObjectName": "CM_DepartmentCsv",
+      "Parsed": {
+        "AuthMode": null,
+        "Database": null,
+        "Extras": {},
+        "FilePath": "D:\\PoC\\SSIS\\Data\\Input\\Department\\Departments.csv",
+        "Provider": null,
+        "Server": null,
+        "UserId": null
+      },
+      "PropertyExpressions": [
+        {
+          "Expression": "@[User::DepartmentFilePath]",
+          "PropertyName": "ConnectionString"
+        }
+      ],
+      "RefId": "Package.ConnectionManagers[CM_DepartmentCsv]",
+      "RetainSameConnection": null,
+      "Scope": "Package",
+      "UnredactedConnectionString": null,
+      "WasRedacted": false
+    },
+    {
+      "ConnectionString": "D:\\PoC\\SSIS\\Data\\Input\\Designation\\Designations.csv",
+      "CreationName": "FLATFILE",
+      "DelayValidation": null,
+      "Description": "Inbound designation CSV.",
+      "DtsId": "{73683CAD-6D12-49CB-9C8F-763B6B71599A}",
+      "EncryptedProperties": [],
+      "FlatFileFormat": {
+        "CodePage": 1252,
+        "ColumnNamesInFirstDataRow": true,
+        "Columns": [
+          {
+            "ColumnDelimiterDecoded": ",",
+            "ColumnDelimiterDisplay": ",",
+            "ColumnDelimiterRaw": "_x002C_",
+            "ColumnType": "Delimited",
+            "DataPrecision": null,
+            "DataScale": null,
+            "DataTypeName": "DT_I4",
+            "DataTypeRaw": 3,
+            "DtsId": "{28F43C36-380F-48C2-8815-EFC69F65E40E}",
+            "MaximumWidth": null,
+            "ObjectName": "DesignationID",
+            "TextQualified": true
+          },
+          {
+            "ColumnDelimiterDecoded": ",",
+            "ColumnDelimiterDisplay": ",",
+            "ColumnDelimiterRaw": "_x002C_",
+            "ColumnType": "Delimited",
+            "DataPrecision": null,
+            "DataScale": null,
+            "DataTypeName": "DT_WSTR",
+            "DataTypeRaw": 130,
+            "DtsId": "{61DE2B95-4342-4453-A09D-C538FDC6D9E6}",
+            "MaximumWidth": 10,
+            "ObjectName": "DesignationCode",
+            "TextQualified": true
+          },
+          {
+            "ColumnDelimiterDecoded": ",",
+            "ColumnDelimiterDisplay": ",",
+            "ColumnDelimiterRaw": "_x002C_",
+            "ColumnType": "Delimited",
+            "DataPrecision": null,
+            "DataScale": null,
+            "DataTypeName": "DT_WSTR",
+            "DataTypeRaw": 130,
+            "DtsId": "{2D60D8D7-A419-4BF7-9621-45F6EF0A4CB8}",
+            "MaximumWidth": 50,
+            "ObjectName": "Title",
+            "TextQualified": true
+          },
+          {
+            "ColumnDelimiterDecoded": ",",
+            "ColumnDelimiterDisplay": ",",
+            "ColumnDelimiterRaw": "_x002C_",
+            "ColumnType": "Delimited",
+            "DataPrecision": null,
+            "DataScale": null,
+            "DataTypeName": "DT_I4",
+            "DataTypeRaw": 3,
+            "DtsId": "{25BD1234-209F-41A3-9DA9-9D7700AD6EB7}",
+            "MaximumWidth": null,
+            "ObjectName": "JobLevel",
+            "TextQualified": true
+          },
+          {
+            "ColumnDelimiterDecoded": "\r\n",
+            "ColumnDelimiterDisplay": "\\r\\n",
+            "ColumnDelimiterRaw": "_x000D__x000A_",
+            "ColumnType": "Delimited",
+            "DataPrecision": null,
+            "DataScale": null,
+            "DataTypeName": "DT_WSTR",
+            "DataTypeRaw": 130,
+            "DtsId": "{73D8F25F-9036-4664-9FAD-2BE3E15B3F51}",
+            "MaximumWidth": 5,
+            "ObjectName": "Band",
+            "TextQualified": true
+          }
+        ],
+        "Format": "Delimited",
+        "HeaderRowDelimiterDecoded": "\r\n",
+        "HeaderRowDelimiterDisplay": "\\r\\n",
+        "HeaderRowDelimiterRaw": "_x000D__x000A_",
+        "HeaderRowsToSkip": null,
+        "LocaleId": "1033",
+        "RowDelimiterDecoded": "",
+        "RowDelimiterDisplay": "",
+        "RowDelimiterRaw": "",
+        "TextQualifierDecoded": "\u0022",
+        "TextQualifierRaw": "_x0022_",
+        "Unicode": null
+      },
+      "ObjectName": "CM_DesignationCsv",
+      "Parsed": {
+        "AuthMode": null,
+        "Database": null,
+        "Extras": {},
+        "FilePath": "D:\\PoC\\SSIS\\Data\\Input\\Designation\\Designations.csv",
+        "Provider": null,
+        "Server": null,
+        "UserId": null
+      },
+      "PropertyExpressions": [
+        {
+          "Expression": "@[User::DesignationFilePath]",
+          "PropertyName": "ConnectionString"
+        }
+      ],
+      "RefId": "Package.ConnectionManagers[CM_DesignationCsv]",
+      "RetainSameConnection": null,
+      "Scope": "Package",
+      "UnredactedConnectionString": null,
+      "WasRedacted": false
+    },
+    {
+      "ConnectionString": "Data Source=.\\SQLFORPOC_2022;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;",
+      "CreationName": "OLEDB",
+      "DelayValidation": null,
+      "Description": "Destination SQL Server database.",
+      "DtsId": "{203D8BE4-BC5A-4EC2-9EE1-D8D84ED092BC}",
+      "EncryptedProperties": [],
+      "FlatFileFormat": null,
+      "ObjectName": "CM_TargetDb",
+      "Parsed": {
+        "AuthMode": "Integrated",
+        "Database": "SsisPoC",
+        "Extras": {
+          "Auto Translate": "False"
+        },
+        "FilePath": null,
+        "Provider": "MSOLEDBSQL.1",
+        "Server": ".\\SQLFORPOC_2022",
+        "UserId": null
+      },
+      "PropertyExpressions": [
+        {
+          "Expression": "@[$Project::TargetConnectionString]",
+          "PropertyName": "ConnectionString"
+        }
+      ],
+      "RefId": "Package.ConnectionManagers[CM_TargetDb]",
+      "RetainSameConnection": null,
+      "Scope": "Package",
+      "UnredactedConnectionString": null,
+      "WasRedacted": false
+    }
+  ],
+  "Coverage": {
+    "CoveragePercent": 100,
+    "ExcludedElements": 1,
+    "TotalElements": 274,
+    "UnmappedElements": 0
+  },
+  "CreationDate": "8/12/2026 6:10:00 PM",
+  "CreatorComputerName": "IRIS-CSG-7247",
+  "CreatorName": "IRISSOFTWARE\\yashpal.singh01",
+  "Dag": {
+    "HasCycle": false,
+    "ParallelLevels": [
+      [
+        "Package\\SQL_TruncateTargets"
+      ],
+      [
+        "Package\\DFT_LoadDepartment"
+      ],
+      [
+        "Package\\DFT_LoadDesignation"
+      ]
+    ],
+    "TopologicalOrder": [
+      "Package\\SQL_TruncateTargets",
+      "Package\\DFT_LoadDepartment",
+      "Package\\DFT_LoadDesignation"
+    ]
+  },
+  "Description": "Loads dbo.Department and dbo.Designation from two CSVs in two different folders. All four file-location values are package parameters.",
+  "DtsId": "{F7803B39-DD7A-4B26-8565-B62908BE633F}",
+  "EnableConfigurations": false,
+  "EventHandlers": [],
+  "Executables": [
+    {
+      "Children": [],
+      "Dag": {
+        "HasCycle": false,
+        "ParallelLevels": [],
+        "TopologicalOrder": []
+      },
+      "DataFlowTask": {
+        "Lineage": {
+          "ConstantColumns": [
+            {
+              "ColumnName": "LoadedAtUtc",
+              "ColumnRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+              "ComponentName": "DER_DepartmentKey",
+              "ComponentRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey",
+              "Expression": "GETUTCDATE()",
+              "LineageId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]"
+            }
+          ],
+          "Edges": [
+            {
+              "Expression": null,
+              "FromColumnName": "DepartmentID",
+              "FromColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]",
+              "FromComponentName": "FF_SRC_Department",
+              "FromComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]",
+              "ToColumnName": "DepartmentID",
+              "ToColumnRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Inputs[Derived Column Input].Columns[DepartmentID]",
+              "ToComponentName": "DER_DepartmentKey",
+              "ToComponentRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "DepartmentCode",
+              "FromColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]",
+              "FromComponentName": "FF_SRC_Department",
+              "FromComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]",
+              "ToColumnName": "DepartmentCode",
+              "ToColumnRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Inputs[Derived Column Input].Columns[DepartmentCode]",
+              "ToComponentName": "DER_DepartmentKey",
+              "ToComponentRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey"
+            },
+            {
+              "Expression": "(DT_WSTR,25)(UPPER(DepartmentCode) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)DepartmentID)",
+              "FromColumnName": "DepartmentCode",
+              "FromColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]",
+              "FromComponentName": "FF_SRC_Department",
+              "FromComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Kind": "ExpressionDerived",
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]",
+              "ToColumnName": "DepartmentKey",
+              "ToColumnRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[DepartmentKey]",
+              "ToComponentName": "DER_DepartmentKey",
+              "ToComponentRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey"
+            },
+            {
+              "Expression": "(DT_WSTR,25)(UPPER(DepartmentCode) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)DepartmentID)",
+              "FromColumnName": "DepartmentID",
+              "FromColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]",
+              "FromComponentName": "FF_SRC_Department",
+              "FromComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Kind": "ExpressionDerived",
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]",
+              "ToColumnName": "DepartmentKey",
+              "ToColumnRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[DepartmentKey]",
+              "ToComponentName": "DER_DepartmentKey",
+              "ToComponentRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "DepartmentID",
+              "FromColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]",
+              "FromComponentName": "FF_SRC_Department",
+              "FromComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]",
+              "ToColumnName": "DepartmentID",
+              "ToColumnRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[DepartmentID]",
+              "ToComponentName": "OLEDST_Department",
+              "ToComponentRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "DepartmentCode",
+              "FromColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]",
+              "FromComponentName": "FF_SRC_Department",
+              "FromComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]",
+              "ToColumnName": "DepartmentCode",
+              "ToColumnRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[DepartmentCode]",
+              "ToComponentName": "OLEDST_Department",
+              "ToComponentRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "DepartmentName",
+              "FromColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentName]",
+              "FromComponentName": "FF_SRC_Department",
+              "FromComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentName]",
+              "ToColumnName": "DepartmentName",
+              "ToColumnRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[DepartmentName]",
+              "ToComponentName": "OLEDST_Department",
+              "ToComponentRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "CostCenter",
+              "FromColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[CostCenter]",
+              "FromComponentName": "FF_SRC_Department",
+              "FromComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[CostCenter]",
+              "ToColumnName": "CostCenter",
+              "ToColumnRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[CostCenter]",
+              "ToComponentName": "OLEDST_Department",
+              "ToComponentRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "HeadCount",
+              "FromColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[HeadCount]",
+              "FromComponentName": "FF_SRC_Department",
+              "FromComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[HeadCount]",
+              "ToColumnName": "HeadCount",
+              "ToColumnRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[HeadCount]",
+              "ToComponentName": "OLEDST_Department",
+              "ToComponentRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "DepartmentKey",
+              "FromColumnRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[DepartmentKey]",
+              "FromComponentName": "DER_DepartmentKey",
+              "FromComponentRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[DepartmentKey]",
+              "ToColumnName": "DepartmentKey",
+              "ToColumnRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[DepartmentKey]",
+              "ToComponentName": "OLEDST_Department",
+              "ToComponentRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "LoadedAtUtc",
+              "FromColumnRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+              "FromComponentName": "DER_DepartmentKey",
+              "FromComponentRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+              "ToColumnName": "LoadedAtUtc",
+              "ToColumnRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[LoadedAtUtc]",
+              "ToComponentName": "OLEDST_Department",
+              "ToComponentRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department"
+            }
+          ],
+          "UnusedColumns": [
+            {
+              "ColumnName": "ErrorCode",
+              "ColumnRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorCode]",
+              "ComponentName": "DER_DepartmentKey",
+              "ComponentRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorCode]"
+            },
+            {
+              "ColumnName": "ErrorColumn",
+              "ColumnRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]",
+              "ComponentName": "DER_DepartmentKey",
+              "ComponentRefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
+            },
+            {
+              "ColumnName": "Flat File Source Error Output Column",
+              "ColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[Flat File Source Error Output Column]",
+              "ComponentName": "FF_SRC_Department",
+              "ComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[Flat File Source Error Output Column]"
+            },
+            {
+              "ColumnName": "ErrorCode",
+              "ColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[ErrorCode]",
+              "ComponentName": "FF_SRC_Department",
+              "ComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[ErrorCode]"
+            },
+            {
+              "ColumnName": "ErrorColumn",
+              "ColumnRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[ErrorColumn]",
+              "ComponentName": "FF_SRC_Department",
+              "ComponentRefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[ErrorColumn]"
+            },
+            {
+              "ColumnName": "ErrorCode",
+              "ColumnRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]",
+              "ComponentName": "OLEDST_Department",
+              "ComponentRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+            },
+            {
+              "ColumnName": "ErrorColumn",
+              "ColumnRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]",
+              "ComponentName": "OLEDST_Department",
+              "ComponentRefId": "Package\\DFT_LoadDepartment\\OLEDST_Department",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+            }
+          ]
+        },
+        "Pipeline": {
+          "Components": [
+            {
+              "AdoNetDestination": null,
+              "AdoNetSource": null,
+              "Aggregate": null,
+              "ComponentClassId": "Microsoft.DerivedColumn",
+              "ConditionalSplit": null,
+              "Connections": [],
+              "ContactInfo": "Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0",
+              "DataConvert": null,
+              "Description": "Creates new column values by applying expressions to transformation input columns.",
+              "ExcelSource": null,
+              "FlatFileDestination": null,
+              "FlatFileSource": null,
+              "Inputs": [
+                {
+                  "Columns": [
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "i4",
+                      "CachedLength": null,
+                      "CachedName": "DepartmentID",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Inputs[Derived Column Input].Columns[DepartmentID]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "wstr",
+                      "CachedLength": 10,
+                      "CachedName": "DepartmentCode",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Inputs[Derived Column Input].Columns[DepartmentCode]",
+                      "UsageType": null
+                    }
+                  ],
+                  "Description": "Input to the Derived Column Transformation",
+                  "ErrorRowDisposition": null,
+                  "ExternalMetadataColumns": [],
+                  "HasSideEffects": null,
+                  "Name": "Derived Column Input",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Inputs[Derived Column Input]",
+                  "TruncationRowDisposition": null
+                }
+              ],
+              "IsUnresolvedLegacyClsid": false,
+              "LocaleId": null,
+              "Lookup": null,
+              "MergeJoin": null,
+              "Name": "DER_DepartmentKey",
+              "OleDbCommand": null,
+              "OleDbDestination": null,
+              "OleDbSource": null,
+              "Outputs": [
+                {
+                  "Columns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "ErrorOrTruncationOperation": "Computation",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": "(DT_WSTR,25)([UPPER](#{Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]}) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)#{Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]})",
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": "(DT_WSTR,25)(UPPER(DepartmentCode) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)DepartmentID)",
+                      "Length": 25,
+                      "LineageId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[DepartmentKey]",
+                      "Name": "DepartmentKey",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.String",
+                          "Description": "Derived Column Expression",
+                          "IsArray": false,
+                          "Name": "Expression",
+                          "Value": "(DT_WSTR,25)([UPPER](#{Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]}) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)#{Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]})"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.String",
+                          "Description": "Derived Column Friendly Expression",
+                          "IsArray": false,
+                          "Name": "FriendlyExpression",
+                          "Value": "(DT_WSTR,25)(UPPER(DepartmentCode) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)DepartmentID)"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[DepartmentKey]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "dbTimeStamp",
+                      "ErrorOrTruncationOperation": "Computation",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": "[GETUTCDATE]()",
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": "GETUTCDATE()",
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+                      "Name": "LoadedAtUtc",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.String",
+                          "Description": "Derived Column Expression",
+                          "IsArray": false,
+                          "Name": "Expression",
+                          "Value": "[GETUTCDATE]()"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.String",
+                          "Description": "Derived Column Friendly Expression",
+                          "IsArray": false,
+                          "Name": "FriendlyExpression",
+                          "Value": "GETUTCDATE()"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    }
+                  ],
+                  "Dangling": null,
+                  "DeleteOutputOnPathDetached": null,
+                  "Description": "Default Output of the Derived Column Transformation",
+                  "ExclusionGroup": "1",
+                  "ExternalMetadataColumns": [],
+                  "IsErrorOut": null,
+                  "Name": "Derived Column Output",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output]",
+                  "SynchronousInputId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Inputs[Derived Column Input]"
+                },
+                {
+                  "Columns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorCode]",
+                      "Name": "ErrorCode",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorCode]",
+                      "Scale": null,
+                      "SpecialFlags": 1,
+                      "TruncationRowDisposition": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]",
+                      "Name": "ErrorColumn",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]",
+                      "Scale": null,
+                      "SpecialFlags": 2,
+                      "TruncationRowDisposition": null
+                    }
+                  ],
+                  "Dangling": null,
+                  "DeleteOutputOnPathDetached": null,
+                  "Description": "Error Output of the Derived Column Transformation",
+                  "ExclusionGroup": "1",
+                  "ExternalMetadataColumns": [],
+                  "IsErrorOut": true,
+                  "Name": "Derived Column Error Output",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Error Output]",
+                  "SynchronousInputId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Inputs[Derived Column Input]"
+                }
+              ],
+              "Properties": [],
+              "RawComponentClassId": null,
+              "RefId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey",
+              "RowCount": null,
+              "ScriptComponent": null,
+              "Sort": null,
+              "UsesDispositions": true,
+              "ValidateExternalMetadata": null,
+              "Version": null
+            },
+            {
+              "AdoNetDestination": null,
+              "AdoNetSource": null,
+              "Aggregate": null,
+              "ComponentClassId": "Microsoft.FlatFileSource",
+              "ConditionalSplit": null,
+              "Connections": [
+                {
+                  "ConnectionManagerName": "CM_DepartmentCsv",
+                  "ConnectionManagerRefRaw": "Package.ConnectionManagers[CM_DepartmentCsv]",
+                  "Description": null,
+                  "Name": "FlatFileConnection",
+                  "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Connections[FlatFileConnection]"
+                }
+              ],
+              "ContactInfo": "Flat File Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;1",
+              "DataConvert": null,
+              "Description": "Flat File Source",
+              "ExcelSource": null,
+              "FlatFileDestination": null,
+              "FlatFileSource": {
+                "ColumnMappings": [
+                  {
+                    "ComponentColumnName": "DepartmentID",
+                    "ExternalColumnName": "DepartmentID",
+                    "ExternalDataType": "i4"
+                  },
+                  {
+                    "ComponentColumnName": "DepartmentCode",
+                    "ExternalColumnName": "DepartmentCode",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "DepartmentName",
+                    "ExternalColumnName": "DepartmentName",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "CostCenter",
+                    "ExternalColumnName": "CostCenter",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "HeadCount",
+                    "ExternalColumnName": "HeadCount",
+                    "ExternalDataType": "i4"
+                  }
+                ],
+                "ConnectionName": "CM_DepartmentCsv",
+                "FileNameColumnName": null,
+                "RetainNulls": false
+              },
+              "Inputs": [],
+              "IsUnresolvedLegacyClsid": false,
+              "LocaleId": "1033",
+              "Lookup": null,
+              "MergeJoin": null,
+              "Name": "FF_SRC_Department",
+              "OleDbCommand": null,
+              "OleDbDestination": null,
+              "OleDbSource": null,
+              "Outputs": [
+                {
+                  "Columns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": "Conversion",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].ExternalColumns[DepartmentID]",
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]",
+                      "Name": "DepartmentID",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the column uses the faster, locale-neutral parsing routines.",
+                          "IsArray": false,
+                          "Name": "FastParse",
+                          "Value": "false"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the data is in binary format.",
+                          "IsArray": false,
+                          "Name": "UseBinaryFormat",
+                          "Value": "false"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "ErrorOrTruncationOperation": "Conversion",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].ExternalColumns[DepartmentCode]",
+                      "FriendlyExpression": null,
+                      "Length": 10,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]",
+                      "Name": "DepartmentCode",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the column uses the faster, locale-neutral parsing routines.",
+                          "IsArray": false,
+                          "Name": "FastParse",
+                          "Value": "false"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the data is in binary format.",
+                          "IsArray": false,
+                          "Name": "UseBinaryFormat",
+                          "Value": "false"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "ErrorOrTruncationOperation": "Conversion",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].ExternalColumns[DepartmentName]",
+                      "FriendlyExpression": null,
+                      "Length": 50,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentName]",
+                      "Name": "DepartmentName",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the column uses the faster, locale-neutral parsing routines.",
+                          "IsArray": false,
+                          "Name": "FastParse",
+                          "Value": "false"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the data is in binary format.",
+                          "IsArray": false,
+                          "Name": "UseBinaryFormat",
+                          "Value": "false"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentName]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "ErrorOrTruncationOperation": "Conversion",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].ExternalColumns[CostCenter]",
+                      "FriendlyExpression": null,
+                      "Length": 20,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[CostCenter]",
+                      "Name": "CostCenter",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the column uses the faster, locale-neutral parsing routines.",
+                          "IsArray": false,
+                          "Name": "FastParse",
+                          "Value": "false"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the data is in binary format.",
+                          "IsArray": false,
+                          "Name": "UseBinaryFormat",
+                          "Value": "false"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[CostCenter]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": "Conversion",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].ExternalColumns[HeadCount]",
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[HeadCount]",
+                      "Name": "HeadCount",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the column uses the faster, locale-neutral parsing routines.",
+                          "IsArray": false,
+                          "Name": "FastParse",
+                          "Value": "false"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the data is in binary format.",
+                          "IsArray": false,
+                          "Name": "UseBinaryFormat",
+                          "Value": "false"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[HeadCount]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    }
+                  ],
+                  "Dangling": null,
+                  "DeleteOutputOnPathDetached": null,
+                  "Description": null,
+                  "ExclusionGroup": null,
+                  "ExternalMetadataColumns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "Length": null,
+                      "Name": "DepartmentID",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].ExternalColumns[DepartmentID]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 10,
+                      "Name": "DepartmentCode",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].ExternalColumns[DepartmentCode]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 50,
+                      "Name": "DepartmentName",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].ExternalColumns[DepartmentName]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 20,
+                      "Name": "CostCenter",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].ExternalColumns[CostCenter]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "Length": null,
+                      "Name": "HeadCount",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].ExternalColumns[HeadCount]",
+                      "Scale": null
+                    }
+                  ],
+                  "IsErrorOut": null,
+                  "Name": "Flat File Source Output",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output]",
+                  "SynchronousInputId": null
+                },
+                {
+                  "Columns": [
+                    {
+                      "CodePage": 1252,
+                      "DataType": "text",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[Flat File Source Error Output Column]",
+                      "Name": "Flat File Source Error Output Column",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[Flat File Source Error Output Column]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[ErrorCode]",
+                      "Name": "ErrorCode",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[ErrorCode]",
+                      "Scale": null,
+                      "SpecialFlags": 1,
+                      "TruncationRowDisposition": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[ErrorColumn]",
+                      "Name": "ErrorColumn",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output].Columns[ErrorColumn]",
+                      "Scale": null,
+                      "SpecialFlags": 2,
+                      "TruncationRowDisposition": null
+                    }
+                  ],
+                  "Dangling": null,
+                  "DeleteOutputOnPathDetached": null,
+                  "Description": null,
+                  "ExclusionGroup": null,
+                  "ExternalMetadataColumns": [],
+                  "IsErrorOut": true,
+                  "Name": "Flat File Source Error Output",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Error Output]",
+                  "SynchronousInputId": null
+                }
+              ],
+              "Properties": [
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Boolean",
+                  "Description": "Specifies whether zero-length columns are treated as null.",
+                  "IsArray": false,
+                  "Name": "RetainNulls",
+                  "Value": "false"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.String",
+                  "Description": "Specifies the name of an output column containing the file name. If no name is specified, no output column containing the file name will be generated.",
+                  "IsArray": false,
+                  "Name": "FileNameColumnName",
+                  "Value": ""
+                }
+              ],
+              "RawComponentClassId": null,
+              "RefId": "Package\\DFT_LoadDepartment\\FF_SRC_Department",
+              "RowCount": null,
+              "ScriptComponent": null,
+              "Sort": null,
+              "UsesDispositions": true,
+              "ValidateExternalMetadata": null,
+              "Version": "1"
+            },
+            {
+              "AdoNetDestination": null,
+              "AdoNetSource": null,
+              "Aggregate": null,
+              "ComponentClassId": "Microsoft.OLEDBDestination",
+              "ConditionalSplit": null,
+              "Connections": [
+                {
+                  "ConnectionManagerName": "CM_TargetDb",
+                  "ConnectionManagerRefRaw": "Package.ConnectionManagers[CM_TargetDb]",
+                  "Description": "The OLE DB runtime connection used to access the database.",
+                  "Name": "OleDbConnection",
+                  "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Connections[OleDbConnection]"
+                }
+              ],
+              "ContactInfo": "OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4",
+              "DataConvert": null,
+              "Description": "OLE DB Destination",
+              "ExcelSource": null,
+              "FlatFileDestination": null,
+              "FlatFileSource": null,
+              "Inputs": [
+                {
+                  "Columns": [
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "i4",
+                      "CachedLength": null,
+                      "CachedName": "DepartmentID",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[DepartmentID]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentID]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[DepartmentID]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "wstr",
+                      "CachedLength": 10,
+                      "CachedName": "DepartmentCode",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[DepartmentCode]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentCode]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[DepartmentCode]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "wstr",
+                      "CachedLength": 50,
+                      "CachedName": "DepartmentName",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[DepartmentName]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[DepartmentName]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[DepartmentName]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "wstr",
+                      "CachedLength": 20,
+                      "CachedName": "CostCenter",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[CostCenter]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[CostCenter]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[CostCenter]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "i4",
+                      "CachedLength": null,
+                      "CachedName": "HeadCount",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[HeadCount]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output].Columns[HeadCount]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[HeadCount]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "wstr",
+                      "CachedLength": 25,
+                      "CachedName": "DepartmentKey",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[DepartmentKey]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[DepartmentKey]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[DepartmentKey]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "dbTimeStamp",
+                      "CachedLength": null,
+                      "CachedName": "LoadedAtUtc",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[LoadedAtUtc]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].Columns[LoadedAtUtc]",
+                      "UsageType": null
+                    }
+                  ],
+                  "Description": null,
+                  "ErrorRowDisposition": "FailComponent",
+                  "ExternalMetadataColumns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "Length": null,
+                      "Name": "DepartmentID",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[DepartmentID]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 25,
+                      "Name": "DepartmentKey",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[DepartmentKey]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 10,
+                      "Name": "DepartmentCode",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[DepartmentCode]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 50,
+                      "Name": "DepartmentName",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[DepartmentName]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 20,
+                      "Name": "CostCenter",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[CostCenter]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "Length": null,
+                      "Name": "HeadCount",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[HeadCount]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "dbTimeStamp2",
+                      "Length": null,
+                      "Name": "LoadedAtUtc",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input].ExternalColumns[LoadedAtUtc]",
+                      "Scale": 3
+                    }
+                  ],
+                  "HasSideEffects": true,
+                  "Name": "OLE DB Destination Input",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input]",
+                  "TruncationRowDisposition": null
+                }
+              ],
+              "IsUnresolvedLegacyClsid": false,
+              "LocaleId": null,
+              "Lookup": null,
+              "MergeJoin": null,
+              "Name": "OLEDST_Department",
+              "OleDbCommand": null,
+              "OleDbDestination": {
+                "AccessMode": 3,
+                "ColumnMappings": [
+                  {
+                    "ComponentColumnName": "DepartmentID",
+                    "ExternalColumnName": "DepartmentID",
+                    "ExternalDataType": "i4"
+                  },
+                  {
+                    "ComponentColumnName": "DepartmentCode",
+                    "ExternalColumnName": "DepartmentCode",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "DepartmentName",
+                    "ExternalColumnName": "DepartmentName",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "CostCenter",
+                    "ExternalColumnName": "CostCenter",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "HeadCount",
+                    "ExternalColumnName": "HeadCount",
+                    "ExternalDataType": "i4"
+                  },
+                  {
+                    "ComponentColumnName": "DepartmentKey",
+                    "ExternalColumnName": "DepartmentKey",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "LoadedAtUtc",
+                    "ExternalColumnName": "LoadedAtUtc",
+                    "ExternalDataType": "dbTimeStamp2"
+                  }
+                ],
+                "CommandTimeout": 0,
+                "ConnectionName": "CM_TargetDb",
+                "FastLoadKeepIdentity": false,
+                "FastLoadKeepNulls": false,
+                "FastLoadMaxInsertCommitSize": 2147483647,
+                "FastLoadOptions": null,
+                "OpenRowset": "[dbo].[Department]",
+                "SqlCommand": null
+              },
+              "OleDbSource": null,
+              "Outputs": [
+                {
+                  "Columns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]",
+                      "Name": "ErrorCode",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]",
+                      "Scale": null,
+                      "SpecialFlags": 1,
+                      "TruncationRowDisposition": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]",
+                      "Name": "ErrorColumn",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]",
+                      "Scale": null,
+                      "SpecialFlags": 2,
+                      "TruncationRowDisposition": null
+                    }
+                  ],
+                  "Dangling": null,
+                  "DeleteOutputOnPathDetached": null,
+                  "Description": null,
+                  "ExclusionGroup": "1",
+                  "ExternalMetadataColumns": [],
+                  "IsErrorOut": true,
+                  "Name": "OLE DB Destination Error Output",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Outputs[OLE DB Destination Error Output]",
+                  "SynchronousInputId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input]"
+                }
+              ],
+              "Properties": [
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Int32",
+                  "Description": "The number of seconds before a command times out.  A value of 0 indicates an infinite time-out.",
+                  "IsArray": false,
+                  "Name": "CommandTimeout",
+                  "Value": "0"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.String",
+                  "Description": "Specifies the name of the database object used to open a rowset.",
+                  "IsArray": false,
+                  "Name": "OpenRowset",
+                  "Value": "[dbo].[Department]"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.String",
+                  "Description": "Specifies the variable that contains the name of the database object used to open a rowset.",
+                  "IsArray": false,
+                  "Name": "OpenRowsetVariable",
+                  "Value": ""
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.String",
+                  "Description": "The SQL command to be executed.",
+                  "IsArray": false,
+                  "Name": "SqlCommand",
+                  "Value": ""
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Int32",
+                  "Description": "Specifies the column code page to use when code page information is unavailable from the data source.",
+                  "IsArray": false,
+                  "Name": "DefaultCodePage",
+                  "Value": "1252"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Boolean",
+                  "Description": "Forces the use of the DefaultCodePage property value when describing character data.",
+                  "IsArray": false,
+                  "Name": "AlwaysUseDefaultCodePage",
+                  "Value": "false"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Int32",
+                  "Description": "Specifies the mode used to access the database.",
+                  "IsArray": false,
+                  "Name": "AccessMode",
+                  "Value": "3"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Boolean",
+                  "Description": "Indicates whether the values supplied for identity columns will be copied to the destination. If false, values for identity columns will be auto-generated at the destination. Applies only if fast load is turned on.",
+                  "IsArray": false,
+                  "Name": "FastLoadKeepIdentity",
+                  "Value": "false"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Boolean",
+                  "Description": "Indicates whether the columns containing null will have null inserted in the destination. If false, columns containing null will have their default values inserted at the destination. Applies only if fast load is turned on.",
+                  "IsArray": false,
+                  "Name": "FastLoadKeepNulls",
+                  "Value": "false"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.String",
+                  "Description": "Specifies options to be used with fast load.  Applies only if fast load is turned on.",
+                  "IsArray": false,
+                  "Name": "FastLoadOptions",
+                  "Value": ""
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Int32",
+                  "Description": "Specifies when commits are issued during data insertion.  A value of 0 specifies that one commit will be issued at the end of data insertion.  Applies only if fast load is turned on.",
+                  "IsArray": false,
+                  "Name": "FastLoadMaxInsertCommitSize",
+                  "Value": "2147483647"
+                }
+              ],
+              "RawComponentClassId": null,
+              "RefId": "Package\\DFT_LoadDepartment\\OLEDST_Department",
+              "RowCount": null,
+              "ScriptComponent": null,
+              "Sort": null,
+              "UsesDispositions": true,
+              "ValidateExternalMetadata": null,
+              "Version": "4"
+            }
+          ],
+          "Paths": [
+            {
+              "EndId": "Package\\DFT_LoadDepartment\\OLEDST_Department.Inputs[OLE DB Destination Input]",
+              "Name": "Derived Column Output",
+              "RefId": "Package\\DFT_LoadDepartment.Paths[Derived Column Output]",
+              "StartId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Outputs[Derived Column Output]"
+            },
+            {
+              "EndId": "Package\\DFT_LoadDepartment\\DER_DepartmentKey.Inputs[Derived Column Input]",
+              "Name": "Flat File Source Output",
+              "RefId": "Package\\DFT_LoadDepartment.Paths[Flat File Source Output]",
+              "StartId": "Package\\DFT_LoadDepartment\\FF_SRC_Department.Outputs[Flat File Source Output]"
+            }
+          ],
+          "Version": "1"
+        }
+      },
+      "DelayValidation": null,
+      "Description": null,
+      "Disabled": null,
+      "DtsId": "{93C16893-1514-4443-9C6F-7448933F05AA}",
+      "EventHandlers": [],
+      "ExecutableType": "Microsoft.Pipeline",
+      "ExecutePackageTask": null,
+      "ExecuteSqlTask": null,
+      "FailPackageOnFailure": null,
+      "FailParentOnFailure": null,
+      "FileSystemTask": null,
+      "ForEachLoop": null,
+      "ForcedExecutionValue": null,
+      "IsolationLevel": null,
+      "MaximumErrorCount": null,
+      "ObjectName": "DFT_LoadDepartment",
+      "PrecedenceConstraints": [],
+      "PropertyExpressions": [],
+      "RefId": "Package\\DFT_LoadDepartment",
+      "ScriptTask": null,
+      "ThreadHint": null,
+      "TransactionOption": null,
+      "UnmappedTask": null,
+      "Variables": []
+    },
+    {
+      "Children": [],
+      "Dag": {
+        "HasCycle": false,
+        "ParallelLevels": [],
+        "TopologicalOrder": []
+      },
+      "DataFlowTask": {
+        "Lineage": {
+          "ConstantColumns": [
+            {
+              "ColumnName": "LoadedAtUtc",
+              "ColumnRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+              "ComponentName": "DER_DesignationKey",
+              "ComponentRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey",
+              "Expression": "GETUTCDATE()",
+              "LineageId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]"
+            }
+          ],
+          "Edges": [
+            {
+              "Expression": null,
+              "FromColumnName": "DesignationCode",
+              "FromColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]",
+              "FromComponentName": "FF_SRC_Designation",
+              "FromComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]",
+              "ToColumnName": "DesignationCode",
+              "ToColumnRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Inputs[Derived Column Input].Columns[DesignationCode]",
+              "ToComponentName": "DER_DesignationKey",
+              "ToComponentRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "JobLevel",
+              "FromColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]",
+              "FromComponentName": "FF_SRC_Designation",
+              "FromComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]",
+              "ToColumnName": "JobLevel",
+              "ToColumnRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Inputs[Derived Column Input].Columns[JobLevel]",
+              "ToComponentName": "DER_DesignationKey",
+              "ToComponentRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey"
+            },
+            {
+              "Expression": "(DT_WSTR,25)(UPPER(DesignationCode) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)JobLevel)",
+              "FromColumnName": "DesignationCode",
+              "FromColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]",
+              "FromComponentName": "FF_SRC_Designation",
+              "FromComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Kind": "ExpressionDerived",
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]",
+              "ToColumnName": "DesignationKey",
+              "ToColumnRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[DesignationKey]",
+              "ToComponentName": "DER_DesignationKey",
+              "ToComponentRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey"
+            },
+            {
+              "Expression": "(DT_WSTR,25)(UPPER(DesignationCode) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)JobLevel)",
+              "FromColumnName": "JobLevel",
+              "FromColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]",
+              "FromComponentName": "FF_SRC_Designation",
+              "FromComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Kind": "ExpressionDerived",
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]",
+              "ToColumnName": "DesignationKey",
+              "ToColumnRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[DesignationKey]",
+              "ToComponentName": "DER_DesignationKey",
+              "ToComponentRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "DesignationID",
+              "FromColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationID]",
+              "FromComponentName": "FF_SRC_Designation",
+              "FromComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationID]",
+              "ToColumnName": "DesignationID",
+              "ToColumnRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[DesignationID]",
+              "ToComponentName": "OLEDST_Designation",
+              "ToComponentRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "DesignationCode",
+              "FromColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]",
+              "FromComponentName": "FF_SRC_Designation",
+              "FromComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]",
+              "ToColumnName": "DesignationCode",
+              "ToColumnRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[DesignationCode]",
+              "ToComponentName": "OLEDST_Designation",
+              "ToComponentRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "Title",
+              "FromColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[Title]",
+              "FromComponentName": "FF_SRC_Designation",
+              "FromComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[Title]",
+              "ToColumnName": "Title",
+              "ToColumnRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[Title]",
+              "ToComponentName": "OLEDST_Designation",
+              "ToComponentRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "JobLevel",
+              "FromColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]",
+              "FromComponentName": "FF_SRC_Designation",
+              "FromComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]",
+              "ToColumnName": "JobLevel",
+              "ToColumnRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[JobLevel]",
+              "ToComponentName": "OLEDST_Designation",
+              "ToComponentRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "Band",
+              "FromColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[Band]",
+              "FromComponentName": "FF_SRC_Designation",
+              "FromComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[Band]",
+              "ToColumnName": "Band",
+              "ToColumnRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[Band]",
+              "ToComponentName": "OLEDST_Designation",
+              "ToComponentRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "DesignationKey",
+              "FromColumnRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[DesignationKey]",
+              "FromComponentName": "DER_DesignationKey",
+              "FromComponentRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[DesignationKey]",
+              "ToColumnName": "DesignationKey",
+              "ToColumnRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[DesignationKey]",
+              "ToComponentName": "OLEDST_Designation",
+              "ToComponentRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation"
+            },
+            {
+              "Expression": null,
+              "FromColumnName": "LoadedAtUtc",
+              "FromColumnRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+              "FromComponentName": "DER_DesignationKey",
+              "FromComponentRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey",
+              "Kind": "PathFlow",
+              "LineageId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+              "ToColumnName": "LoadedAtUtc",
+              "ToColumnRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[LoadedAtUtc]",
+              "ToComponentName": "OLEDST_Designation",
+              "ToComponentRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation"
+            }
+          ],
+          "UnusedColumns": [
+            {
+              "ColumnName": "ErrorCode",
+              "ColumnRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorCode]",
+              "ComponentName": "DER_DesignationKey",
+              "ComponentRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorCode]"
+            },
+            {
+              "ColumnName": "ErrorColumn",
+              "ColumnRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]",
+              "ComponentName": "DER_DesignationKey",
+              "ComponentRefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]"
+            },
+            {
+              "ColumnName": "Flat File Source Error Output Column",
+              "ColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[Flat File Source Error Output Column]",
+              "ComponentName": "FF_SRC_Designation",
+              "ComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[Flat File Source Error Output Column]"
+            },
+            {
+              "ColumnName": "ErrorCode",
+              "ColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[ErrorCode]",
+              "ComponentName": "FF_SRC_Designation",
+              "ComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[ErrorCode]"
+            },
+            {
+              "ColumnName": "ErrorColumn",
+              "ColumnRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[ErrorColumn]",
+              "ComponentName": "FF_SRC_Designation",
+              "ComponentRefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[ErrorColumn]"
+            },
+            {
+              "ColumnName": "ErrorCode",
+              "ColumnRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]",
+              "ComponentName": "OLEDST_Designation",
+              "ComponentRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+            },
+            {
+              "ColumnName": "ErrorColumn",
+              "ColumnRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]",
+              "ComponentName": "OLEDST_Designation",
+              "ComponentRefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation",
+              "Expression": null,
+              "LineageId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+            }
+          ]
+        },
+        "Pipeline": {
+          "Components": [
+            {
+              "AdoNetDestination": null,
+              "AdoNetSource": null,
+              "Aggregate": null,
+              "ComponentClassId": "Microsoft.DerivedColumn",
+              "ConditionalSplit": null,
+              "Connections": [],
+              "ContactInfo": "Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0",
+              "DataConvert": null,
+              "Description": "Creates new column values by applying expressions to transformation input columns.",
+              "ExcelSource": null,
+              "FlatFileDestination": null,
+              "FlatFileSource": null,
+              "Inputs": [
+                {
+                  "Columns": [
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "wstr",
+                      "CachedLength": 10,
+                      "CachedName": "DesignationCode",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Inputs[Derived Column Input].Columns[DesignationCode]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "i4",
+                      "CachedLength": null,
+                      "CachedName": "JobLevel",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Inputs[Derived Column Input].Columns[JobLevel]",
+                      "UsageType": null
+                    }
+                  ],
+                  "Description": "Input to the Derived Column Transformation",
+                  "ErrorRowDisposition": null,
+                  "ExternalMetadataColumns": [],
+                  "HasSideEffects": null,
+                  "Name": "Derived Column Input",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Inputs[Derived Column Input]",
+                  "TruncationRowDisposition": null
+                }
+              ],
+              "IsUnresolvedLegacyClsid": false,
+              "LocaleId": null,
+              "Lookup": null,
+              "MergeJoin": null,
+              "Name": "DER_DesignationKey",
+              "OleDbCommand": null,
+              "OleDbDestination": null,
+              "OleDbSource": null,
+              "Outputs": [
+                {
+                  "Columns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "ErrorOrTruncationOperation": "Computation",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": "(DT_WSTR,25)([UPPER](#{Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]}) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)#{Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]})",
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": "(DT_WSTR,25)(UPPER(DesignationCode) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)JobLevel)",
+                      "Length": 25,
+                      "LineageId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[DesignationKey]",
+                      "Name": "DesignationKey",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.String",
+                          "Description": "Derived Column Expression",
+                          "IsArray": false,
+                          "Name": "Expression",
+                          "Value": "(DT_WSTR,25)([UPPER](#{Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]}) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)#{Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]})"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.String",
+                          "Description": "Derived Column Friendly Expression",
+                          "IsArray": false,
+                          "Name": "FriendlyExpression",
+                          "Value": "(DT_WSTR,25)(UPPER(DesignationCode) \u002B \u0022-\u0022 \u002B (DT_WSTR,10)JobLevel)"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[DesignationKey]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "dbTimeStamp",
+                      "ErrorOrTruncationOperation": "Computation",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": "[GETUTCDATE]()",
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": "GETUTCDATE()",
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+                      "Name": "LoadedAtUtc",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.String",
+                          "Description": "Derived Column Expression",
+                          "IsArray": false,
+                          "Name": "Expression",
+                          "Value": "[GETUTCDATE]()"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.String",
+                          "Description": "Derived Column Friendly Expression",
+                          "IsArray": false,
+                          "Name": "FriendlyExpression",
+                          "Value": "GETUTCDATE()"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    }
+                  ],
+                  "Dangling": null,
+                  "DeleteOutputOnPathDetached": null,
+                  "Description": "Default Output of the Derived Column Transformation",
+                  "ExclusionGroup": "1",
+                  "ExternalMetadataColumns": [],
+                  "IsErrorOut": null,
+                  "Name": "Derived Column Output",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output]",
+                  "SynchronousInputId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Inputs[Derived Column Input]"
+                },
+                {
+                  "Columns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorCode]",
+                      "Name": "ErrorCode",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorCode]",
+                      "Scale": null,
+                      "SpecialFlags": 1,
+                      "TruncationRowDisposition": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]",
+                      "Name": "ErrorColumn",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Error Output].Columns[ErrorColumn]",
+                      "Scale": null,
+                      "SpecialFlags": 2,
+                      "TruncationRowDisposition": null
+                    }
+                  ],
+                  "Dangling": null,
+                  "DeleteOutputOnPathDetached": null,
+                  "Description": "Error Output of the Derived Column Transformation",
+                  "ExclusionGroup": "1",
+                  "ExternalMetadataColumns": [],
+                  "IsErrorOut": true,
+                  "Name": "Derived Column Error Output",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Error Output]",
+                  "SynchronousInputId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Inputs[Derived Column Input]"
+                }
+              ],
+              "Properties": [],
+              "RawComponentClassId": null,
+              "RefId": "Package\\DFT_LoadDesignation\\DER_DesignationKey",
+              "RowCount": null,
+              "ScriptComponent": null,
+              "Sort": null,
+              "UsesDispositions": true,
+              "ValidateExternalMetadata": null,
+              "Version": null
+            },
+            {
+              "AdoNetDestination": null,
+              "AdoNetSource": null,
+              "Aggregate": null,
+              "ComponentClassId": "Microsoft.FlatFileSource",
+              "ConditionalSplit": null,
+              "Connections": [
+                {
+                  "ConnectionManagerName": "CM_DesignationCsv",
+                  "ConnectionManagerRefRaw": "Package.ConnectionManagers[CM_DesignationCsv]",
+                  "Description": null,
+                  "Name": "FlatFileConnection",
+                  "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Connections[FlatFileConnection]"
+                }
+              ],
+              "ContactInfo": "Flat File Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;1",
+              "DataConvert": null,
+              "Description": "Flat File Source",
+              "ExcelSource": null,
+              "FlatFileDestination": null,
+              "FlatFileSource": {
+                "ColumnMappings": [
+                  {
+                    "ComponentColumnName": "DesignationID",
+                    "ExternalColumnName": "DesignationID",
+                    "ExternalDataType": "i4"
+                  },
+                  {
+                    "ComponentColumnName": "DesignationCode",
+                    "ExternalColumnName": "DesignationCode",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "Title",
+                    "ExternalColumnName": "Title",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "JobLevel",
+                    "ExternalColumnName": "JobLevel",
+                    "ExternalDataType": "i4"
+                  },
+                  {
+                    "ComponentColumnName": "Band",
+                    "ExternalColumnName": "Band",
+                    "ExternalDataType": "wstr"
+                  }
+                ],
+                "ConnectionName": "CM_DesignationCsv",
+                "FileNameColumnName": null,
+                "RetainNulls": false
+              },
+              "Inputs": [],
+              "IsUnresolvedLegacyClsid": false,
+              "LocaleId": "1033",
+              "Lookup": null,
+              "MergeJoin": null,
+              "Name": "FF_SRC_Designation",
+              "OleDbCommand": null,
+              "OleDbDestination": null,
+              "OleDbSource": null,
+              "Outputs": [
+                {
+                  "Columns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": "Conversion",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].ExternalColumns[DesignationID]",
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationID]",
+                      "Name": "DesignationID",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the column uses the faster, locale-neutral parsing routines.",
+                          "IsArray": false,
+                          "Name": "FastParse",
+                          "Value": "false"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the data is in binary format.",
+                          "IsArray": false,
+                          "Name": "UseBinaryFormat",
+                          "Value": "false"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationID]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "ErrorOrTruncationOperation": "Conversion",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].ExternalColumns[DesignationCode]",
+                      "FriendlyExpression": null,
+                      "Length": 10,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]",
+                      "Name": "DesignationCode",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the column uses the faster, locale-neutral parsing routines.",
+                          "IsArray": false,
+                          "Name": "FastParse",
+                          "Value": "false"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the data is in binary format.",
+                          "IsArray": false,
+                          "Name": "UseBinaryFormat",
+                          "Value": "false"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "ErrorOrTruncationOperation": "Conversion",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].ExternalColumns[Title]",
+                      "FriendlyExpression": null,
+                      "Length": 50,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[Title]",
+                      "Name": "Title",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the column uses the faster, locale-neutral parsing routines.",
+                          "IsArray": false,
+                          "Name": "FastParse",
+                          "Value": "false"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the data is in binary format.",
+                          "IsArray": false,
+                          "Name": "UseBinaryFormat",
+                          "Value": "false"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[Title]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": "Conversion",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].ExternalColumns[JobLevel]",
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]",
+                      "Name": "JobLevel",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the column uses the faster, locale-neutral parsing routines.",
+                          "IsArray": false,
+                          "Name": "FastParse",
+                          "Value": "false"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the data is in binary format.",
+                          "IsArray": false,
+                          "Name": "UseBinaryFormat",
+                          "Value": "false"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "ErrorOrTruncationOperation": "Conversion",
+                      "ErrorRowDisposition": "FailComponent",
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].ExternalColumns[Band]",
+                      "FriendlyExpression": null,
+                      "Length": 5,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[Band]",
+                      "Name": "Band",
+                      "Precision": null,
+                      "Properties": [
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the column uses the faster, locale-neutral parsing routines.",
+                          "IsArray": false,
+                          "Name": "FastParse",
+                          "Value": "false"
+                        },
+                        {
+                          "ArrayElements": [],
+                          "DataType": "System.Boolean",
+                          "Description": "Indicates whether the data is in binary format.",
+                          "IsArray": false,
+                          "Name": "UseBinaryFormat",
+                          "Value": "false"
+                        }
+                      ],
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[Band]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": "FailComponent"
+                    }
+                  ],
+                  "Dangling": null,
+                  "DeleteOutputOnPathDetached": null,
+                  "Description": null,
+                  "ExclusionGroup": null,
+                  "ExternalMetadataColumns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "Length": null,
+                      "Name": "DesignationID",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].ExternalColumns[DesignationID]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 10,
+                      "Name": "DesignationCode",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].ExternalColumns[DesignationCode]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 50,
+                      "Name": "Title",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].ExternalColumns[Title]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "Length": null,
+                      "Name": "JobLevel",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].ExternalColumns[JobLevel]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 5,
+                      "Name": "Band",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].ExternalColumns[Band]",
+                      "Scale": null
+                    }
+                  ],
+                  "IsErrorOut": null,
+                  "Name": "Flat File Source Output",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output]",
+                  "SynchronousInputId": null
+                },
+                {
+                  "Columns": [
+                    {
+                      "CodePage": 1252,
+                      "DataType": "text",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[Flat File Source Error Output Column]",
+                      "Name": "Flat File Source Error Output Column",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[Flat File Source Error Output Column]",
+                      "Scale": null,
+                      "SpecialFlags": null,
+                      "TruncationRowDisposition": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[ErrorCode]",
+                      "Name": "ErrorCode",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[ErrorCode]",
+                      "Scale": null,
+                      "SpecialFlags": 1,
+                      "TruncationRowDisposition": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[ErrorColumn]",
+                      "Name": "ErrorColumn",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output].Columns[ErrorColumn]",
+                      "Scale": null,
+                      "SpecialFlags": 2,
+                      "TruncationRowDisposition": null
+                    }
+                  ],
+                  "Dangling": null,
+                  "DeleteOutputOnPathDetached": null,
+                  "Description": null,
+                  "ExclusionGroup": null,
+                  "ExternalMetadataColumns": [],
+                  "IsErrorOut": true,
+                  "Name": "Flat File Source Error Output",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Error Output]",
+                  "SynchronousInputId": null
+                }
+              ],
+              "Properties": [
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Boolean",
+                  "Description": "Specifies whether zero-length columns are treated as null.",
+                  "IsArray": false,
+                  "Name": "RetainNulls",
+                  "Value": "false"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.String",
+                  "Description": "Specifies the name of an output column containing the file name. If no name is specified, no output column containing the file name will be generated.",
+                  "IsArray": false,
+                  "Name": "FileNameColumnName",
+                  "Value": ""
+                }
+              ],
+              "RawComponentClassId": null,
+              "RefId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation",
+              "RowCount": null,
+              "ScriptComponent": null,
+              "Sort": null,
+              "UsesDispositions": true,
+              "ValidateExternalMetadata": null,
+              "Version": "1"
+            },
+            {
+              "AdoNetDestination": null,
+              "AdoNetSource": null,
+              "Aggregate": null,
+              "ComponentClassId": "Microsoft.OLEDBDestination",
+              "ConditionalSplit": null,
+              "Connections": [
+                {
+                  "ConnectionManagerName": "CM_TargetDb",
+                  "ConnectionManagerRefRaw": "Package.ConnectionManagers[CM_TargetDb]",
+                  "Description": "The OLE DB runtime connection used to access the database.",
+                  "Name": "OleDbConnection",
+                  "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Connections[OleDbConnection]"
+                }
+              ],
+              "ContactInfo": "OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4",
+              "DataConvert": null,
+              "Description": "OLE DB Destination",
+              "ExcelSource": null,
+              "FlatFileDestination": null,
+              "FlatFileSource": null,
+              "Inputs": [
+                {
+                  "Columns": [
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "i4",
+                      "CachedLength": null,
+                      "CachedName": "DesignationID",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[DesignationID]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationID]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[DesignationID]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "wstr",
+                      "CachedLength": 10,
+                      "CachedName": "DesignationCode",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[DesignationCode]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[DesignationCode]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[DesignationCode]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "wstr",
+                      "CachedLength": 50,
+                      "CachedName": "Title",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[Title]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[Title]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[Title]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "i4",
+                      "CachedLength": null,
+                      "CachedName": "JobLevel",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[JobLevel]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[JobLevel]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[JobLevel]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "wstr",
+                      "CachedLength": 5,
+                      "CachedName": "Band",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[Band]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output].Columns[Band]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[Band]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "wstr",
+                      "CachedLength": 25,
+                      "CachedName": "DesignationKey",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[DesignationKey]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[DesignationKey]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[DesignationKey]",
+                      "UsageType": null
+                    },
+                    {
+                      "CachedCodePage": null,
+                      "CachedDataType": "dbTimeStamp",
+                      "CachedLength": null,
+                      "CachedName": "LoadedAtUtc",
+                      "CachedPrecision": null,
+                      "CachedScale": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[LoadedAtUtc]",
+                      "FriendlyExpression": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+                      "OutputColumnLineageId": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].Columns[LoadedAtUtc]",
+                      "UsageType": null
+                    }
+                  ],
+                  "Description": null,
+                  "ErrorRowDisposition": "FailComponent",
+                  "ExternalMetadataColumns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "Length": null,
+                      "Name": "DesignationID",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[DesignationID]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 25,
+                      "Name": "DesignationKey",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[DesignationKey]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 10,
+                      "Name": "DesignationCode",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[DesignationCode]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 50,
+                      "Name": "Title",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[Title]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "Length": null,
+                      "Name": "JobLevel",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[JobLevel]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "wstr",
+                      "Length": 5,
+                      "Name": "Band",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[Band]",
+                      "Scale": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "dbTimeStamp2",
+                      "Length": null,
+                      "Name": "LoadedAtUtc",
+                      "Precision": null,
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input].ExternalColumns[LoadedAtUtc]",
+                      "Scale": 3
+                    }
+                  ],
+                  "HasSideEffects": true,
+                  "Name": "OLE DB Destination Input",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input]",
+                  "TruncationRowDisposition": null
+                }
+              ],
+              "IsUnresolvedLegacyClsid": false,
+              "LocaleId": null,
+              "Lookup": null,
+              "MergeJoin": null,
+              "Name": "OLEDST_Designation",
+              "OleDbCommand": null,
+              "OleDbDestination": {
+                "AccessMode": 3,
+                "ColumnMappings": [
+                  {
+                    "ComponentColumnName": "DesignationID",
+                    "ExternalColumnName": "DesignationID",
+                    "ExternalDataType": "i4"
+                  },
+                  {
+                    "ComponentColumnName": "DesignationCode",
+                    "ExternalColumnName": "DesignationCode",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "Title",
+                    "ExternalColumnName": "Title",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "JobLevel",
+                    "ExternalColumnName": "JobLevel",
+                    "ExternalDataType": "i4"
+                  },
+                  {
+                    "ComponentColumnName": "Band",
+                    "ExternalColumnName": "Band",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "DesignationKey",
+                    "ExternalColumnName": "DesignationKey",
+                    "ExternalDataType": "wstr"
+                  },
+                  {
+                    "ComponentColumnName": "LoadedAtUtc",
+                    "ExternalColumnName": "LoadedAtUtc",
+                    "ExternalDataType": "dbTimeStamp2"
+                  }
+                ],
+                "CommandTimeout": 0,
+                "ConnectionName": "CM_TargetDb",
+                "FastLoadKeepIdentity": false,
+                "FastLoadKeepNulls": false,
+                "FastLoadMaxInsertCommitSize": 2147483647,
+                "FastLoadOptions": null,
+                "OpenRowset": "[dbo].[Designation]",
+                "SqlCommand": null
+              },
+              "OleDbSource": null,
+              "Outputs": [
+                {
+                  "Columns": [
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]",
+                      "Name": "ErrorCode",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]",
+                      "Scale": null,
+                      "SpecialFlags": 1,
+                      "TruncationRowDisposition": null
+                    },
+                    {
+                      "CodePage": null,
+                      "DataType": "i4",
+                      "ErrorOrTruncationOperation": null,
+                      "ErrorRowDisposition": null,
+                      "Expression": null,
+                      "ExternalMetadataColumnId": null,
+                      "FriendlyExpression": null,
+                      "Length": null,
+                      "LineageId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]",
+                      "Name": "ErrorColumn",
+                      "Precision": null,
+                      "Properties": [],
+                      "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]",
+                      "Scale": null,
+                      "SpecialFlags": 2,
+                      "TruncationRowDisposition": null
+                    }
+                  ],
+                  "Dangling": null,
+                  "DeleteOutputOnPathDetached": null,
+                  "Description": null,
+                  "ExclusionGroup": "1",
+                  "ExternalMetadataColumns": [],
+                  "IsErrorOut": true,
+                  "Name": "OLE DB Destination Error Output",
+                  "Properties": [],
+                  "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Outputs[OLE DB Destination Error Output]",
+                  "SynchronousInputId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input]"
+                }
+              ],
+              "Properties": [
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Int32",
+                  "Description": "The number of seconds before a command times out.  A value of 0 indicates an infinite time-out.",
+                  "IsArray": false,
+                  "Name": "CommandTimeout",
+                  "Value": "0"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.String",
+                  "Description": "Specifies the name of the database object used to open a rowset.",
+                  "IsArray": false,
+                  "Name": "OpenRowset",
+                  "Value": "[dbo].[Designation]"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.String",
+                  "Description": "Specifies the variable that contains the name of the database object used to open a rowset.",
+                  "IsArray": false,
+                  "Name": "OpenRowsetVariable",
+                  "Value": ""
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.String",
+                  "Description": "The SQL command to be executed.",
+                  "IsArray": false,
+                  "Name": "SqlCommand",
+                  "Value": ""
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Int32",
+                  "Description": "Specifies the column code page to use when code page information is unavailable from the data source.",
+                  "IsArray": false,
+                  "Name": "DefaultCodePage",
+                  "Value": "1252"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Boolean",
+                  "Description": "Forces the use of the DefaultCodePage property value when describing character data.",
+                  "IsArray": false,
+                  "Name": "AlwaysUseDefaultCodePage",
+                  "Value": "false"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Int32",
+                  "Description": "Specifies the mode used to access the database.",
+                  "IsArray": false,
+                  "Name": "AccessMode",
+                  "Value": "3"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Boolean",
+                  "Description": "Indicates whether the values supplied for identity columns will be copied to the destination. If false, values for identity columns will be auto-generated at the destination. Applies only if fast load is turned on.",
+                  "IsArray": false,
+                  "Name": "FastLoadKeepIdentity",
+                  "Value": "false"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Boolean",
+                  "Description": "Indicates whether the columns containing null will have null inserted in the destination. If false, columns containing null will have their default values inserted at the destination. Applies only if fast load is turned on.",
+                  "IsArray": false,
+                  "Name": "FastLoadKeepNulls",
+                  "Value": "false"
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.String",
+                  "Description": "Specifies options to be used with fast load.  Applies only if fast load is turned on.",
+                  "IsArray": false,
+                  "Name": "FastLoadOptions",
+                  "Value": ""
+                },
+                {
+                  "ArrayElements": [],
+                  "DataType": "System.Int32",
+                  "Description": "Specifies when commits are issued during data insertion.  A value of 0 specifies that one commit will be issued at the end of data insertion.  Applies only if fast load is turned on.",
+                  "IsArray": false,
+                  "Name": "FastLoadMaxInsertCommitSize",
+                  "Value": "2147483647"
+                }
+              ],
+              "RawComponentClassId": null,
+              "RefId": "Package\\DFT_LoadDesignation\\OLEDST_Designation",
+              "RowCount": null,
+              "ScriptComponent": null,
+              "Sort": null,
+              "UsesDispositions": true,
+              "ValidateExternalMetadata": null,
+              "Version": "4"
+            }
+          ],
+          "Paths": [
+            {
+              "EndId": "Package\\DFT_LoadDesignation\\OLEDST_Designation.Inputs[OLE DB Destination Input]",
+              "Name": "Derived Column Output",
+              "RefId": "Package\\DFT_LoadDesignation.Paths[Derived Column Output]",
+              "StartId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Outputs[Derived Column Output]"
+            },
+            {
+              "EndId": "Package\\DFT_LoadDesignation\\DER_DesignationKey.Inputs[Derived Column Input]",
+              "Name": "Flat File Source Output",
+              "RefId": "Package\\DFT_LoadDesignation.Paths[Flat File Source Output]",
+              "StartId": "Package\\DFT_LoadDesignation\\FF_SRC_Designation.Outputs[Flat File Source Output]"
+            }
+          ],
+          "Version": "1"
+        }
+      },
+      "DelayValidation": null,
+      "Description": null,
+      "Disabled": null,
+      "DtsId": "{CCE1AFA2-0279-428B-96E8-309891EED3B4}",
+      "EventHandlers": [],
+      "ExecutableType": "Microsoft.Pipeline",
+      "ExecutePackageTask": null,
+      "ExecuteSqlTask": null,
+      "FailPackageOnFailure": null,
+      "FailParentOnFailure": null,
+      "FileSystemTask": null,
+      "ForEachLoop": null,
+      "ForcedExecutionValue": null,
+      "IsolationLevel": null,
+      "MaximumErrorCount": null,
+      "ObjectName": "DFT_LoadDesignation",
+      "PrecedenceConstraints": [],
+      "PropertyExpressions": [],
+      "RefId": "Package\\DFT_LoadDesignation",
+      "ScriptTask": null,
+      "ThreadHint": null,
+      "TransactionOption": null,
+      "UnmappedTask": null,
+      "Variables": []
+    },
+    {
+      "Children": [],
+      "Dag": {
+        "HasCycle": false,
+        "ParallelLevels": [],
+        "TopologicalOrder": []
+      },
+      "DataFlowTask": null,
+      "DelayValidation": null,
+      "Description": "Makes the package re-runnable.",
+      "Disabled": null,
+      "DtsId": "{5842FCC5-4A60-40C5-B0AF-16A089549436}",
+      "EventHandlers": [],
+      "ExecutableType": "Microsoft.ExecuteSQLTask",
+      "ExecutePackageTask": null,
+      "ExecuteSqlTask": {
+        "BypassPrepare": null,
+        "CodePage": null,
+        "ConnectionName": "CM_TargetDb",
+        "ConnectionRefRaw": "{203D8BE4-BC5A-4EC2-9EE1-D8D84ED092BC}",
+        "IsStoredProc": null,
+        "ParameterBindings": [],
+        "ResultBindings": [],
+        "ResultSetType": null,
+        "SqlStatementSource": "TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;",
+        "SqlStatementSourceType": null,
+        "TimeOut": null
+      },
+      "FailPackageOnFailure": null,
+      "FailParentOnFailure": null,
+      "FileSystemTask": null,
+      "ForEachLoop": null,
+      "ForcedExecutionValue": null,
+      "IsolationLevel": null,
+      "MaximumErrorCount": null,
+      "ObjectName": "SQL_TruncateTargets",
+      "PrecedenceConstraints": [],
+      "PropertyExpressions": [],
+      "RefId": "Package\\SQL_TruncateTargets",
+      "ScriptTask": null,
+      "ThreadHint": "0",
+      "TransactionOption": null,
+      "UnmappedTask": null,
+      "Variables": []
+    }
+  ],
+  "ExecutionSemantics": {
+    "DelayValidation": null,
+    "Disable": null,
+    "DisableEventHandlers": null,
+    "FailPackageOnFailure": null,
+    "ForceExecutionResult": null,
+    "IsolationLevel": null,
+    "MaxConcurrentExecutables": null,
+    "MaximumErrorCount": null,
+    "TransactionOption": null
+  },
+  "FileSizeBytes": 82944,
+  "LastModifiedProductVersion": "17.0.1016.0",
+  "LastWriteTimeUtc": "<normalized>",
+  "LocaleId": "1033",
+  "Logging": {
+    "LoggingMode": null,
+    "Providers": []
+  },
+  "ObjectName": "LoadReferenceData",
+  "PackageFormatVersion": 8,
+  "PackageType": "5",
+  "Parameters": [
+    {
+      "CreationName": null,
+      "DataTypeName": "String",
+      "DataTypeRaw": 8,
+      "Description": "File name of the inbound department CSV file.",
+      "Id": "{9F556CF8-833E-4B0A-9171-1EABA231F16D}",
+      "IncludeInDebugDump": null,
+      "Name": "DepartmentFileName",
+      "Required": false,
+      "Scope": "Package",
+      "Sensitive": false,
+      "Value": "Departments.csv"
+    },
+    {
+      "CreationName": null,
+      "DataTypeName": "String",
+      "DataTypeRaw": 8,
+      "Description": "Folder that holds the inbound department CSV file.",
+      "Id": "{8576F622-BEA6-47C4-93F2-E4AF570AA6FD}",
+      "IncludeInDebugDump": null,
+      "Name": "DepartmentFolder",
+      "Required": false,
+      "Scope": "Package",
+      "Sensitive": false,
+      "Value": "D:\\PoC\\SSIS\\Data\\Input\\Department"
+    },
+    {
+      "CreationName": null,
+      "DataTypeName": "String",
+      "DataTypeRaw": 8,
+      "Description": "File name of the inbound designation CSV file.",
+      "Id": "{F9B00A8B-E0FA-454B-84DE-A721FEFF5111}",
+      "IncludeInDebugDump": null,
+      "Name": "DesignationFileName",
+      "Required": false,
+      "Scope": "Package",
+      "Sensitive": false,
+      "Value": "Designations.csv"
+    },
+    {
+      "CreationName": null,
+      "DataTypeName": "String",
+      "DataTypeRaw": 8,
+      "Description": "Folder that holds the inbound designation CSV file.",
+      "Id": "{A0A74AA8-E0F9-4DA9-A370-A944F6D68456}",
+      "IncludeInDebugDump": null,
+      "Name": "DesignationFolder",
+      "Required": false,
+      "Scope": "Package",
+      "Sensitive": false,
+      "Value": "D:\\PoC\\SSIS\\Data\\Input\\Designation"
+    }
+  ],
+  "PrecedenceConstraints": [
+    {
+      "DtsId": "{1EE17100-C69C-4B25-891D-BE9E097BA1B9}",
+      "EvalOp": null,
+      "Expression": null,
+      "From": "Package\\SQL_TruncateTargets",
+      "LogicalAnd": true,
+      "ObjectName": "{1EE17100-C69C-4B25-891D-BE9E097BA1B9}",
+      "RefId": "Package.PrecedenceConstraints[{1EE17100-C69C-4B25-891D-BE9E097BA1B9\\}]",
+      "To": "Package\\DFT_LoadDepartment",
+      "Value": null
+    },
+    {
+      "DtsId": "{FF815502-AAA8-4E24-9D86-F09817D625C0}",
+      "EvalOp": null,
+      "Expression": null,
+      "From": "Package\\DFT_LoadDepartment",
+      "LogicalAnd": true,
+      "ObjectName": "{FF815502-AAA8-4E24-9D86-F09817D625C0}",
+      "RefId": "Package.PrecedenceConstraints[{FF815502-AAA8-4E24-9D86-F09817D625C0\\}]",
+      "To": "Package\\DFT_LoadDesignation",
+      "Value": null
+    }
+  ],
+  "PropertyExpressions": [],
+  "ProtectionLevelName": "DontSaveSensitive",
+  "ProtectionLevelRaw": 0,
+  "RefId": "Package",
+  "Sha256": "d1079ca373372bfd1e2fa1f7c32a93b1e9c47973f6f5f68925e4fdeea0dfdf73",
+  "SourceDtsxPath": "<normalized>",
+  "Unmapped": [
+    {
+      "Location": "Package/DesignTimeProperties",
+      "RawXml": "\u003C!-- elided, 5660 chars --\u003E",
+      "Reason": "GUI layout only (diagram X/Y, sizes) -- the file\u0027s own embedded comment documents this has no runtime effect. Elided to a length note so designer rearrangement doesn\u0027t masquerade as a package change in git diff. Excluded from the coverage percentage (not just deferred) since it will never be modeled."
+    }
+  ],
+  "Variables": [
+    {
+      "CreationName": null,
+      "DeclaredDataTypeName": "String",
+      "DeclaredDataTypeRaw": 8,
+      "DtsId": "{6ACB2050-3D63-4453-9F8D-9943AF0CC35A}",
+      "EvaluateAsExpression": true,
+      "Expression": "@[$Package::DepartmentFolder] \u002B \u0022\\\\\u0022 \u002B @[$Package::DepartmentFileName]",
+      "IncludeInDebugDump": 2345,
+      "Namespace": "User",
+      "ObjectName": "DepartmentFilePath",
+      "OwningContainerRefId": "Package",
+      "ReadOnly": false,
+      "Value": "D:\\PoC\\SSIS\\Data\\Input\\Department\\Departments.csv"
+    },
+    {
+      "CreationName": null,
+      "DeclaredDataTypeName": "String",
+      "DeclaredDataTypeRaw": 8,
+      "DtsId": "{4DE2D682-B914-4586-9E02-DC0C4D870AB1}",
+      "EvaluateAsExpression": true,
+      "Expression": "@[$Package::DesignationFolder] \u002B \u0022\\\\\u0022 \u002B @[$Package::DesignationFileName]",
+      "IncludeInDebugDump": 2345,
+      "Namespace": "User",
+      "ObjectName": "DesignationFilePath",
+      "OwningContainerRefId": "Package",
+      "ReadOnly": false,
+      "Value": "D:\\PoC\\SSIS\\Data\\Input\\Designation\\Designations.csv"
+    }
+  ],
+  "VersionBuild": "1",
+  "VersionComment": null,
+  "VersionGuid": "{0D2A25C4-E65F-4C2E-9EBD-FB94D92CC200}"
+}

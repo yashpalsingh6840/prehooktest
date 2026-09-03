@@ -1,0 +1,349 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:refId="Package"
+  DTS:CreationDate="8/28/2026 7:26:54 PM"
+  DTS:CreationName="Microsoft.Package"
+  DTS:CreatorComputerName="IRIS-CSG-8214"
+  DTS:CreatorName="IRISSOFTWARE\yashpal.singh01"
+  DTS:DTSID="{4496688B-A622-466F-87B4-93EB17627448}"
+  DTS:ExecutableType="Microsoft.Package"
+  DTS:LastModifiedProductVersion="16.0.1000.6"
+  DTS:LocaleID="1033"
+  DTS:ObjectName="SyntheticExcelSourceSqlCommand"
+  DTS:ProtectionLevel="0"
+  DTS:VersionGUID="{2BC6238E-8A78-41E1-8830-0260F7DB406A}">
+  <DTS:Property
+    DTS:Name="PackageFormatVersion">8</DTS:Property>
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_Excel_Fixture]"
+      DTS:CreationName="EXCEL"
+      DTS:DTSID="{90E281A5-FD1D-4EF9-9D35-693DCB5EC788}"
+      DTS:ObjectName="CM_Excel_Fixture">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectRetryCount="0"
+          DTS:ConnectRetryInterval="0"
+          DTS:ConnectionString="Provider=Microsoft.ACE.OLEDB.12.0;Data Source=D:\PoC\SSIS\Tools\SsisExtractor\tests\Ssis.Extract.Tests\Fixtures\synthetic-excel-source.xlsx;Extended Properties=&quot;EXCEL 12.0 XML;HDR=YES&quot;;" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_Sql]"
+      DTS:CreationName="OLEDB"
+      DTS:DTSID="{EA3A3FF8-87AE-4F78-8D44-1BF7EF6CAE25}"
+      DTS:ObjectName="CM_Sql">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectRetryCount="1"
+          DTS:ConnectRetryInterval="5"
+          DTS:ConnectionString="Data Source=.\SQLFORPOC_2022;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Variables />
+  <DTS:Executables>
+    <DTS:Executable
+      DTS:refId="Package\DFT_ExcelLoad"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:DTSID="{DBB220B0-5C96-4098-8B7F-FCB540B520AB}"
+      DTS:ExecutableType="Microsoft.Pipeline"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="DFT_ExcelLoad"
+      DTS:TaskContact="Performs high-performance data extraction, transformation and loading;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <pipeline
+          version="1">
+          <components>
+            <component
+              refId="Package\DFT_ExcelLoad\Excel Source"
+              componentClassID="Microsoft.ExcelSource"
+              contactInfo="Excel Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;1"
+              description="Excel Source"
+              name="Excel Source"
+              usesDispositions="true"
+              version="1">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset"></property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor">SELECT * FROM [DripEligibility$]</property>
+                <property
+                  dataType="System.String"
+                  description="The variable that contains the SQL command to be executed."
+                  name="SqlCommandVariable"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">2</property>
+                <property
+                  dataType="System.String"
+                  description="The mapping from parameters in the SQL command to variables."
+                  name="ParameterMapping"></property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_ExcelLoad\Excel Source.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_Excel_Fixture]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_Excel_Fixture]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <outputs>
+                <output
+                  refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output]"
+                  name="Excel Source Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].Columns[CustomerID]"
+                      dataType="r8"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].ExternalColumns[CustomerID]"
+                      lineageId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].Columns[CustomerID]"
+                      name="CustomerID"
+                      truncationRowDisposition="FailComponent" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].Columns[DripEligible]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].ExternalColumns[DripEligible]"
+                      length="255"
+                      lineageId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].Columns[DripEligible]"
+                      name="DripEligible"
+                      truncationRowDisposition="FailComponent" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].Columns[ReviewedBy]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].ExternalColumns[ReviewedBy]"
+                      length="255"
+                      lineageId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].Columns[ReviewedBy]"
+                      name="ReviewedBy"
+                      truncationRowDisposition="FailComponent" />
+                  </outputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].ExternalColumns[CustomerID]"
+                      dataType="r8"
+                      name="CustomerID" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].ExternalColumns[DripEligible]"
+                      dataType="wstr"
+                      length="255"
+                      name="DripEligible" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].ExternalColumns[ReviewedBy]"
+                      dataType="wstr"
+                      length="255"
+                      name="ReviewedBy" />
+                  </externalMetadataColumns>
+                </output>
+                <output
+                  refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Error Output]"
+                  isErrorOut="true"
+                  name="Excel Source Error Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Error Output].Columns[CustomerID]"
+                      dataType="r8"
+                      lineageId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Error Output].Columns[CustomerID]"
+                      name="CustomerID" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Error Output].Columns[DripEligible]"
+                      dataType="wstr"
+                      length="255"
+                      lineageId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Error Output].Columns[DripEligible]"
+                      name="DripEligible" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Error Output].Columns[ReviewedBy]"
+                      dataType="wstr"
+                      length="255"
+                      lineageId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Error Output].Columns[ReviewedBy]"
+                      name="ReviewedBy" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_ExcelLoad\OLE DB Destination"
+              componentClassID="Microsoft.OLEDBDestination"
+              contactInfo="OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4"
+              description="OLE DB Destination"
+              name="OLE DB Destination"
+              usesDispositions="true"
+              version="4">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset">[dbo].[SyntheticExcelSourceSqlCommandTarget]</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Forces the use of the DefaultCodePage property value when describing character data."
+                  name="AlwaysUseDefaultCodePage">false</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">3</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the values supplied for identity columns will be copied to the destination. If false, values for identity columns will be auto-generated at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepIdentity">false</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the columns containing null will have null inserted in the destination. If false, columns containing null will have their default values inserted at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepNulls">false</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies options to be used with fast load.  Applies only if fast load is turned on."
+                  name="FastLoadOptions"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies when commits are issued during data insertion.  A value of 0 specifies that one commit will be issued at the end of data insertion.  Applies only if fast load is turned on."
+                  name="FastLoadMaxInsertCommitSize">2147483647</property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_ExcelLoad\OLE DB Destination.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_Sql]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_Sql]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <inputs>
+                <input
+                  refId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input]"
+                  errorOrTruncationOperation="Insert"
+                  errorRowDisposition="FailComponent"
+                  hasSideEffects="true"
+                  name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[CustomerID]"
+                      cachedDataType="r8"
+                      cachedName="CustomerID"
+                      externalMetadataColumnId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]"
+                      lineageId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].Columns[CustomerID]" />
+                    <inputColumn
+                      refId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[DripEligible]"
+                      cachedDataType="wstr"
+                      cachedLength="255"
+                      cachedName="DripEligible"
+                      externalMetadataColumnId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[DripEligible]"
+                      lineageId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].Columns[DripEligible]" />
+                    <inputColumn
+                      refId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input].Columns[ReviewedBy]"
+                      cachedDataType="wstr"
+                      cachedLength="255"
+                      cachedName="ReviewedBy"
+                      externalMetadataColumnId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[ReviewedBy]"
+                      lineageId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output].Columns[ReviewedBy]" />
+                  </inputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]"
+                      dataType="r8"
+                      name="CustomerID" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[DripEligible]"
+                      codePage="1252"
+                      dataType="str"
+                      length="5"
+                      name="DripEligible" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input].ExternalColumns[ReviewedBy]"
+                      codePage="1252"
+                      dataType="str"
+                      length="50"
+                      name="ReviewedBy" />
+                  </externalMetadataColumns>
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_ExcelLoad\OLE DB Destination.Outputs[OLE DB Destination Error Output]"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="OLE DB Destination Error Output"
+                  synchronousInputId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_ExcelLoad\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ExcelLoad\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelLoad\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ExcelLoad\OLE DB Destination.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+          </components>
+          <paths>
+            <path
+              refId="Package\DFT_ExcelLoad.Paths[Excel Source Output]"
+              endId="Package\DFT_ExcelLoad\OLE DB Destination.Inputs[OLE DB Destination Input]"
+              name="Excel Source Output"
+              startId="Package\DFT_ExcelLoad\Excel Source.Outputs[Excel Source Output]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+</DTS:Executable>

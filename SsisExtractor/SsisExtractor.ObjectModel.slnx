@@ -1,0 +1,23 @@
+<Solution>
+  <!--
+    Deliberately separate from SsisExtractor.slnx: these projects are Windows-only and
+    need the SSIS 17 GAC assemblies installed (plan §7.3 test oracle; Migration-Validation-
+    Plan.md §4's expression-semantics oracle), unlike the main solution's "works on any OS,
+    no GAC" promise (plan §2.1). Build/test explicitly:
+      dotnet build Tools/SsisExtractor/SsisExtractor.ObjectModel.slnx
+      dotnet test  Tools/SsisExtractor/SsisExtractor.ObjectModel.slnx
+
+    Ssis.Expression.Oracle has no tests of its own; it IS the test oracle, run manually to
+    (re)generate tests/Ssis.Runtime.Expressions.Tests/Fixtures/ssis-expression-oracle.tsv,
+    which lives in the main (portable) solution and is what Ssis.Runtime.Expressions is
+    verified against. See that project's own Program.cs header for the regenerate command.
+  -->
+  <Folder Name="/src/">
+    <Project Path="src/Ssis.Extract.ObjectModel/Ssis.Extract.ObjectModel.csproj" />
+    <Project Path="src/Ssis.Expression.Oracle/Ssis.Expression.Oracle.csproj" />
+    <Project Path="src/Ssis.Extract.FixtureBuilder/Ssis.Extract.FixtureBuilder.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Ssis.Extract.ObjectModel.Tests/Ssis.Extract.ObjectModel.Tests.csproj" />
+  </Folder>
+</Solution>

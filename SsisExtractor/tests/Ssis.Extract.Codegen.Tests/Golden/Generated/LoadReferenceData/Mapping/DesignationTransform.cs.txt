@@ -1,0 +1,21 @@
+using Etl.Core.Abstractions;
+using Etl.Core.Ssis;
+using LoadReferenceData.Csv;
+using LoadReferenceData.Model;
+using LoadReferenceData.Ssis;
+
+namespace LoadReferenceData.Mapping;
+
+public sealed class DesignationTransform : IRowTransform<DesignationCsvRow, Designation>
+{
+    public Designation Map(DesignationCsvRow row, in RowContext ctx) => new()
+    {
+        DesignationID = row.DesignationID,
+        DesignationCode = row.DesignationCode,
+        Title = row.Title,
+        JobLevel = row.JobLevel,
+        Band = row.Band,
+        DesignationKey = WidthGuard.Wstr($"{SsisFn.Upper(row.DesignationCode)}-{SsisFn.Str(row.JobLevel)}", 25, nameof(Designation.DesignationKey), ctx.RowNumber),
+        LoadedAtUtc = ctx.LoadedAtUtc,
+    };
+}

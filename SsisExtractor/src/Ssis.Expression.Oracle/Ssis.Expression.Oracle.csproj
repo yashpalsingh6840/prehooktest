@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <!-- Microsoft.SqlServer.DTSRuntimeWrap is GAC_64 only (CLAUDE.md environment note),
+         so anything referencing it must build/run as x64, not AnyCPU/x86. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>ssis-expr-oracle</AssemblyName>
+    <RootNamespace>Ssis.Expression.Oracle</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    Windows-only, optional, and deliberately NOT referenced by Ssis.Runtime.Expressions.
+    This is the oracle that produced tests/Ssis.Runtime.Expressions.Tests/Fixtures/
+    ssis-expression-oracle.tsv: it evaluates each expression with the REAL SSIS expression
+    evaluator so the semantics library encodes measured behaviour rather than remembered
+    documentation. The library itself is net8.0 with no GAC dependency (plan §2.1); this
+    project exists so the corpus can be REGENERATED and re-verified on a machine that has
+    SSIS installed, not so the library needs one.
+
+    The GAC references (ManagedDTS / DTSRuntimeWrap) come from Build/Ssis.Gac.props, which
+    detects the installed SSIS version rather than pinning one - see that file's header for
+    why, and for how to pin a version deliberately.
+  -->
+  <Import Project="..\..\..\..\Build\Ssis.Gac.props" />
+
+</Project>

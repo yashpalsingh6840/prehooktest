@@ -1,0 +1,66 @@
+using Etl.Core.Abstractions;
+using Etl.Core.Csv;
+using Etl.Core.Hosting;
+using Etl.Core.Notifications;
+using Etl.Core.Pipeline;
+using LoadEmployees.Csv;
+using LoadEmployees.Mapping;
+using LoadEmployees.Model;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+const string PackageName = "LoadEmployees";
+
+var builder = EtlHost.Create(args, PackageName);
+
+builder.Services.AddEtlDbContext<LoadEmployeesDbContext>();
+builder.Services.AddBulkSink<Employee>();
+builder.Services.AddEmailNotifications(builder.Configuration);
+
+builder.Services.AddScoped<IRowSource<EmployeeCsvRow>>(sp =>
+{
+    var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;
+    var csvOptions = new CsvSourceOptions { FilePath = fileOptions["Employee"].ResolvedPath };
+    return new CsvRowSource<EmployeeCsvRow>("FF_SRC_Employees", csvOptions, new EmployeeCsvRowMap());
+});
+
+builder.Services.AddScoped<IRowTransform<EmployeeCsvRow, Employee>, EmployeeTransform>();
+
+builder.Services.AddScoped<IEtlPackage>(sp =>
+{
+    var employeeFlow = new DataFlowStep<EmployeeCsvRow, Employee>(
+        "DFT_LoadEmployees",
+        sp.GetRequiredService<IRowSource<EmployeeCsvRow>>(),
+        sp.GetRequiredService<IRowTransform<EmployeeCsvRow, Employee>>(),
+        sp.GetRequiredService<IBulkSink<Employee>>(),
+        sp.GetRequiredService<ILogger<DataFlowStep<EmployeeCsvRow, Employee>>>());
+
+    return new EtlPackage(
+        Name: PackageName,
+        PreLoadStatements: ["TRUNCATE TABLE dbo.Employee;"],
+        Steps: [employeeFlow],
+        PreLoadFileActions: []);
+});
+
+using var host = builder.Build();
+
+await using var scope = host.Services.CreateAsyncScope();
+var runner = scope.ServiceProvider.GetRequiredService<IPackageRunner>();
+var package = scope.ServiceProvider.GetRequiredService<IEtlPackage>();
+var notifier = scope.ServiceProvider.GetRequiredService<IPackageResultNotifier>();
+var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+logger.LogInformation("Starting {Package}...", package.Name);
+var result = await runner.RunAsync(package, CancellationToken.None);
+await notifier.NotifyAsync(result, CancellationToken.None);
+
+if (result.Succeeded)
+{
+    foreach (var step in result.Steps)
+        logger.LogInformation("{Step}: {Rows:N0} rows loaded", step.Name, step.RowsWritten);
+    return ExitCode.Success;
+}
+
+logger.LogError(result.Error, "{Package} failed", package.Name);
+return ExitCode.LoadFailed;

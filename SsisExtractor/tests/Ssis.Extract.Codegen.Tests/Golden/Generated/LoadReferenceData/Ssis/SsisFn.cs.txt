@@ -1,0 +1,12 @@
+using System.Globalization;
+
+namespace LoadReferenceData.Ssis;
+
+internal static class SsisFn
+{
+    /// <summary>UPPER() -- always invariant. A plain ToUpper() would map 'i' -> 'İ' under tr-TR.</summary>
+    public static string Upper(string value) => value.ToUpperInvariant();
+
+    /// <summary>(DT_WSTR,n) cast of an integer -- invariant, no thousands separator.</summary>
+    public static string Str(int value) => value.ToString(CultureInfo.InvariantCulture);
+}

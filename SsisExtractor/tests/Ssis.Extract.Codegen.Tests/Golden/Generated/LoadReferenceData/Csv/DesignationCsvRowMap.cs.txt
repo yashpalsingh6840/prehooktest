@@ -1,0 +1,15 @@
+using CsvHelper.Configuration;
+
+namespace LoadReferenceData.Csv;
+
+public sealed class DesignationCsvRowMap : ClassMap<DesignationCsvRow>
+{
+    public DesignationCsvRowMap()
+    {
+        Map(m => m.DesignationID).Name("DesignationID");
+        Map(m => m.DesignationCode).Name("DesignationCode");
+        Map(m => m.Title).Name("Title");
+        Map(m => m.JobLevel).Name("JobLevel");
+        Map(m => m.Band).Name("Band");
+    }
+}

@@ -1,0 +1,21 @@
+using Etl.Core.Abstractions;
+using Etl.Core.Ssis;
+using LoadReferenceData.Csv;
+using LoadReferenceData.Model;
+using LoadReferenceData.Ssis;
+
+namespace LoadReferenceData.Mapping;
+
+public sealed class DepartmentTransform : IRowTransform<DepartmentCsvRow, Department>
+{
+    public Department Map(DepartmentCsvRow row, in RowContext ctx) => new()
+    {
+        DepartmentID = row.DepartmentID,
+        DepartmentCode = row.DepartmentCode,
+        DepartmentName = row.DepartmentName,
+        CostCenter = row.CostCenter,
+        HeadCount = row.HeadCount,
+        DepartmentKey = WidthGuard.Wstr($"{SsisFn.Upper(row.DepartmentCode)}-{SsisFn.Str(row.DepartmentID)}", 25, nameof(Department.DepartmentKey), ctx.RowNumber),
+        LoadedAtUtc = ctx.LoadedAtUtc,
+    };
+}
