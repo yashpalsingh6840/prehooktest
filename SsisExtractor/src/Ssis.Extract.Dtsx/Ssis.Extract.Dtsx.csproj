@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ssis.Extract.Model\Ssis.Extract.Model.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets the test project unit test DtsxPackageReader.BuildDag directly (synthetic
+         graphs; neither PoC fixture branches enough to exercise parallel levels/cycles)
+         without widening its visibility to public API surface. -->
+    <InternalsVisibleTo Include="Ssis.Extract.Tests" />
+  </ItemGroup>
+
+</Project>

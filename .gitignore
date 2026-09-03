@@ -70,6 +70,13 @@ secrets.json
 *.ispac
 *.conmgr
 *.params
+# These patterns match directories too, and source project folders are named
+# after the formats they parse (Ssis.Extract.Dtsx) -- re-include any directory.
+!*.dtsx/
+!*.dtproj/
+!*.ispac/
+!*.conmgr/
+!*.params/
 !SsisExtractor/tests/**/*.dtsx
 !SsisExtractor/tests/**/*.dtproj
 
