@@ -297,6 +297,15 @@ public static class ConformanceRulesBuilder
     /// it is a person's job, so these rules exist to make that person's sign-off explicit
     /// rather than implied.
     /// </summary>
+    /// <summary>
+    /// The exact <c>ScriptCode</c> <see cref="ConformanceRuleSpec.RuleId"/> for the Script
+    /// Task/Component at <paramref name="refId"/> -- the single source of truth for this format,
+    /// so a second caller (<c>ApplyFillsCommand</c>, linking an applied Tier-2 fill to the
+    /// conformance rule it answers) computes the exact same id this builder does, rather than
+    /// duplicating the string shape and risking drift between the two.
+    /// </summary>
+    public static string ScriptCodeRuleId(string refId) => $"SCRIPT-CODE:{refId}";
+
     private static void ScriptCodeRules(PackageSpec package, List<ExecutableSpec> allExecutables, List<ConformanceRuleSpec> rules)
     {
         foreach (var ex in allExecutables.Where(e => ScriptTaskTypes.Contains(e.ExecutableType)))
@@ -314,7 +323,7 @@ public static class ConformanceRulesBuilder
 
             rules.Add(new ConformanceRuleSpec
             {
-                RuleId = $"SCRIPT-CODE:{ex.RefId}",
+                RuleId = ScriptCodeRuleId(ex.RefId),
                 Category = "ScriptCode",
                 PackageName = package.ObjectName,
                 Location = ex.RefId,
@@ -338,7 +347,7 @@ public static class ConformanceRulesBuilder
 
                 rules.Add(new ConformanceRuleSpec
                 {
-                    RuleId = $"SCRIPT-CODE:{comp.RefId}",
+                    RuleId = ScriptCodeRuleId(comp.RefId),
                     Category = "ScriptCode",
                     PackageName = package.ObjectName,
                     Location = comp.RefId,

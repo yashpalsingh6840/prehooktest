@@ -65,6 +65,7 @@ public static class AiPacketEmitter
             IsBlocking = gap.IsBlocking,
             PacketPath = packetPath,
             EvidenceSha256 = evidenceHash,
+            EvidenceRefId = gap.EvidenceRefId,
         };
 
     private static string BuildPacket(PackageSpec package, string gapId, GenerationGap gap, GapTier tier, string evidence)

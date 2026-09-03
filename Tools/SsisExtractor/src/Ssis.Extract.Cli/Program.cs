@@ -157,7 +157,7 @@ internal static class Program
             <out>/fills/), which ssisx only ever READS -- both the Fill_* parts applied by
             'apply-fills' and <Package>.decisions.json.
 
-              ssisx apply-fills --out <dir> [--fills <dir>]
+              ssisx apply-fills --out <dir> [--fills <dir>] [--claims <dir>]
 
             apply-fills options: copies hand-maintained Tier-2 fills -- the second part of a
             generated partial class, implementing the Fill_<Column> or RunScriptAsync seams
@@ -169,8 +169,17 @@ internal static class Program
             confusing compile error), and every seam with no fill is listed as the CS8795
             the next build will report. A Script Task fill is matched by its CLASS name, not
             its method name -- every one of those seams is called RunScriptAsync, so a
-            package with two Script Tasks needs two distinctly-named class parts.
-            Exits 1 on an orphan, 3 while any seam is unfilled.
+            package with two Script Tasks needs two distinctly-named class parts. A fill MAY
+            carry a per-seam '// ssisx-fill: GapId=... Author=... Date=... EvidenceSha256=...'
+            comment; a recorded hash that no longer matches the package's current one marks
+            that seam (and, since there is no safe way to copy only part of a file, its whole
+            file) STALE and NOT copied. Every seam and its outcome is written fresh to
+            <out>/fills-applied.json every run. When a Script Task/Component's every seam is
+            filled, and a claims file already exists at --claims (default
+            <out>/conformance/claims/, the same default 'conformance' itself uses), this also
+            names the gate-1 ScriptCode RuleId that translation answers and its current claim
+            status -- read-only, never written; only a human updates the claims file.
+            Exits 1 on an orphan, 3 while any seam is unfilled or stale.
 
             Exit codes: 0 success, 1 diff found (diff) / gate 1 failed (conformance
             --check), 2 usage/extraction error, 3 a package's coverage was below

@@ -108,4 +108,16 @@ public sealed class GapSpec
     /// Null when the gap has no packet.
     /// </summary>
     public string? EvidenceSha256 { get; init; }
+
+    /// <summary>
+    /// The RefId of the executable/component this gap's evidence came from -- the exact same value
+    /// <c>ConformanceRulesBuilder.ScriptCodeRules</c> uses to build a <c>ScriptCode</c> rule's own
+    /// <c>RuleId</c> (<c>ConformanceRulesBuilder.ScriptCodeRuleId</c>). Persisted so a consumer of
+    /// <c>gaps.json</c> alone (like <c>ApplyFillsCommand</c>, which never has the live
+    /// <c>PackageSpec</c>/<c>GenerationGap</c> objects this value already lived on in memory) can
+    /// compute that RuleId directly and link an applied Tier-2 fill to the gate-1 conformance
+    /// obligation it answers, without re-deriving or guessing the identifier. Null for a gap kind
+    /// with no evidence-bearing single object (e.g. an unclassified gap).
+    /// </summary>
+    public string? EvidenceRefId { get; init; }
 }

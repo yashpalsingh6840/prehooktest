@@ -74,4 +74,14 @@ public sealed class FillRecordSpec
     /// <see cref="RecordedEvidenceSha256"/> so a stale record is self-explanatory without anyone
     /// re-deriving it from two separate files.</summary>
     public string? CurrentEvidenceSha256 { get; init; }
+
+    /// <summary>
+    /// The gate-1 <c>ScriptCode</c> conformance <c>RuleId</c> this seam's own translation
+    /// contributes to, when its gap kind carries one (<c>ScriptTask</c>/<c>ScriptComponentColumn</c>,
+    /// via <c>GapSpec.EvidenceRefId</c> and <c>ConformanceRulesBuilder.ScriptCodeRuleId</c>). A
+    /// Script Component's several columns share one value here -- the underlying obligation is
+    /// "port the whole component", not one per column. Null for every other gap kind, and for an
+    /// <see cref="FillStatus.Orphaned"/> seam (no gap, so no rule to point at).
+    /// </summary>
+    public string? ConformanceRuleId { get; init; }
 }

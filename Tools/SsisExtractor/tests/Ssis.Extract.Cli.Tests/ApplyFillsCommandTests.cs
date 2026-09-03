@@ -58,6 +58,24 @@ public class ApplyFillsCommandTests : IDisposable
         EvidenceSha256 = evidenceHash,
     };
 
+    private void WriteClaim(string ruleId, string status)
+    {
+        var dir = Path.Combine(_root, "conformance", "claims");
+        Directory.CreateDirectory(dir);
+        var claim = new List<object> { new { RuleId = ruleId, Status = status, ImplementedBy = (string?)null, Note = (string?)null } };
+        File.WriteAllText(Path.Combine(dir, $"{Package}.claims.json"), JsonSerializer.Serialize(claim));
+    }
+
+    private static string CaptureConsole(Action action)
+    {
+        var original = Console.Out;
+        var writer = new StringWriter();
+        Console.SetOut(writer);
+        try { action(); }
+        finally { Console.SetOut(original); }
+        return writer.ToString();
+    }
+
     [Fact]
     public void Run_AppliesAFill_WhenTheProvenanceHashMatchesTheCurrentGap()
     {
@@ -237,5 +255,112 @@ public class ApplyFillsCommandTests : IDisposable
         Assert.Equal(FillStatus.Applied, record.Status);
         Assert.Equal($"{className}.RunScriptAsync", record.Seam);
         Assert.Equal(taskGapId, record.GapId);
+    }
+
+    [Fact]
+    public void Run_NamesTheConformanceRuleId_WhenEveryColumnOfAScriptComponentIsFilled()
+    {
+        const string refId = "Package\\DFT_Load\\SCR_Cleanse";
+        const string ruleId = "SCRIPT-CODE:Package\\DFT_Load\\SCR_Cleanse";
+        WriteGaps(
+            new GapSpec
+            {
+                GapId = "SCRIPT-COLUMN:Pkg:Foo.Bar", Package = Package, Kind = GapKind.ScriptComponentColumn,
+                Tier = GapTier.MissingLogic, Location = "Foo.Bar", Reason = "produced by a Script Component",
+                IsBlocking = true, EvidenceSha256 = CurrentHash, EvidenceRefId = refId,
+            },
+            new GapSpec
+            {
+                GapId = "SCRIPT-COLUMN:Pkg:Foo.Baz", Package = Package, Kind = GapKind.ScriptComponentColumn,
+                Tier = GapTier.MissingLogic, Location = "Foo.Baz", Reason = "produced by a Script Component",
+                IsBlocking = true, EvidenceSha256 = CurrentHash, EvidenceRefId = refId,
+            });
+        WriteClaim(ruleId, "Pending");
+        WriteFill("FooTransform.Fills.cs", """
+            namespace Pkg.Mapping;
+
+            public sealed partial class FooTransform
+            {
+                private partial string Fill_Bar(FooRow row, in RowContext ctx) => "x";
+                private partial string Fill_Baz(FooRow row, in RowContext ctx) => "y";
+            }
+            """);
+
+        var output = CaptureConsole(() => ApplyFillsCommand.Run(["--out", _root]));
+
+        Assert.Contains(ruleId, output);
+        Assert.Contains("Pending", output);
+
+        var records = ReadManifest();
+        Assert.All(records, r => Assert.Equal(ruleId, r.ConformanceRuleId));
+    }
+
+    [Fact]
+    public void Run_DoesNotNameTheRule_WhenOnlySomeOfItsColumnsAreFilled()
+    {
+        const string refId = "Package\\DFT_Load\\SCR_Cleanse";
+        const string ruleId = "SCRIPT-CODE:Package\\DFT_Load\\SCR_Cleanse";
+        WriteGaps(
+            new GapSpec
+            {
+                GapId = "SCRIPT-COLUMN:Pkg:Foo.Bar", Package = Package, Kind = GapKind.ScriptComponentColumn,
+                Tier = GapTier.MissingLogic, Location = "Foo.Bar", Reason = "produced by a Script Component",
+                IsBlocking = true, EvidenceSha256 = CurrentHash, EvidenceRefId = refId,
+            },
+            new GapSpec
+            {
+                GapId = "SCRIPT-COLUMN:Pkg:Foo.Baz", Package = Package, Kind = GapKind.ScriptComponentColumn,
+                Tier = GapTier.MissingLogic, Location = "Foo.Baz", Reason = "produced by a Script Component",
+                IsBlocking = true, EvidenceSha256 = CurrentHash, EvidenceRefId = refId,
+            });
+        // Only Fill_Bar exists -- Fill_Baz has no fill at all, so the component's own obligation
+        // (port the WHOLE thing) is genuinely not finished yet.
+        WriteFill("FooTransform.Fills.cs", """
+            namespace Pkg.Mapping;
+
+            public sealed partial class FooTransform
+            {
+                private partial string Fill_Bar(FooRow row, in RowContext ctx) => "x";
+            }
+            """);
+
+        var output = CaptureConsole(() => ApplyFillsCommand.Run(["--out", _root]));
+
+        Assert.DoesNotContain(ruleId, output);
+
+        // The single filled seam still carries its own RuleId in the manifest -- that fact is true
+        // regardless of whether the group as a whole is done.
+        var record = ReadManifest().Single(r => r.Seam == "Fill_Bar");
+        Assert.Equal(ruleId, record.ConformanceRuleId);
+    }
+
+    [Fact]
+    public void Run_ReportsNoClaimsFileFound_WhenConformanceWasNeverRun()
+    {
+        const string refId = "Package\\SCR_Task";
+        const string ruleId = "SCRIPT-CODE:Package\\SCR_Task";
+        WriteGaps(new GapSpec
+        {
+            GapId = "SCRIPT-TASK:Pkg:SCR_Task.ScriptTask", Package = Package, Kind = GapKind.ScriptTask,
+            Tier = GapTier.MissingLogic, Location = "SCR_Task.ScriptTask", Reason = "a Microsoft.ScriptTask",
+            IsBlocking = true, EvidenceSha256 = CurrentHash, EvidenceRefId = refId,
+        });
+        var className = ScriptTaskEmitter.ClassName("SCR_Task");
+        WriteFill($"{className}.Fills.cs", $$"""
+            using Etl.Core.Abstractions;
+
+            namespace Pkg.ScriptTasks;
+
+            public sealed partial class {{className}}
+            {
+                private partial Task RunScriptAsync(ScriptTaskContext ctx, CancellationToken ct) => Task.CompletedTask;
+            }
+            """);
+        // Deliberately no conformance/claims directory at all -- nobody has run `ssisx conformance`.
+
+        var output = CaptureConsole(() => ApplyFillsCommand.Run(["--out", _root]));
+
+        Assert.Contains(ruleId, output);
+        Assert.Contains("no claims file found", output);
     }
 }

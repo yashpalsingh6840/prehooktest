@@ -6136,11 +6136,83 @@ in the new `Ssis.Extract.Cli.Tests` project), 7+11+81 = 99 in `Etl.Core` unaffec
 `scripts/Run-Tests.ps1`. No `Etl.Core` changes this round -- this is entirely a codegen/CLI-side
 feature.
 
-**Remaining, deliberately unaddressed:** the plan's own "optionally link a fill to the conformance
-rule(s) it satisfies" -- explicitly optional there, and still out of scope here; and Tier 1's
-`decisions.json` files still are not automatically re-stamped with a fresh hash when a human edits
-one by hand (the packet now asks for it at authoring time, but nothing enforces it afterward --
-same trust model as `ConfirmedBy` itself, a human field this tool reads and never writes).
+**Remaining, deliberately unaddressed at the time:** the plan's own "optionally link a fill to the
+conformance rule(s) it satisfies" -- explicitly optional there, closed in the very next round below;
+and Tier 1's `decisions.json` files still are not automatically re-stamped with a fresh hash when a
+human edits one by hand (the packet now asks for it at authoring time, but nothing enforces it
+afterward -- same trust model as `ConfirmedBy` itself, a human field this tool reads and never
+writes).
+
+### Linking a fill to the conformance rule it answers (2026-09-03, same day)
+
+The plan's own explicitly-optional last item, picked as the next round when asked what to do next
+-- the AI-gap-filling plan's 4 chunks were otherwise fully done, and this was the one concretely
+scoped, non-speculative piece left.
+
+**The two commands share nothing today, not even data, despite being about the exact same real-
+world obligation.** A Script Task/Component's `ScriptCode` conformance rule (gate 1,
+`ssisx conformance`) and its own Tier-2 gap (`ssisx generate --seams`/`apply-fills`) both ask "read
+this script and port it deliberately" -- but `ConformanceCommand.cs` never references anything in
+`Ssis.Extract.Codegen`'s gap machinery, and `GenerateCommand.cs`/`ApplyFillsCommand.cs` never
+reference `ConformanceRuleSpec`/`ImplementationClaimSpec`. Confirmed by reading both, not assumed:
+their persisted `RuleId`/`GapId` strings use genuinely DIFFERENT location conventions --
+`ConformanceRulesBuilder.ScriptCodeRules` keys a `ScriptCode` rule as `SCRIPT-CODE:{RefId}` (SSIS's
+own backslash-delimited executable/component path, package carried as a separate JSON field), while
+a Tier-2 `GapId` is `<KIND>:<Package>:<Location>` where `Location` is an `ObjectName`- or
+`{Entity}.{Column}`-shaped string. **Neither is a string-transform of the other.**
+
+**But there IS an exact shared key, just dropped before it reaches disk.** `GenerationGap` already
+carries `EvidenceRefId` (`ScriptTaskEmitter.cs`'s `task.RefId`, `TransformEmitter.cs`'s
+`producer.RefId`) -- the literal same RefId value `ConformanceRulesBuilder` uses to build the rule.
+`AiPacketEmitter.NewSpec` (the `GenerationGap` -> `GapSpec` conversion, chunk 1) simply never
+forwarded it into the persisted `gaps.json`. Fixed with one additive field,
+`GapSpec.EvidenceRefId`, threaded straight through -- and a new, single-source-of-truth
+`ConformanceRulesBuilder.ScriptCodeRuleId(refId)` (both existing `RuleId = $"SCRIPT-CODE:{...}"`
+call sites now call it) so `ApplyFillsCommand` computes the exact same string the rule builder
+does, rather than duplicating the literal and risking the two drifting apart later.
+
+**What `ApplyFillsCommand` does with it, and -- more importantly -- what it deliberately does
+NOT do.** Every `FillRecordSpec` now carries a `ConformanceRuleId` (null except for
+`ScriptTask`/`ScriptComponentColumn`). Separately, after the main seam loop, every EXPECTED seam
+(not just ones a fill answered) is grouped by `(Package, RuleId)` -- several `ScriptComponentColumn`
+gaps share one RuleId (same component, several columns), and the real obligation is "port the WHOLE
+component," not one per column, so a group counts as answered only once every seam in it has
+genuinely landed in `generate/` (i.e. is in `filledMethods`, never stale/orphaned). For each fully-
+answered group, it reads that package's own claims file (read-only, default
+`<out>/conformance/claims/`, same default `conformance` itself uses -- silently absent, never an
+error, when nobody has run `conformance` for this `--out` at all) and reports the RuleId alongside
+its CURRENT claim status. **It never writes to the claims file.** Only a human puts a
+`ConfirmedBy`-equivalent sign-off on a conformance claim -- this command's entire job here is
+making the connection VISIBLE, the same division of labor as every other piece of this feature
+(decisions.json, fill provenance, all human-authored, `ssisx` only ever reads them).
+
+**Verified against the real portfolio, not just unit tests.** `ssisx generate --seams` +
+`ssisx conformance` (fresh claim stubs, all `Pending`) + `ssisx apply-fills` with the real,
+already-authored `Package` fills (`D:\PoC\SSIS_From_Sandeep_Generated\fills\Package\`) against
+`SSIS_From_Sandeep`: correctly named all **4** real `ScriptCode` rules this package's fills fully
+answer --
+```
+SCRIPT-CODE:Package\DFT_BuildSalesSummary\SCR_ComputeCustomerTier  (2 seams)
+SCRIPT-CODE:Package\DFT_LoadCustomers\SCR_CleanseCustomerRow        (4 seams)
+SCRIPT-CODE:Package\SCR_NotifyAndLogProgress                       (1 seam)
+SCRIPT-CODE:Package\SCR_ValidateAndLogStart                        (1 seam)
+```
+all correctly `Pending` on the first run. Then hand-edited one claim to `Implemented` in the real
+claims file and re-ran `apply-fills`: that one rule's own report line correctly flipped to
+"claim status: Implemented -- already marked Implemented" while the other three stayed `Pending`
+-- and the claims file itself was confirmed untouched by `apply-fills` (the hand edit survived).
+The whole regenerated 5-package portfolio (plus a copy of `Etl.Core`) still builds
+**0 warnings/0 errors** -- this round touches only reporting, never generated code.
+
+New tests (`ApplyFillsCommandTests.cs`, +3): the fully-answered case reports the RuleId and its
+claim status; a PARTIALLY-filled Script Component (one of two columns) correctly reports nothing
+for the group (while the one filled seam still carries its own `ConformanceRuleId` in the
+manifest, a true fact independent of the group's completeness); and no claims file at all reports
+`(no claims file found)` rather than a false `Unclaimed`. Regression: 149+9+156+304 = 618 in the
+`ssisx` solution (was 615), Etl.Core's 99 unaffected, all green. No `Etl.Core` changes.
+
+This closes the AI-assisted gap-filling plan's own last item -- all 4 chunks plus this optional
+extra are now done.
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**

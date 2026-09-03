@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Ssis.Extract.Codegen;
+using Ssis.Extract.Dtsx;
 using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Serialization;
 
@@ -44,6 +45,18 @@ namespace Ssis.Extract.Cli;
 /// to prevent. The full, honest picture instead goes into <c>fills-applied.json</c>, written fresh
 /// every run: one row per seam, its status, and (when present) who wrote it, when, and against
 /// which hash.
+///
+/// <b>Linking a fill to the gate-1 conformance obligation it answers.</b> A Script Task/Component
+/// gap and its own gate-1 <c>ScriptCode</c> conformance rule (<c>ssisx conformance</c>) are about
+/// the exact same real-world obligation -- "read this script and port it deliberately" -- but they
+/// live in two commands that share no code and, until now, no data either. `GapSpec` now carries
+/// the same `EvidenceRefId` <c>ConformanceRulesBuilder</c> uses to build that rule's own `RuleId`
+/// (<c>ConformanceRulesBuilder.ScriptCodeRuleId</c>), so once every seam belonging to one Script
+/// Task/Component is genuinely filled, this command can name the exact <c>RuleId</c> that
+/// translation answers and -- when a claims file already exists -- say what it currently claims.
+/// **It never writes to the claims file.** Only a human puts a `ConfirmedBy`-equivalent sign-off on
+/// a conformance claim; this command's whole job here is making the connection VISIBLE, the same
+/// division of labor as everywhere else in this feature.
 /// </summary>
 internal static class ApplyFillsCommand
 {
@@ -86,6 +99,7 @@ internal static class ApplyFillsCommand
     {
         string? outDir = null;
         string? fillsDir = null;
+        string? claimsDir = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -93,6 +107,7 @@ internal static class ApplyFillsCommand
             {
                 case "--out": outDir = RequireValue(args, ref i, "--out"); break;
                 case "--fills": fillsDir = RequireValue(args, ref i, "--fills"); break;
+                case "--claims": claimsDir = RequireValue(args, ref i, "--claims"); break;
                 default:
                     Console.Error.WriteLine($"error: unknown option '{args[i]}'. Run 'ssisx --help'.");
                     return 2;
@@ -160,6 +175,9 @@ internal static class ApplyFillsCommand
         }
 
         fillsDir = Path.GetFullPath(fillsDir ?? Path.Combine(outDir, "fills"));
+        // Same default `ssisx conformance` itself uses -- read-only here, and silently absent
+        // (never an error) when nobody has run `conformance` for this --out at all.
+        claimsDir = Path.GetFullPath(claimsDir ?? Path.Combine(outDir, "conformance", "claims"));
         var generateDir = Path.Combine(outDir, "generate");
 
         var applied = new List<string>();
@@ -245,6 +263,7 @@ internal static class ApplyFillsCommand
                                 Package = packageName, FileName = fileName, Seam = seam, GapId = gap.GapId,
                                 Status = FillStatus.Stale, Author = provenance.Author, Date = provenance.Date,
                                 RecordedEvidenceSha256 = recorded, CurrentEvidenceSha256 = current,
+                                ConformanceRuleId = ConformanceRuleId(gap),
                             });
                             if (!staleMethods.TryGetValue(packageName, out var staleSet))
                                 staleMethods[packageName] = staleSet = new HashSet<string>(StringComparer.Ordinal);
@@ -260,6 +279,7 @@ internal static class ApplyFillsCommand
                             Status = provenance is null ? FillStatus.Unattributed : FillStatus.Applied,
                             Author = provenance?.Author, Date = provenance?.Date,
                             RecordedEvidenceSha256 = provenance?.EvidenceSha256, CurrentEvidenceSha256 = gap.EvidenceSha256,
+                            ConformanceRuleId = ConformanceRuleId(gap),
                         });
                     }
 
@@ -317,6 +337,51 @@ internal static class ApplyFillsCommand
             }
         }
 
+        // Group every EXPECTED seam (not just the ones a fill answered) by the ScriptCode RuleId
+        // its own gap points at -- several ScriptComponentColumn gaps can share one RuleId (same
+        // Script Component, several columns), and the underlying obligation is "port the whole
+        // component", not one per column, so it is only satisfied once every seam in the group has
+        // genuinely landed in `generate/` (i.e. is in filledMethods, never stale/orphaned).
+        var ruleGroups = new Dictionary<(string Package, string RuleId), List<string>>();
+        foreach (var (packageName, byMethod) in expected)
+            foreach (var (method, gap) in byMethod)
+                if (ConformanceRuleId(gap) is { } ruleId)
+                {
+                    var key = (packageName, ruleId);
+                    if (!ruleGroups.TryGetValue(key, out var seamsForRule))
+                        ruleGroups[key] = seamsForRule = [];
+                    seamsForRule.Add(method);
+                }
+        foreach (var (packageName, byClass) in expectedScriptTasks)
+            foreach (var (cls, gap) in byClass)
+                if (ConformanceRuleId(gap) is { } ruleId)
+                {
+                    var key = (packageName, ruleId);
+                    if (!ruleGroups.TryGetValue(key, out var seamsForRule))
+                        ruleGroups[key] = seamsForRule = [];
+                    seamsForRule.Add($"{cls}.RunScriptAsync");
+                }
+
+        var conformanceLinks = new List<string>();
+        var claimsCache = new Dictionary<string, List<ImplementationClaimSpec>?>(StringComparer.Ordinal);
+        foreach (var ((packageName, ruleId), seamsForRule) in ruleGroups.OrderBy(g => g.Key.Package, StringComparer.Ordinal)
+                                                                          .ThenBy(g => g.Key.RuleId, StringComparer.Ordinal))
+        {
+            filledMethods.TryGetValue(packageName, out var filled);
+            if (!seamsForRule.All(s => filled?.Contains(s) == true)) continue; // partial -- not yet a candidate
+
+            if (!claimsCache.TryGetValue(packageName, out var claims))
+                claimsCache[packageName] = claims = ReadClaims(claimsDir, packageName);
+            var claim = claims?.FirstOrDefault(c => string.Equals(c.RuleId, ruleId, StringComparison.Ordinal));
+
+            var status = claim?.Status ?? (claims is null ? "(no claims file found)" : "Unclaimed");
+            var note = string.Equals(status, "Implemented", StringComparison.OrdinalIgnoreCase)
+                ? "already marked Implemented"
+                : "update the claims file by hand if this port is trustworthy";
+            conformanceLinks.Add(
+                $"{packageName}: {ruleId}  --  all {seamsForRule.Count} seam(s) filled ({string.Join(", ", seamsForRule.OrderBy(s => s, StringComparer.Ordinal))}); claim status: {status} -- {note}");
+        }
+
         var manifestPath = Path.Combine(outDir, "fills-applied.json");
         StableJsonWriter.WriteToFile(
             fillRecords.OrderBy(r => r.Package, StringComparer.Ordinal)
@@ -325,13 +390,20 @@ internal static class ApplyFillsCommand
                        .ToList(),
             manifestPath);
 
-        Report(fillsDir, manifestPath, applied, stillUnfilled, staleSeams, orphanedFiles, orphanedMethods, unknownPackages);
+        Report(fillsDir, manifestPath, applied, stillUnfilled, staleSeams, orphanedFiles, orphanedMethods, unknownPackages, conformanceLinks);
 
         if (orphanedFiles.Count > 0 || orphanedMethods.Count > 0 || unknownPackages.Count > 0) return 1;
         return stillUnfilled.Count > 0 || staleSeams.Count > 0 ? 3 : 0;
     }
 
     private static string Short(string hash) => hash.Length > 8 ? hash[..8] : hash;
+
+    /// <summary>The gate-1 <c>ScriptCode</c> RuleId this gap's own translation contributes to, or
+    /// null when its kind carries no such counterpart (only ScriptTask/ScriptComponentColumn do).</summary>
+    private static string? ConformanceRuleId(GapSpec gap) =>
+        gap.Kind is GapKind.ScriptTask or GapKind.ScriptComponentColumn && gap.EvidenceRefId is { Length: > 0 } refId
+            ? ConformanceRulesBuilder.ScriptCodeRuleId(refId)
+            : null;
 
     /// <summary>
     /// Looks for a <c>// ssisx-fill:</c> comment on the nearest non-blank line ABOVE this seam's
@@ -375,6 +447,38 @@ internal static class ApplyFillsCommand
         return null;
     }
 
+    private static readonly JsonSerializerOptions ClaimsReadOptions = new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>
+    /// Reads a package's own claims file, read-only, exactly like <c>ConformanceCommand</c> writes
+    /// and reads it -- <c>&lt;claimsDir&gt;/&lt;SanitizedPackageName&gt;.claims.json</c>. Returns
+    /// null (not empty) when the file is absent, so a caller can tell "nobody has run `ssisx
+    /// conformance` for this package yet" apart from "it ran and found nothing to claim".
+    /// </summary>
+    private static List<ImplementationClaimSpec>? ReadClaims(string claimsDir, string packageName)
+    {
+        var path = Path.Combine(claimsDir, $"{SanitizeFileName(packageName)}.claims.json");
+        if (!File.Exists(path)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<List<ImplementationClaimSpec>>(File.ReadAllText(path), ClaimsReadOptions) ?? [];
+        }
+        catch (JsonException)
+        {
+            // A malformed claims file is `conformance`'s own problem to report; here it just means
+            // "nothing to cross-reference", not a reason to fail an otherwise-successful apply-fills.
+            return null;
+        }
+    }
+
+    /// <summary>Must match <c>ConformanceCommand.SanitizeFileName</c> exactly -- both sides need to
+    /// agree on the same claims file name without sharing the method.</summary>
+    private static string SanitizeFileName(string s)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        return new string(s.Select(c => invalid.Contains(c) ? '_' : c).ToArray());
+    }
+
     private static FillProvenance ParseProvenance(string fields)
     {
         string? gapId = null, author = null, date = null, hash = null;
@@ -396,7 +500,8 @@ internal static class ApplyFillsCommand
 
     private static void Report(
         string fillsDir, string manifestPath, List<string> applied, List<string> stillUnfilled,
-        List<string> staleSeams, List<string> orphanedFiles, List<string> orphanedMethods, List<string> unknownPackages)
+        List<string> staleSeams, List<string> orphanedFiles, List<string> orphanedMethods,
+        List<string> unknownPackages, List<string> conformanceLinks)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"apply-fills: {applied.Count} fill file(s) applied from {fillsDir}");
@@ -433,6 +538,14 @@ internal static class ApplyFillsCommand
             sb.AppendLine();
             sb.AppendLine("Fills for a package that was not generated into --out:");
             foreach (var line in unknownPackages) sb.AppendLine($"  ? {line}");
+        }
+
+        if (conformanceLinks.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Gate-1 conformance rules now fully answered by these fills (never written here --");
+            sb.AppendLine("update the claims file yourself if you agree the port is trustworthy):");
+            foreach (var line in conformanceLinks) sb.AppendLine($"  = {line}");
         }
 
         if (applied.Count == 0 && stillUnfilled.Count == 0 && staleSeams.Count == 0
