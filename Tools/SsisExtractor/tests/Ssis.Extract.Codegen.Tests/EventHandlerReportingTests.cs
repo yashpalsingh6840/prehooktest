@@ -22,7 +22,9 @@ namespace Ssis.Extract.Codegen.Tests;
 /// </summary>
 public class EventHandlerReportingTests
 {
-    private static PackageSpec Package(params EventHandlerSpec[] handlers) => new()
+    private static PackageSpec Package(params EventHandlerSpec[] handlers) => Package(null, handlers);
+
+    private static PackageSpec Package(ExecutionSemanticsSpec? semantics, params EventHandlerSpec[] handlers) => new()
     {
         ObjectName = "PkgWithHandlers",
         SourceDtsxPath = "in-memory.dtsx",
@@ -33,6 +35,7 @@ public class EventHandlerReportingTests
         ProtectionLevelName = "DontSaveSensitive",
         Coverage = new CoverageStats { TotalElements = 0, UnmappedElements = 0, ExcludedElements = 0, CoveragePercent = 100 },
         EventHandlers = [.. handlers],
+        ExecutionSemantics = semantics ?? new ExecutionSemanticsSpec(),
     };
 
     private static ExecutableSpec SqlTask(string name, bool disabled = false) => new()
@@ -53,16 +56,37 @@ public class EventHandlerReportingTests
     };
 
     [Fact]
-    public void Plan_ReportsABlockingGap_ForAnEventHandlerThatContainsWork()
+    public void Plan_TranslatesAPackageRootOnErrorHandler_WithASingleExecuteSqlTask()
     {
-        // The real Package_Advanced shape: OnError -> one Execute SQL Task.
+        // The real Package_Advanced shape: OnError -> one Execute SQL Task. Superseded
+        // 2026-09-03: a real dtexec probe (SyntheticEventHandlerProbe.dtsx) measured that, under
+        // the default MaximumErrorCount=1 everywhere, "some task failed" and "the whole package
+        // failed" are the same event -- so this shape is now translated as a failure handler
+        // (PackageRunner.RunFailureHandlersAsync already runs it unconditionally on any
+        // exception), not reported as an untranslatable gap.
         var plan = PackagePlanner.Plan(Package(Handler("OnError", disabled: false, SqlTask("SQL_LogOnError"))));
+
+        Assert.DoesNotContain(plan.Gaps, g => g.Location.Contains("EventHandlers[OnError]", StringComparison.Ordinal));
+        var handler = Assert.Single(plan.FailureHandlers);
+        Assert.Equal("SQL_LogOnError", handler.TaskName);
+        Assert.Equal("INSERT INTO dbo.ErrorLog DEFAULT VALUES;", handler.Sql);
+    }
+
+    [Fact]
+    public void Plan_ReportsABlockingGap_ForAnOnErrorHandler_WhenMaximumErrorCountIsRaised()
+    {
+        // The precondition ResolveErrorEventHandler's own doc comment names: raising
+        // MaximumErrorCount anywhere in the tree is exactly what the probe measured as letting a
+        // task fail while the package as a whole still succeeds -- a state this generator's single
+        // whole-package transaction cannot represent, so it must gap rather than guess.
+        var package = Package(new ExecutionSemanticsSpec { MaximumErrorCount = 5 },
+            Handler("OnError", disabled: false, SqlTask("SQL_LogOnError")));
+        var plan = PackagePlanner.Plan(package);
 
         var gap = Assert.Single(plan.Gaps, g => g.Location.Contains("EventHandlers[OnError]", StringComparison.Ordinal));
         Assert.True(gap.IsBlocking);
-        Assert.Contains("SQL_LogOnError", gap.Reason);
-        // The reason must say why it is not simply translated as a failure handler.
-        Assert.Contains("not the same as the Failure-constraint handler", gap.Reason);
+        Assert.Contains("MaximumErrorCount", gap.Reason);
+        Assert.Empty(plan.FailureHandlers);
     }
 
     [Fact]
@@ -95,5 +119,43 @@ public class EventHandlerReportingTests
         var plan = PackagePlanner.Plan(Package(Handler("OnError", disabled: false, SqlTask("SQL_LogOnError", disabled: true))));
 
         Assert.DoesNotContain(plan.Gaps, g => g.Location.Contains("EventHandlers[", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Plan_ReportsABlockingGap_ForAnOnErrorHandlerOnANestedContainer()
+    {
+        // ResolveErrorEventHandler's own doc comment states this is not an oversight: under the
+        // measured MaximumErrorCount=1-everywhere precondition, a handler below the package root
+        // could only ever fire on a run where nothing above it also failed -- which this rewrite's
+        // whole-package-abort model already treats as "the run succeeded" -- so it is a genuinely
+        // different, unevidenced shape from the one real evidenced case, not a generalization of it.
+        var seq = new ExecutableSpec
+        {
+            RefId = "Package\\SEQ_A",
+            ObjectName = "SEQ_A",
+            ExecutableType = "STOCK:SEQUENCE",
+            // EnumerateContainers only walks a container that has at least one child -- an empty
+            // Sequence isn't a real container to it, so this needs one to be recognized at all.
+            Children = [SqlTask("SQL_Inner")],
+            EventHandlers = [Handler("OnError", disabled: false, SqlTask("SQL_LogOnError"))],
+        };
+        var package = new PackageSpec
+        {
+            ObjectName = "PkgWithHandlers",
+            SourceDtsxPath = "in-memory.dtsx",
+            Sha256 = new string('0', 64),
+            FileSizeBytes = 0,
+            LastWriteTimeUtc = DateTime.UnixEpoch,
+            ProtectionLevelRaw = 0,
+            ProtectionLevelName = "DontSaveSensitive",
+            Coverage = new CoverageStats { TotalElements = 0, UnmappedElements = 0, ExcludedElements = 0, CoveragePercent = 100 },
+            Executables = [seq],
+        };
+
+        var plan = PackagePlanner.Plan(package);
+
+        var gap = Assert.Single(plan.Gaps, g => g.Location.Contains("EventHandlers[OnError]", StringComparison.Ordinal));
+        Assert.True(gap.IsBlocking);
+        Assert.Empty(plan.FailureHandlers);
     }
 }

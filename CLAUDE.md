@@ -70,6 +70,12 @@ now nothing that ran `dotnet test`), not because an exit code was swallowed.
    an `OnError` handler containing an Execute SQL Task, so SSIS logs on error
    and the generated job does not. Reporting it moves that package out of the
    generatable set: **4/5 â†’ 3/5.** The count was wrong, not the package.
+   **Closed in part 2026-09-03** — see "Event handler translation" below: the
+   one real evidenced shape (a package-root OnError handler with a single
+   Execute SQL Task, under the schema-default MaximumErrorCount everywhere)
+   is now translated, verified against the real package, restoring it to the
+   generatable set. Everything else about an event handler is still reported,
+   not guessed.
 6. **A guard could silently skip its step.** Conditional-precedence guards read
    variables via `PackageVariables.Get<T>`, which returns `default(T)` on a
    type mismatch â€” so a guard reading `int` against a `long` silently saw 0 and
@@ -5909,6 +5915,99 @@ target-type gaps. `DFT_LookupAndAggregate` -- Aggregate-inside-a-Multicast-branc
 Lookup routing -- is now closed. Every real, evidenced flow in the tracked `SSIS_From_Sandeep`
 portfolio either generates cleanly or is blocked only on `Package`'s own 8 hand-portable Script
 seams (Tier 2, already fillable via `--seams`/`ssisx apply-fills`, unrelated to this round).
+
+### Event handler translation -- the one gap the 2026-09-02/03 audit itself left open, closed (2026-09-03)
+
+Picked up as the direct next round after that audit's own six fixes were verified end to end
+(Docker back up, real dtexec run vs. the fixed generator's own output, byte-for-byte match across
+all five real packages -- see the audit's own commit history). Finding 5 explicitly left this
+open: event handlers were reported once codegen started reading them, but deliberately NOT
+translated, because "an SSIS event fires per event occurrence and propagates up the container
+tree, which is not the same as the Failure-constraint handler this tool does generate, and the
+difference has not been measured." This round measured it.
+
+**A real dtexec probe came first, before any codegen** (`Ssis.Extract.FixtureBuilder`'s new
+`event-handler-probe` mode, `SyntheticEventHandlerProbe.dtsx` -- built via the real object model,
+reflected first to confirm the `Package.EventHandlers.Add("OnError")` API shape since no prior
+fixture in this repo had ever built one): a package-root `OnError` handler (one Execute SQL Task,
+matching `Package_Advanced.dtsx`'s own real shape exactly) plus a Sequence Container with NO
+handler of its own holding a failing task, plus a second, independent root-level failing task, with
+`Package.MaximumErrorCount` deliberately raised to 10 so a second, distinct failure got the chance
+to actually happen instead of the run stopping after the first. **Measured, not assumed:**
+- The handler fired **twice** -- once per failing task, not once per run. Raising
+  `MaximumErrorCount` is exactly what let a second, independent failure occur at all.
+- It propagates from a child container that declares no handler of its own up to the nearest
+  ancestor that does (the Sequence's own failure, with no handler on the Sequence itself, fired
+  the package-level one).
+- A task ordered "on success" after a failing task correctly did not run.
+- The overall package still returned **`DTSER_SUCCESS`** despite two real task failures underneath
+  it -- a genuinely surprising, separately-confirmed fact: reflecting the live object model showed
+  `FailParentOnFailure`/`FailPackageOnFailure` both default to `false` and `MaximumErrorCount`
+  defaults to exactly `1` on a Package, a Sequence, and a plain Task alike, so a failing task's own
+  container hits *its own* threshold and becomes Failure without that automatically failing an
+  ancestor. Only because the PACKAGE's own threshold had also been deliberately raised (to let
+  branch B run at all) did the package as a whole tolerate two real failures underneath it.
+
+**The precondition this makes possible, and why it is not a narrowing for convenience:** at the
+schema DEFAULT of `MaximumErrorCount=1` everywhere -- the case for every package in the tracked
+portfolio, unmeasured elsewhere -- the FIRST failure anywhere in the tree immediately exhausts its
+own container's threshold, and because this rewrite's own `PackageRunner` already aborts the WHOLE
+run the instant any ONE step throws (no per-branch tolerance exists here at all), "some task
+failed" and "the whole package failed" collapse into the exact same event. That is also why scoping
+to the package root is not a special case: under that same default, a handler on some deeper
+container could only ever fire on a run where nothing above it also failed -- which this rewrite's
+whole-package-abort model already treats as "the run succeeded" -- so a non-root handler is a
+genuinely different, unevidenced shape, not a generalization of this one.
+
+**What was built, in `Ssis.Extract.Codegen/PackagePlanner.cs`:** a new `ResolveErrorEventHandler`,
+resolved separately from precedence-constraint failure handlers (an event handler lives in a wholly
+different part of the model, `package.EventHandlers`, never inside the ordinary executable tree)
+but landing in the exact SAME `PackagePlan.FailureHandlers` list and reusing `Etl.Core`'s existing
+`FailureHandlerAction`/`PackageRunner.RunFailureHandlersAsync` completely unchanged -- that runtime
+already runs every entry unconditionally on ANY exception, which turns out not to be a coincidence
+given the measured precondition above. Requires: exactly one live `OnError` handler at the package
+root, `MaximumErrorCount` left at its default everywhere in the whole executable tree (a new check
+over `ExecutableSpec.MaximumErrorCount` plus `PackageSpec.ExecutionSemantics.MaximumErrorCount`,
+both already extracted, read by nothing before this), and its one live child being an Execute SQL
+Task with a literal (non-expression) statement -- the exact shape `ResolveFailureHandler` already
+requires for a Failure precedence constraint, reused verbatim. Anything else (more than one live
+handler, a non-root owner, a non-OnError event, a raised `MaximumErrorCount`, a non-SQL child) stays
+a reported gap, not guessed -- `ReportEventHandlers` now takes the set of package-root OnError
+handlers `ResolveErrorEventHandler` already examined (whether it succeeded or rejected) and skips
+them, so a rejected one gets exactly one precise gap instead of two conflicting ones.
+
+**Verified two ways:**
+1. **The real motivating package.** Regenerating `Package_Advanced.dtsx`: the
+   `EventHandlers[OnError]` gap is gone entirely, and the whole regenerated 5-package portfolio
+   (plus a copy of `Etl.Core`) still builds **0 warnings/0 errors**. Reading the emitted
+   `Program.cs` directly confirms `FailureHandlers: [new FailureHandlerAction("SQL_LogOnError",
+   "INSERT INTO dbo.EtlRunLog (PackageName, SourceName, EventType, MessageText) VALUES
+   (N'Package_Advanced', N'(event handler)', N'OnError', N'An error was raised.');")]` -- the
+   real SQL text, verbatim, from the real `.dtsx`.
+2. **A real forced failure, run against the generated exe, not just built.** Pointed the Excel
+   Source's own configured file at a nonexistent path so `DFT_ExcelImport` genuinely throws;
+   `Package_Advanced.exe` exited 1 (the load rolled back, matching this rewrite's own established
+   trade against SSIS's per-task auto-commit) and `dbo.EtlRunLog` gained EXACTLY the row real SSIS's
+   own handler would write: `Package_Advanced | (event handler) | OnError | An error was raised.`
+   -- read back from the table directly, not trusted from the exit code. The earlier, unmodified
+   happy-path portfolio run (nothing failed) correctly logged nothing, matching real SSIS's own
+   equivalent run.
+
+Two new unit tests in `EventHandlerReportingTests.cs` (the real `Package_Advanced` shape now
+resolving to a `FailureHandlerAction` instead of a gap; a raised `MaximumErrorCount` correctly
+still gapping) plus one pinning the non-root boundary explicitly. One pre-existing test
+(`Plan_IgnoresADisabledTaskInsideAnOtherwiseLiveHandler`) needed a one-line fix inside
+`ResolveErrorEventHandler` itself: a handler whose only child is disabled must return null
+SILENTLY (matching `ReportEventHandlers`'s own long-standing "declares nothing that runs" rule),
+not raise a spurious rejection gap. Regression: 304/304 in `Ssis.Extract.Codegen.Tests` (was 302),
+708 tests total across both repos via `scripts/Run-Tests.ps1`, all green.
+
+**Remaining, deliberately unaddressed:** `MaximumErrorCount` raised anywhere in the tree (no real
+package in the tracked portfolio does this, so it stays a named, evidence-gated gap rather than a
+guessed multi-firing translation); an event handler on a non-root container; any event other than
+`OnError`; a handler whose one live child is anything other than a single Execute SQL Task. None of
+these is guessed at -- each was named, not silently dropped, exactly like every other gap in this
+tool.
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**

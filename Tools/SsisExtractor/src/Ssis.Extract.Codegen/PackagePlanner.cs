@@ -490,8 +490,15 @@ public static class PackagePlanner
             guards: guards, guardsApplied: guardsApplied,
             failureHandlerRefIds: resolved.FailureHandlers.Keys.ToHashSet());
 
+        // Resolved separately from precedence-constraint failure handlers above (an event handler
+        // lives in a wholly different part of the model, package.EventHandlers, never inside the
+        // ordinary executable tree WalkContainer just walked) but lands in the exact same list --
+        // see ResolveErrorEventHandler's own doc comment for why that reuse is correct, not just
+        // convenient.
+        var errorHandler = ResolveErrorEventHandler(package, gaps, out var claimedHandlerRefIds);
+
         ReportParallelismFlattening(package, gaps);
-        ReportEventHandlers(package, gaps);
+        ReportEventHandlers(package, gaps, claimedRefIds: claimedHandlerRefIds);
         ReportUnappliedGuards(package, guards, guardsApplied, gaps);
 
         var seeds = steps
@@ -501,10 +508,13 @@ public static class PackagePlanner
             .OrderBy(seed => seed.SsisName, StringComparer.Ordinal)
             .ToList();
 
+        var failureHandlers = resolved.FailureHandlers.Values.ToList();
+        if (errorHandler is not null) failureHandlers.Add(errorHandler);
+
         return new PackagePlan(preLoadStatements, preLoadFileActions, flows, steps, gaps)
         {
             VariableSeeds = seeds,
-            FailureHandlers = resolved.FailureHandlers.Values
+            FailureHandlers = failureHandlers
                 .OrderBy(h => h.RefId, StringComparer.Ordinal)
                 .ToList(),
         };
@@ -721,6 +731,116 @@ public static class PackagePlanner
         }
 
         return new FailureHandlerPlan(executable.ObjectName ?? to, sql, constraint.To);
+    }
+
+    /// <summary>
+    /// A package-root <c>OnError</c> event handler translated into the SAME
+    /// <see cref="FailureHandlerAction"/> position a Failure precedence constraint already uses --
+    /// <c>PackageRunner.RunFailureHandlersAsync</c> already runs every entry unconditionally on ANY
+    /// exception, which turns out not to be a coincidence: under the precondition checked below,
+    /// "the package as a whole fails" and "some task raised OnError" are the SAME event.
+    ///
+    /// <para><b>Measured via a real dtexec probe first, not assumed</b> (SyntheticEventHandlerProbe,
+    /// built specifically to answer this before writing any of this method): OnError fires ONCE PER
+    /// FAILING TASK, not once per run -- raising the package's own MaximumErrorCount let two
+    /// independent failures both happen and the handler ran twice (2 rows logged). It also
+    /// propagates from a child container that declares no handler of its own up to the nearest
+    /// ancestor that does (a Sequence Container's own failure, with no handler on the Sequence
+    /// itself, fired the PACKAGE-level handler). And reflecting the live object model directly
+    /// confirmed <c>MaximumErrorCount</c> defaults to exactly 1 on a Package, a Sequence, AND a
+    /// plain Task alike, with <c>FailParentOnFailure</c>/<c>FailPackageOnFailure</c> both defaulting
+    /// to false -- so a failing task's own container hits its OWN threshold and becomes Failure,
+    /// but that does NOT automatically fail an ancestor (the probe's own package returned
+    /// DTSER_SUCCESS despite two real task failures underneath it, precisely because nothing raised
+    /// either container's MaximumErrorCount past 1... except in that probe, the PACKAGE's own count
+    /// was deliberately raised to 10 to let both branches run, which is exactly the condition that
+    /// makes the "runs once" assumption unsafe).</para>
+    ///
+    /// <para><b>The precondition this rests on:</b> at the schema default of 1, the FIRST failure
+    /// anywhere in the tree immediately exhausts its own container's threshold -- and because this
+    /// rewrite's own <c>PackageRunner</c> already aborts the WHOLE run the instant any ONE step
+    /// throws, "some task failed" and "the whole package failed" collapse into the same event here
+    /// too, with no possibility of a second, independent failure ever occurring. So translation is
+    /// safe ONLY when every container in the tree (package included) leaves MaximumErrorCount at
+    /// that default; anywhere it is raised, a task could fail while the package still overall
+    /// succeeds -- a state this rewrite's all-or-nothing step loop cannot represent -- and that is
+    /// reported as a gap rather than guessed.</para>
+    ///
+    /// <para>Scoping to the package root is not a special case under that same precondition: with
+    /// every threshold at 1, a handler on some deeper container could only ever fire if nothing
+    /// above it also failed on the same run, which is precisely the case the whole-package-abort
+    /// model already treats as "the run succeeded" -- so a non-root handler is a genuinely
+    /// different, unevidenced shape, not a generalization of this one, and stays a reported gap.</para>
+    /// </summary>
+    private static FailureHandlerPlan? ResolveErrorEventHandler(
+        PackageSpec package, List<GenerationGap> gaps, out HashSet<string> claimedRefIds)
+    {
+        claimedRefIds = [];
+        var packageName = package.ObjectName ?? "package";
+        var location = $"{packageName}.EventHandlers[OnError]";
+
+        var live = package.ExecutionSemantics?.DisableEventHandlers == true
+            ? []
+            : package.EventHandlers
+                .Where(h => string.Equals(h.EventName, "OnError", StringComparison.OrdinalIgnoreCase))
+                .Where(h => h.Disabled != true)
+                .ToList();
+        if (live.Count == 0) return null;
+
+        // Claimed the moment a live package-root OnError handler exists to examine, regardless of
+        // outcome -- Reject already adds this method's own, more precise gap for the SAME
+        // location, so ReportEventHandlers must not also add its generic one right behind it.
+        claimedRefIds = [.. live.Select(h => h.RefId)];
+
+        void Reject(string why) => gaps.Add(new GenerationGap(location,
+            $"OnError event handler on '{packageName}' would be generated as a failure handler, but {why}. " +
+            "Not guessed at.",
+            Kind: GapKind.ConditionalConstraint));
+
+        if (live.Count > 1)
+        {
+            Reject($"'{packageName}' declares {live.Count} live OnError handlers at the package root, and only " +
+                   "one is evidenced; combining more than one is not guessed at");
+            return null;
+        }
+
+        // The precondition: MaximumErrorCount left at the schema default (absent, or ==1)
+        // everywhere in the tree -- see doc comment above.
+        var badMec = EnumerateAllExecutables(package.Executables)
+            .FirstOrDefault(e => e.MaximumErrorCount is not null and not 1);
+        if (badMec is not null)
+        {
+            Reject($"'{badMec.ObjectName ?? badMec.RefId}' sets MaximumErrorCount={badMec.MaximumErrorCount} " +
+                   "(the default is 1) -- a task could then fail while the package as a whole still succeeds, " +
+                   "which this generator's single whole-package transaction cannot represent");
+            return null;
+        }
+        if (package.ExecutionSemantics?.MaximumErrorCount is not null and not 1)
+        {
+            Reject($"'{packageName}' itself sets MaximumErrorCount={package.ExecutionSemantics!.MaximumErrorCount} " +
+                   "(the default is 1) -- a task could then fail while the package as a whole still succeeds, " +
+                   "which this generator's single whole-package transaction cannot represent");
+            return null;
+        }
+
+        var handler = live[0];
+        var liveChildren = handler.Children.Where(c => c.Disabled != true).ToList();
+        if (liveChildren.Count == 0) return null; // declares nothing that runs -- silent, matching ReportEventHandlers
+        if (liveChildren.Count != 1)
+        {
+            Reject($"it contains {liveChildren.Count} live executable(s); only a single one is generated");
+            return null;
+        }
+
+        var executable = liveChildren[0];
+        if (executable.ExecuteSqlTask is not { SqlStatementSource: { Length: > 0 } sql })
+        {
+            Reject($"its one child is a {executable.ExecutableType ?? "container"} rather than an Execute SQL " +
+                   "Task with a statement; only a single SQL statement is generated in the failure-handler position");
+            return null;
+        }
+
+        return new FailureHandlerPlan(executable.ObjectName ?? executable.RefId, sql, handler.RefId);
     }
 
     /// <summary>Every precedence constraint in the package, at any container depth.</summary>
@@ -983,14 +1103,16 @@ public static class PackagePlanner
     /// (<c>SQL_LogOnError</c>), so real SSIS writes a log row on any error and the generated job
     /// does not.</para>
     ///
-    /// <para><b>Blocking, and deliberately not translated.</b> An OnError handler looks close to
-    /// the Failure-precedence-constraint handler this tool already generates
-    /// (<c>Etl.Core.FailureHandlerAction</c>), but the semantics are NOT the same and the
-    /// difference has not been measured: an SSIS event fires per error event, can fire more than
-    /// once for one task, and propagates up the container tree unless the handler's own
-    /// Propagate variable stops it, whereas a Failure constraint fires once for its own task.
-    /// Equating them without measuring would be the same unmeasured inference that produced the
-    /// Merge Join JoinType bug.</para>
+    /// <para><b>Superseded in part 2026-09-03.</b> This method used to say the OnError-vs-Failure-
+    /// handler equivalence had not been measured, and that it was deliberately never translated.
+    /// It has now been measured (a real dtexec probe, <c>SyntheticEventHandlerProbe.dtsx</c>) and
+    /// the one real evidenced shape -- a package-root OnError handler with a single Execute SQL
+    /// Task, under the schema-default MaximumErrorCount everywhere -- IS translated, by
+    /// <see cref="ResolveErrorEventHandler"/>, into the exact same <c>FailureHandlerAction</c>
+    /// position. This method now only reports what that one does not attempt: a non-root owner, a
+    /// non-OnError event, more than one live handler, or (the measured reason a general "any event
+    /// handler" translation is NOT safe) a MaximumErrorCount raised anywhere in the tree, which is
+    /// what actually lets OnError fire more than once in a single run.</para>
     ///
     /// <para>A handler holding no executables (only the stock <c>Propagate</c> variable, which is
     /// what SSDT creates the moment you click into the handler tab) runs nothing, so it is not
@@ -998,7 +1120,7 @@ public static class PackagePlanner
     /// that is disabled, or whose owner sets <c>DisableEventHandlers</c>, is reported as a
     /// non-blocking advisory instead: it declares work, but SSIS does not run it either.</para>
     /// </summary>
-    private static void ReportEventHandlers(PackageSpec package, List<GenerationGap> gaps)
+    private static void ReportEventHandlers(PackageSpec package, List<GenerationGap> gaps, HashSet<string> claimedRefIds)
     {
         var owners = new List<(string Owner, bool HandlersDisabled, List<EventHandlerSpec> Handlers)>
         {
@@ -1011,6 +1133,8 @@ public static class PackagePlanner
         {
             foreach (var handler in handlers)
             {
+                if (claimedRefIds.Contains(handler.RefId)) continue; // ResolveErrorEventHandler already reported (or resolved) this one
+
                 var live = handler.Children.Where(c => c.Disabled != true).ToList();
                 if (live.Count == 0) continue; // declares nothing that runs
 
@@ -1025,8 +1149,12 @@ public static class PackagePlanner
                     continue;
                 }
 
+                // A live package-root OnError handler is claimed by ResolveErrorEventHandler and
+                // never reaches this line (see claimedRefIds above) -- so getting here means this
+                // handler is a different, unevidenced shape: a non-root owner, or an event other
+                // than OnError. Neither is guessed at.
                 gaps.Add(new GenerationGap(location,
-                    $"{handler.EventName} event handler on '{owner}' contains {what} -- SSIS runs this when that event fires and generated code does not run it at all. Event handlers are not translated: an SSIS event fires per event occurrence and propagates up the container tree, which is not the same as the Failure-constraint handler this tool does generate, and the difference has not been measured."));
+                    $"{handler.EventName} event handler on '{owner}' contains {what} -- SSIS runs this when that event fires and generated code does not run it at all. Only a package-root OnError handler with a single Execute SQL Task is translated (see ResolveErrorEventHandler); this is a different, unevidenced shape."));
             }
         }
     }

@@ -277,9 +277,13 @@ internal static class Program
         {
             return BuildUnionTwoSourcesFixture(args[0]);
         }
+        if (fixtureName == "event-handler-probe")
+        {
+            return BuildEventHandlerProbeFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', or 'union-two-sources'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', or 'event-handler-probe'.");
 
             return 2;
         }
@@ -445,6 +449,64 @@ internal static class Program
 
         pkg.PrecedenceConstraints.Add(preLoadTask, dftHost);
         pkg.PrecedenceConstraints.Add(dftHost, postLoadTask);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// PURE MEASUREMENT PROBE, not a translation-target fixture -- built to answer three real
+    /// questions about OnError semantics before writing any codegen against the one real
+    /// evidenced case (RBC_Demo_ETL's own Package_Advanced.dtsx, a package-root OnError handler
+    /// containing one static Execute SQL Task) that no fixture in this repo had ever exercised:
+    /// (1) does the handler fire once per failing task, or does the FIRST failure halt the run
+    /// before a second, independent failure gets a chance to happen; (2) does it fire when the
+    /// failure happens in a CHILD container that declares no handler of its own (propagation up
+    /// the tree); (3) does a task ordered "on success" after a failing task actually get skipped.
+    /// `Package.MaximumErrorCount` is raised well past 1 specifically so a real second failure
+    /// gets the chance to occur instead of the run stopping after the first -- at the default of
+    /// 1 this fixture could not distinguish "fires once" from "only one failure ever happened."
+    /// </summary>
+    private static int BuildEventHandlerProbeFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticEventHandlerProbe" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+        pkg.MaximumErrorCount = 10;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var errHandler = (Microsoft.SqlServer.Dts.Runtime.DtsEventHandler)pkg.EventHandlers.Add("OnError");
+        var logTask = (RtTaskHost)errHandler.Executables.Add("Microsoft.ExecuteSQLTask");
+        logTask.Name = "SQL_LogOnError";
+        logTask.Properties["Connection"].SetValue(logTask, sqlCm.Name);
+        logTask.Properties["SqlStatementSource"].SetValue(logTask,
+            "INSERT INTO dbo.SyntheticEventHandlerLog (Marker) VALUES (N'onerror-fired');");
+
+        // A child container with NO handler of its own -- its failure must propagate up to the
+        // package-root handler above for that handler to fire at all here.
+        var seq = (Microsoft.SqlServer.Dts.Runtime.Sequence)pkg.Executables.Add("STOCK:SEQUENCE");
+        seq.Name = "SEQ_A";
+
+        var failA = (RtTaskHost)seq.Executables.Add("Microsoft.ExecuteSQLTask");
+        failA.Name = "SQL_FailA";
+        failA.Properties["Connection"].SetValue(failA, sqlCm.Name);
+        failA.Properties["SqlStatementSource"].SetValue(failA, "RAISERROR('probe failure A', 16, 1);");
+
+        var afterA = (RtTaskHost)seq.Executables.Add("Microsoft.ExecuteSQLTask");
+        afterA.Name = "SQL_AfterA";
+        afterA.Properties["Connection"].SetValue(afterA, sqlCm.Name);
+        afterA.Properties["SqlStatementSource"].SetValue(afterA,
+            "INSERT INTO dbo.SyntheticEventHandlerLog (Marker) VALUES (N'after-a-ran');");
+        // Default constraint value is Success -- afterA must NOT run once failA fails.
+        seq.PrecedenceConstraints.Add((Executable)failA, (Executable)afterA);
+
+        // A second, INDEPENDENT root-level failure with no ordering relationship to SEQ_A at
+        // all -- this is what actually answers "does the handler fire more than once."
+        var failB = AddExecuteSql(pkg, "SQL_FailB", sqlCm, "RAISERROR('probe failure B', 16, 1);");
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
