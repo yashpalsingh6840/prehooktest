@@ -1,8 +1,8 @@
 {
   "PackageName": "LoadEmployees",
-  "SchemaScript": "../../../Sql/01_CreateTarget.sql",
+  "SchemaScript": "../../Sql/01_CreateTarget.sql",
   "AdditionalSchemaScripts": [
-    "../../../Sql/04_CreateLoaderCredential.sql"
+    "../../Sql/04_CreateLoaderCredential.sql"
   ],
   "TargetTables": [
     {

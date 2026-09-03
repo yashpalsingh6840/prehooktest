@@ -1,6 +1,6 @@
 # ssis-validate -- gate 3 prep (golden corpus + comparison harness)
 
-Status: **prep work for [`Migration-Validation-Plan.md`](../../Migration-Validation-Plan.md)
+Status: **prep work for [`Migration-Validation-Plan.md`](../Migration-Validation-Plan.md)
 §5, built before a C# rewrite exists.** A golden corpus captured from both of this PoC's real
 SSIS packages, a portable comparison harness verified against a self-test stand-in job (not a
 real rewrite -- there isn't one yet), and a Docker Compose SQL-Server-on-Linux target proving
@@ -19,7 +19,7 @@ new engineering.
 ## Layout
 
 ```
-Tools/Validation/
+Validation/
   Ssis.Validate.Harness/       the engine: TableSnapshot, SnapshotDiffer, GateRunner, CLI
   selftest/Ssis.Validate.SelfTestJob/   stand-in "job under test" -- proves the harness works,
                                          NOT a rewrite of anything
@@ -33,8 +33,8 @@ Tools/Validation/
 ## Build & test
 
 ```powershell
-dotnet build Tools\Validation\SsisValidation.slnx
-dotnet test  Tools\Validation\SsisValidation.slnx
+dotnet build Validation\SsisValidation.slnx
+dotnet test  Validation\SsisValidation.slnx
 ```
 
 ## Generate a package config
@@ -43,10 +43,10 @@ dotnet test  Tools\Validation\SsisValidation.slnx
 ssisx report --input ..\SSIS --out out   # produces nondeterministic.json + primary-keys.json
 
 .\Ssis.Validate.Harness\bin\Debug\net8.0\ssis-validate.exe generate-config `
-  --package LoadReferenceData --schema-script ..\..\Sql\01_CreateTarget.sql `
+  --package LoadReferenceData --schema-script ..\Sql\01_CreateTarget.sql `
   --tables "dbo.Department,dbo.Designation" `
-  --nondeterministic-json ..\SsisExtractor\out\nondeterministic.json `
-  --primary-keys-json ..\SsisExtractor\out\primary-keys.json `
+  --nondeterministic-json ..\Tools\SsisExtractor\out\nondeterministic.json `
+  --primary-keys-json ..\Tools\SsisExtractor\out\primary-keys.json `
   --out configs\LoadReferenceData.config.json
 ```
 
@@ -60,11 +60,11 @@ human"). `ExcludedColumns` is real generated data either way; don't hand-edit it
 ```powershell
 .\Ssis.Validate.Harness\bin\Debug\net8.0\ssis-validate.exe capture-corpus `
   --package-key LOAD_REFERENCE_DATA --package-name LoadReferenceData `
-  --runner-exe ..\..\Scripts\SsisRunner\bin\Release\net8.0\SsisRunner.exe `
+  --runner-exe ..\Scripts\SsisRunner\bin\Release\net8.0\SsisRunner.exe `
   --ssispoc-connection "Server=.\SQLFORPOC;Database=SsisPoC;Integrated Security=True;TrustServerCertificate=True;" `
   --ssisdb-connection "Server=.\SQLFORPOC;Database=SSISDB;Integrated Security=True;TrustServerCertificate=True;" `
   --tables "dbo.Department:DepartmentID,dbo.Designation:DesignationID" `
-  --input-files "..\..\Data\Input\Department\Departments.csv,..\..\Data\Input\Designation\Designations.csv" `
+  --input-files "..\Data\Input\Department\Departments.csv,..\Data\Input\Designation\Designations.csv" `
   --logging-level 3 --out corpus
 ```
 

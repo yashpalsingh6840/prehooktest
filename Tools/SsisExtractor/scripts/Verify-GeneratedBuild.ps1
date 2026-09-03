@@ -9,14 +9,16 @@
   `ssisx generate` deliberately does NOT produce Etl.Core -- it's hand-written shared
   plumbing, not derivable from a .dtsx (see GenerateCommand.cs's own WriteFixedFiles
   comment), so generated output can never build on its own. This script supplies a
-  compatible Etl.Core (copied from wherever the caller points -Etl.CorePath, e.g.
-  D:\PoC\SSIS_Rewrite\src\Etl.Core for this PoC) so the rest of the pipeline -- generate,
-  then dotnet build -- can be re-run in one command whenever the emitters change, instead of
-  redoing the manual copy/build dance by hand.
+  compatible Etl.Core (copied from wherever the caller points -EtlCorePath, e.g.
+  ..\..\Etl.Core -- the portable copy shipped alongside this tool, a sibling of
+  Tools\SsisExtractor) so the rest of the pipeline -- generate, then dotnet build -- can be
+  re-run in one command whenever the emitters change, instead of redoing the manual
+  copy/build dance by hand.
 
-  Neither this script nor `ssisx generate` itself hardcodes a path to SSIS_Rewrite: pass
-  whatever Etl.Core you want the generated output verified against. A client site with no
-  SSIS_Rewrite just points -EtlCorePath at its own copy.
+  Neither this script nor `ssisx generate` itself hardcodes a path to any particular
+  Etl.Core: pass whatever Etl.Core you want the generated output verified against. A client
+  site just points -EtlCorePath at the Tools\Etl.Core folder that ships alongside ssisx (or
+  its own copy, if it has one).
 
 .PARAMETER PackageFolder
   Folder holding the SSIS packages to generate from (passed through to `ssisx generate
@@ -31,7 +33,7 @@
   deleted and recreated on each run so a stale prior run never masquerades as this one.
 
 .EXAMPLE
-  .\Verify-GeneratedBuild.ps1 -PackageFolder ..\..\..\SSIS -EtlCorePath D:\PoC\SSIS_Rewrite\src\Etl.Core
+  .\Verify-GeneratedBuild.ps1 -PackageFolder ..\..\..\SSIS -EtlCorePath ..\..\Etl.Core
 #>
 [CmdletBinding()]
 param(

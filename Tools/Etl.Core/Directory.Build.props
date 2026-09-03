@@ -1,0 +1,24 @@
+<Project>
+
+  <!--
+    Scoped to just this Etl.Core copy (it sits in the SAME directory as Etl.Core.csproj, not at
+    the Tools/ root) so it never leaks into Tools/SsisExtractor's own projects, each of which
+    already sets its own TargetFramework/PlatformTarget explicitly (several are net48/x64 for GAC
+    interop, see Build/Ssis.Gac.props) and must not inherit anything from here.
+
+    Content is a deliberate mirror of GenerateCommand.WriteFixedFiles' own emitted
+    Directory.Build.props (Tools/SsisExtractor/src/Ssis.Extract.Cli/GenerateCommand.cs). Keep
+    the two in sync if either changes.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- CodePage 1252 decoding needs the full globalization stack, not the invariant one. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>

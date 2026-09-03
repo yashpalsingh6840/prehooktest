@@ -31,6 +31,7 @@ internal static class ConformanceCommand
         string? claimsDir = null;
         var recursive = false;
         var check = false;
+        var packageNames = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -43,6 +44,10 @@ internal static class ConformanceCommand
                     case "--claims": claimsDir = RequireValue(args, ref i, "--claims"); break;
                     case "--recursive": recursive = true; break;
                     case "--check": check = true; break;
+                    case "--package":
+                        var pkgArg = RequireValue(args, ref i, "--package");
+                        packageNames.AddRange(pkgArg.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+                        break;
                     default:
                         Console.Error.WriteLine($"error: unknown conformance option '{args[i]}'");
                         return 2;
@@ -74,8 +79,14 @@ internal static class ConformanceCommand
 
         try
         {
-            using var loaded = PackageLoader.Load(input, noRedact: false, recursive);
+            using var loaded = PackageLoader.Load(input, noRedact: false, recursive, packageNames);
             var packages = loaded.Packages;
+
+            if (packageNames.Count > 0 && packages.Count == 0)
+            {
+                Console.Error.WriteLine("error: --package matched no packages under this --input -- nothing to check.");
+                return 2;
+            }
 
             var rulesDir = Path.Combine(outDir, "conformance");
             Directory.CreateDirectory(rulesDir);

@@ -32,6 +32,7 @@ internal static class TestGenCommand
         string? input = null;
         string? outDir = null;
         var recursive = false;
+        var packageNames = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -42,6 +43,10 @@ internal static class TestGenCommand
                     case "--input": input = RequireValue(args, ref i, "--input"); break;
                     case "--out": outDir = RequireValue(args, ref i, "--out"); break;
                     case "--recursive": recursive = true; break;
+                    case "--package":
+                        var pkgArg = RequireValue(args, ref i, "--package");
+                        packageNames.AddRange(pkgArg.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+                        break;
                     default:
                         Console.Error.WriteLine($"error: unknown testgen option '{args[i]}'");
                         return 2;
@@ -60,7 +65,12 @@ internal static class TestGenCommand
             return 2;
         }
 
-        using var loaded = PackageLoader.Load(input, noRedact: false, recursive);
+        using var loaded = PackageLoader.Load(input, noRedact: false, recursive, packageNames);
+        if (packageNames.Count > 0 && loaded.Packages.Count == 0)
+        {
+            Console.Error.WriteLine("error: --package matched no packages under this --input -- nothing to testgen.");
+            return 2;
+        }
         var testGenDir = Path.Combine(outDir, "testgen");
         Directory.CreateDirectory(testGenDir);
 

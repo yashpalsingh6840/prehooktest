@@ -29,6 +29,7 @@ internal static class ReportCommand
         string? outDir = null;
         var recursive = false;
         string? weightsPath = null;
+        var packageNames = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -40,6 +41,10 @@ internal static class ReportCommand
                     case "--out": outDir = RequireValue(args, ref i, "--out"); break;
                     case "--recursive": recursive = true; break;
                     case "--weights": weightsPath = RequireValue(args, ref i, "--weights"); break;
+                    case "--package":
+                        var pkgArg = RequireValue(args, ref i, "--package");
+                        packageNames.AddRange(pkgArg.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+                        break;
                     default:
                         Console.Error.WriteLine($"error: unknown report option '{args[i]}'");
                         return 2;
@@ -90,9 +95,15 @@ internal static class ReportCommand
         input = Path.GetFullPath(input);
         outDir = Path.GetFullPath(outDir);
 
-        using var loaded = LoadOrNull(input, recursive);
+        using var loaded = LoadOrNull(input, recursive, packageNames);
         if (loaded is null) return 2;
         var packages = loaded.Packages;
+
+        if (packageNames.Count > 0 && packages.Count == 0)
+        {
+            Console.Error.WriteLine("error: --package matched no packages under this --input -- nothing to report.");
+            return 2;
+        }
 
         Directory.CreateDirectory(outDir);
 
@@ -308,11 +319,11 @@ internal static class ReportCommand
         File.WriteAllText(path, sb.ToString());
     }
 
-    private static PackageLoader.LoadResult? LoadOrNull(string input, bool recursive)
+    private static PackageLoader.LoadResult? LoadOrNull(string input, bool recursive, IReadOnlyList<string>? packageNames = null)
     {
         try
         {
-            return PackageLoader.Load(input, noRedact: false, recursive);
+            return PackageLoader.Load(input, noRedact: false, recursive, packageNames);
         }
         catch (Exception ex)
         {

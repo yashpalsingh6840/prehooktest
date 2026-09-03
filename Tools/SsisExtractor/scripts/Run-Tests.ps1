@@ -16,10 +16,16 @@
     So this is the missing piece: one command that runs everything and fails loudly. Point a CI
     job at it, or run it before committing.
 
-    Etl.Core lives in a SIBLING repository (D:\PoC\SSIS_Rewrite) because the generated packages
-    reference it, and its suite covers the runtime abstractions generated code is built on -- so
-    it is included when present, and skipped with a warning when it is not, rather than silently
-    passing on a machine that only has this repo.
+    Etl.Core the LIBRARY has a portable, in-repo copy at Tools\Etl.Core (a sibling of
+    Tools\SsisExtractor) -- that copy is what ships with this tool and what generated packages
+    build against on a client site with no access to this PoC's own dev repos. Etl.Core the TEST
+    SUITE (Etl.Core.Tests, plus the hand-written LoadEmployees.Tests/LoadReferenceData.Tests it
+    ships alongside) still lives only in the sibling development repository (D:\PoC\SSIS_Rewrite),
+    since a client site has no reason to run this repo's own dev-time regression tests. This
+    script runs that suite when present, and skips it with a warning when it is not, rather than
+    silently passing on a machine that only has this repo. If Etl.Core the library changes,
+    refresh Tools\Etl.Core from D:\PoC\SSIS_Rewrite\src\Etl.Core (excluding bin/obj) so the two
+    copies do not drift apart.
 
 .PARAMETER SkipRewrite
     Skip the sibling Etl.Core suite even if the repo is present.
@@ -81,8 +87,9 @@ elseif (Test-Path (Join-Path $RewritePath "src\Etl.Core\Etl.Core.csproj")) {
 else {
     # A warning, not silence: a green run here would otherwise imply coverage that did not run.
     Write-Host ""
-    Write-Host "WARNING: Etl.Core repo not found at $RewritePath -- its suite did NOT run." -ForegroundColor Yellow
-    Write-Host "         Generated packages target that runtime, so this run is incomplete." -ForegroundColor Yellow
+    Write-Host "WARNING: Etl.Core dev repo not found at $RewritePath -- its TEST SUITE did NOT run." -ForegroundColor Yellow
+    Write-Host "         (The library itself is unaffected -- generated packages target the portable" -ForegroundColor Yellow
+    Write-Host "         copy at Tools\Etl.Core, not this repo. Only its own regression tests live here.)" -ForegroundColor Yellow
 }
 
 Write-Host ""

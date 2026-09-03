@@ -816,9 +816,9 @@ error, 3 still-running (`--status` without `--wait` only). In `SSIS.sln`
 mapped to `Release|Any CPU` (trap 6 — any real platform label makes devenv
 silently skip it); `dotnet build` on the csproj alone works too.
 
-## Gate 3 prep (`Tools/Validation/`, added 2026-08-18 — golden corpus + comparison harness, built before a C# rewrite exists; first real run against the actual rewrite 2026-08-20)
+## Gate 3 prep (`Validation/`, added 2026-08-18 — golden corpus + comparison harness, built before a C# rewrite exists; first real run against the actual rewrite 2026-08-20)
 
-A separate tool from the extractor, `ssis-validate` (`Tools/Validation/Ssis.Validate.Harness/`),
+A separate tool from the extractor, `ssis-validate` (`Validation/Ssis.Validate.Harness/`),
 built ahead of need: `Migration-Validation-Plan.md` §5 (gate 3, golden-dataset integration
 test) needs a captured golden corpus and a comparison harness, neither of which depend on a
 rewrite existing yet. Building both now means gate 3 is "point the harness at the new job"
@@ -846,7 +846,7 @@ BUFFER FLUSH, not one per component pair — `LoadEmployees`'s capture shows two
 component pair (a `0`-row end-of-data marker, then the real count).
 
 **No rewrite exists to validate gate 3 against**, so a tiny stand-in job
-(`Tools/Validation/selftest/Ssis.Validate.SelfTestJob/`, explicitly NOT a rewrite of
+(`Validation/selftest/Ssis.Validate.SelfTestJob/`, explicitly NOT a rewrite of
 anything) proves the harness's own comparison logic instead — `--mode pass` loads the
 corpus's golden output verbatim (harness should report PASS), `--mode fail` deliberately
 corrupts one value (harness should report FAIL, naming exactly what differs). Verified against
@@ -883,7 +883,7 @@ heuristic agrees with the human review exactly, on this PoC.
 Full account, every command, and the honest-limits list (per-stage row counts captured but
 not yet asserted against; `KeyColumn` auto-fill is a heuristic, not a fact, and a composite/
 low-confidence candidate still needs a human; only two corpus entries exist) in
-`Tools/Validation/docs/gate3-harness.md` and `Tools/Validation/README.md`.
+`Validation/docs/gate3-harness.md` and `Validation/README.md`.
 
 ### The C# rewrite (`D:\PoC\SSIS_Migration`, its own separate repo) and the first real gate 3 pass (2026-08-20)
 
@@ -900,9 +900,9 @@ transactional truncate+load — a deliberate improvement over SSIS's separate au
 width-guard truncation checks matching the original Flat File Source columns exactly). No test
 project exists there.
 
-**Pointing `Tools/Validation`'s gate 3 harness at it, for real, produced two genuine PASSes**
+**Pointing `Validation`'s gate 3 harness at it, for real, produced two genuine PASSes**
 against a freshly created container — full account and exact commands in
-`Tools/Validation/docs/gate3-harness.md`'s own "first real gate 3 run" section, one fact worth
+`Validation/docs/gate3-harness.md`'s own "first real gate 3 run" section, one fact worth
 repeating here because it generalizes beyond this PoC: **`Host.CreateApplicationBuilder(args)`
 already wires appsettings → env vars → command line internally; calling `AddUserSecrets`
 afterward (as `EtlHost.Create` does) makes secrets the highest-precedence source of all** —
@@ -1082,7 +1082,7 @@ Gate 3) are recorded in this session's own plan
 memory under `ssis-generator-phase0-pause` —**not duplicated here**; this section is only the
 pointer plus the two facts most likely to matter to a future session picking this back up:
 
-- **Gate 3 (`Tools/Validation/Ssis.Validate.Harness`) has been run against `ssisx generate`'s
+- **Gate 3 (`Validation/Ssis.Validate.Harness`) has been run against `ssisx generate`'s
   own output, not just the hand-written rewrite.** Both real PoC packages PASS end to end
   (8/10/12 rows, exact match against the golden corpus) when generated, built against a copy
   of `Etl.Core`, and pointed at `.\SQLFORPOC_2022` — proof, not just a clean `dotnet build`.
@@ -1221,7 +1221,7 @@ requirement from scratch, it's documented there.
 writes `primary-keys.json`/`.md` (`Ssis.Extract.Dtsx.PrimaryKeyInference`), a best-effort
 guess per OLE DB Destination, and folds the same candidate into `ssisx conformance`'s
 `TargetSchema` rule evidence. Built because it directly closes a named gap in
-`Tools/Validation/docs/gate3-harness.md` ("`KeyColumn` is hand-filled, not detected"), not
+`Validation/docs/gate3-harness.md` ("`KeyColumn` is hand-filled, not detected"), not
 speculatively.
 
 **Confirmed, before writing a line of code, that a `.dtsx` genuinely carries no primary-key
@@ -1241,7 +1241,7 @@ overlooked.
 candidates were cross-checked against `.\SQLFORPOC`'s actual `PRIMARY KEY` constraints via
 `sys.indexes`/`sys.index_columns` — `Employee.EmployeeID`, `Department.DepartmentID`,
 `Designation.DesignationID`, exact matches, all three. Feeding the output into
-`Tools/Validation`'s `ConfigGenerator` (new `--primary-keys-json` flag) reproduced the two PoC
+`Validation`'s `ConfigGenerator` (new `--primary-keys-json` flag) reproduced the two PoC
 configs' `KeyColumn` values byte-for-byte against what a human had already hand-filled in an
 earlier session — confirmed with a plain `diff`, zero differences.
 
@@ -6213,6 +6213,345 @@ manifest, a true fact independent of the group's completeness); and no claims fi
 
 This closes the AI-assisted gap-filling plan's own last item -- all 4 chunks plus this optional
 extra are now done.
+
+### `Tools` reorganized for real client portability (2026-09-03)
+
+Prompted directly by the user asking whether the extractor/generator could actually be sent to a
+client and run there today. The honest answer at the time: extraction/survey/report/conformance
+already could (raw-XML parsing, no GAC/SSISDB dependency, and `Run-Survey.ps1`/`Publish-Survey.ps1`
+already package it as a self-contained exe) -- but `ssisx generate`'s own output could not build
+anywhere except this dev machine, because every path to its one hand-written dependency,
+`Etl.Core`, pointed at the sibling dev repo `D:\PoC\SSIS_Rewrite`, which will never exist on a
+client site. This closes that gap and, per the user's own follow-up, tidies `Tools/` down to only
+what a client actually needs.
+
+**`Tools/Etl.Core` now exists** -- a portable copy of the runtime library (robocopy'd from
+`D:\PoC\SSIS_Rewrite\src\Etl.Core`, excluding `bin`/`obj`; deliberately NOT the test project or the
+hand-written `LoadEmployees`/`LoadReferenceData` reference apps that live alongside it there, since
+a client needs the library `ssisx generate`'s output targets, not this PoC's own dev-time tests).
+Etl.Core.csproj itself is untouched -- it has no `TargetFramework` and no `PackageVersion`-pinned
+`PackageReference`s by design, since it's meant to be dropped into a tree that already supplies
+`Directory.Build.props`/`Directory.Packages.props` (either the dev repo's own root files, or
+`ssisx generate`'s own fixed emission via `GenerateCommand.WriteFixedFiles`). To make the *portable
+copy* buildable on its own too, it got its own scoped `Directory.Build.props`/`Directory.Packages.props`
+placed directly alongside `Etl.Core.csproj` (not at the `Tools/` root -- `Tools/SsisExtractor`'s own
+~15 projects each set their own `TargetFramework`/`PlatformTarget` explicitly, several `net48`/`x64`
+for GAC interop, and never use central package management, so a `Tools`-root-level
+`Directory.Packages.props` with `ManagePackageVersionsCentrally=true` would have broken every one of
+them with `NU1008`). Content is a deliberate byte-for-byte mirror of what `GenerateCommand.WriteFixedFiles`
+already emits (and of `D:\PoC\SSIS_Rewrite`'s own root files) -- all three must be kept in sync by
+hand; there is no single source of truth for these version numbers yet, a known, named risk rather
+than a silently assumed one.
+
+**One real trap hit writing the props files, worth recording alongside trap 18's own XML lesson**:
+an XML comment containing a literal `--` (used as a plain prose dash, e.g. "net48/x64 for GAC interop
+-- see Build/Ssis.Gac.props") is **invalid XML** -- `--` may only appear at the very end of a comment,
+immediately before `-->`. MSBuild does not error clearly on this: `dotnet build` just reported
+`error NETSDK1013: The TargetFramework value '' was not recognized`, as if the props file were
+simply absent. Root-caused only via `-v:diag`, which reported "was not imported ... due to the file
+being invalid" -- the generic XML parse failure, not a pointer to the actual `--` substring. Fixed
+by rewording the comments to avoid double-hyphens.
+
+**Verified two ways, not just "the file parses now":**
+1. `dotnet build Tools\Etl.Core\Etl.Core.csproj -c Release` standalone -- 0 warnings/0 errors.
+2. The real end-to-end path this whole change exists for:
+   `Verify-GeneratedBuild.ps1 -PackageFolder ..\..\..\SSIS -EtlCorePath ..\..\Etl.Core` (run from
+   `Tools\SsisExtractor\scripts\`) -- `ssisx generate` against this PoC's own real packages, Etl.Core
+   staged from the new portable copy (including its own `Directory.Build.props`/`Directory.Packages.props`,
+   which travel along with the copy and simply become the CLOSER props file MSBuild resolves for
+   `Etl.Core.csproj` specifically inside the generated tree -- confirmed harmless precisely because
+   their content matches `generate/Directory.Packages.props`'s own emission): **PASS -- every
+   generated package compiled clean against the supplied Etl.Core**, 0 warnings/0 errors.
+
+**Two forward-looking references fixed, not just this narrative note.** `GenerateCommand.cs`'s own
+`Etl.Core` gap message -- text a CLIENT sees when running `ssisx generate` -- used to hardcode
+`D:\PoC\SSIS_Rewrite\src\Etl.Core`, a path that will never exist off this machine; it and the
+adjacent `WriteFixedFiles` doc comment now point at "the Etl.Core folder shipped alongside this tool
+(Tools/Etl.Core, a sibling of Tools/SsisExtractor)" instead -- self-relative, not another
+dev-machine absolute path. `GeneratedSolutionBuildTests.cs`'s own `EtlCoreProjectDir` (a TEST, not
+prose) hardcoded the same absolute path and consequently silently skipped on every machine but this
+one (its own class comment already warned "a skipped run proves nothing"); it now resolves relative
+to `[CallerFilePath]`, matching the pattern `ExtractorRoot` already used, so the test actually runs
+on any clone. `Verify-GeneratedBuild.ps1`'s own doc comment/example were updated the same way.
+`Run-Tests.ps1`'s doc comment and its "Etl.Core repo not found" warning were reworded to distinguish
+the two things clearly: the LIBRARY (portable, ships at `Tools\Etl.Core`, unaffected by whether
+`SSIS_Rewrite` exists) from the TEST SUITE (`Etl.Core.Tests`, still only in the dev repo, since a
+client has no reason to run this repo's own regression tests) -- its default `-RewritePath` is
+unchanged, since the suite genuinely still only lives there.
+
+**`Tools/Validation` moved to the repo root (`D:\PoC\SSIS\Validation`, sibling of
+`Scripts`/`Sql`/`Data`)**, at the user's own suggestion after being told what it actually is: the
+gate-3 golden-corpus comparison harness, built and verified against THIS PoC's own captured SSISDB
+runs (`CorpusCapture` is explicitly Windows-only, drives `SsisRunner.exe` against local SSISDB) --
+real substance (~400 files, its own solution and test project) but a dev-time proof that the
+generator is correct, not a tool a client ever runs themselves. It didn't belong in a folder meant
+to be handed to a client. Every relative path inside it needed correcting for the new depth (one
+level shallower than before) -- traced by actually reading `Program.cs`'s own `ResolveRelativeToConfig`
+first rather than guessing from `PackageConfig.cs`'s own doc comment (which loosely says "relative to
+the repo root," but the real resolution code resolves every config path relative to the CONFIG FILE's
+own directory): both `configs/*.config.json`'s `SchemaScript`/`AdditionalSchemaScripts` values, and
+every `..\..\X`-style example command in `README.md`/`docs/gate3-harness.md`, needed exactly one
+fewer `../` level. One exception traced through carefully and left UNCHANGED: `README.md`'s own
+`ssisx report --input ..\SSIS` example assumed a DIFFERENT working directory than the rest of that
+same code block already (a pre-existing inconsistency, not introduced by this move) -- verified it
+was not something this move broke, so left alone rather than half-fixed.
+
+**`Tools/README.md` (new)** documents the resulting two-folder layout (`SsisExtractor/` = the CLI,
+`Etl.Core/` = the runtime dependency), a copy-paste "point this at a client's own packages" recipe,
+and why `Validation/` isn't here. **Deliberately does NOT name `D:\PoC\SSIS_Rewrite` or any other
+dev-machine path** -- caught by the user reviewing it: that file lives inside the exact folder this
+whole change exists to make client-shippable, so it must not leak this project's own internal repo
+layout. The "how to refresh the copy when the library changes" instruction moved here instead,
+where it belongs (this file is this repo's own dev-ops notes, never sent anywhere):
+
+```powershell
+robocopy D:\PoC\SSIS_Rewrite\src\Etl.Core Tools\Etl.Core /E /XD bin obj
+```
+
+Run from this repo's root. Never touches `Tools\Etl.Core\Directory.Build.props`/
+`Directory.Packages.props` (robocopy only pulls from `SSIS_Rewrite\src\Etl.Core`, which doesn't
+have them) -- if `GenerateCommand.WriteFixedFiles`'s own emitted versions ever change, update
+those two files by hand to match, since all three are independent copies with no shared source
+of truth yet.
+
+**Bash tool was completely non-functional this entire session** -- every invocation (even `echo`,
+`pwd`) returned exit 1 with no output at all, from the very first call. Diagnosed as far as
+possible without being able to restart anything: Git Bash itself works fine when invoked directly
+from PowerShell (`& "C:\Program Files\Git\bin\bash.exe" -c "echo hello"` succeeds), and no
+`bash`/`shell` override exists in any settings file (`~/.claude.json`, `~/.claude/settings.json`,
+this repo's `.claude/settings*.json`) -- so the failure is in the harness's own process-spawning for
+this tool, this session, not a config file this file could fix. All work this session went through
+the PowerShell tool instead, prefixing `$env:PATH` with `C:\Program Files\Git\cmd;C:\Program
+Files\Git\usr\bin` whenever `git` was needed.
+
+### `--package` -- running one package (or a named few), not the whole portfolio (2026-09-03, same day)
+
+Prompted directly by the client-env question this whole `Tools` reorg was answering: a real
+portfolio is dozens of packages, `ssisx generate` should never default to running against all
+of them, and the client site drives this with GitHub Copilot (not Claude) on a limited token
+budget, so it needs to be told exactly what to run rather than left to explore.
+
+**`--input` already accepted a single `.dtsx` file directly** (confirmed by reading
+`PackageLoader.LoadInto` before assuming a gap existed) -- so "run just one package" was never
+actually blocked, only inconvenient: it required knowing and typing the package's own full file
+path rather than just its name, and there was no way to name a SMALL BATCH (2-3 packages) in one
+call without either multiple invocations or falling back to the whole-portfolio sweep.
+
+**What was added:** `PackageLoader.Load` gained an optional `IReadOnlyList<string>? packageNames`
+parameter, applied via a new `FilterByName` AFTER the existing directory sweep and duplicate-name
+resolution -- deliberately not resolved by turning names into file paths up front, so the exact
+same load-failure/duplicate-name/build-output handling `PackageLoader` already has applies
+whether or not a filter is in play. Matched against the package's own `ObjectName` (the
+`.dtsx`'s own `DTS:ObjectName`, not necessarily its filename -- confirmed these usually but not
+always agree while reading `PackageLoader`'s own existing duplicate-name comment). A requested
+name matching nothing is recorded as a `LoadFailure` (kind `package-not-found`) and printed as a
+warning -- never silently ignored, since a typo'd name silently generating zero packages would
+look like "ran clean" for a package that was never touched. **Every command that loads packages
+now takes `--package <name>` (repeatable, and comma-splittable in one value: `--package A,B` ==
+`--package A --package B`)** -- `extract`, `graph`, `report`, `conformance`, `testgen`,
+`generate`. Each command now also hard-fails (exit 2) when `--package` was given but matched
+zero packages, rather than silently "succeeding" with an empty run -- none of the six had this
+guard before, because the all-packages-or-nothing shape never let an empty result happen
+silently until a filter could produce one.
+
+**Verified against both real portfolios in this repo, not just this PoC's own 4 packages** --
+this was pointed at deliberately, since the whole reason to add this is a real, larger, messier
+portfolio (`SSIS_From_Sandeep`), not the two straight-line PoC packages:
+- `ssisx report --input SSIS --recursive` (no filter): unchanged, all 4 packages.
+- `ssisx generate --input SSIS --recursive --package LoadEmployees`: exactly 1 package folder
+  written (`generate/LoadEmployees/`), not all 4.
+- `ssisx generate --input SSIS_From_Sandeep\RBC_Demo_ETL\RBC_Demo_ETL --recursive --package
+  Package_Legacy,Package_Exports`: exactly those 2 (of 5) package folders written, comma-
+  separated form confirmed working on the real multi-package portfolio, not just a synthetic
+  test.
+- `--package NoSuchPackage`: exit 2, `warning: --package 'NoSuchPackage' matched no package...`
+  followed by a hard `error:`, never a quiet zero-package "success".
+- `ssisx generate --input SSIS --recursive` with no `--package` at all: unchanged, still
+  generates every package (7 gaps, 4 packages processed, matching pre-existing behavior) --
+  confirming the new parameter is additive and changes nothing for an existing caller that
+  never passes `--package`.
+
+Full suite still green afterward: 149+156+9+304 = 618 across `Ssis.Runtime.Expressions.Tests`/
+`Ssis.Extract.Tests`/`Ssis.Extract.Cli.Tests`/`Ssis.Extract.Codegen.Tests`, same 3 pre-existing
+unrelated failures elsewhere (unaffected -- this round touched none of their fixtures).
+
+**A second, unrelated leak was caught and fixed while updating the CLI's own `--help` text for
+this**: the `generate` help section's prose named `D:\PoC\SSIS_Migration` as where the
+hand-written reference packages live -- literal console output a client (or Copilot) sees by
+running `ssisx --help`, a much more directly-exposed leak than the earlier `Tools\README.md`/
+`Directory.*.props` ones, since this text ships INSIDE the compiled `ssisx.exe` itself, not just
+a doc file beside it. Rewritten to point at `Tools/Etl.Core` (this tool's own shipped copy) and
+to state explicitly, in the help text itself, that generation does not attempt any verification
+against real data -- see the client-facing docs below for why that needed saying plainly.
+
+### GitHub Copilot instructions + guide, and "no verification is attempted" made explicit (2026-09-03, same day)
+
+The other half of the same client-env conversation: the client site has GitHub Copilot, not
+Claude, with a limited token budget -- meaning whatever guides it must be short enough to
+actually fit in that budget and precise enough that Copilot never has to guess or re-derive
+something this project already decided. `CLAUDE.md` (this file) is explicitly the wrong document
+for that job -- it is this project's own multi-hundred-KB development history, addressed to a
+future Claude session picking this PoC back up, not to an assistant operating the shipped `Tools`
+folder on a client machine that has never seen any of this narrative.
+
+**Two new files, both under `Tools/` (not this repo's own root -- they ship with the tool, they
+are not this repo's dev notes):**
+- `Tools/.github/copilot-instructions.md` -- the file GitHub Copilot auto-loads as repository
+  custom instructions for any workspace opened at (or under) this folder. Short, and entirely
+  rules plus a one-sentence workflow: never re-implement `ssisx`/`Etl.Core`, never run `generate`
+  against the whole portfolio unless explicitly asked (use `--package`, see above), never attempt
+  to verify generated code against a real database/data/SSIS run (none exist in this
+  environment -- inventing one is explicitly forbidden, not just undiscussed), never hand-edit
+  anything under `<out>/generate/` (disposable, regenerated freely -- Tier-2 work goes in
+  `<out>/fills/` instead), never guess at a value a `GenerationGap` work packet says is missing,
+  and never open `CLAUDE.md`/the plan docs/`docs/report-schema.md` (this project's own history,
+  not written for it, and a token-budget trap for exactly the audience this file serves).
+- `Tools/COPILOT_GUIDE.md` -- the longer reference the short file points to: what `generate`
+  does and explicitly does NOT do, the full `--package` command reference, how to build what was
+  generated, and a "Prompts you can paste into Copilot Chat" section (survey a portfolio, generate
+  one package, generate a named batch, confirm a build, work a Tier-1/Tier-2 gap, recognize and
+  correctly refuse a Tier-3 gap, and a sanity-check prompt before ever running `generate` without
+  `--package`).
+
+**The explicit "no verification" framing is a direct answer to the user's own stated constraint,
+not a restatement of something already true everywhere.** `ssisx generate` never built or ran
+anything on its own -- that was already true -- but nothing had ever said so IN THE CLIENT-FACING
+DOCS, because every session that used this tool so far was this project's own dev environment,
+which DOES have a real database and a real captured corpus (`Validation/`) to check against. On
+a client site, neither exists, and without saying so explicitly, the natural (wrong) move for an
+agent under-informed about that gap is to invent sample data or a throwaway database to "prove" the
+generated code works -- exactly the failure this documentation update exists to head off. Stated
+in three places now, deliberately redundant: `Tools/README.md`, `Tools/COPILOT_GUIDE.md`, and the
+`generate` command's own `--help` text (see above) -- so it survives whichever one an agent
+actually reads.
+
+`Tools/README.md` also gained a "Running this with GitHub Copilot" section pointing at both new
+files, and its own usage example was updated to show the `--package`-scoped form as the normal
+case, with the whole-portfolio form kept as a clearly-labeled alternative ("only when that's
+actually what's wanted").
+
+### `--etl-core` and `HOW-TO-FILL-GAPS.md` — closing two real gaps found running this through GitHub Copilot for real (2026-09-03, later the same day)
+
+Prompted directly by the user actually running the `--package`-scoped workflow above through
+GitHub Copilot in Visual Studio and hitting two real problems, neither hypothetical: Solution
+Explorer showed `Etl.Core (not found)`, and the user suspected (a suspicion that turned out to
+be correct about the ROOT CAUSE, though not about what was actually happening) that Copilot
+wasn't picking up gap-filling guidance at all.
+
+**Bug 1 — `Etl.Core` genuinely wasn't copied, because the copy was a separate manual step, and
+a separate manual step is exactly the kind of thing that gets silently skipped moving fast
+through a checklist.** `ssisx generate` already correctly reported the gap in
+`generate-report.md` ("this generator does not produce Etl.Core... copy it in by hand"), but
+Copilot ran `generate` and moved on without doing the follow-up copy. Fixed by folding the copy
+INTO the command itself: a new `--etl-core <path>` flag on `ssisx generate`
+(`GenerateCommand.cs`), which copies the given folder (excluding `bin`/`obj`, the same exclusion
+`robocopy /XD bin obj` gives, reimplemented in pure .NET rather than shelling out) into
+`<out>/generate/Etl.Core/` as part of the same command that reports the gap if it's missing. A
+failed copy still surfaces as a `GenerationGap`, never silently — the alternative is a
+`Generated.slnx` referencing a directory nothing put there, discovered only much later as
+exactly the Solution-Explorer symptom that motivated this fix.
+
+**Bug 2 — NOT actually a missing-work-packets bug** (reproducing the exact scenario confirmed
+`ssisx generate` DOES write all of them under `gaps/<Package>/`, every run) **but a real
+structural gap in how Copilot ever finds out this mechanism exists.** `.github/copilot-
+instructions.md` only auto-loads when the IDE's open workspace ROOT is `Tools\` itself — the
+user had the GENERATED solution open directly (the natural thing to do once code exists to
+build), and `gaps\`/`fills\` aren't part of any `.csproj`, so they don't even appear in Solution
+Explorer to be noticed by accident. Fixed with a new self-contained `HOW-TO-FILL-GAPS.md`,
+written by `ssisx generate` itself directly into `<out>` root on every run (`GenerateCommand.
+WriteAiAssistantGuide`) — it travels WITH the generated output regardless of which workspace
+root an IDE happens to be pointed at, filtered to only the gaps that are actually fillable
+(`Tier.MissingDatum`/`MissingLogic` — Tier 3 gets no packet, by the taxonomy's own design), with
+the full `// ssisx-fill:` comment format and the `apply-fills` procedure spelled out inline
+rather than assumed known.
+
+**Verified as genuinely fixed, not just plausible, from the user's own real environment** (`D:\
+PoC\Tools\out`, run through GitHub Copilot, not a scripted repro here): `Etl.Core.csproj` present
+after `--etl-core`; 4 real `.cs` fill files written by Copilot, each carrying a correct
+`// ssisx-fill:` provenance comment; `fills-applied.json` showing all 8 seams `Applied`; the
+whole generated solution building **0 warnings / 0 errors**. On the user's explicit follow-up
+ask to check "to be 200% sure" the ported LOGIC (not just that it compiled) was faithful, all 4
+fill files were independently read against their own work packets' original SSIS script source
+and confirmed correct — including the one genuinely tricky substitution (`SCR_NotifyAndLogProgress`,
+ported from VB.NET, switching the original's raw `SqlConnection` row-count query to
+`ctx.Uow.Context.Set<T>().CountAsync(...)` — the SAME shared `DbContext`/transaction already used
+everywhere else, which is actually SAFER than a second connection would have been, sidestepping
+the exact cross-connection-visibility class of bug this project hit for real in the
+`sp_bindsession` round above).
+
+### `--framework net8.0` — supporting a client stuck on .NET 8 without a second copy of this tool (2026-09-03, later still)
+
+Asked directly, before any code was touched: could the generator (net10.0 throughout, per the
+"Rewrite skeleton decisions" memory) also target net8.0. Checked live against the real published
+NuGet packages before answering "yes" — the honest constraint turned out to be narrower than a
+TFM string, and worth recording exactly:
+
+- **`Microsoft.EntityFrameworkCore.SqlServer` 10.0.11 targets `net10.0` ONLY** (confirmed via
+  the live nuget.org package page, not assumed by analogy). So net8.0 support cannot be "the same
+  packages, different TargetFramework" — it needs a DIFFERENT EF Core MAJOR VERSION. **9.0.15**
+  (the newest 9.x, confirmed to target `net8.0` only) is what a net8.0 leg actually needs.
+- Every OTHER pinned package — `Microsoft.Extensions.Hosting`/`Configuration.UserSecrets`
+  (both 10.0.11), `System.Text.Encoding.CodePages` (10.0.11) — already multi-targets net8.0 for
+  real (checked the same way, not assumed just because EF Core's provider does), so those stay
+  unchanged regardless of which framework is chosen.
+
+Presented this as a real design decision (pick-one-per-generate-run via a flag, vs. true
+`<TargetFrameworks>net8.0;net10.0</TargetFrameworks>` dual multi-targeting on every project,
+always building both) before implementing either — the user picked the flag. **New `--framework
+net8.0|net10.0` on `ssisx generate`** (default `net10.0`, so omitting it changes nothing for an
+existing caller). `GenerateCommand.cs` gained `EfCoreSqlServerVersionFor(framework)` (the one
+version lookup that actually depends on the flag) plus `BuildDirectoryBuildProps`/
+`BuildDirectoryPackagesProps` helpers, used to write BOTH the generated output's own
+`Directory.Build.props`/`Directory.Packages.props` AND — after `--etl-core` copies the library
+in — to OVERWRITE the copied `Etl.Core`'s own two props files with the exact same
+framework-matched content, unconditionally. That last part closes a standing, previously
+manually-enforced risk: `Tools/Etl.Core`'s own committed props files and `GenerateCommand`'s
+emission have always needed to be kept in sync BY HAND (each side's own doc comment says so) —
+now the OUTPUT side of that promise is enforced in code every run, regardless of framework or of
+whether the committed source copy has drifted.
+
+**Verified end to end, not just "the flag compiles" — three separate real generations, each
+actually built, not just reported as gap-free:**
+1. `LoadEmployees` (`SSIS/`) with `--framework net8.0 --etl-core Tools/Etl.Core`: emitted
+   `Directory.Build.props`/`Directory.Packages.props` correctly showed `net8.0`/EF Core `9.0.15`
+   in BOTH the generated output and the copied `Etl.Core`; `dotnet build Generated.slnx` — **0
+   warnings / 0 errors**.
+2. `LoadReferenceData` with no `--framework` at all (regression check): unchanged, still
+   `net10.0`/EF Core `10.0.11`, still **0 warnings / 0 errors** — confirms the new flag changes
+   nothing for the existing default path.
+3. Three real `SSIS_From_Sandeep` packages together (`Package_Advanced`, `Package_Legacy`,
+   `Package_Exports` — Excel Source, fixed-width flat file read, ADO NET, a secondary database
+   connection, event handlers) with `--framework net8.0`: **0 warnings / 0 errors** across all
+   three plus `Etl.Core`, confirming `Etl.Core`'s ENTIRE surface (not just the two-package PoC
+   subset) has no net9/net10-exclusive BCL API dependency anywhere in it.
+
+Full suite re-run after: 149+156+9+304 = 618, all green, no regression. `--help` (`Program.cs`),
+`Tools/README.md`, and `Tools/COPILOT_GUIDE.md` all updated with the flag and the one-sentence
+"why EF Core changes version, not just TFM" explanation, so an agent (Copilot or otherwise)
+reads the real constraint rather than assuming a plain recompile would work.
+
+**Real end-to-end verification followed immediately, on the user's own explicit "let's not
+assume" push** — build success alone (above) proves the code compiles, not that it produces the
+same data. Reset `dbo.Employee`/`Department`/`Designation` to a genuinely clean, verified state
+(`Sql/01_CreateTarget.sql` + `Sql/04_CreateLoaderCredential.sql`, confirmed via a fresh row-count
+query before touching anything — not assumed clean from a prior session's memory), then ran the
+FULL real cycle twice: generate `LoadEmployees`+`LoadReferenceData` → `dotnet build` → actually
+execute the built `.exe`s against `.\SQLFORPOC_2022` (via `TargetDatabase__Password` as an env
+var, confirmed as the right mechanism by reading `EtlHost.cs`'s own `AddUserSecrets` call rather
+than assumed from memory of an unrelated project's config precedence) → read the landed rows back
+— once for `net10.0` (12/8/10 rows, captured to a file), once for `net8.0` (12/8/10 rows) after
+resetting the tables again in between. **`Compare-Object` on every non-timestamp column across
+all three tables came back with zero differences — the two frameworks produce byte-for-byte
+identical output data, not just the same row counts.** This is the strongest evidence tier this
+project's own philosophy asks for, now extended to prove `--framework net8.0` isn't just
+"compiles" but is a genuinely faithful alternate target.
+
+Same session, on the user's own explicit ask: `Tools/.github/copilot-instructions.md` and
+`Tools/COPILOT_GUIDE.md` both updated so Copilot itself knows to ask which .NET version a client
+runs rather than defaulting silently — a new rule 3a in the instructions file (pass
+`--framework net8.0` for every `generate` call on such an engagement, not just the first one; ask
+if unsure, don't guess net10.0), a new "Choosing a .NET target framework" section in the guide
+with both example commands, and a new ready-to-paste prompt for the .NET-8-client scenario.
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**

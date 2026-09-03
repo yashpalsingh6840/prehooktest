@@ -54,19 +54,64 @@ internal static class PackageLoader
         }
     }
 
-    public static LoadResult Load(string input, bool noRedact, bool recursive)
+    /// <summary>
+    /// <paramref name="packageNames"/> is the "one package, or a handful, not all 73" knob every
+    /// command shares (<c>--package</c>, repeatable). Filtering happens HERE, after the full
+    /// directory sweep and duplicate-name resolution, rather than by resolving names to paths up
+    /// front -- a package is matched by its real <c>ObjectName</c> (the .dtsx's own
+    /// <c>DTS:ObjectName</c>, not necessarily its filename; the two occasionally differ, e.g. a
+    /// renamed-on-disk copy) against whatever the directory sweep actually found, so the same
+    /// duplicate-name/build-output/load-failure handling above applies uniformly whether or not a
+    /// filter is in play. A requested name that matches nothing is recorded as a
+    /// <see cref="LoadFailure"/> (kind <c>"package-not-found"</c>) rather than silently ignored --
+    /// a typo'd package name must not look like "ran clean, zero gaps" for a package that was
+    /// never actually touched. Deliberately does NOT filter <see cref="LoadResult.Projects"/> --
+    /// a project's own manifest is cheap and small, and callers that write one file per project
+    /// (extract's project.spec.json) get it regardless of which packages were asked for.
+    /// </summary>
+    public static LoadResult Load(string input, bool noRedact, bool recursive, IReadOnlyList<string>? packageNames = null)
     {
         var result = new LoadResult();
         try
         {
             LoadInto(result, input, noRedact, recursive);
             DropDuplicateNames(result);
+            if (packageNames is { Count: > 0 })
+            {
+                FilterByName(result, packageNames);
+            }
             return result;
         }
         catch
         {
             result.Dispose();
             throw;
+        }
+    }
+
+    private static void FilterByName(LoadResult result, IReadOnlyList<string> requestedNames)
+    {
+        var wanted = new HashSet<string>(requestedNames, StringComparer.OrdinalIgnoreCase);
+        var matched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var kept = new List<PackageSpec>(result.Packages.Count);
+        foreach (var pkg in result.Packages)
+        {
+            if (wanted.Contains(pkg.ObjectName))
+            {
+                matched.Add(pkg.ObjectName);
+                kept.Add(pkg);
+            }
+        }
+        result.Packages.Clear();
+        result.Packages.AddRange(kept);
+
+        foreach (var name in wanted)
+        {
+            if (matched.Contains(name)) continue;
+            result.Failures.Add(new LoadFailure(name, "package-not-found",
+                $"--package '{name}' did not match any package's ObjectName found under the given --input (case-insensitive exact match against the .dtsx's own DTS:ObjectName -- run without --package to see every name this input actually contains)"));
+            Console.Error.WriteLine($"warning: --package '{name}' matched no package under this --input -- skipped");
         }
     }
 

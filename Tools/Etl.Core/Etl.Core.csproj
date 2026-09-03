@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="CsvHelper" />
+    <PackageReference Include="ExcelDataReader" />
+    <PackageReference Include="MailKit" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <!-- NU1510: the SDK thinks this ships in the shared runtime, but CP1252 support is opt-in and needs the package. -->
+    <PackageReference Include="System.Text.Encoding.CodePages" NoWarn="NU1510" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Etl.Core.Tests" />
+  </ItemGroup>
+
+</Project>

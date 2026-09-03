@@ -44,6 +44,21 @@ internal static class Program
               ssisx extract --input <dir|file.dtsx|file.dtproj> --out <dir> [options]
               ssisx --help
 
+            Running against ONE package, or a named few, instead of a whole portfolio:
+            every command below that loads packages accepts --package <name> (repeatable,
+            and comma-splittable within one value: --package A,B is the same as
+            --package A --package B). <name> is matched against the package's own
+            ObjectName (case-insensitive exact match -- the .dtsx's own DTS:ObjectName,
+            which is USUALLY but not always its filename without the extension). Point
+            --input at the portfolio ROOT with --recursive as usual; --package narrows
+            AFTER the sweep, so the same load-failure/duplicate-name handling applies
+            either way. A name that matches nothing is a hard error (exit 2), never a
+            silent no-op -- run without --package first to see every name --input
+            actually contains (extract/report's own inventory.csv, or just the console
+            output, lists them). This is the knob to reach for on a large portfolio: run
+            'extract'/'report' once across everything (cheap, read-only), then run
+            'generate' --package by name for just the packages you actually want C# for.
+
             extract options:
               --input <path>    A .dtproj (extracts the whole project + its packages), a
                                  single .dtsx, an .ispac (a deployed project -- it is just a
@@ -55,6 +70,7 @@ internal static class Program
                                  rest of the folder.
               --out <dir>       Output directory. Writes project.spec.json,
                                  packages/<Package>.spec.json, and _meta.json.
+              --package <name>  Only this package (repeatable/comma-splittable) -- see above.
               --no-redact       Do not strip Password=/Pwd= from connection strings.
                                  Off by default.
               --recursive       With a directory --input, search subdirectories for every
@@ -64,19 +80,21 @@ internal static class Program
                                  below <pct>. Extraction output is still written either
                                  way; this only affects the exit code, for CI gating.
 
-              ssisx graph --input <dir|file.dtsx|file.dtproj> --out <dir> [--recursive]
+              ssisx graph --input <dir|file.dtsx|file.dtproj> --out <dir>
+                           [--recursive] [--package <name>]
 
-            graph options: same --input/--out/--recursive shape as extract. Writes one
-            Mermaid (.mmd) + Graphviz DOT (.dot) pair per Data Flow Task's column-level
-            lineage (plan §5.1) under <out>/lineage/. Does not require --out from a prior
-            'extract' run -- lineage is derived directly from the parsed pipeline.
+            graph options: same --input/--out/--recursive/--package shape as extract.
+            Writes one Mermaid (.mmd) + Graphviz DOT (.dot) pair per Data Flow Task's
+            column-level lineage (plan §5.1) under <out>/lineage/. Does not require --out
+            from a prior 'extract' run -- lineage is derived directly from the parsed
+            pipeline.
 
-              ssisx report --input <dir|file.dtsx|file.dtproj> --out <dir> [--recursive]
-                            [--weights <path.json>]
+              ssisx report --input <dir|file.dtsx|file.dtproj> --out <dir>
+                            [--recursive] [--package <name>] [--weights <path.json>]
 
-            report options: same --input/--out/--recursive shape as extract/graph, plus
-            --weights to override the complexity-scoring weights (config/complexity-
-            weights.json has the defaults -- plan §5.6). Writes inventory.csv/.md,
+            report options: same --input/--out/--recursive/--package shape as
+            extract/graph, plus --weights to override the complexity-scoring weights
+            (config/complexity-weights.json has the defaults -- plan §5.6). Writes inventory.csv/.md,
             findings.csv/.md, nondeterministic.json (plan §5.8), datatouch.md/.json,
             primary-keys.json/.md (best-effort naming-convention PK guesses, needs human
             confirmation -- a .dtsx carries no real PK concept), effects.json/.md (every
@@ -89,7 +107,7 @@ internal static class Program
             portfolio.md -- the "here is what you own" report (plan §5.2-§5.8).
 
               ssisx conformance --input <dir|file.dtsx|file.dtproj> --out <dir>
-                                 [--claims <dir>] [--recursive] [--check]
+                                 [--claims <dir>] [--recursive] [--check] [--package <name>]
 
             conformance options: gate 1 of Migration-Validation-Plan.md -- generates the
             obligations a rewrite must satisfy (control flow, ordering, data flow, source
@@ -101,7 +119,8 @@ internal static class Program
             overwritten -- edit them as the rewrite progresses. --check exits 1 unless
             every obligation is Implemented or explained-NotApplicable, for CI gating.
 
-              ssisx testgen --input <dir|file.dtsx|file.dtproj> --out <dir> [--recursive]
+              ssisx testgen --input <dir|file.dtsx|file.dtproj> --out <dir>
+                             [--recursive] [--package <name>]
 
             testgen options: gate 2 of Migration-Validation-Plan.md §4 -- generates an xUnit
             test file per package (under <out>/testgen/) covering every Derived Column
@@ -122,21 +141,40 @@ internal static class Program
             as a CI drift gate.
 
               ssisx generate --input <dir|file.dtsx|file.dtproj|file.ispac> --out <dir>
-                              [--recursive] [--namespace-prefix <prefix>]
-                              [--unsafe-skip-seams] [--fills <dir>]
+                              [--recursive] [--package <name>] [--namespace-prefix <prefix>]
+                              [--unsafe-skip-seams] [--fills <dir>] [--etl-core <path>]
+                              [--framework net8.0|net10.0]
 
             generate options: turns a package into a runnable C# ETL project -- entity,
             DbContext, CSV row + ClassMap, Derived Column transform, the oracle-verified
             SsisFn primitives it actually uses, Program.cs, and .csproj/appsettings.json --
-            under <out>/generate/<Package>/, calling Etl.Core for plumbing (SqlBulkCopy,
-            CSV reading, email notification) the same way the hand-written
-            D:\PoC\SSIS_Migration reference packages do. Covers exactly milestone 1's
-            scenario: Flat File Source -> [Derived Column] -> OLE DB Destination (fast
-            load), N flows per package, Execute SQL Task as pre-load. Anything else (a
-            non-fast-load destination, a flow with no Flat File Source, a SQL-command
-            destination, an untranslatable expression) degrades that one piece to a
-            GenerationGap rather than a guess -- every gap, with its reason, is listed in
-            generate-report.md alongside how many files each package produced.
+            under <out>/generate/<Package>/, calling Etl.Core (shipped alongside this tool
+            at Tools/Etl.Core) for plumbing: SqlBulkCopy, CSV reading, email notification.
+            --etl-core <path> copies that folder into <out>/generate/Etl.Core/ as part of
+            THIS command (e.g. --etl-core Tools/Etl.Core, or a relative ../Etl.Core if you're
+            already inside Tools/SsisExtractor) -- do this every time unless you have a
+            reason not to: without it, the generated solution will not build at all (every
+            project references Etl.Core.csproj), and forgetting the copy as a separate manual
+            step is an easy, real mistake to make. NO verification runs
+            against a client's real data or database -- this tool has neither, and does not
+            expect them. It only writes source code; building/running the result, and any
+            comparison against the original package's real behavior, is the caller's own
+            job (Validation/ in this repo's own dev environment shows the shape of that,
+            but it depends on this project's own captured corpus and is not part of what
+            ships here). Covers exactly milestone 1's scenario: Flat File Source ->
+            [Derived Column] -> OLE DB Destination (fast load), N flows per package,
+            Execute SQL Task as pre-load. Anything else (a non-fast-load destination, a
+            flow with no Flat File Source, a SQL-command destination, an untranslatable
+            expression) degrades that one piece to a GenerationGap rather than a guess --
+            every gap, with its reason, is listed in generate-report.md alongside how many
+            files each package produced.
+            --framework selects the generated solution's target framework -- net10.0
+            (default, unchanged) or net8.0. This is not just a TargetFramework string: Etl.Core's
+            EF Core SqlServer provider (10.0.11) targets net10.0 ONLY, so net8.0 pins a
+            different EF Core MAJOR VERSION (9.0.15, the newest that still targets net8.0)
+            instead. --etl-core copies the matching Directory.Build.props/Directory.Packages.props
+            into the copied Etl.Core too, so the two always agree -- pass --framework net8.0
+            on every generate call for a client stuck on .NET 8, not just once.
             --namespace-prefix roots every generated namespace under a prefix (e.g.
             "Contoso.Etl") instead of just the package name. Generated code under
             <out>/generate/ has no hand-editing expectation -- rerun freely.

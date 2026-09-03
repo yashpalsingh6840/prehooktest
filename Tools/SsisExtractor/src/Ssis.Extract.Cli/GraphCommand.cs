@@ -19,6 +19,7 @@ internal static class GraphCommand
         string? input = null;
         string? outDir = null;
         var recursive = false;
+        var packageNames = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -29,6 +30,10 @@ internal static class GraphCommand
                     case "--input": input = RequireValue(args, ref i, "--input"); break;
                     case "--out": outDir = RequireValue(args, ref i, "--out"); break;
                     case "--recursive": recursive = true; break;
+                    case "--package":
+                        var pkgArg = RequireValue(args, ref i, "--package");
+                        packageNames.AddRange(pkgArg.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+                        break;
                     default:
                         Console.Error.WriteLine($"error: unknown graph option '{args[i]}'");
                         return 2;
@@ -56,8 +61,14 @@ internal static class GraphCommand
 
         try
         {
-            using var loaded = PackageLoader.Load(input, noRedact: false, recursive);
+            using var loaded = PackageLoader.Load(input, noRedact: false, recursive, packageNames);
             var packages = loaded.Packages;
+
+            if (packageNames.Count > 0 && packages.Count == 0)
+            {
+                Console.Error.WriteLine("error: --package matched no packages under this --input -- nothing to graph.");
+                return 2;
+            }
 
             var lineageDir = Path.Combine(outDir, "lineage");
             Directory.CreateDirectory(lineageDir);

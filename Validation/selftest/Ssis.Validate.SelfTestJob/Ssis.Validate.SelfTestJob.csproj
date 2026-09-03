@@ -16,7 +16,7 @@
     a real package can exercise it. Mode "pass" loads the corpus's own golden "after"
     snapshot verbatim (the harness should report PASS); mode "fail" deliberately corrupts one
     value first (the harness should report FAIL, naming exactly what differs). See
-    Tools/Validation/docs/gate3-harness.md.
+    Validation/docs/gate3-harness.md.
   -->
 
   <ItemGroup>

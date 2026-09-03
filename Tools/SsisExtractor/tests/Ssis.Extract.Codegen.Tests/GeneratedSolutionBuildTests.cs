@@ -28,10 +28,10 @@ namespace Ssis.Extract.Codegen.Tests;
 /// hand-assembled tree nobody ships, and would drift from the real one silently.</para>
 ///
 /// <para><b>Skips when it cannot run, and the class comment is the warning.</b> It needs a built
-/// ssisx and the sibling Etl.Core repo, neither guaranteed on an arbitrary clone. Absence is an
-/// early return, matching IspacReaderTests' established pattern for build outputs (this xUnit
-/// version has no Assert.Skip). A skipped run proves nothing -- run scripts/Run-Tests.ps1 on a
-/// dev box.</para>
+/// ssisx, which is guaranteed once this repo's own solution has been built at least once.
+/// Absence is an early return, matching IspacReaderTests' established pattern for build outputs
+/// (this xUnit version has no Assert.Skip). A skipped run proves nothing -- run
+/// scripts/Run-Tests.ps1 on a dev box.</para>
 /// </summary>
 public class GeneratedSolutionBuildTests
 {
@@ -42,8 +42,14 @@ public class GeneratedSolutionBuildTests
 
     private static string FixturesDir => Path.Combine(ExtractorRoot, "tests", "Ssis.Extract.Tests", "Fixtures");
 
-    /// <summary>The hand-written runtime generated projects reference. Not produced by this tool.</summary>
-    private static string EtlCoreProjectDir => Path.Combine("D:", "PoC", "SSIS_Rewrite", "src", "Etl.Core");
+    /// <summary>
+    /// The hand-written runtime generated projects reference. Not produced by this tool -- a
+    /// portable, in-repo copy lives at Tools/Etl.Core (sibling of Tools/SsisExtractor), refreshed
+    /// from the actual development repo (D:\PoC\SSIS_Rewrite\src\Etl.Core) when that library
+    /// changes. Resolved relative to this file's own path, not a hardcoded dev-machine absolute
+    /// path, so this test runs on any clone rather than only this one machine.
+    /// </summary>
+    private static string EtlCoreProjectDir => Path.Combine(ExtractorRoot, "..", "Etl.Core");
 
     /// <summary>Prefers Release (what the survey scripts publish) but takes whatever is built.</summary>
     private static string? FindSsisx()

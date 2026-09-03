@@ -24,6 +24,7 @@ internal static class ExtractCommand
         var noRedact = false;
         var recursive = false;
         double? failUnder = null;
+        var packageNames = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -35,6 +36,14 @@ internal static class ExtractCommand
                     case "--out": outDir = RequireValue(args, ref i, "--out"); break;
                     case "--no-redact": noRedact = true; break;
                     case "--recursive": recursive = true; break;
+                    // Repeatable, and comma-splittable within one value, so both
+                    // `--package A --package B` and `--package A,B` work -- the one
+                    // "run just this one, or this handful, not all N" knob every command
+                    // that loads packages shares. Matched against ObjectName, see PackageLoader.
+                    case "--package":
+                        var pkgArg = RequireValue(args, ref i, "--package");
+                        packageNames.AddRange(pkgArg.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+                        break;
                     case "--fail-under":
                         var failUnderRaw = RequireValue(args, ref i, "--fail-under");
                         if (!double.TryParse(failUnderRaw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedFailUnder))
@@ -78,9 +87,18 @@ internal static class ExtractCommand
 
         try
         {
-            using var loaded = PackageLoader.Load(input, noRedact, recursive);
+            using var loaded = PackageLoader.Load(input, noRedact, recursive, packageNames);
             packageSpecs = loaded.Packages;
             projectCount = loaded.Projects.Count;
+
+            // A --package filter that matched nothing must fail loudly, not silently write
+            // an empty extraction that "succeeds" -- PackageLoader already printed the
+            // specific per-name warning(s) above.
+            if (packageNames.Count > 0 && packageSpecs.Count == 0)
+            {
+                Console.Error.WriteLine("error: --package matched no packages under this --input -- nothing extracted.");
+                return 2;
+            }
 
             foreach (var (dtprojPath, project) in loaded.Projects)
             {

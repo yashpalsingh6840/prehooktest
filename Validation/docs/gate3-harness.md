@@ -1,6 +1,6 @@
 # Gate 3 prep — golden corpus + comparison harness
 
-Pre-work for [`Migration-Validation-Plan.md`](../../../Migration-Validation-Plan.md) §5
+Pre-work for [`Migration-Validation-Plan.md`](../../Migration-Validation-Plan.md) §5
 (golden-dataset integration test in CI), built **before** a C# rewrite exists. Gate 3 itself
 needs two things that don't exist yet if you wait for the rewrite to start this: a captured
 golden corpus, and a comparison harness. Both are built now, against the two current SSIS
@@ -25,11 +25,11 @@ SSISDB at all; it only needs a SQL Server connection string and a command to run
 
 ```powershell
 ssis-validate capture-corpus --package-key LOAD_REFERENCE_DATA --package-name LoadReferenceData `
-  --runner-exe ..\..\Scripts\SsisRunner\bin\Release\net8.0\SsisRunner.exe `
+  --runner-exe ..\Scripts\SsisRunner\bin\Release\net8.0\SsisRunner.exe `
   --ssispoc-connection "Server=.\SQLFORPOC;Database=SsisPoC;Integrated Security=True;TrustServerCertificate=True;" `
   --ssisdb-connection "Server=.\SQLFORPOC;Database=SSISDB;Integrated Security=True;TrustServerCertificate=True;" `
   --tables "dbo.Department:DepartmentID,dbo.Designation:DesignationID" `
-  --input-files "..\..\Data\Input\Department\Departments.csv,..\..\Data\Input\Designation\Designations.csv" `
+  --input-files "..\Data\Input\Department\Departments.csv,..\Data\Input\Designation\Designations.csv" `
   --logging-level 3 `
   --out corpus
 ```
@@ -66,7 +66,7 @@ serialization — not a different idea.
 
 ```powershell
 ssis-validate generate-config --package LoadReferenceData `
-  --schema-script ..\..\Sql\01_CreateTarget.sql `
+  --schema-script ..\Sql\01_CreateTarget.sql `
   --tables "dbo.Department,dbo.Designation" `
   --nondeterministic-json <ssisx report output>\nondeterministic.json `
   --primary-keys-json <ssisx report output>\primary-keys.json `
@@ -164,7 +164,7 @@ stand-in job because it never went through a real `Host.CreateApplicationBuilder
 chain or a real SQL-auth login:
 
 - **`GateRunner` never set the job process's working directory**, so the child inherited
-  wherever `ssis-validate` itself was invoked from (`Tools/Validation`), not the job exe's own
+  wherever `ssis-validate` itself was invoked from (`Tools/Validation` at the time, now `Validation`), not the job exe's own
   folder. `Host.CreateApplicationBuilder`'s `AddJsonFile("appsettings.json", optional: true,
   ...)` resolves that path relative to the current directory — a mismatch doesn't error, it
   silently loads *none* of the job's configured defaults. Symptom: `LoadEmployees` reverted to
