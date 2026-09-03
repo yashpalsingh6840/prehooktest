@@ -81,6 +81,7 @@ internal static class PortfolioDigest
         int GeneratablePackageCount,
         int PackagesWithGenerationGaps,
         List<KeyCount> GenerationGapReasons,
+        List<KeyCount> GenerationGapKinds,
         List<PackageDigestRow> Packages);
 
     /// <summary>
@@ -149,6 +150,15 @@ internal static class PortfolioDigest
             GeneratablePackageCount: inventory.Count(r => GapCountFor(r.PackageName, perPackageGenerationGaps) == 0),
             PackagesWithGenerationGaps: inventory.Count(r => GapCountFor(r.PackageName, perPackageGenerationGaps) > 0),
             GenerationGapReasons: Tally(perPackageGenerationGaps.Values.SelectMany(gaps => gaps).Select(g => Shorten(g.Reason))),
+            // Portfolio-wide, not per-package, same footing as GenerationGapReasons above -- this is
+            // the "which component type recurs" signal chunk 4 exists to surface: a GapKind showing
+            // up across several packages is the case FOR promoting it out of the AI-fill workflow
+            // (Tier 1/2, one package at a time) and into the deterministic emitter (Tier 3, built
+            // once with its own fixture/probe/test, and it pays off for every package that has it).
+            // Deliberately excludes GapKind.Unclassified -- that bucket is either a plain advisory or
+            // genuinely unclassified missing tool support, neither of which names a component TYPE.
+            GenerationGapKinds: Tally(perPackageGenerationGaps.Values.SelectMany(gaps => gaps)
+                .Where(g => g.Kind != GapKind.Unclassified).Select(g => g.Kind.ToString())),
             Packages: inventory.Select(r => new PackageDigestRow(
                 Pseudonym: pseudonyms[r.PackageName],
                 Classification: r.Complexity.Classification,
@@ -231,6 +241,7 @@ internal static class PortfolioDigest
         Section(sb, "EXPRESSION FUNCTIONS", d.ExpressionFunctions, 0, 12);
         Section(sb, "FINDINGS BY SEVERITY", d.FindingsBySeverity, 0, 5);
         Section(sb, "GENERATION GAP REASONS (ssisx generate)", d.GenerationGapReasons, 0, 10);
+        Section(sb, "GENERATION GAP KINDS (recurrence = promote to the emitter)", d.GenerationGapKinds, 0, 8);
 
         if (d.NonMicrosoftComponentTypes.Count > 0)
         {
@@ -293,6 +304,7 @@ internal static class PortfolioDigest
         }
         sb.AppendLine();
         AppendTable(sb, "Generation gap reasons (ssisx generate)", d.GenerationGapReasons);
+        AppendTable(sb, "Generation gap kinds (recurrence = promote to the emitter)", d.GenerationGapKinds);
         AppendTable(sb, "Findings by rule", d.FindingsByRule);
         AppendTable(sb, "Expression casts", d.ExpressionCasts);
         AppendTable(sb, "Protection levels", d.ProtectionLevels);

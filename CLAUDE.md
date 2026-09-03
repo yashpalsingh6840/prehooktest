@@ -6009,6 +6009,139 @@ guessed multi-firing translation); an event handler on a non-root container; any
 these is guessed at -- each was named, not silently dropped, exactly like every other gap in this
 tool.
 
+### AI-assisted gap filling, chunk 4 -- Tier-2 provenance/staleness, and Tier-1 catching up (2026-09-03)
+
+Closes the plan's own last chunk (`peaceful-percolating-pebble.md`): chunk 2 built the staleness
+concept for Tier-1 `decisions.json` months ago and this file has said ever since that "the hash
+check exists and is tested, but nothing writes `EvidenceSha256` into a fill yet" -- true for BOTH
+tiers. This closes it for Tier 2 (the harder half, since a Tier-2 fill is free-form `.cs`, not a
+JSON dictionary keyed by GapId) and, cheaply, for Tier 1 (whose machinery only ever needed its own
+packet to actually ask for the hash).
+
+**Tier 1, closed almost for free.** `GapDecisions.ResolveLookupJoinKey`/
+`ResolveEncryptedSecretAcknowledgment` already refuse a decision whose `EvidenceSha256` no longer
+matches -- built and tested in chunk 2. The gap was entirely upstream: `AiPacketEmitter`'s own
+`LookupResponseFormat` JSON template never asked for `evidenceSha256` at all, and
+`EncryptedSecretContract`'s own step 3 ("record an acknowledgment... with `ConfirmedBy` set") never
+mentioned it either. Both now instruct including it, copied verbatim from the packet's own heading
+-- the machinery was always there; it just never got fed.
+
+**Tier 2 needed a real design, since a fill file has no JSON dictionary to carry a hash in.** A
+fill MAY carry a one-line comment immediately above the seam it answers:
+
+```
+// ssisx-fill: GapId=<id> Author=<name-or-email> Date=<yyyy-mm-dd> EvidenceSha256=<hash>
+```
+
+`AiPacketEmitter.CodeResponseFormat` (and the `ScriptTaskContract`/`ScriptComponentContract`
+example code blocks) now instruct including it, copied verbatim from the packet's own heading.
+**Per-seam, not per-file, and that distinction is load-bearing, discovered by reading a real
+already-authored fill before designing anything**: `StagingCustomersTransform.Fills.cs` (this
+session's own worked example, `D:\PoC\SSIS_From_Sandeep_Generated\fills\Package\`) answers FOUR
+separate GapIds in one class -- a single file-level header could not carry four different hashes.
+
+**`ApplyFillsCommand` (`Ssis.Extract.Cli`) gained provenance parsing, a staleness check, and a new
+`fills-applied.json` manifest** -- written fresh every run via `StableJsonWriter`, one row
+(`FillRecordSpec`: Package/FileName/Seam/GapId/Status/Author/Date/RecordedEvidenceSha256/
+CurrentEvidenceSha256) per seam found in every `fills/<Package>/*.cs` file, regardless of outcome.
+`FillStatus` mirrors `GapDecisionStatus`'s own shape one tier over: `Applied` (recorded hash
+matches current), `Unattributed` (no provenance comment at all -- every fill written before this
+feature, or a human who skipped it; NOT a refusal, since most fills predate this), `Stale`
+(recorded hash no longer matches), `Orphaned` (unchanged from before -- a seam no gap asks for).
+
+**Deliberately does NOT synthesize a header into an unattributed fill's own copy.** It would be
+easy to fabricate one from `gaps.json`'s current hash, but that value was never actually checked
+against by a human -- stamping it in would make an unattributed fill LOOK reviewed rather than
+actually being reviewed, the exact failure this whole design exists to prevent. The honest picture
+goes into the manifest instead; the source fill itself is still never written to, same lifecycle
+as `decisions.json` and conformance claims.
+
+**A real, load-bearing bug was caught verifying this against the actual `Package` fills, not
+shipped from the design alone.** The first cut of `ExtractProvenance` located the seam's own
+regex-match `Index` and walked `content[..declaration.Index]` backward looking for the nearest
+non-blank line -- but that substring's OWN LAST "line" is a mid-line FRAGMENT (`"    private "`,
+cut off right before the word `partial`), which is neither blank nor a provenance comment, so the
+search stopped there and returned null on every real fill, misreporting every genuinely-provenanced
+seam as `Unattributed`. Caught immediately by the new `Ssis.Extract.Cli.Tests` project's own tests
+(0/6 passing on the first run), not shipped. Fixed by finding which whole LINE the declaration
+starts on first, then searching only COMPLETE preceding lines.
+
+**A second, more consequential design bug was caught only by testing against a real multi-seam
+file with real content, not a synthetic one-seam fixture.** The first cut computed each seam's
+`FillStatus` independently and copied the WHOLE FILE whenever `recognized.Count > 0` (i.e. at
+least one seam was fine) -- so a file with three current seams and ONE deliberately-corrupted-hash
+seam still got copied in full, `Fill_FullName`'s real (if stale) implementation included, and the
+generated project built with **zero errors**, silently defeating the entire staleness check for
+that seam. Caught by actually stamping a real fill from `D:\PoC\SSIS_From_Sandeep_Generated\fills\`
+with a wrong hash and building the regenerated `Package.csproj` -- not by unit tests alone, which
+had been written to expect the (wrong) partial-copy behavior. **Fixed to block the WHOLE file
+whenever ANY of its seams is stale** -- there is no safe way to strip one method out of an
+otherwise-fine file without risking a subtly wrong edit, and a file with even one stale seam is
+not more trustworthy for containing three fine ones alongside it. The file's own fine seams then
+correctly show up as still-unfilled too (the honest state of the actual generated output, not a
+false "these three are done"), and rebuilding confirmed **exactly four CS8795 errors**, matching
+the manifest's "1 stale + 3 still-unfilled" count precisely -- re-verified end to end after the
+fix, not assumed correct from re-reading the diff.
+
+**`PortfolioDigest` gained `GenerationGapKinds`** -- a portfolio-wide (not per-package, same
+footing as the existing `GenerationGapReasons`) tally of blocking gaps by `GapKind`, computed
+directly from the `GenerationGap.Kind` values `PackageGenerator.Generate` already returns in
+memory (no new file I/O, no `--fills` flag added to `ssisx report` -- `Kind` was already being
+carried on every gap, just never tallied). This is the plan's own "component type recurring in
+Tier 2/3 is the signal to promote it into the deterministic emitter" metric. Deliberately scoped
+down from the plan's literal "report AI-authored fill count per package" wording: that would need
+`ssisx report` to read an arbitrary `fills/` directory of hand-authored C# off disk, a genuinely
+different responsibility crossover between the survey command and the generate/apply-fills
+workflow, for a benefit `GenerationGapKinds` already delivers more cheaply and with zero new
+attack surface on the digest's own allow-list safety design. Run for real against
+`SSIS_From_Sandeep`: **`EncryptedConnectionManagerSecret: 8, ScriptComponentColumn: 6,
+ScriptTask: 2`** -- confirming the signal actually works, not just compiles: the encrypted-secret
+gap alone recurs across enough connection managers in this one real portfolio to be a strong
+candidate the next time this project looks for what to promote out of the AI-fill workflow.
+
+**No `ApplyFillsCommand` tests existed at all before this round** (confirmed by the research pass
+that scoped this chunk) -- `Ssis.Extract.Cli` had no test project and no `InternalsVisibleTo`.
+Added both: a new `tests/Ssis.Extract.Cli.Tests/` project (mirroring `Ssis.Extract.Codegen.Tests`'s
+own shape) and `InternalsVisibleTo` on `Ssis.Extract.Cli.csproj`, registered in
+`SsisExtractor.slnx`. Six real-filesystem integration tests (a temp `--out` directory, real
+`gaps.json`/`fills/` files -- this command's whole job is file I/O, so faking it away would test
+less than doing it): a matching-hash fill applies; a stale one is refused and not copied; a
+headerless one applies as Unattributed; an orphan is refused exactly as before; a mixed file (one
+current seam, one stale) blocks entirely, both ending up reported unfilled; and a Script Task fill
+is recognized by its own class-level provenance comment. All six caught both real bugs above
+before either reached the real portfolio.
+
+**Verified end to end, the same discipline as every other round:**
+1. **The existing, already-authored real fills** (`D:\PoC\SSIS_From_Sandeep_Generated\fills\
+   Package\`, written last session with no provenance comments at all) still apply cleanly,
+   unmodified, as `Unattributed` -- confirmed via a fresh `ssisx generate --seams` +
+   `ssisx apply-fills` run into a new temp `--out`, and the whole regenerated 5-package portfolio
+   (`Generated.slnx`, plus a copy of `Etl.Core`) still builds **0 warnings/0 errors** with them
+   applied -- zero regression from adding this feature.
+2. **A real fill, genuinely stamped and genuinely corrupted**, not a synthetic fixture: copied
+   `StagingCustomersTransform.Fills.cs` into a scratch `--out`, added a correct
+   `// ssisx-fill:` comment above `Fill_FullName` (confirmed `Applied` on the next `apply-fills`
+   run), then corrupted only its recorded hash (confirmed `Stale`, the whole file NOT copied, and
+   -- the real proof -- rebuilding `Package.csproj` produced exactly the 4 expected `CS8795`
+   errors, one per seam in that file, where a build had succeeded moments before).
+3. **`ssisx report`'s new digest section**, run against the same real portfolio, produced the
+   `EncryptedConnectionManagerSecret: 8, ScriptComponentColumn: 6, ScriptTask: 2` breakdown quoted
+   above, serialized correctly into `portfolio-digest.json` (confirmed by reading the file, not
+   assuming the console renderer's own correctness proves the export format too -- this project's
+   own `KeyCount`-record fix earlier in this file exists precisely because that assumption once
+   failed).
+
+Regression: 149+156+6+304 = 615 in the `ssisx` solution (was 149+156+304 = 609 -- the 6 new tests
+in the new `Ssis.Extract.Cli.Tests` project), 7+11+81 = 99 in `Etl.Core` unaffected, all green via
+`scripts/Run-Tests.ps1`. No `Etl.Core` changes this round -- this is entirely a codegen/CLI-side
+feature.
+
+**Remaining, deliberately unaddressed:** the plan's own "optionally link a fill to the conformance
+rule(s) it satisfies" -- explicitly optional there, and still out of scope here; and Tier 1's
+`decisions.json` files still are not automatically re-stamped with a fresh hash when a human edits
+one by hand (the packet now asks for it at authoring time, but nothing enforces it afterward --
+same trust model as `ConfirmedBy` itself, a human field this tool reads and never writes).
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

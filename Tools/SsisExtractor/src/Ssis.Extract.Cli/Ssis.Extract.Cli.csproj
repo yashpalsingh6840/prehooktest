@@ -18,4 +18,8 @@
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Ssis.Extract.Cli.Tests" />
+  </ItemGroup>
+
 </Project>

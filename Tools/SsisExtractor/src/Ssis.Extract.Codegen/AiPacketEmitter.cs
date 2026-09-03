@@ -135,6 +135,7 @@ public static class AiPacketEmitter
 
         namespace <Package>.ScriptTasks;
 
+        // ssisx-fill: GapId=<this gap's id> Author=<you> Date=<yyyy-mm-dd> EvidenceSha256=<from the heading above>
         public sealed partial class <TaskName>ScriptTask
         {
             // Fields are allowed here -- this is a class part, not a bare method body. A compiled
@@ -176,6 +177,7 @@ public static class AiPacketEmitter
         the generated transform as a `partial` method, so it must be a pure function of the row:
 
         ```csharp
+        // ssisx-fill: GapId=<this gap's id> Author=<you> Date=<yyyy-mm-dd> EvidenceSha256=<from the heading above>
         private partial <ClrType> Fill_<ColumnName>(<RowType> row, in RowContext ctx);
         ```
 
@@ -209,9 +211,16 @@ public static class AiPacketEmitter
           "inputColumn": "...",
           "referenceColumn": "...",
           "confidence": "High | Medium | Low",
-          "rationale": "one or two sentences"
+          "rationale": "one or two sentences",
+          "evidenceSha256": "<the Evidence SHA-256 from the heading above, copied verbatim>"
         }
         ```
+
+        A human copies this into `fills/<Package>.decisions.json` keyed by this gap's id, adding
+        `confirmedBy`/`confirmedOn` themselves -- **that confirmation, not your confidence, is what
+        makes it used.** `evidenceSha256` is what lets a LATER run tell a decision made against this
+        package apart from one made against a version of it that has since changed; include it even
+        though it feels redundant with the heading above.
         """;
 
     private const string EncryptedSecretContract = """
@@ -228,8 +237,10 @@ public static class AiPacketEmitter
            (or `SecondaryConnections:<connection manager name>:Password` -- see the gap's own reason
            text and the generated appsettings.json for which key applies).
         3. Record an acknowledgment -- NEVER the value itself -- in this package's
-           `fills/<Package>.decisions.json`, keyed by this gap's own id, with `ConfirmedBy` set. This
-           only silences the report; it changes nothing about what gets generated.
+           `fills/<Package>.decisions.json`, keyed by this gap's own id, with `ConfirmedBy` set and
+           `EvidenceSha256` copied from the heading above. This only silences the report; it changes
+           nothing about what gets generated. `EvidenceSha256` is what lets a later run detect that
+           the connection manager changed underneath this acknowledgment and ask for a fresh one.
 
         Do not put the real secret anywhere in a chat response, a work packet answer, or
         `decisions.json`. This packet exists to make the requirement visible, not to collect the value.
@@ -251,6 +262,17 @@ public static class AiPacketEmitter
         A single fenced `csharp` block containing only the code asked for above -- no prose around it,
         no `using` directives (the generated file already has them), no explanation inside the block.
         Put any caveats AFTER the block, and say plainly if the port is not faithful.
+
+        Immediately above the method (or `partial class`) declaration, on its own line, include:
+
+        ```
+        // ssisx-fill: GapId=<this gap's id, from the heading above> Author=<your name or email> Date=<yyyy-mm-dd> EvidenceSha256=<the Evidence SHA-256 from the heading above>
+        ```
+
+        This is what lets `ssisx apply-fills` tell this port apart from a stale one on a later run,
+        after the .dtsx has changed underneath it -- without it the fill is still applied (most fills
+        predate this), just reported as unattributed rather than checked. Copy the id and hash
+        verbatim from the heading above; do not compute or guess either.
         """;
 
     /// <summary>
