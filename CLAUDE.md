@@ -6613,6 +6613,63 @@ rewrite untouched. A real FORCED failure was also run against the generated exe,
 happy path: the transaction rolled back and the failure handler's own row landed independently,
 confirming the inlined catch-block logic reproduces `PackageRunner`'s old behaviour exactly.
 
+### The remaining three dual-path conditional-constraint forms — Completion, Expression-only, Failure-OR-expression (2026-09-04)
+
+The three forms the 2026-08-31 "Failure handlers" round left as gaps, closed the same way that
+round's own Failure-only handler was: reusing `ResolveFailureHandler`'s existing safety scoping
+(single incoming constraint, a single Execute SQL Task with a literal statement, terminal, not
+disabled), now with two new fields on `FailureHandlerPlan` (`Guard`, `IsDualPosition`) so the SAME
+task can be BOTH an ordinary step (success path) AND a failure-handler entry (failure path) — the
+measured behaviour these three forms all share (`Value=Completion` runs on both paths
+unconditionally; `EvalOp=Expression` ignores the outcome constraint entirely, same expression both
+sides; `EvalOp=ExpressionOrConstraint`, scoped to its one evidenced Value — Failure — reduces to
+the expression alone on success and is unconditionally true on failure).
+
+**The real risk a pure Failure-only handler never has to worry about: double execution.** A
+Failure-only task never runs in-line at all, so it can only ever fire once (in the catch block). A
+dual-position task DOES run in-line on success — so if it ran there and a LATER, unrelated step
+then fails, naively re-running every failure handler unconditionally (the pre-existing behaviour)
+would run it a second time. Fixed with a per-dual-position-task runtime "reached" flag
+(`ProgramEmitter`): declared `false` above the `try`, set `true` unconditionally the instant
+execution reaches that step's own line (before its guard is even evaluated — reaching the line at
+all already means everything before it succeeded, independent of what the guard itself then
+decides), and checked (`if (!xReached)`) before the catch block's copy runs. This is what actually
+answers "did THIS task's own predecessor fail, specifically" without tracking predecessor identity
+at runtime at all.
+
+**Same known imprecision as the Failure-only round, inherited rather than introduced:** any
+failure handler in this generator (dual-position or not) fires on ANY exception anywhere in the
+package, not scoped to its own true predecessor specifically — accepted there already, and the
+`IsDualPosition` reached-flag only closes the ONE new failure mode dual-position adds (re-running
+work that already ran in-line), not this pre-existing one.
+
+**Verified:** 18/18 in `ConditionalConstraintTests.cs` (was 15 — 4 new, 2 rewritten since Value=2/
+EvalOp=1 moved from the "unsupported" theory to positive coverage), 322/322 in
+`Ssis.Extract.Codegen.Tests` overall. The three new forms have no real evidenced instance anywhere
+in the tracked portfolio (`SyntheticCondConstraint.dtsx`'s own dtexec probe, from the original
+2026-08-31 measurement, remains the only ground truth for all seven forms) — this PoC's own two
+packages regenerate byte-identical (4 packages, 7 gaps, unchanged) as a smoke check.
+
+**The end-to-end gap was closed the same day, in a follow-up pass.** The checked-in
+`SyntheticCondConstraint.dtsx` probe deliberately has no Data Flow Task (it exists purely as a
+dtexec ground-truth probe), so `ssisx generate` refuses it outright ("no Data Flow Task could be
+planned") — it can never itself prove the GENERATED code, only the SSIS side. A derivative
+fixture (`SyntheticCondConstraintDual.dtsx`, built via the object model, same `SQL_Body` plus the
+three dual-position successors, anchored by a trivial `DFT_Load` so it actually generates) closed
+that gap: generated (0 `.Constraint` gaps — only the pre-existing non-blocking `Parallelism`/
+`Notification` advisories), built against a copy of `Etl.Core` (0 warnings/0 errors), and RUN
+twice against `.\SQLFORPOC_2022` — once with the predecessor succeeding, once forced to fail.
+**Exact match against the dtexec table above, both runs, all three forms**: on success,
+Completion/Expression-only(true) ran and Failure-OR(false) correctly skipped; on failure (target
+rows unaffected, confirming the whole-package rollback), all three fired via the post-rollback
+`ExecuteSqlWithoutTransactionAsync` path, with Expression-only's own guard genuinely
+re-evaluating true rather than assuming it. The generated `Program.cs`'s own `sQL_XStepReached`
+flags were inspected directly and confirmed present, one per dual-position task.
+
+**Remaining unsupported:** `EvalOp=ExpressionOrConstraint` paired with any `Value` other than
+Failure (e.g. Completion OR expression, Success OR expression) — only the one combination measured
+against real SSIS is generated; the others are plausible by analogy but not guessed at.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

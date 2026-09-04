@@ -34,11 +34,12 @@ public class MergeJoinJoinTypeTests
         return DtsxPackageReader.Read(Path.Combine(fixturesDir, dtsxFileName), noRedact: false);
     }
 
-    private static string ProgramCsFor(string dtsxFileName)
+    private static string ClassFileFor(string dtsxFileName)
     {
-        var result = PackageGenerator.Generate(LoadSyntheticFixture(dtsxFileName), namespacePrefix: null);
+        var package = LoadSyntheticFixture(dtsxFileName);
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
         Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
-        return result.Files.Single(f => f.RelativePath.EndsWith("Program.cs", StringComparison.Ordinal)).Content;
+        return result.Files.Single(f => f.RelativePath == $"{package.ObjectName}.cs").Content;
     }
 
     [Theory]
@@ -47,11 +48,11 @@ public class MergeJoinJoinTypeTests
     [InlineData("SyntheticMergeJoinLeftOuter.dtsx", "MergeJoinType.LeftOuter")]
     public void Generate_EmitsTheMeasuredJoinType_ForEachSupportedRawValue(string fixture, string expected)
     {
-        var program = ProgramCsFor(fixture);
+        var classFile = ClassFileFor(fixture);
 
-        Assert.Contains(expected, program);
+        Assert.Contains(expected, classFile);
         // Guard the specific regression: LeftOuter must no longer appear for an INNER join.
-        if (expected != "MergeJoinType.LeftOuter") Assert.DoesNotContain("MergeJoinType.LeftOuter", program);
+        if (expected != "MergeJoinType.LeftOuter") Assert.DoesNotContain("MergeJoinType.LeftOuter", classFile);
     }
 
     [Fact]

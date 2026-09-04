@@ -139,6 +139,12 @@ delete it and regenerate freely, as long as every `generate`/`apply-fills` call 
 (`git add fills-library && git commit`) -- that is what makes it permanent, not just "outside
 `out\`."
 
+**Generated code is one class per package, one method per SSIS task/component (not a flat
+script), and real concurrency where SSIS itself ran things concurrently -- each concurrent
+branch gets its own transaction, so rollback there is per-branch, not whole-package.** See
+`COPILOT_GUIDE.md`'s "What the generated code actually looks like" for the full explanation
+before reviewing or editing generated output.
+
 **`generate`'s job ends at writing buildable C# source.** There is no client database or real
 source data available in this environment, so nothing here builds, runs, or verifies the
 generated code against real behavior -- that comparison is a separate, dev-only concern (see

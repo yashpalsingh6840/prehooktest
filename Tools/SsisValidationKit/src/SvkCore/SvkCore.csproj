@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Build-time references only; nothing under Tools/SsisExtractor is ever edited by
+         this project. Ssis.Extract.Model is the plain record/POCO shape spec.json
+         deserializes into; Ssis.Extract.Dtsx supplies pure functions (PackageTree,
+         PrimaryKeyInference, ConformanceRulesBuilder) that already operate on that parsed
+         shape, not the XML parser itself. -->
+    <ProjectReference Include="..\..\..\SsisExtractor\src\Ssis.Extract.Model\Ssis.Extract.Model.csproj" />
+    <ProjectReference Include="..\..\..\SsisExtractor\src\Ssis.Extract.Dtsx\Ssis.Extract.Dtsx.csproj" />
+  </ItemGroup>
+
+</Project>

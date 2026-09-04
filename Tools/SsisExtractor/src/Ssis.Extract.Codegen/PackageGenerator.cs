@@ -364,7 +364,7 @@ public static partial class PackageGenerator
         {
             var programLoop = GenerateForEachDataFlowLoop(
                 package, ns, dataFlowLoopStep.Loop, files, tables, functionsUsed,
-                primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+                primaryKeysByDestination, fileSourceEntries, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
             if (programLoop is not null) wiredDataFlowLoops[dataFlowLoopStep.Loop] = programLoop;
         }
 
@@ -407,7 +407,7 @@ public static partial class PackageGenerator
                     programSteps.Add(programOleDbCommand);
                     break;
                 case SqlStep sqlStep:
-                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, $"{ns}.Mapping", gaps));
+                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, testFiles, $"{ns}.Mapping", gaps));
                     break;
                 case ScriptTaskStep { Task: var scriptTask }:
                 {
@@ -422,11 +422,12 @@ public static partial class PackageGenerator
                     break;
                 }
                 case FileSystemStep fileSystemStep:
+                    RegisterFileSystemActionPaths(package, fileSystemStep.Action, fileSourceEntries, gaps);
                     programSteps.Add(new ProgramFileSystemStep(fileSystemStep.TaskName, fileSystemStep.Action));
                     break;
                 case ForEachFileLoopStep loopStep:
                 {
-                    var programLoop = ResolveForEachFileLoop(loopStep.Loop, files, $"{ns}.Mapping", gaps);
+                    var programLoop = ResolveForEachFileLoop(loopStep.Loop, files, $"{ns}.Mapping", fileSourceEntries, gaps);
                     if (programLoop is not null) programSteps.Add(programLoop);
                     break;
                 }
@@ -442,7 +443,7 @@ public static partial class PackageGenerator
             // reported its own gap.
             if (programSteps.Count == programStepsBefore + 1)
             {
-                programSteps[^1] = programSteps[^1] with { FlowGroup = step.FlowGroup };
+                programSteps[^1] = programSteps[^1] with { FlowGroup = step.FlowGroup, ContainerPath = step.ContainerPath, Wave = step.Wave };
                 if (step.Guard is { } guard)
                     programSteps[^1] = programSteps[^1] with
                     {
@@ -464,7 +465,7 @@ public static partial class PackageGenerator
                 preLoadStatements.Add(new ProgramPreLoadStatement(stmt.TaskName, statementClassName));
             }
 
-            Merge(files, gaps, ProgramEmitter.Emit(new ProgramRequest(
+            var programRequest = new ProgramRequest(
                 PackageName: package.ObjectName,
                 RootNamespace: ns,
                 DbContextTypeName: $"{package.ObjectName}DbContext",
@@ -474,7 +475,9 @@ public static partial class PackageGenerator
             {
                 VariableSeeds = plan.VariableSeeds,
                 FailureHandlers = plan.FailureHandlers,
-            }));
+            };
+            Merge(files, gaps, ProgramEmitter.Emit(programRequest));
+            Merge(files, gaps, PackageClassEmitter.Emit(programRequest));
 
             if (authMode is null)
             {
@@ -535,7 +538,7 @@ public static partial class PackageGenerator
     /// entityName (always derived from a table's OpenRowset, already alphanumeric). Strips
     /// everything but letters/digits/underscore and guards against a leading digit, which C#
     /// identifiers don't allow.</summary>
-    private static string SanitizeIdentifier(string name)
+    internal static string SanitizeIdentifier(string name)
     {
         var chars = name.Where(c => char.IsLetterOrDigit(c) || c == '_').ToArray();
         var result = new string(chars);
@@ -2089,6 +2092,29 @@ public static partial class PackageGenerator
         return new FileSourceEntryRequest(key, Path.GetDirectoryName(filePath) ?? "", Path.GetFileName(filePath));
     }
 
+    /// <summary>Emitter rewrite phase 6: registers an appsettings.json "FileSource" entry, keyed
+    /// by connection manager name, for whichever of a File System Task's own source/destination
+    /// actually resolved from a connection manager (<see cref="FileSystemActionPlan.SourceConnectionName"/>/
+    /// <c>DestinationConnectionName</c> -- null, and so skipped here, for the object-model-confirmed
+    /// but never-evidenced literal-path form). Two File System Tasks referencing the SAME
+    /// connection manager (e.g. a package archiving into, then later reading from, one FILE CM)
+    /// would otherwise register the identical key twice -- harmless in the emitted JSON (a
+    /// Dictionary, last write wins on an identical value) but skipped anyway for a clean
+    /// appsettings.json.</summary>
+    private static void RegisterFileSystemActionPaths(
+        PackageSpec package, FileSystemActionPlan action, List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps)
+    {
+        void RegisterOne(string? connectionName)
+        {
+            if (connectionName is null) return;
+            if (fileSourceEntries.Any(e => e.Key == connectionName)) return;
+            if (FindConnectionManager(package, connectionName) is not { } cm) return; // PackagePlanner already resolved this CM by name; should not happen
+            fileSourceEntries.Add(BuildFileSourceEntry(connectionName, cm, gaps));
+        }
+        RegisterOne(action.SourceConnectionName);
+        RegisterOne(action.DestinationConnectionName);
+    }
+
     /// <summary>
     /// Resolves a Flat File Destination's own file-format facts into a <see cref="FlatFileFlowSink"/>
     /// -- everything about the file's PHYSICAL layout (delimited vs fixed-width, delimiters,
@@ -2220,13 +2246,15 @@ public static partial class PackageGenerator
     private static ProgramStep ResolveSqlStep(
         PackageSpec package, SqlStep sqlStep, string? targetServer, string? targetDatabase,
         Dictionary<string, SecondaryConnectionRequest> secondaryConnections, List<GeneratedFile> files,
-        string mappingNamespace, List<GenerationGap> gaps)
+        List<GeneratedFile> testFiles, string mappingNamespace, List<GenerationGap> gaps)
     {
         // Named, testable statement class (SqlStatementBuilderEmitter) rather than an anonymous
         // string literal embedded in Program.cs -- emitted once here regardless of which of the
         // two ProgramStep shapes below this resolves to, since both reference it identically.
         var statementClassName = sqlStep.TaskName + "Statement";
         Merge(files, gaps, SqlStatementBuilderEmitter.Emit(mappingNamespace, sqlStep.TaskName, sqlStep.Sql));
+        var statementTest = SqlStatementTestEmitter.Emit($"{package.ObjectName}.Tests", mappingNamespace, sqlStep.TaskName, sqlStep.Sql);
+        testFiles.Add(statementTest with { RelativePath = $"{package.ObjectName}.Tests/{statementTest.RelativePath}" });
 
         if (sqlStep.ConnectionManagerName is not { } cmName
             || FindConnectionManager(package, cmName) is not { } cm
@@ -2257,7 +2285,8 @@ public static partial class PackageGenerator
     /// package (not fatal to the rest of it), matching every other single-step gap in this
     /// file.</summary>
     private static ProgramForEachFileLoopStep? ResolveForEachFileLoop(
-        ForEachFileLoopPlan loop, List<GeneratedFile> files, string mappingNamespace, List<GenerationGap> gaps)
+        ForEachFileLoopPlan loop, List<GeneratedFile> files, string mappingNamespace,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps)
     {
         const string currentFileParamName = "currentFile";
         var translated = ForEachLoopEmitter.TranslateSqlTemplate(loop.SqlTemplate, loop.VariableName, currentFileParamName);
@@ -2274,8 +2303,14 @@ public static partial class PackageGenerator
         Merge(files, gaps, SqlStatementBuilderEmitter.EmitParameterized(
             mappingNamespace, loop.InnerTaskName, currentFileParamName, ((TranslatedOk)translated).CSharpExpression));
 
+        // Emitter rewrite phase 6: the enumerator's own Folder is never backed by a connection
+        // manager (unlike a Flat File Source's own path), so it's registered as a folder-only
+        // (empty-filename) FileSourceEntryRequest keyed by this task's own name instead.
+        var fileSourceKey = loop.TaskName;
+        fileSourceEntries.Add(new FileSourceEntryRequest(fileSourceKey, loop.Folder, ""));
+
         return new ProgramForEachFileLoopStep(loop.TaskName, loop.Folder, loop.FileSpec, loop.Recurse, nameMode,
-            currentFileParamName, statementClassName);
+            currentFileParamName, statementClassName, fileSourceKey);
     }
 
     /// <summary>Raw values from Microsoft's public IDTSForEachFileEnumerator documentation --
@@ -2322,7 +2357,8 @@ public static partial class PackageGenerator
     private static ProgramForEachDataFlowLoopStep? GenerateForEachDataFlowLoop(
         PackageSpec package, string ns, ForEachFileDataFlowPlan loop,
         List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
-        Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
+        Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
         bool emitSeams)
     {
@@ -2402,9 +2438,16 @@ public static partial class PackageGenerator
         if (authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
             (authMode, userId, targetServer, targetDatabase) = auth;
 
+        // Emitter rewrite phase 6: the enumerator's own Folder is never backed by a connection
+        // manager (unlike the per-iteration Flat File Source's own path, which is already an
+        // expression, not a design-time default), so it's registered as a folder-only
+        // (empty-filename) FileSourceEntryRequest keyed by this task's own name instead.
+        var fileSourceKey = loop.TaskName;
+        fileSourceEntries.Add(new FileSourceEntryRequest(fileSourceKey, loop.Folder, ""));
+
         return new ProgramForEachDataFlowLoopStep(
             loop.TaskName, loop.Folder, loop.FileSpec, loop.Recurse, nameMode,
             "currentFile", ((TranslatedOk)translated).CSharpExpression,
-            flow.FlatFileSource.Name, rowTypeName, entityName, transformClassName);
+            flow.FlatFileSource.Name, rowTypeName, entityName, transformClassName, fileSourceKey);
     }
 }

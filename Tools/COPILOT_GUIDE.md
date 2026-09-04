@@ -74,6 +74,30 @@ coverage -- a column outside its own pilot scope is a named, non-blocking gap in
 - Does not silently guess at anything it can't derive from the `.dtsx` file. See "Working a gap"
   in the instructions file.
 
+## What the generated code actually looks like
+
+Each package generates as one class (`{PackageName}Package`, in `{PackageName}.cs`), not a flat
+script -- **one `internal` method per SSIS task or pipeline component**, named after the task/
+component itself and ordered exactly like that package's own control flow, so a method name in
+the code is the same name you'd see in the original `.dtsx`/SSDT designer. `Program.cs` itself is
+just a few lines of bootstrap that construct the class and call its `RunAsync`. Every method is
+`internal` (not `private`) specifically so the generated `{Package}.Tests` project can call it
+directly and test one task/component in isolation -- this is a deliberate design choice, not an
+accident of the generator's own internals, so don't "clean it up" into `private` if asked to
+review the generated code.
+
+**Concurrency is real, not simulated.** If the original package ran two or more executables with
+no ordering constraint between them (SSIS itself ran those concurrently), the generated code runs
+them concurrently too, via `Task.WhenAll` -- each branch gets its **own** database connection/
+transaction (opened fresh for that branch, committed or rolled back independently). This means
+rollback is scoped to a branch, not the whole package, for exactly the executables that ran
+concurrently under SSIS -- if one concurrent branch fails after a sibling branch already
+committed, that sibling's work stands, matching what the original SSIS package itself did (none
+of these packages declares `DTS:TransactionOption="Required"`, so SSIS never wrapped concurrent
+branches in one shared transaction either). Everything that ran sequentially in the original
+package still shares one transaction end to end, same as before. This is stated in the generated
+class's own doc comment and in `generate-report.md` -- read those rather than assuming.
+
 ## Running against one package vs. many (the flexibility this exists for)
 
 Every command that reads packages (`extract`, `graph`, `report`, `conformance`, `testgen`,

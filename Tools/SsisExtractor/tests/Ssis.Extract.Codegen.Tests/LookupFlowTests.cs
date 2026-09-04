@@ -40,11 +40,11 @@ public class LookupFlowTests
         Assert.Contains("CountryCode = lookup[row.Country].CountryCode,", transform);
         Assert.Contains("Region = lookup[row.Country].Region,", transform);
 
-        var program = result.Files.Single(f => f.RelativePath == "Program.cs").Content;
-        Assert.Contains("await LKP_CountryCache.LoadAsync<string>(", program);
-        Assert.Contains("r => r.CountryName,", program);
-        // Constructed with the preloaded cache, not resolved by type -- the cache is a local.
-        Assert.Contains("AddScoped<IRowTransform<SyntheticLookupSingleTargetSqlRow, SyntheticLookupSingleTarget>>(sp => new SyntheticLookupSingleTargetTransform(lKP_CountryCache));", program);
+        var classFile = result.Files.Single(f => f.RelativePath == "SyntheticLookupSingle.cs").Content;
+        Assert.Contains("private Dictionary<string, LKP_CountryCache.ReferenceRow> lKP_CountryCache = null!;", classFile);
+        Assert.Contains("lKP_CountryCache = await LKP_CountryCache.LoadAsync<string>(SqlConnectionStringFactory.Build(Db()), r => r.CountryName, ct);", classFile);
+        // Constructed with the preloaded cache field directly, not resolved via DI.
+        Assert.Contains("var transform = new SyntheticLookupSingleTargetTransform(lKP_CountryCache);", classFile);
     }
 
     [Fact]
@@ -67,23 +67,21 @@ public class LookupFlowTests
         Assert.Contains(result.Gaps, g => g.Reason.Contains("Multicast 'MCAST_Matched' output 'Multicast Output 2'") && g.Reason.Contains("User::MatchedRows"));
         Assert.Contains(result.Gaps, g => g.Reason.Contains("Lookup 'LKP_Country' output 'Lookup No Match Output'") && g.Reason.Contains("User::UnmatchedRows"));
 
-        var program = result.Files.Single(f => f.RelativePath == "Program.cs").Content;
+        var classFile = result.Files.Single(f => f.RelativePath == "SyntheticLookupThenAggregate.cs").Content;
 
         // The raw source is filtered by the lookup cache BEFORE it ever reaches grouping --
         // a Lookup miss must never be aggregated under a null/sentinel key.
-        Assert.Contains("return new FilteringRowSource<AGG_ByRegionSourceSqlRow>(\"AGG_ByRegion\", BuildRawSource(), row => lKP_CountryCache.ContainsKey(row.Country));", program);
+        Assert.Contains("return new FilteringRowSource<AGG_ByRegionSourceSqlRow>(\"AGG_ByRegion\", BuildRawSource(), row => lKP_CountryCache.ContainsKey(row.Country));", classFile);
         // The GroupBy key itself reads through the SAME cache, not a plain row property --
         // "Region" only exists via the Lookup's own copied reference column.
-        Assert.Contains("row => lKP_CountryCache[row.Country].Region,", program);
+        Assert.Contains("row => lKP_CountryCache[row.Country].Region,", classFile);
         // The Count column is untouched -- CustomerID is a plain raw column, no lookup involved.
-        Assert.Contains("CustomerCount = rows.Count(r => r.CustomerID != null)", program);
+        Assert.Contains("CustomerCount = rows.Count(r => r.CustomerID != null)", classFile);
 
-        // The transform takes NO constructor argument -- unlike the plain single-output Lookup
-        // shape, the cache is already fully consumed upstream by AggregateFlowSource itself, so
-        // registering it by type (not `new ...Transform(cache)`) is what must be emitted; the
-        // opposite would be a build error (no such constructor exists).
-        Assert.Contains("AddScoped<IRowTransform<SyntheticLookupThenAggregateTargetAggregateRow, SyntheticLookupThenAggregateTarget>, SyntheticLookupThenAggregateTargetTransform>();", program);
-        Assert.DoesNotContain("new SyntheticLookupThenAggregateTargetTransform(", program);
+        // The transform is constructed with NO argument -- unlike the plain single-output Lookup
+        // shape, the cache is already fully consumed upstream by AggregateFlowSource itself, so a
+        // constructor argument here would be a build error (no such constructor exists).
+        Assert.Contains("var transform = new SyntheticLookupThenAggregateTargetTransform();", classFile);
 
         var transform = result.Files.Single(f => f.RelativePath == "Mapping/SyntheticLookupThenAggregateTargetTransform.cs").Content;
         Assert.Contains("Region = row.Region,", transform);
@@ -105,10 +103,10 @@ public class LookupFlowTests
         Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
         Assert.Contains(result.Gaps, g => g.Reason.Contains("User::RowsSeen"));
 
-        var program = result.Files.Single(f => f.RelativePath == "Program.cs").Content;
+        var classFile = result.Files.Single(f => f.RelativePath == "SyntheticMulticastDiscard.cs").Content;
         // Exactly one branch wired -- the discarded one contributes no ProgramMulticastBranch,
-        // no entity, no transform, no table (and so no second ConditionalSplitBranch<> local).
-        Assert.Single(System.Text.RegularExpressions.Regex.Matches(program, "new ConditionalSplitBranch<"));
+        // no entity, no transform, no table (and so no second ConditionalSplitBranch<> construction).
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(classFile, "new ConditionalSplitBranch<"));
     }
 
     [Fact]

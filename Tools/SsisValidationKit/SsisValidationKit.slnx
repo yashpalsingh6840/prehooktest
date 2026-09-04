@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SvkCli/SvkCli.csproj" />
+    <Project Path="src/SvkCore/SvkCore.csproj" />
+  </Folder>
+</Solution>

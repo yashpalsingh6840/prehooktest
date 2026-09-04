@@ -1,81 +1,14 @@
-using System.Data;
-using System.Diagnostics;
-using Etl.Core.Abstractions;
-using Etl.Core.Csv;
 using Etl.Core.Hosting;
 using Etl.Core.Notifications;
-using Etl.Core.Pipeline;
-using LoadEmployees.Csv;
-using LoadEmployees.Mapping;
+using LoadEmployees;
 using LoadEmployees.Model;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 const string PackageName = "LoadEmployees";
 
 var builder = EtlHost.Create(args, PackageName);
-
 builder.Services.AddEtlDbContext<LoadEmployeesDbContext>();
-builder.Services.AddBulkSink<Employee>();
 builder.Services.AddEmailNotifications(builder.Configuration);
 
-builder.Services.AddScoped<IRowSource<EmployeeCsvRow>>(sp =>
-{
-    var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;
-    var csvOptions = new CsvSourceOptions { FilePath = fileOptions["Employee"].ResolvedPath };
-    return new CsvRowSource<EmployeeCsvRow>("FF_SRC_Employees", csvOptions, new EmployeeCsvRowMap());
-});
-
-builder.Services.AddScoped<IRowTransform<EmployeeCsvRow, Employee>, EmployeeTransform>();
-
 using var host = builder.Build();
-
-await using var scope = host.Services.CreateAsyncScope();
-var sp = scope.ServiceProvider;
-
-var uow = sp.GetRequiredService<IUnitOfWork>();
-var notifier = sp.GetRequiredService<IPackageResultNotifier>();
-var logger = sp.GetRequiredService<ILogger<Program>>();
-
-var employeeFlow = new DataFlowStep<EmployeeCsvRow, Employee>(
-    "DFT_LoadEmployees",
-    sp.GetRequiredService<IRowSource<EmployeeCsvRow>>(),
-    sp.GetRequiredService<IRowTransform<EmployeeCsvRow, Employee>>(),
-    sp.GetRequiredService<IBulkSink<Employee>>(),
-    sp.GetRequiredService<ILogger<DataFlowStep<EmployeeCsvRow, Employee>>>());
-
-var startedAtUtc = sp.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
-startedAtUtc = new DateTime(startedAtUtc.Ticks - (startedAtUtc.Ticks % TimeSpan.TicksPerMillisecond), DateTimeKind.Utc);
-var load = new LoadContext(Guid.NewGuid(), startedAtUtc, PackageName);
-var stopwatch = Stopwatch.StartNew();
-var results = new List<StepResult>();
-
-logger.LogInformation("Starting {Package}...", PackageName);
-await uow.BeginAsync(IsolationLevel.ReadCommitted, CancellationToken.None);
-try
-{
-    // Fetched once, here, while this transaction's connection is guaranteed idle -- a lazy fetch
-    // from inside a step reproduced a real deadlock (SqlRowSource reading while SqlBulkCopy streams).
-    await uow.GetBindTokenAsync(CancellationToken.None);
-
-    logger.LogInformation("{Package}: executing pre-load statement: {Sql}", PackageName, SQL_TruncateTargetStatement.BuildStatement());
-    await uow.ExecuteSqlAsync(SQL_TruncateTargetStatement.BuildStatement(), CancellationToken.None);
-
-    results.Add(await employeeFlow.RunAsync(uow, load, CancellationToken.None));
-
-    await uow.CommitAsync(CancellationToken.None);
-    logger.LogInformation("{Package}: succeeded in {Ms} ms", PackageName, stopwatch.ElapsedMilliseconds);
-}
-catch (Exception ex)
-{
-    await uow.RollbackAsync(CancellationToken.None);
-    logger.LogError(ex, "{Package} failed after {Steps} step(s); transaction rolled back", PackageName, results.Count);
-
-    await notifier.NotifyAsync(new PackageResult(PackageName, false, results, stopwatch.Elapsed, ex), CancellationToken.None);
-    return ExitCode.LoadFailed;
-}
-
-await notifier.NotifyAsync(new PackageResult(PackageName, true, results, stopwatch.Elapsed, null), CancellationToken.None);
-foreach (var step in results) logger.LogInformation("{Step}: {Rows:N0} rows loaded", step.Name, step.RowsWritten);
-return ExitCode.Success;
+return await new LoadEmployeesPackage(host.Services).RunAsync(CancellationToken.None);

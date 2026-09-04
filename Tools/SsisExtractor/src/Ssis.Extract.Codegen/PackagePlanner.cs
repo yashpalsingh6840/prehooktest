@@ -267,7 +267,17 @@ public sealed record MulticastPlan(PipelineComponentSpec Component, List<Conditi
 /// evidenced RBC_Demo_ETL shape), or the task's own raw path text otherwise. A variable-driven
 /// source/destination is a gate <see cref="PackagePlanner"/> reports, not something this record
 /// represents -- there is no runtime-config mapping for an SSIS variable to resolve against.</summary>
-public sealed record FileSystemActionPlan(string Operation, string SourcePath, string? DestinationPath, bool Overwrite);
+/// <see cref="SourceConnectionName"/>/<see cref="DestinationConnectionName"/> (emitter rewrite
+/// phase 6) is the FILE connection manager name a path was resolved from, when it was resolved
+/// from one -- carried alongside the already-resolved literal so the generated code can read the
+/// path from appsettings.json (<c>File(key)</c>) instead of embedding a client-machine-specific
+/// absolute path straight into the source. Null when the task's own raw path text had no
+/// connection manager behind it at all (the object-model-confirmed but never-evidenced literal
+/// form <see cref="ResolveFileSystemPath"/>'s own doc comment already names) -- that case still
+/// falls back to the literal <see cref="SourcePath"/>/<see cref="DestinationPath"/> text.</summary>
+public sealed record FileSystemActionPlan(
+    string Operation, string SourcePath, string? DestinationPath, bool Overwrite,
+    string? SourceConnectionName = null, string? DestinationConnectionName = null);
 
 /// <summary>One <c>STOCK:FOREACHLOOP</c> container using a <c>Microsoft.ForEachFileEnumerator</c>,
 /// whose body is a single Execute SQL Task -- the real evidenced shape (RBC_Demo_ETL's own
@@ -348,6 +358,31 @@ public abstract record PackageStep
     /// decide where to print a "// Flow N:" heading; it has no effect on execution order, which is
     /// still the plain topological order every step was already emitted in.</summary>
     public int FlowGroup { get; init; }
+
+    /// <summary>The ordered names of every <c>STOCK:SEQUENCE</c> container this step is nested
+    /// inside, root-first, empty for a package-root step. Added for the emitter rewrite (see
+    /// <c>Docs/Emitter-Rewrite-Plan.md</c>) so generated code can preserve the SSIS package's own
+    /// container structure (e.g. a `SEQ_Prepare` block) instead of flattening every step into one
+    /// undifferentiated list -- before this field existed a step's own container left NO trace in
+    /// the plan at all once <see cref="PackagePlanner.WalkContainer"/> folded it into the flat
+    /// <see cref="PackagePlan.Steps"/> list. Stamped in <see cref="PackagePlanner.WalkContainer"/>'s
+    /// own <c>Gated</c> helper, the same single choke point <see cref="Guard"/>/<see cref="FlowGroup"/>
+    /// already go through.</summary>
+    public IReadOnlyList<string> ContainerPath { get; init; } = [];
+
+    /// <summary>This step's 0-based topological level within its OWN container (i.e. among its
+    /// siblings sharing the same <see cref="ContainerPath"/>) -- the emitter rewrite's phase 7
+    /// concurrency signal (<c>Docs/Emitter-Rewrite-Plan.md</c> §4). Two steps sharing a Wave value
+    /// have no precedence constraint between them and ran CONCURRENTLY under real SSIS (up to
+    /// <c>MaxConcurrentExecutables</c>); <see cref="PackageClassEmitter"/> groups contiguous
+    /// same-Wave siblings and, when such a group has more than one member, runs them via
+    /// <c>Task.WhenAll</c>, each in its OWN transaction -- see that type for why a shared ambient
+    /// transaction cannot be used across genuinely concurrent branches. Computed the same way as
+    /// <see cref="FlowGroup"/> (fresh at the outermost call, inherited wholesale by every
+    /// descendant of a Sequence Container, since the container itself -- not its children
+    /// independently -- occupies one slot in its PARENT's own level layering) -- see
+    /// <see cref="PackagePlanner.ComputeWaves"/>.</summary>
+    public int Wave { get; init; }
 }
 
 /// <summary>
@@ -371,16 +406,43 @@ internal sealed record ConditionalConstraints(
     Dictionary<string, StepGuard> Guards,
     Dictionary<string, FailureHandlerPlan> FailureHandlers);
 
-/// <summary>One resolved Failure precedence constraint: the SQL that runs after the package
-/// transaction is rolled back. <paramref name="RefId"/> is carried so the walk can EXCLUDE this
-/// executable from the ordinary step list -- generating it in both places would run it on every
-/// successful run too.</summary>
-public sealed record FailureHandlerPlan(string TaskName, string Sql, string RefId);
+/// <summary>One resolved outcome-based precedence constraint's failure-path successor: the SQL
+/// that runs after the package transaction is rolled back. <paramref name="RefId"/> is carried so
+/// the walk can EXCLUDE this executable from the ordinary step list when it is FAILURE-ONLY
+/// (<paramref name="IsDualPosition"/> false) -- generating it in both places would run it on every
+/// successful run too.
+///
+/// <para><paramref name="IsDualPosition"/> is true for a constraint form measured to fire on BOTH
+/// the success and the failure path (Completion, Expression-only, Failure-OR-expression) -- the
+/// SAME task then ALSO becomes an ordinary (possibly guarded) step in its normal position, and
+/// <c>ProgramEmitter</c> generates a runtime "reached" flag so this failure-path copy only runs
+/// when the normal-position copy never got a chance to (i.e. something upstream of it threw)
+/// rather than unconditionally on every failure.</para>
+///
+/// <para><paramref name="Guard"/> is this handler's OWN failure-path condition, independent of
+/// whatever guard the same task's normal-position step carries -- null means unconditional on the
+/// failure path (Completion always; Failure-OR-expression too, since the OR's Failure half is
+/// unconditionally true once the predecessor has actually failed), non-null re-evaluates the same
+/// expression the success-side step's own guard uses (Expression-only, whose outcome half is
+/// measured to be ignored entirely).</para>
+/// </summary>
+public sealed record FailureHandlerPlan(
+    string TaskName, string Sql, string RefId, StepGuard? Guard = null, bool IsDualPosition = false);
 
 /// <summary>One pre-load Execute SQL Task's own SQL text, carrying its task name so
 /// <c>PackageGenerator</c> can emit a named, independently-testable <c>{TaskName}Statement</c>
 /// class for it (<see cref="SqlStatementBuilderEmitter"/>) -- the exact same treatment a
-/// post-flow <see cref="SqlStep"/> already gets.</summary>
+/// post-flow <see cref="SqlStep"/> already gets.
+///
+/// <para><b>Deprecated, always empty as of the emitter rewrite's phase 2 (see
+/// <c>Docs/Emitter-Rewrite-Plan.md</c>).</b> A pre-flow Execute SQL/File System Task is no longer
+/// hoisted ahead of every step -- <see cref="PackagePlanner.WalkContainer"/> now emits it as an
+/// ordinary <see cref="SqlStep"/>/<see cref="FileSystemStep"/> at its real topological position,
+/// same as a post-flow one, so it can carry a container path and a conditional-constraint guard
+/// like every other step. This type and <see cref="PackagePlan.PreLoadStatements"/>/
+/// <see cref="PackagePlan.PreLoadFileActions"/> are kept only so <c>ProgramEmitter"/>/
+/// <c>PackageGenerator</c> (rewritten in phase 3) keep compiling in the meantime; they are removed
+/// once that phase lands.</para></summary>
 public sealed record PreLoadSqlStatementPlan(string TaskName, string Sql);
 
 public sealed record FlowStep(DataFlowPlan Flow) : PackageStep;
@@ -409,7 +471,12 @@ public sealed record ScriptTaskStep(ExecutableSpec Task) : PackageStep;
 /// in order" (most existing tests and emitters) don't need to migrate to pattern-matching
 /// Steps.</summary>
 public sealed record PackagePlan(
+    /// <summary>Always empty as of the emitter rewrite's phase 2 -- see
+    /// <see cref="PreLoadSqlStatementPlan"/>'s own doc comment. Kept only so phase-2-unaware
+    /// consumers keep compiling until phase 3.</summary>
     List<PreLoadSqlStatementPlan> PreLoadStatements,
+    /// <summary>Always empty as of the emitter rewrite's phase 2 -- see
+    /// <see cref="PreLoadSqlStatementPlan"/>'s own doc comment.</summary>
     List<FileSystemActionPlan> PreLoadFileActions,
     List<DataFlowPlan> Flows,
     List<PackageStep> Steps,
@@ -429,33 +496,31 @@ public sealed record PackagePlan(
 /// <summary>
 /// Walks one package's whole control-flow tree (<c>package.Executables</c>/<c>package.Dag</c>,
 /// recursing into any Sequence Container's own <c>Children</c>/<c>Dag</c>) into the ordered
-/// facts <see cref="ProgramEmitter"/> and friends need: pre-load SQL text, each Data Flow
-/// Task's key components, and any Execute SQL Task that runs AFTER a Data Flow Task (an
-/// <see cref="SqlStep"/>, in <see cref="PackagePlan.Steps"/> at its real position -- unlike a
-/// pre-load statement, this is not hoisted to the front), in the exact order SSIS would run
-/// them.
+/// facts <see cref="ProgramEmitter"/> and friends need: each Data Flow Task's key components,
+/// and every Execute SQL/File System Task, each as a step in <see cref="PackagePlan.Steps"/> at
+/// its real topological position, in the exact order SSIS would run them.
 ///
-/// Pre-load vs. post-flow is decided from each container's own <c>PrecedenceConstraints</c>
-/// (direct predecessor lookup), NOT from a single global "have we seen any flow yet" flag --
-/// that simpler design was tried first and rejected after it produced a wrong answer on this
-/// tool's own SyntheticParallelShapes.dtsx fixture: SQL_CreateLoadATemp has no precedence
-/// relationship at all to the package's other two (fully independent) top-level branches, but
-/// a global flag still misclassified it as post-flow purely because DFT_DirectCopy/
-/// DFT_ErrorRouting happened to sort earlier in the merged topological order. An Execute SQL
-/// Task with no predecessor in its own container inherits whether the CONTAINER itself is
-/// already running after a flow (relevant once a Sequence Container is itself downstream of
-/// an outer flow); one with predecessors is post-flow iff any direct predecessor is a Data
-/// Flow Task or is itself already post-flow -- computed in a single forward pass since
-/// <c>dag.TopologicalOrder</c> already guarantees every predecessor is visited first. A
-/// container's own "did a flow happen anywhere inside me" result is returned to its caller so
-/// a Sequence Container correctly propagates to ITS OWN siblings in the parent container, the
-/// same way a bare Data Flow Task would.
+/// <para><b>Nothing is hoisted (emitter rewrite phase 2, <c>Docs/Emitter-Rewrite-Plan.md</c>).</b>
+/// Earlier, a pre-flow Execute SQL/File System Task (one with no Data Flow Task anywhere among
+/// its transitive predecessors) was hoisted into a flat, position-losing
+/// <c>PreLoadStatements</c>/<c>PreLoadFileActions</c> list run ahead of every step -- which meant
+/// such a task could carry no container, no conditional-constraint guard, and needed its own
+/// "did this get inverted relative to a Script Task" safety check
+/// (<c>ReportHoistingInversion</c>, since removed as unreachable). Now every Execute SQL/File
+/// System Task becomes an ordinary step regardless of its position relative to any Data Flow
+/// Task, stamped with its real <see cref="PackageStep.ContainerPath"/> and (if gated) its
+/// <see cref="PackageStep.Guard"/> exactly like any other step -- so the generated code's own
+/// transaction runs every statement in the SAME order SSIS's own precedence constraints declare,
+/// with no separate "pre-load" concept at all.</para>
 ///
-/// A Sequence Container (<c>STOCK:SEQUENCE</c>) is transparent -- its own children are walked
-/// in ITS topological order and folded into the same flat lists, at whatever point the
-/// container itself falls in its parent's order. It carries no execution semantics of its own
-/// beyond grouping and ordering (confirmed via an isolated object-model probe before writing
-/// this: a freshly built Sequence Container's own saved XML has no payload, just
+/// A Sequence Container (<c>STOCK:SEQUENCE</c>) is transparent to ORDERING -- its own children
+/// are walked in ITS topological order and folded into the same flat <see cref="PackagePlan.Steps"/>
+/// list, at whatever point the container itself falls in its parent's order -- but each child
+/// step's own <see cref="PackageStep.ContainerPath"/> records which container(s) it came from,
+/// so a consumer that wants to preserve the package's real nesting (e.g. emitting one method per
+/// Sequence Container) still can. A Sequence carries no execution semantics of its own beyond
+/// grouping and ordering (confirmed via an isolated object-model probe before writing this: a
+/// freshly built Sequence Container's own saved XML has no payload, just
 /// <c>&lt;DTS:Executables&gt;</c>/<c>&lt;DTS:PrecedenceConstraints&gt;</c>, exactly the shape
 /// <c>DtsxPackageReader.ReadContainerBody</c> already reads generically for every container --
 /// see the synthetic fixture this was verified against,
@@ -505,9 +570,15 @@ public static class PackagePlanner
         var guardsApplied = new HashSet<string>();
 
         WalkContainer(package.Executables, package.Dag, package.PrecedenceConstraints, package.ConnectionManagers,
-            preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: false, emitSeams: emitSeams,
+            flows, steps, gaps, containerPath: [], emitSeams: emitSeams,
             guards: guards, guardsApplied: guardsApplied,
-            failureHandlerRefIds: resolved.FailureHandlers.Keys.ToHashSet(),
+            // Only FAILURE-ONLY handlers are excluded from the ordinary step walk -- a dual-position
+            // one (Completion/Expression-only/Failure-OR-expression) stays in the walk, since it also
+            // runs from its normal position on the success path.
+            failureHandlerRefIds: resolved.FailureHandlers
+                .Where(kv => !kv.Value.IsDualPosition)
+                .Select(kv => kv.Key)
+                .ToHashSet(),
             inheritedFlowGroup: null);
 
         // Resolved separately from precedence-constraint failure handlers above (an event handler
@@ -517,7 +588,6 @@ public static class PackagePlanner
         // convenient.
         var errorHandler = ResolveErrorEventHandler(package, gaps, out var claimedHandlerRefIds);
 
-        ReportParallelismFlattening(package, gaps);
         ReportEventHandlers(package, gaps, claimedRefIds: claimedHandlerRefIds);
         ReportUnappliedGuards(package, guards, guardsApplied, gaps);
 
@@ -635,14 +705,110 @@ public static class PackagePlanner
                 var to = LeafName(constraint.To);
                 var location = $"{packageName}.{from}-{to}.Constraint";
 
-                // Value=Failure with no expression half: the ONE outcome-based form that is
-                // generated, as a failure handler run after the rollback. ResolveFailureHandler
-                // reports its own gap for any shape it will not take.
+                // Value=Failure with no expression half: FAILURE-ONLY -- excluded from the ordinary
+                // step walk entirely, since it never runs on the success path at all.
+                // ResolveFailureHandler reports its own gap for any shape it will not take.
                 if (constraint.Value == "1" && constraint.EvalOp is null or "2")
                 {
-                    var handler = ResolveFailureHandler(
-                        package, constraint, from, to, location, failureHandlers, gaps);
+                    var handler = ResolveFailureHandler(package, constraint, from, to, location, failureHandlers, gaps,
+                        firesWhen: "only when the preceding executable FAILS (DTSExecResult.Failure)");
                     if (handler is not null) failureHandlers[constraint.To] = handler;
+                    continue;
+                }
+
+                // Value=Completion, no expression: measured to fire on BOTH the success and the
+                // failure path, unconditionally either way. Generated as an ORDINARY (unguarded) step
+                // in its normal position for the success half -- reaching that line in program order
+                // already means the predecessor succeeded, so no guard is needed there at all -- PLUS
+                // a dual-position failure-handler counterpart for the failure half. See
+                // ResolveFailureHandler's own doc comment for the shared safety scoping.
+                if (constraint.Value == "2" && constraint.EvalOp is null or "2")
+                {
+                    var handler = ResolveFailureHandler(package, constraint, from, to, location, failureHandlers, gaps,
+                        firesWhen: "on completion, pass or fail (DTSExecResult.Completion)", dualPosition: true);
+                    if (handler is not null) failureHandlers[constraint.To] = handler;
+                    continue;
+                }
+
+                // EvalOp=Expression (1): the outcome constraint is measured to be IGNORED entirely --
+                // the SAME translated expression gates both the success-path step and the
+                // failure-path handler, independent of what the predecessor actually did.
+                if (constraint.EvalOp == "1")
+                {
+                    if (guards.ContainsKey(constraint.To))
+                    {
+                        gaps.Add(new GenerationGap(location,
+                            $"'{to}' is gated by more than one conditional precedence constraint; combining them " +
+                            "needs DTS:LogicalAnd's own AND/OR semantics, which is not evidenced anywhere and is " +
+                            "not guessed at.",
+                            Kind: GapKind.ConditionalConstraint));
+                        continue;
+                    }
+
+                    var exprOnly = TranslateGuardExpression(constraint.Expression, variables);
+                    if (exprOnly is GuardOk exprOnlyOk)
+                    {
+                        var guard = new StepGuard(constraint.Expression ?? "", exprOnlyOk.CSharpPredicate, exprOnlyOk.Seeds);
+                        var handler = ResolveFailureHandler(package, constraint, from, to, location, failureHandlers, gaps,
+                            firesWhen: $"whenever its expression is true (`{constraint.Expression}`), regardless of " +
+                                       "the preceding executable's outcome",
+                            dualPosition: true, failureGuard: guard);
+                        if (handler is not null)
+                        {
+                            guards[constraint.To] = guard;
+                            failureHandlers[constraint.To] = handler;
+                        }
+                        continue;
+                    }
+
+                    gaps.Add(new GenerationGap(location,
+                        $"the precedence constraint '{from}' to '{to}' fires whenever its expression is true " +
+                        $"(`{constraint.Expression}`), regardless of outcome, but that expression " +
+                        $"{((GuardNotTranslatable)exprOnly).Reason}.",
+                        Kind: GapKind.ConditionalConstraint));
+                    continue;
+                }
+
+                // EvalOp=ExpressionOrConstraint (4), scoped to the ONE evidenced Value: Failure OR
+                // expression. Measured (SyntheticCondConstraint.dtsx, Value=Failure/expr=false):
+                // success path -> the Failure half is false, so the whole thing reduces to the
+                // expression alone; failure path -> the Failure half is true, so the OR is
+                // unconditionally true regardless of the expression. Any OTHER Value combined with
+                // EvalOp=4 (Completion OR expr, Success OR expr) is unevidenced and stays a gap,
+                // falling through to UnsupportedFormReason below.
+                if (constraint.EvalOp == "4" && constraint.Value == "1")
+                {
+                    if (guards.ContainsKey(constraint.To))
+                    {
+                        gaps.Add(new GenerationGap(location,
+                            $"'{to}' is gated by more than one conditional precedence constraint; combining them " +
+                            "needs DTS:LogicalAnd's own AND/OR semantics, which is not evidenced anywhere and is " +
+                            "not guessed at.",
+                            Kind: GapKind.ConditionalConstraint));
+                        continue;
+                    }
+
+                    var orExpr = TranslateGuardExpression(constraint.Expression, variables);
+                    if (orExpr is GuardOk orExprOk)
+                    {
+                        var successGuard = new StepGuard(constraint.Expression ?? "", orExprOk.CSharpPredicate, orExprOk.Seeds);
+                        var handler = ResolveFailureHandler(package, constraint, from, to, location, failureHandlers, gaps,
+                            firesWhen: $"when the preceding executable fails OR its expression is true " +
+                                       $"(`{constraint.Expression}`)",
+                            dualPosition: true, failureGuard: null); // the OR's Failure half is unconditionally true
+                        if (handler is not null)
+                        {
+                            guards[constraint.To] = successGuard;
+                            failureHandlers[constraint.To] = handler;
+                        }
+                        continue;
+                    }
+
+                    gaps.Add(new GenerationGap(location,
+                        $"the precedence constraint '{from}' to '{to}' fires when the preceding executable fails OR " +
+                        $"its expression is true (`{constraint.Expression}`), but that expression " +
+                        $"{((GuardNotTranslatable)orExpr).Reason}.",
+                        Kind: GapKind.ConditionalConstraint));
                     continue;
                 }
 
@@ -681,21 +847,25 @@ public static class PackagePlanner
     }
 
     /// <summary>
-    /// A Failure precedence constraint (<c>DTS:Value="1"</c>) resolved into a handler that
-    /// <c>PackageRunner</c> runs after the rollback -- see <c>Etl.Core</c>'s
-    /// <c>FailureHandlerAction</c>. Keyed out of the ordinary step walk entirely: the same task must
-    /// NOT also become a step, or it would run on every successful run too, which is the bug this
-    /// whole round exists to fix.
+    /// A precedence constraint whose failure-path successor runs after the rollback -- see
+    /// <c>Etl.Core</c>'s <c>FailureHandlerAction</c>. A FAILURE-ONLY constraint (<paramref
+    /// name="dualPosition"/> false, the default) is keyed out of the ordinary step walk entirely:
+    /// the same task must NOT also become a step, or it would run on every successful run too. A
+    /// DUAL-POSITION constraint (Completion/Expression-only/Failure-OR-expression, measured to fire
+    /// on both paths) leaves the task in the ordinary step walk as well -- see
+    /// <see cref="FailureHandlerPlan"/>'s own doc comment for why that is safe and how
+    /// <c>ProgramEmitter</c> avoids running it twice.
     /// </summary>
     private static FailureHandlerPlan? ResolveFailureHandler(
         PackageSpec package, PrecedenceConstraintSpec constraint, string from, string to, string location,
-        Dictionary<string, FailureHandlerPlan> alreadyResolved, List<GenerationGap> gaps)
+        Dictionary<string, FailureHandlerPlan> alreadyResolved, List<GenerationGap> gaps,
+        string firesWhen, bool dualPosition = false, StepGuard? failureGuard = null)
     {
         void Reject(string why)
         {
             gaps.Add(new GenerationGap(location,
-                $"the precedence constraint '{from}' to '{to}' fires only when the preceding executable FAILS " +
-                $"(DTSExecResult.Failure), which is generated as a failure handler -- but {why}. Not guessed at.",
+                $"the precedence constraint '{from}' to '{to}' fires {firesWhen}, which needs a failure-handler " +
+                $"position -- but {why}. Not guessed at.",
                 Kind: GapKind.ConditionalConstraint));
         }
 
@@ -750,14 +920,16 @@ public static class PackagePlanner
             return null;
         }
 
-        return new FailureHandlerPlan(executable.ObjectName ?? to, sql, constraint.To);
+        return new FailureHandlerPlan(executable.ObjectName ?? to, sql, constraint.To,
+            Guard: failureGuard, IsDualPosition: dualPosition);
     }
 
     /// <summary>
     /// A package-root <c>OnError</c> event handler translated into the SAME
     /// <see cref="FailureHandlerAction"/> position a Failure precedence constraint already uses --
-    /// <c>PackageRunner.RunFailureHandlersAsync</c> already runs every entry unconditionally on ANY
-    /// exception, which turns out not to be a coincidence: under the precondition checked below,
+    /// a generated <c>Program.cs</c>'s own catch block already runs every FAILURE-ONLY entry
+    /// unconditionally on ANY exception, which turns out not to be a coincidence: under the
+    /// precondition checked below,
     /// "the package as a whole fails" and "some task raised OnError" are the SAME event.
     ///
     /// <para><b>Measured via a real dtexec probe first, not assumed</b> (SyntheticEventHandlerProbe,
@@ -880,27 +1052,28 @@ public static class PackagePlanner
         }
     }
 
-    /// <summary>The measured reason a form other than "Success AND expression" is not generated.
-    /// Deliberately specific per form: every one of these was observed running its successor on the
-    /// FAILURE path, which is precisely what a single whole-package transaction cannot express.</summary>
+    /// <summary>The fallback reason for whichever forms remain genuinely unsupported once Failure
+    /// (handler-only), Completion, Expression-only, and Failure-OR-expression are all generated
+    /// above -- reached only for a Value/EvalOp combination none of those cover, e.g. EvalOp=4
+    /// (ExpressionOrConstraint) paired with anything other than Value=Failure, which is the only
+    /// combination measured (SyntheticCondConstraint.dtsx). Not guessed at for the untested
+    /// combinations: an OR's other half could plausibly need a different dual-position shape (e.g.
+    /// Completion OR expression fires unconditionally regardless of the expression, the same way
+    /// Completion alone does -- but that has not been measured, so it is not assumed here).</summary>
     private static string UnsupportedFormReason(string from, string to, PrecedenceConstraintSpec constraint)
     {
         var head = $"the precedence constraint '{from}' to '{to}' fires ";
         const string Tail =
-            " Measured against real SSIS (dtexec, SyntheticCondConstraint.dtsx): the successor runs on BOTH the " +
-            "success and the failure path. A pure Failure constraint IS generated (as a failure handler run after " +
-            "the rollback), but a form that fires on both paths would need the same task in two positions at once " +
-            "-- an ordinary step AND a handler -- which is a separate feature and is not guessed at.";
+            " Measured against real SSIS (dtexec, SyntheticCondConstraint.dtsx). Failure, Completion, " +
+            "Expression-only, and Failure-OR-expression are all generated (the last three as an ordinary step " +
+            "AND a failure-handler counterpart); this exact Value/EvalOp combination is not evidenced and is not " +
+            "guessed at.";
 
         return constraint switch
         {
-            { Value: "2", EvalOp: null or "2" } =>
-                head + "on completion, pass or fail (DTSExecResult.Completion)." + Tail,
-            { EvalOp: "1" } =>
-                head + $"only when its expression is true (`{constraint.Expression}`), the outcome constraint being " +
-                "IGNORED entirely -- so it fires even when the preceding executable failed." + Tail,
             { EvalOp: "4" } =>
-                head + $"when the outcome constraint holds OR its expression is true (`{constraint.Expression}`)." + Tail,
+                head + $"when DTS:Value={constraint.Value ?? "(absent)"} holds OR its expression is true " +
+                $"(`{constraint.Expression}`) -- only Value=Failure paired with EvalOp=4 is generated." + Tail,
             _ =>
                 head + $"conditionally on DTS:Value={constraint.Value ?? "(absent)"}/DTS:EvalOp=" +
                 $"{constraint.EvalOp ?? "(absent)"} with expression `{constraint.Expression}`." + Tail,
@@ -1035,82 +1208,6 @@ public static class PackagePlanner
         return slash >= 0 && slash < refIdPath.Length - 1 ? refIdPath[(slash + 1)..] : refIdPath;
     }
 
-    /// <summary>
-    /// Reports the one behavioural difference between SSIS's Control Flow and the generated
-    /// <c>PackageRunner</c> that nothing else in this tool surfaces: SSIS runs executables with no
-    /// ordering constraint between them CONCURRENTLY (up to <c>MaxConcurrentExecutables</c>), while
-    /// <c>PackageRunner</c> runs every step strictly in sequence. The generated code produces the
-    /// same DATA -- a topological order always respects every precedence constraint -- so this is
-    /// non-blocking (an advisory gap, like the Notification one), not a correctness failure. It is
-    /// reported because staying silent about it is the actual defect: a package whose four branches
-    /// SSIS ran in parallel generates code that looks complete and takes four times as long.
-    ///
-    /// Detection is <c>ParallelLevels.Any(l => l.Count > 1)</c>. <see cref="ControlFlowDagSpec.ParallelLevels"/>
-    /// warns it is a sound-but-INCOMPLETE accounting of parallelism, which is true for enumerating
-    /// WHICH pairs run concurrently -- but not for the only question asked here, whether ANY pair
-    /// does. If every level were a singleton then level 0's single node is the unique root, and each
-    /// level n+1 node has a predecessor at level n, so the container is a strict chain with no
-    /// concurrency at all. So this check is both sound and complete for existence.
-    ///
-    /// Why it is not simply fixed: <c>Etl.Core</c>'s <c>IUnitOfWork</c> pins ONE SqlConnection open
-    /// for the whole run so a bulk insert can enlist in the same transaction as its TRUNCATE. A
-    /// SqlTransaction is bound to a single connection and one connection serializes commands, so
-    /// parallel branches would need one unit of work each -- giving up whole-package rollback (which
-    /// is closer to what SSIS itself did, auto-committing per task) or escalating to MSDTC.
-    /// </summary>
-    private static void ReportParallelismFlattening(PackageSpec package, List<GenerationGap> gaps)
-    {
-        var packageName = package.ObjectName ?? "package";
-        var concurrency = package.ExecutionSemantics.MaxConcurrentExecutables switch
-        {
-            null => "MaxConcurrentExecutables not declared, so SSIS's own default of -1 applies: number of logical processors + 2",
-            -1 => "MaxConcurrentExecutables=-1: number of logical processors + 2",
-            1 => "MaxConcurrentExecutables=1, so SSIS itself ran these one at a time -- sequential generated code matches it exactly",
-            var n => $"MaxConcurrentExecutables={n}",
-        };
-
-        Report(package.Dag, package.Executables, packageName, isRoot: true);
-        foreach (var container in EnumerateContainers(package.Executables))
-            Report(container.Dag, container.Children, container.ObjectName ?? container.RefId, isRoot: false);
-
-        void Report(ControlFlowDagSpec dag, List<ExecutableSpec> children, string containerName, bool isRoot)
-        {
-            if (dag.HasCycle || dag.ParallelLevels.Count == 0) return;
-
-            // Count only the executables that actually RAN. A wave of {enabled, disabled} is not
-            // concurrency, and reporting it as such is a live false positive on a real package
-            // (RBC_Demo_ETL's Package_Legacy: SQL_AtomicSwap fans out to DFT_FixedWidthImport and
-            // to SQL_LegacyStep_DISABLED, so SSIS never ran two things at once there).
-            //
-            // Filtering the precomputed levels is safe -- disabling a node does not change the
-            // ordering it imposes, so nobody else's depth moves -- but it does give up the
-            // completeness argument this method's own comment below relies on: with a disabled
-            // node as the sole bridge of a diamond, two enabled siblings can now both fall in
-            // singleton levels and go unreported. That trade is deliberate. An advisory that
-            // fires when nothing ran concurrently is the kind of noise that teaches people to
-            // ignore the gap list; a missed report in that one contrived shape does not.
-            var disabled = children.Where(e => e.Disabled == true).Select(e => e.RefId).ToHashSet();
-            var levels = dag.ParallelLevels
-                .Select(level => level.Count(refId => !disabled.Contains(refId)))
-                .ToList();
-
-            var widest = levels.Max();
-            if (widest < 2) return;
-
-            var affectedWaves = levels.Count(count => count > 1);
-            var location = isRoot ? $"{packageName}.Parallelism" : $"{packageName}.{containerName}.Parallelism";
-            var where = isRoot ? "at the root of" : $"inside container '{containerName}' of";
-
-            gaps.Add(new GenerationGap(location,
-                $"up to {widest} executables {where} '{packageName}' have no ordering constraint between them " +
-                $"({affectedWaves} such wave(s)) and ran concurrently under SSIS ({concurrency}); the generated " +
-                "Program.cs runs every step strictly in sequence. Same data, longer wall clock -- Etl.Core's " +
-                "IUnitOfWork pins one SqlConnection for the whole run, so true parallelism needs one unit of work " +
-                "per branch and gives up whole-package rollback.",
-                IsBlocking: false));
-        }
-    }
-
     /// <summary>Every executable that owns children, at any depth -- the containers whose own
     /// <see cref="ExecutableSpec.Dag"/> describes a separate ordering problem from its parent's.</summary>
     /// <summary>
@@ -1194,36 +1291,6 @@ public static class PackagePlanner
             foreach (var nested in EnumerateContainers(executable.Children))
                 yield return nested;
         }
-    }
-
-    /// <summary>
-    /// Reports the one ordering hazard Script Task steps introduce. PreLoadStatements and
-    /// PreLoadFileActions are HOISTED: the generated Program.cs runs all of them before any step,
-    /// whatever their real position was. That is harmless while everything pre-flow is itself hoisted --
-    /// which was true until a Script Task became a step -- but the moment a step sits in the
-    /// pre-flow region, a hoisted statement that the package actually ordered AFTER it silently
-    /// runs BEFORE it instead.
-    ///
-    /// Ordered-after is tested against transitive ancestors, not direct predecessors, so a chain
-    /// of any length is caught; and testing ancestry rather than walk position matters, because
-    /// two UNORDERED pre-flow tasks may legitimately run in either order (SSIS would have run them
-    /// concurrently) and must not be reported. Blocking, unlike this file's other advisories: the
-    /// generated code would genuinely do the wrong thing in the wrong order.
-    /// </summary>
-    private static void ReportHoistingInversion(
-        ExecutableSpec hoisted, HashSet<string> hoistedAncestors,
-        List<ExecutableSpec> preFlowScriptTasks, string kind, List<GenerationGap> gaps)
-    {
-        var inverted = preFlowScriptTasks.Where(t => hoistedAncestors.Contains(t.RefId)).ToList();
-        if (inverted.Count == 0) return;
-
-        var names = string.Join(", ", inverted.Select(t => $"'{t.ObjectName ?? t.RefId}'"));
-        gaps.Add(new GenerationGap($"{hoisted.ObjectName ?? hoisted.RefId}.Hoisting",
-            $"{kind} '{hoisted.ObjectName ?? hoisted.RefId}' is ordered AFTER Script Task(s) {names} " +
-            "in the package, but pre-load statements/actions are hoisted ahead of every step and a " +
-            "Script Task is a step -- so the generated code would run them in the opposite order. " +
-            "Move the work into the Script Task's own fill, or put an intervening Data Flow Task " +
-            "between them so this becomes an ordinary post-flow step."));
     }
 
     /// <summary>
@@ -1313,9 +1380,32 @@ public static class PackagePlanner
         return children.ToDictionary(e => e.RefId, e => groupIndexByRoot[Find(e.RefId)], StringComparer.Ordinal);
     }
 
-    /// <summary>Returns true if, by the time this container finishes (from its parent's point
-    /// of view), a Data Flow Task has run -- either because <paramref name="containerIsPostFlow"/>
-    /// was already true coming in, or because one ran somewhere inside.</summary>
+    /// <summary>Which 0-based topological level each of this container's own children occupies --
+    /// <see cref="PackageStep.Wave"/>'s own source of truth. Reuses <c>dag.ParallelLevels</c>
+    /// directly (already the right per-container level layering; unlike <see cref="ComputeFlowGroups"/>,
+    /// which explicitly rejects it as the wrong shape for GROUPING unrelated branches, level index
+    /// IS exactly what's needed here). Falls back to each child's own position in <paramref
+    /// name="order"/> when <c>ParallelLevels</c> is empty (0-1 children, or a cyclic container no
+    /// generation ever reaches) -- every step gets a distinct index, i.e. fully sequential, which
+    /// is the same behaviour as before this field existed.</summary>
+    private static Dictionary<string, int> ComputeWaves(ControlFlowDagSpec dag, List<string> order)
+    {
+        var waves = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (dag.ParallelLevels.Count == 0)
+        {
+            for (var i = 0; i < order.Count; i++) waves[order[i]] = i;
+            return waves;
+        }
+
+        for (var level = 0; level < dag.ParallelLevels.Count; level++)
+            foreach (var refId in dag.ParallelLevels[level])
+                waves[refId] = level;
+        return waves;
+    }
+
+    /// <param name="containerPath">The names of every Sequence Container this call is nested
+    /// inside, root-first, empty at the package-root call -- stamped onto each generated step's
+    /// own <see cref="PackageStep.ContainerPath"/> via <c>Gated</c> below.</param>
     /// <param name="inheritedFlowGroup">Null exactly once: the outermost call, for the package's
     /// own top-level <c>Executables</c>. There, this container computes its own flow-group
     /// assignment fresh (weakly-connected components over its own children/constraints -- see
@@ -1324,15 +1414,15 @@ public static class PackagePlanner
     /// wholesale rather than being grouped again on its own, since a Sequence Container has no
     /// execution semantics of its own beyond ordering (see <see cref="PackageStep.FlowGroup"/>'s
     /// own doc comment).</param>
-    private static bool WalkContainer(
+    private static void WalkContainer(
         List<ExecutableSpec> children, ControlFlowDagSpec dag, List<PrecedenceConstraintSpec> constraints,
         List<ConnectionManagerSpec> connectionManagers,
-        List<PreLoadSqlStatementPlan> preLoadStatements, List<FileSystemActionPlan> preLoadFileActions,
         List<DataFlowPlan> flows, List<PackageStep> steps,
-        List<GenerationGap> gaps, bool containerIsPostFlow, bool emitSeams,
+        List<GenerationGap> gaps, IReadOnlyList<string> containerPath, bool emitSeams,
         Dictionary<string, StepGuard> guards, HashSet<string> guardsApplied,
         HashSet<string> failureHandlerRefIds,
-        int? inheritedFlowGroup)
+        int? inheritedFlowGroup,
+        int? inheritedWave = null)
     {
         var byRefId = children.ToDictionary(e => e.RefId);
 
@@ -1351,44 +1441,24 @@ public static class PackagePlanner
             : null;
         int FlowGroupFor(string refId) => inheritedFlowGroup ?? localFlowGroups![refId];
 
+        // Same inherit-once-then-pass-down shape as FlowGroup -- see PackageStep.Wave's own doc
+        // comment for why a Sequence Container's descendants all inherit ITS wave rather than
+        // being leveled again on their own.
+        var localWaves = inheritedWave is null ? ComputeWaves(dag, order) : null;
+        int WaveFor(string refId) => inheritedWave ?? (localWaves!.TryGetValue(refId, out var w) ? w : 0);
+
         // Attaches the conditional-constraint guard gating this executable, if any, and records
         // that the guard actually reached a step -- ReportUnappliedGuards turns one that never did
         // into a gap rather than letting the gated work run unconditionally in silence. Also
-        // stamps the step's own FlowGroup, unconditionally -- every steps.Add(...) call site goes
-        // through this helper.
+        // stamps the step's own FlowGroup and ContainerPath, unconditionally -- every
+        // steps.Add(...) call site goes through this helper.
         PackageStep Gated(string refId, PackageStep step)
         {
-            step = step with { FlowGroup = FlowGroupFor(refId) };
+            step = step with { FlowGroup = FlowGroupFor(refId), ContainerPath = containerPath, Wave = WaveFor(refId) };
             if (!guards.TryGetValue(refId, out var guard)) return step;
             guardsApplied.Add(refId);
             return step with { Guard = guard };
         }
-
-        var predecessorsByRefId = new Dictionary<string, List<string>>();
-        foreach (var c in constraints)
-        {
-            if (!byRefId.ContainsKey(c.From) || !byRefId.ContainsKey(c.To)) continue;
-            if (!predecessorsByRefId.TryGetValue(c.To, out var list))
-                predecessorsByRefId[c.To] = list = [];
-            list.Add(c.From);
-        }
-
-        // refIds (within THIS container only) known to be a Data Flow Task or to already run
-        // after one -- built up as we go, in topological order, so every predecessor is
-        // resolved before its successors are evaluated.
-        var flowOrAfter = new HashSet<string>();
-        var sawDataFlowInThisContainer = false;
-
-        // Transitive ancestors per refId, accumulated in topological order so every
-        // predecessor's own set is complete before it is read. Used only by the hoisting guard
-        // below -- direct predecessors are not enough there, since the inversion it looks for
-        // can be several edges away.
-        var ancestors = new Dictionary<string, HashSet<string>>();
-
-        // Script Tasks planned in PRE-FLOW position. A pre-load statement or file action is
-        // hoisted ahead of every step, so one of these ordered BEFORE such a statement in the
-        // package would have its real order silently inverted -- see ReportHoistingInversion.
-        var preFlowScriptTasks = new List<ExecutableSpec>();
 
         foreach (var refId in order)
         {
@@ -1398,19 +1468,10 @@ public static class PackagePlanner
                 continue;
             }
 
-            // Computed before the disabled check on purpose: a disabled node still ORDERS its
-            // neighbours (measured -- successors run), so it has to stay a vertex here even
-            // though nothing is generated for it.
-            var ownAncestors = new HashSet<string>();
-            if (predecessorsByRefId.TryGetValue(refId, out var ancestorPreds))
-            {
-                foreach (var pred in ancestorPreds)
-                {
-                    ownAncestors.Add(pred);
-                    if (ancestors.TryGetValue(pred, out var inherited)) ownAncestors.UnionWith(inherited);
-                }
-            }
-            ancestors[refId] = ownAncestors;
+            // A Failure-constraint successor is generated in the failure-handler position instead
+            // (PackagePlan.FailureHandlers), so it must NOT also become a step -- doing both would
+            // run it on every successful run, which is the exact bug this handling exists to fix.
+            if (failureHandlerRefIds.Contains(refId)) continue;
 
             // A disabled executable is skipped outright -- and skipping exactly this node, and
             // NOTHING else, is the faithful translation. That was measured against the real SSIS
@@ -1420,53 +1481,33 @@ public static class PackagePlanner
             // below); and its SUCCESSORS DID run -- SSIS treats a disabled node as satisfied for
             // precedence purposes, so the ordering it imposes on everything else is unchanged,
             // which is exactly why nothing downstream needs skipping with it.
-            //
-            // Deliberately NOT added to flowOrAfter: a disabled Data Flow Task never ran, so
-            // nothing ordered after it is "after a flow", and a following Execute SQL Task
-            // correctly stays a pre-load statement.
-            // A Failure-constraint successor is generated in the failure-handler position instead
-            // (PackagePlan.FailureHandlers), so it must NOT also become a step or a pre-load
-            // statement -- doing both would run it on every successful run, which is the exact bug
-            // this handling exists to fix. Like the disabled skip below, this is deliberately not
-            // added to flowOrAfter: it never runs on the success path, so it cannot make anything
-            // ordered after it "post-flow".
-            if (failureHandlerRefIds.Contains(refId)) continue;
-
             if (executable.Disabled == true)
             {
                 ReportDisabledSkip(executable, gaps);
                 continue;
             }
 
-            var isPostFlow = predecessorsByRefId.TryGetValue(refId, out var preds)
-                ? preds.Any(flowOrAfter.Contains)
-                : containerIsPostFlow;
-
             if (executable.ExecutableType == "STOCK:SEQUENCE")
             {
-                var childRanAfterFlow = WalkContainer(executable.Children, executable.Dag, executable.PrecedenceConstraints, connectionManagers,
-                    preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: isPostFlow, emitSeams: emitSeams,
+                WalkContainer(executable.Children, executable.Dag, executable.PrecedenceConstraints, connectionManagers,
+                    flows, steps, gaps, containerPath: [.. containerPath, executable.ObjectName ?? refId], emitSeams: emitSeams,
                     guards: guards, guardsApplied: guardsApplied, failureHandlerRefIds: failureHandlerRefIds,
-                    inheritedFlowGroup: FlowGroupFor(refId));
-                if (childRanAfterFlow)
-                {
-                    flowOrAfter.Add(refId);
-                    sawDataFlowInThisContainer = true;
-                }
+                    inheritedFlowGroup: FlowGroupFor(refId), inheritedWave: WaveFor(refId));
                 continue;
             }
 
             if (executable.ExecutableType == "STOCK:FOREACHLOOP")
             {
                 var loopStep = PlanForEachFileLoop(executable, connectionManagers, gaps);
-                if (loopStep is not null)
-                {
-                    steps.Add(Gated(refId, loopStep));
-                    flowOrAfter.Add(refId);
-                }
+                if (loopStep is not null) steps.Add(Gated(refId, loopStep));
                 continue;
             }
 
+            // Emitter rewrite phase 2 (Docs/Emitter-Rewrite-Plan.md): an Execute SQL/File System
+            // Task is no longer hoisted ahead of every step when it happens to run before the
+            // first Data Flow Task -- it becomes an ordinary step at its own real topological
+            // position regardless, exactly like a post-flow one, so it carries its own container
+            // path and conditional-constraint guard like everything else.
             if (executable.ExecuteSqlTask is { } sqlTask)
             {
                 if (string.IsNullOrWhiteSpace(sqlTask.SqlStatementSource))
@@ -1475,16 +1516,7 @@ public static class PackagePlanner
                     continue;
                 }
 
-                if (isPostFlow)
-                {
-                    steps.Add(Gated(refId, new SqlStep(executable.ObjectName ?? refId, sqlTask.SqlStatementSource, sqlTask.ConnectionName)));
-                    flowOrAfter.Add(refId);
-                }
-                else
-                {
-                    ReportHoistingInversion(executable, ownAncestors, preFlowScriptTasks, "Execute SQL Task", gaps);
-                    preLoadStatements.Add(new PreLoadSqlStatementPlan(executable.ObjectName ?? refId, sqlTask.SqlStatementSource));
-                }
+                steps.Add(Gated(refId, new SqlStep(executable.ObjectName ?? refId, sqlTask.SqlStatementSource, sqlTask.ConnectionName)));
                 continue;
             }
 
@@ -1493,16 +1525,7 @@ public static class PackagePlanner
                 var action = ResolveFileSystemAction(executable.ObjectName ?? refId, fileSystemTask, connectionManagers, gaps);
                 if (action is null) continue; // ResolveFileSystemAction already added the gap
 
-                if (isPostFlow)
-                {
-                    steps.Add(Gated(refId, new FileSystemStep(executable.ObjectName ?? refId, action)));
-                    flowOrAfter.Add(refId);
-                }
-                else
-                {
-                    ReportHoistingInversion(executable, ownAncestors, preFlowScriptTasks, "File System Task", gaps);
-                    preLoadFileActions.Add(action);
-                }
+                steps.Add(Gated(refId, new FileSystemStep(executable.ObjectName ?? refId, action)));
                 continue;
             }
 
@@ -1513,28 +1536,15 @@ public static class PackagePlanner
                 {
                     flows.Add(flow);
                     steps.Add(Gated(refId, new FlowStep(flow)));
-                    flowOrAfter.Add(refId);
-                    sawDataFlowInThisContainer = true;
                 }
                 continue;
             }
 
-            // A Script Task always becomes a step at its own TRUE position, with no pre-load/
-            // post-flow branching of the kind an Execute SQL Task gets. There is no third
-            // "pre-load script" list in the generated Program.cs to hoist it into, and inventing
-            // one would compound the ordering problem the two existing hoisted lists already have (see the
-            // guard right below). Steps preserve order relative to flows and to each other, which
-            // is what actually matters.
+            // A Script Task always becomes a step at its own TRUE position, same as every other
+            // step kind now that nothing is hoisted.
             if (emitSeams && executable.ScriptTask is not null)
             {
                 steps.Add(Gated(refId, new ScriptTaskStep(executable)));
-
-                // A ported Script Task's own SQL runs inside the package transaction, so it is
-                // never a "flow" -- but it CAN follow one, and anything after it must still see
-                // itself as post-flow. Propagate whatever position it inherited rather than
-                // resetting it.
-                if (isPostFlow) flowOrAfter.Add(refId);
-                else preFlowScriptTasks.Add(executable);
                 continue;
             }
 
@@ -1568,8 +1578,6 @@ public static class PackagePlanner
                 Kind: isScriptTask ? GapKind.ScriptTask : GapKind.Unclassified,
                 EvidenceRefId: isScriptTask ? executable.RefId : null));
         }
-
-        return containerIsPostFlow || sawDataFlowInThisContainer;
     }
 
     /// <summary>
@@ -1726,17 +1734,18 @@ public static class PackagePlanner
         var source = ResolveFileSystemPath(taskName, "source", payload.SourcePathRaw, payload.SourceIsVariable, payload.SourceConnectionName, connectionManagers, gaps);
         if (source is null) return null; // ResolveFileSystemPath already added the gap
 
-        string? destination = null;
+        (string Path, string? ConnectionName)? destination = null;
         if (operation is "Copy" or "Move" or "Rename")
         {
             destination = ResolveFileSystemPath(taskName, "destination", payload.DestinationPathRaw, payload.DestinationIsVariable, payload.DestinationConnectionName, connectionManagers, gaps);
             if (destination is null) return null; // ResolveFileSystemPath already added the gap
         }
 
-        return new FileSystemActionPlan(operation, source, destination, payload.OverwriteDestination ?? false);
+        return new FileSystemActionPlan(operation, source.Value.Path, destination?.Path, payload.OverwriteDestination ?? false,
+            source.Value.ConnectionName, destination?.ConnectionName);
     }
 
-    private static string? ResolveFileSystemPath(
+    private static (string Path, string? ConnectionName)? ResolveFileSystemPath(
         string taskName, string role, string? pathRaw, bool? isVariable, string? connectionName,
         List<ConnectionManagerSpec> connectionManagers, List<GenerationGap> gaps)
     {
@@ -1750,7 +1759,7 @@ public static class PackagePlanner
         if (connectionName is not null)
         {
             var cm = connectionManagers.FirstOrDefault(c => c.ObjectName == connectionName);
-            if (cm?.ConnectionString is { } path) return path;
+            if (cm?.ConnectionString is { } path) return (path, connectionName);
 
             gaps.Add(new GenerationGap(taskName,
                 $"File System Task's {role} connection manager '{connectionName}' has no design-time default path -- not supported"));
@@ -1763,7 +1772,7 @@ public static class PackagePlanner
             return null;
         }
 
-        return pathRaw;
+        return (pathRaw, null);
     }
 
     private static DataFlowPlan? PlanDataFlow(string taskName, PipelineSpec pipeline, List<GenerationGap> gaps)

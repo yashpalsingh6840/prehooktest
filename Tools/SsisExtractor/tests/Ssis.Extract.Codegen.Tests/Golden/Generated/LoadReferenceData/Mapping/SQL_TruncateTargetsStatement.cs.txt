@@ -1,0 +1,10 @@
+namespace LoadReferenceData.Mapping;
+
+/// <summary>Ported SSIS Execute SQL Task 'SQL_TruncateTargets'. Pure: computes the statement
+/// text, does no I/O -- called once, either by Etl.Core's ExecuteSqlStep/
+/// SecondaryConnectionSqlStep at construction time, or directly as a pre-load
+/// statement, and the result is run.</summary>
+public static class SQL_TruncateTargetsStatement
+{
+    public static string BuildStatement() => "TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;";
+}

@@ -10,6 +10,15 @@
 # SSIS deployment-wizard output report (timestamped per run, not source)
 deploysummary_*.xml
 
+# svk (SsisValidationKit) demo output at the repo root -- regenerated on demand by
+# running `svk` against this PoC's own packages, disposable like every other `out`
+# folder in this project (Tools/out, Validation output, etc.).
+/Out/
+
+# Python bytecode cache for Tools/ssis_connection_scan.py
+__pycache__/
+*.pyc
+
 # Claude Code local session/permission state -- accumulates machine-specific
 # paths and references to ephemeral per-session temp/scratchpad directories,
 # not meant to be shared as project config. Narrowed (not a blanket .claude/
