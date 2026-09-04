@@ -336,12 +336,25 @@ public abstract record PackageStep
     /// step does (SSIS puts the condition on the EDGE, not the task), and every existing
     /// construction site stays unchanged because it defaults to null.</summary>
     public StepGuard? Guard { get; init; }
+
+    /// <summary>Which independent, weakly-connected SSIS branch this step belongs to, at the
+    /// TOP-LEVEL of the package's own control flow -- see <see cref="PackagePlanner.WalkContainer"/>'s
+    /// own flow-group computation. Zero-based, assigned in order of each branch's earliest member's
+    /// topological position, so a repeated build always assigns the same numbers. A step generated
+    /// from inside a nested Sequence Container inherits the group the CONTAINER itself was assigned
+    /// at its own parent's level, rather than being grouped again on its own -- a Sequence has no
+    /// execution semantics of its own beyond ordering, so its children are still "the same branch"
+    /// from the top-level package's point of view. <see cref="ProgramEmitter"/> uses this purely to
+    /// decide where to print a "// Flow N:" heading; it has no effect on execution order, which is
+    /// still the plain topological order every step was already emitted in.</summary>
+    public int FlowGroup { get; init; }
 }
 
 /// <summary>
 /// A translated conditional precedence constraint: the raw SSIS expression (carried so generated
-/// code can log what it evaluated) and the C# predicate body over a <c>PackageVariables</c>
-/// parameter named <c>v</c>, plus the design-time defaults of every variable it reads.
+/// code can log what it evaluated) and the C# predicate body, referencing the top-level
+/// <c>packageVariables</c> local directly (see <see cref="PackagePlanner.GuardVariableAccess"/>),
+/// plus the design-time defaults of every variable it reads.
 /// </summary>
 public sealed record StepGuard(
     string SsisExpression, string CSharpPredicate, IReadOnlyList<PackageVariableSeed> Seeds);
@@ -363,6 +376,12 @@ internal sealed record ConditionalConstraints(
 /// executable from the ordinary step list -- generating it in both places would run it on every
 /// successful run too.</summary>
 public sealed record FailureHandlerPlan(string TaskName, string Sql, string RefId);
+
+/// <summary>One pre-load Execute SQL Task's own SQL text, carrying its task name so
+/// <c>PackageGenerator</c> can emit a named, independently-testable <c>{TaskName}Statement</c>
+/// class for it (<see cref="SqlStatementBuilderEmitter"/>) -- the exact same treatment a
+/// post-flow <see cref="SqlStep"/> already gets.</summary>
+public sealed record PreLoadSqlStatementPlan(string TaskName, string Sql);
 
 public sealed record FlowStep(DataFlowPlan Flow) : PackageStep;
 
@@ -390,7 +409,7 @@ public sealed record ScriptTaskStep(ExecutableSpec Task) : PackageStep;
 /// in order" (most existing tests and emitters) don't need to migrate to pattern-matching
 /// Steps.</summary>
 public sealed record PackagePlan(
-    List<string> PreLoadStatements,
+    List<PreLoadSqlStatementPlan> PreLoadStatements,
     List<FileSystemActionPlan> PreLoadFileActions,
     List<DataFlowPlan> Flows,
     List<PackageStep> Steps,
@@ -473,7 +492,7 @@ public static class PackagePlanner
     public static PackagePlan Plan(PackageSpec package, bool emitSeams = false)
     {
         var gaps = new List<GenerationGap>();
-        var preLoadStatements = new List<string>();
+        var preLoadStatements = new List<PreLoadSqlStatementPlan>();
         var preLoadFileActions = new List<FileSystemActionPlan>();
         var flows = new List<DataFlowPlan>();
         var steps = new List<PackageStep>();
@@ -488,7 +507,8 @@ public static class PackagePlanner
         WalkContainer(package.Executables, package.Dag, package.PrecedenceConstraints, package.ConnectionManagers,
             preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: false, emitSeams: emitSeams,
             guards: guards, guardsApplied: guardsApplied,
-            failureHandlerRefIds: resolved.FailureHandlers.Keys.ToHashSet());
+            failureHandlerRefIds: resolved.FailureHandlers.Keys.ToHashSet(),
+            inheritedFlowGroup: null);
 
         // Resolved separately from precedence-constraint failure handlers above (an event handler
         // lives in a wholly different part of the model, package.EventHandlers, never inside the
@@ -892,8 +912,8 @@ public static class PackagePlanner
     private sealed record GuardNotTranslatable(string Reason) : GuardTranslation;
 
     /// <summary>
-    /// Translates a constraint expression into a C# predicate over a <c>PackageVariables</c>
-    /// parameter named <c>v</c>.
+    /// Translates a constraint expression into a C# predicate that reads the top-level
+    /// <c>packageVariables</c> local directly.
     ///
     /// <para><b>Reuses <see cref="ExpressionTranslator.TranslateCondition"/> rather than adding a
     /// third translator</b> -- unlike <see cref="ForEachLoopEmitter"/>, which genuinely could not
@@ -948,15 +968,18 @@ public static class PackagePlanner
         return new GuardOk(ok.CSharpExpression, used);
     }
 
-    /// <summary>How a guard reads one variable. <c>v</c> is the predicate lambda's own parameter,
-    /// named in exactly one place so the emitted lambda and this access can never disagree.</summary>
+    /// <summary>How a guard reads one variable, directly against the top-level <c>packageVariables</c>
+    /// local every generated Program.cs declares (see <c>ProgramEmitter</c>) -- there is no lambda
+    /// wrapping the predicate any more (a guarded step becomes a real <c>if</c>/<c>else</c> in the
+    /// flat script, not a <c>ConditionalStep</c> decorator), so the predicate text can reference the
+    /// variable directly rather than through a parameter.</summary>
     private static string GuardVariableAccess(string ssisName, GuardVariable variable) =>
         // GetRequired, not Get: a guard decides whether a step RUNS, so a variable that is
         // missing or holds a different type must fail loudly rather than fall back to default(T)
         // and silently pick a branch -- e.g. a guard reading int against a value some ported
         // Script Task stored as long would have seen 0 and skipped the step, reporting success.
         // See PackageVariables.GetRequired.
-        $"v.GetRequired<{variable.ClrTypeName}>(\"{ssisName}\")";
+        $"packageVariables.GetRequired<{variable.ClrTypeName}>(\"{ssisName}\")";
 
     private sealed record GuardVariable(SsisType Type, string ClrTypeName, string CSharpLiteral);
 
@@ -1081,7 +1104,7 @@ public static class PackagePlanner
             gaps.Add(new GenerationGap(location,
                 $"up to {widest} executables {where} '{packageName}' have no ordering constraint between them " +
                 $"({affectedWaves} such wave(s)) and ran concurrently under SSIS ({concurrency}); the generated " +
-                "PackageRunner runs every step strictly in sequence. Same data, longer wall clock -- Etl.Core's " +
+                "Program.cs runs every step strictly in sequence. Same data, longer wall clock -- Etl.Core's " +
                 "IUnitOfWork pins one SqlConnection for the whole run, so true parallelism needs one unit of work " +
                 "per branch and gives up whole-package rollback.",
                 IsBlocking: false));
@@ -1175,8 +1198,8 @@ public static class PackagePlanner
 
     /// <summary>
     /// Reports the one ordering hazard Script Task steps introduce. PreLoadStatements and
-    /// PreLoadFileActions are HOISTED: IEtlPackage runs all of them before any step, whatever
-    /// their real position was. That is harmless while everything pre-flow is itself hoisted --
+    /// PreLoadFileActions are HOISTED: the generated Program.cs runs all of them before any step,
+    /// whatever their real position was. That is harmless while everything pre-flow is itself hoisted --
     /// which was true until a Script Task became a step -- but the moment a step sits in the
     /// pre-flow region, a hoisted statement that the package actually ordered AFTER it silently
     /// runs BEFORE it instead.
@@ -1225,35 +1248,121 @@ public static class PackagePlanner
             IsBlocking: false));
     }
 
+    /// <summary>
+    /// Which independent, weakly-connected branch each of this container's own children belongs
+    /// to -- built for the generated Program.cs's own "// Flow N:" headings (plan: "Make generated
+    /// Program.cs a flat, readable script"), so a package whose control flow genuinely has several
+    /// unrelated branches (the real client package MFDBUpdate.dtsx: four independent columns of
+    /// Create-temp-table -> load -> load -> UpdateDates) reads that way in the emitted file instead
+    /// of collapsing into one undifferentiated list.
+    ///
+    /// <c>ParallelLevels</c> cannot be reused for this -- it is the TRANSPOSE of what's needed: for
+    /// a 4-branch package, level 0 holds all four branches' own first steps, so grouping by level
+    /// would interleave branches rather than separate them. This instead unions every edge in
+    /// <paramref name="constraints"/> (vertices = <paramref name="children"/>'s own refIds, treated
+    /// as UNDIRECTED -- the documented invariant is that a constraint never crosses a container
+    /// boundary, so this is always a complete picture for this container) via a plain Union-Find,
+    /// then orders the resulting components by the topological index of each one's EARLIEST member
+    /// -- deterministic, so a repeated build always assigns the same numbers to the same branches.
+    /// </summary>
+    private static Dictionary<string, int> ComputeFlowGroups(
+        List<ExecutableSpec> children, List<PrecedenceConstraintSpec> constraints, List<string> order)
+    {
+        var parent = children.ToDictionary(e => e.RefId, e => e.RefId, StringComparer.Ordinal);
+
+        string Find(string x)
+        {
+            while (!string.Equals(parent[x], x, StringComparison.Ordinal))
+            {
+                parent[x] = parent[parent[x]];
+                x = parent[x];
+            }
+            return x;
+        }
+
+        void Union(string a, string b)
+        {
+            var rootA = Find(a);
+            var rootB = Find(b);
+            if (!string.Equals(rootA, rootB, StringComparison.Ordinal)) parent[rootA] = rootB;
+        }
+
+        foreach (var c in constraints)
+        {
+            if (!parent.ContainsKey(c.From) || !parent.ContainsKey(c.To)) continue;
+            Union(c.From, c.To);
+        }
+
+        var indexInOrder = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < order.Count; i++) indexInOrder[order[i]] = i;
+
+        var earliestIndexByRoot = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var refId in children.Select(e => e.RefId))
+        {
+            var root = Find(refId);
+            var idx = indexInOrder.TryGetValue(refId, out var i) ? i : int.MaxValue;
+            if (!earliestIndexByRoot.TryGetValue(root, out var current) || idx < current)
+                earliestIndexByRoot[root] = idx;
+        }
+
+        var groupIndexByRoot = earliestIndexByRoot
+            .OrderBy(kv => kv.Value)
+            .Select((kv, i) => (Root: kv.Key, Group: i))
+            .ToDictionary(x => x.Root, x => x.Group, StringComparer.Ordinal);
+
+        return children.ToDictionary(e => e.RefId, e => groupIndexByRoot[Find(e.RefId)], StringComparer.Ordinal);
+    }
+
     /// <summary>Returns true if, by the time this container finishes (from its parent's point
     /// of view), a Data Flow Task has run -- either because <paramref name="containerIsPostFlow"/>
     /// was already true coming in, or because one ran somewhere inside.</summary>
+    /// <param name="inheritedFlowGroup">Null exactly once: the outermost call, for the package's
+    /// own top-level <c>Executables</c>. There, this container computes its own flow-group
+    /// assignment fresh (weakly-connected components over its own children/constraints -- see
+    /// <see cref="ComputeFlowGroups"/>). A non-null value means this call is a recursive one for a
+    /// Sequence Container's own children -- every step generated here inherits that single group
+    /// wholesale rather than being grouped again on its own, since a Sequence Container has no
+    /// execution semantics of its own beyond ordering (see <see cref="PackageStep.FlowGroup"/>'s
+    /// own doc comment).</param>
     private static bool WalkContainer(
         List<ExecutableSpec> children, ControlFlowDagSpec dag, List<PrecedenceConstraintSpec> constraints,
         List<ConnectionManagerSpec> connectionManagers,
-        List<string> preLoadStatements, List<FileSystemActionPlan> preLoadFileActions,
+        List<PreLoadSqlStatementPlan> preLoadStatements, List<FileSystemActionPlan> preLoadFileActions,
         List<DataFlowPlan> flows, List<PackageStep> steps,
         List<GenerationGap> gaps, bool containerIsPostFlow, bool emitSeams,
         Dictionary<string, StepGuard> guards, HashSet<string> guardsApplied,
-        HashSet<string> failureHandlerRefIds)
+        HashSet<string> failureHandlerRefIds,
+        int? inheritedFlowGroup)
     {
         var byRefId = children.ToDictionary(e => e.RefId);
-
-        // Attaches the conditional-constraint guard gating this executable, if any, and records
-        // that the guard actually reached a step -- ReportUnappliedGuards turns one that never did
-        // into a gap rather than letting the gated work run unconditionally in silence.
-        PackageStep Gated(string refId, PackageStep step)
-        {
-            if (!guards.TryGetValue(refId, out var guard)) return step;
-            guardsApplied.Add(refId);
-            return step with { Guard = guard };
-        }
 
         // dag.TopologicalOrder is empty by design for 0-1 children (that type's own doc
         // comment) -- fall back to declaration order in that case.
         var order = dag.TopologicalOrder.Count > 0
             ? dag.TopologicalOrder
             : children.Select(e => e.RefId).ToList();
+
+        // Computed once, fresh, only at the outermost call -- see the parameter's own doc
+        // comment. A nested Sequence Container's own recursive call always has
+        // inheritedFlowGroup set, so this is null there and every step just uses the inherited
+        // value instead (see FlowGroupFor below).
+        var localFlowGroups = inheritedFlowGroup is null
+            ? ComputeFlowGroups(children, constraints, order)
+            : null;
+        int FlowGroupFor(string refId) => inheritedFlowGroup ?? localFlowGroups![refId];
+
+        // Attaches the conditional-constraint guard gating this executable, if any, and records
+        // that the guard actually reached a step -- ReportUnappliedGuards turns one that never did
+        // into a gap rather than letting the gated work run unconditionally in silence. Also
+        // stamps the step's own FlowGroup, unconditionally -- every steps.Add(...) call site goes
+        // through this helper.
+        PackageStep Gated(string refId, PackageStep step)
+        {
+            step = step with { FlowGroup = FlowGroupFor(refId) };
+            if (!guards.TryGetValue(refId, out var guard)) return step;
+            guardsApplied.Add(refId);
+            return step with { Guard = guard };
+        }
 
         var predecessorsByRefId = new Dictionary<string, List<string>>();
         foreach (var c in constraints)
@@ -1337,7 +1446,8 @@ public static class PackagePlanner
             {
                 var childRanAfterFlow = WalkContainer(executable.Children, executable.Dag, executable.PrecedenceConstraints, connectionManagers,
                     preLoadStatements, preLoadFileActions, flows, steps, gaps, containerIsPostFlow: isPostFlow, emitSeams: emitSeams,
-                    guards: guards, guardsApplied: guardsApplied, failureHandlerRefIds: failureHandlerRefIds);
+                    guards: guards, guardsApplied: guardsApplied, failureHandlerRefIds: failureHandlerRefIds,
+                    inheritedFlowGroup: FlowGroupFor(refId));
                 if (childRanAfterFlow)
                 {
                     flowOrAfter.Add(refId);
@@ -1373,7 +1483,7 @@ public static class PackagePlanner
                 else
                 {
                     ReportHoistingInversion(executable, ownAncestors, preFlowScriptTasks, "Execute SQL Task", gaps);
-                    preLoadStatements.Add(sqlTask.SqlStatementSource);
+                    preLoadStatements.Add(new PreLoadSqlStatementPlan(executable.ObjectName ?? refId, sqlTask.SqlStatementSource));
                 }
                 continue;
             }
@@ -1411,8 +1521,8 @@ public static class PackagePlanner
 
             // A Script Task always becomes a step at its own TRUE position, with no pre-load/
             // post-flow branching of the kind an Execute SQL Task gets. There is no third
-            // "pre-load script" list on IEtlPackage to hoist it into, and inventing one would
-            // compound the ordering problem the two existing hoisted lists already have (see the
+            // "pre-load script" list in the generated Program.cs to hoist it into, and inventing
+            // one would compound the ordering problem the two existing hoisted lists already have (see the
             // guard right below). Steps preserve order relative to flows and to each other, which
             // is what actually matters.
             if (emitSeams && executable.ScriptTask is not null)

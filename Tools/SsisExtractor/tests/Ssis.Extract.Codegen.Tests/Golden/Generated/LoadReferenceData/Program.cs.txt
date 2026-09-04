@@ -1,3 +1,5 @@
+using System.Data;
+using System.Diagnostics;
 using Etl.Core.Abstractions;
 using Etl.Core.Csv;
 using Etl.Core.Hosting;
@@ -37,47 +39,61 @@ builder.Services.AddScoped<IRowSource<DesignationCsvRow>>(sp =>
 
 builder.Services.AddScoped<IRowTransform<DesignationCsvRow, Designation>, DesignationTransform>();
 
-builder.Services.AddScoped<IEtlPackage>(sp =>
-{
-    var departmentFlow = new DataFlowStep<DepartmentCsvRow, Department>(
-        "DFT_LoadDepartment",
-        sp.GetRequiredService<IRowSource<DepartmentCsvRow>>(),
-        sp.GetRequiredService<IRowTransform<DepartmentCsvRow, Department>>(),
-        sp.GetRequiredService<IBulkSink<Department>>(),
-        sp.GetRequiredService<ILogger<DataFlowStep<DepartmentCsvRow, Department>>>());
-
-    var designationFlow = new DataFlowStep<DesignationCsvRow, Designation>(
-        "DFT_LoadDesignation",
-        sp.GetRequiredService<IRowSource<DesignationCsvRow>>(),
-        sp.GetRequiredService<IRowTransform<DesignationCsvRow, Designation>>(),
-        sp.GetRequiredService<IBulkSink<Designation>>(),
-        sp.GetRequiredService<ILogger<DataFlowStep<DesignationCsvRow, Designation>>>());
-
-    return new EtlPackage(
-        Name: PackageName,
-        PreLoadStatements: ["TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;"],
-        Steps: [departmentFlow, designationFlow],
-        PreLoadFileActions: []);
-});
-
 using var host = builder.Build();
 
 await using var scope = host.Services.CreateAsyncScope();
-var runner = scope.ServiceProvider.GetRequiredService<IPackageRunner>();
-var package = scope.ServiceProvider.GetRequiredService<IEtlPackage>();
-var notifier = scope.ServiceProvider.GetRequiredService<IPackageResultNotifier>();
-var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+var sp = scope.ServiceProvider;
 
-logger.LogInformation("Starting {Package}...", package.Name);
-var result = await runner.RunAsync(package, CancellationToken.None);
-await notifier.NotifyAsync(result, CancellationToken.None);
+var uow = sp.GetRequiredService<IUnitOfWork>();
+var notifier = sp.GetRequiredService<IPackageResultNotifier>();
+var logger = sp.GetRequiredService<ILogger<Program>>();
 
-if (result.Succeeded)
+var departmentFlow = new DataFlowStep<DepartmentCsvRow, Department>(
+    "DFT_LoadDepartment",
+    sp.GetRequiredService<IRowSource<DepartmentCsvRow>>(),
+    sp.GetRequiredService<IRowTransform<DepartmentCsvRow, Department>>(),
+    sp.GetRequiredService<IBulkSink<Department>>(),
+    sp.GetRequiredService<ILogger<DataFlowStep<DepartmentCsvRow, Department>>>());
+
+var designationFlow = new DataFlowStep<DesignationCsvRow, Designation>(
+    "DFT_LoadDesignation",
+    sp.GetRequiredService<IRowSource<DesignationCsvRow>>(),
+    sp.GetRequiredService<IRowTransform<DesignationCsvRow, Designation>>(),
+    sp.GetRequiredService<IBulkSink<Designation>>(),
+    sp.GetRequiredService<ILogger<DataFlowStep<DesignationCsvRow, Designation>>>());
+
+var startedAtUtc = sp.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
+startedAtUtc = new DateTime(startedAtUtc.Ticks - (startedAtUtc.Ticks % TimeSpan.TicksPerMillisecond), DateTimeKind.Utc);
+var load = new LoadContext(Guid.NewGuid(), startedAtUtc, PackageName);
+var stopwatch = Stopwatch.StartNew();
+var results = new List<StepResult>();
+
+logger.LogInformation("Starting {Package}...", PackageName);
+await uow.BeginAsync(IsolationLevel.ReadCommitted, CancellationToken.None);
+try
 {
-    foreach (var step in result.Steps)
-        logger.LogInformation("{Step}: {Rows:N0} rows loaded", step.Name, step.RowsWritten);
-    return ExitCode.Success;
+    // Fetched once, here, while this transaction's connection is guaranteed idle -- a lazy fetch
+    // from inside a step reproduced a real deadlock (SqlRowSource reading while SqlBulkCopy streams).
+    await uow.GetBindTokenAsync(CancellationToken.None);
+
+    logger.LogInformation("{Package}: executing pre-load statement: {Sql}", PackageName, SQL_TruncateTargetsStatement.BuildStatement());
+    await uow.ExecuteSqlAsync(SQL_TruncateTargetsStatement.BuildStatement(), CancellationToken.None);
+
+    results.Add(await departmentFlow.RunAsync(uow, load, CancellationToken.None));
+    results.Add(await designationFlow.RunAsync(uow, load, CancellationToken.None));
+
+    await uow.CommitAsync(CancellationToken.None);
+    logger.LogInformation("{Package}: succeeded in {Ms} ms", PackageName, stopwatch.ElapsedMilliseconds);
+}
+catch (Exception ex)
+{
+    await uow.RollbackAsync(CancellationToken.None);
+    logger.LogError(ex, "{Package} failed after {Steps} step(s); transaction rolled back", PackageName, results.Count);
+
+    await notifier.NotifyAsync(new PackageResult(PackageName, false, results, stopwatch.Elapsed, ex), CancellationToken.None);
+    return ExitCode.LoadFailed;
 }
 
-logger.LogError(result.Error, "{Package} failed", package.Name);
-return ExitCode.LoadFailed;
+await notifier.NotifyAsync(new PackageResult(PackageName, true, results, stopwatch.Elapsed, null), CancellationToken.None);
+foreach (var step in results) logger.LogInformation("{Step}: {Rows:N0} rows loaded", step.Name, step.RowsWritten);
+return ExitCode.Success;

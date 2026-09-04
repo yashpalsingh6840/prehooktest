@@ -196,10 +196,16 @@ public sealed record ProgramConditionalSplitBranch(string OutputName, string Ent
 public abstract record ProgramStep
 {
     /// <summary>Non-null when a conditional precedence constraint gates this step -- carried from
-    /// <c>PackageStep.Guard</c>. Emission wraps the step's own local in an <c>Etl.Core</c>
-    /// <c>ConditionalStep</c>; every per-kind case below is untouched, since which step is gated is
-    /// orthogonal to how that step is constructed.</summary>
+    /// <c>PackageStep.Guard</c>. Emission wraps the step's own call in a real <c>if</c>/<c>else</c>
+    /// in the flat script (see <c>ProgramEmitter.Emit</c>'s own step loop); every per-kind case
+    /// below is untouched, since which step is gated is orthogonal to how that step is
+    /// constructed.</summary>
     public ProgramStepGuard? Guard { get; init; }
+
+    /// <summary>Carried from <c>PackageStep.FlowGroup</c> -- which independent SSIS branch this
+    /// step belongs to, purely for deciding where to print a "// Flow N:" heading. See that
+    /// property's own doc comment.</summary>
+    public int FlowGroup { get; init; }
 }
 
 /// <summary>The raw SSIS constraint expression (emitted so the generated code can log what it
@@ -207,7 +213,12 @@ public abstract record ProgramStep
 public sealed record ProgramStepGuard(string SsisExpression, string CSharpPredicate);
 
 public sealed record ProgramFlowStep(ProgramFlowSpec Flow) : ProgramStep;
-public sealed record ProgramSqlStep(string StepName, string Sql) : ProgramStep;
+
+/// <summary><see cref="StatementClassName"/> names the Mapping/{Name}Statement.cs class
+/// SqlStatementBuilderEmitter produced for this task -- ProgramEmitter calls its own
+/// BuildStatement() once, at construction time, rather than embedding the raw SQL text as an
+/// anonymous string literal (see that emitter's own doc comment for why).</summary>
+public sealed record ProgramSqlStep(string StepName, string StatementClassName) : ProgramStep;
 
 /// <summary>An Execute SQL Task whose own connection manager resolves to a DIFFERENT server/
 /// database than this package's primary one (see <c>PackageGenerator.ResolveSqlStep</c>'s own
@@ -215,8 +226,9 @@ public sealed record ProgramSqlStep(string StepName, string Sql) : ProgramStep;
 /// an ordinary <see cref="ProgramSqlStep"/>). <see cref="ConnectionManagerName"/> names both the
 /// generated <c>SecondaryConnections:&lt;name&gt;</c> appsettings.json section this reads its
 /// connection info from and the top-level connection-string local this emitter builds once per
-/// distinct name referenced.</summary>
-public sealed record ProgramSecondaryConnectionSqlStep(string StepName, string ConnectionManagerName, string Sql) : ProgramStep;
+/// distinct name referenced. <see cref="StatementClassName"/> is the same
+/// SqlStatementBuilderEmitter convention <see cref="ProgramSqlStep"/> uses.</summary>
+public sealed record ProgramSecondaryConnectionSqlStep(string StepName, string ConnectionManagerName, string StatementClassName) : ProgramStep;
 
 /// <summary>A ported Script Task (--seams). <paramref name="ClassName"/> is the generated
 /// partial class ScriptTaskEmitter produced; its logic arrives as a hand-written second part.</summary>
@@ -229,18 +241,21 @@ public sealed record ProgramScriptTaskStep(string StepName, string ClassName) : 
 public sealed record ProgramFileSystemStep(string StepName, FileSystemActionPlan Action) : ProgramStep;
 
 /// <summary>A ForEach File Enumerator loop, resolved down to everything <c>Etl.Core.Pipeline.
-/// ForEachLoopStep</c> needs to construct: the enumerator config plus an ALREADY-TRANSLATED C#
-/// expression (<see cref="SqlExpression"/>, produced by <see cref="ForEachLoopEmitter"/> in
-/// <c>PackageGenerator</c>, not here) referencing <see cref="CurrentFileParamName"/> as a bare
-/// identifier -- this emitter only ever wraps it in a lambda,
-/// <c>{CurrentFileParamName} => {SqlExpression}</c>, never re-parses or re-translates it.
+/// ForEachLoopStep</c> needs to construct: the enumerator config plus <see cref="StatementClassName"/>
+/// -- a named, parameterized <c>{TaskName}Statement.BuildStatement(string)</c> class
+/// (<see cref="SqlStatementBuilderEmitter.EmitParameterized"/>, itself built from an
+/// ALREADY-TRANSLATED C# expression produced by <see cref="ForEachLoopEmitter"/> in
+/// <c>PackageGenerator</c>) referencing <see cref="CurrentFileParamName"/> as its own parameter
+/// name -- this emitter only ever wraps a call to it in a lambda,
+/// <c>{CurrentFileParamName} => {StatementClassName}.BuildStatement({CurrentFileParamName})</c>,
+/// never re-parses, re-translates, or inlines the expression itself.
 /// <see cref="NameMode"/> is already the resolved <c>ForEachFileNameMode</c> enum member name
 /// (e.g. "NameAndExtension"), not the raw SSIS integer -- that mapping/gap-reporting also
 /// happens in <c>PackageGenerator</c>, matching every other raw-enum-to-name resolution in this
 /// tool (e.g. FileSystemTaskPayload.OperationRaw -&gt; FileSystemOperation).</summary>
 public sealed record ProgramForEachFileLoopStep(
     string StepName, string Folder, string FileSpec, bool Recurse, string NameMode,
-    string CurrentFileParamName, string SqlExpression) : ProgramStep;
+    string CurrentFileParamName, string StatementClassName) : ProgramStep;
 
 /// <summary>A ForEach File Enumerator loop whose body is a whole Data Flow Task -- built
 /// speculatively 2026-08-30, see <c>Ssis.Extract.Codegen.PackagePlanner.ForEachFileDataFlowPlan</c>'s
@@ -249,9 +264,12 @@ public sealed record ProgramForEachFileLoopStep(
 /// FRESH source per file, so it is constructed inline inside the lambda this emitter wraps
 /// around <see cref="FilePathExpression"/> (an ALREADY-TRANSLATED C# expression, produced by
 /// <c>ForEachLoopEmitter</c> in <c>PackageGenerator</c> -- reusing the exact translator
-/// <see cref="ProgramForEachFileLoopStep.SqlExpression"/> already uses, since a connection
-/// manager's ConnectionString expression and an Execute SQL Task's SqlStatementSource
-/// expression are both just "build a string from <c>@[Namespace::Variable]</c> references")
+/// <see cref="ProgramForEachFileLoopStep.StatementClassName"/>'s own text was built from, since a
+/// connection manager's ConnectionString expression and an Execute SQL Task's SqlStatementSource
+/// expression are both just "build a string from <c>@[Namespace::Variable]</c> references" --
+/// still inlined here rather than named, unlike the SQL-task case, since there is nothing yet to
+/// name it against: the one evidenced instance is the bare variable reference with nothing to
+/// compute)
 /// referencing <see cref="CurrentFileParamName"/> as a bare identifier. <see cref="RowTypeName"/>/
 /// <see cref="EntityName"/>/<see cref="TransformClassName"/> match EntityEmitter/CsvRowEmitter/
 /// TransformEmitter's own outputs exactly like <see cref="ProgramFlowSpec"/>'s do -- the flow
@@ -297,11 +315,16 @@ public sealed record ProgramOleDbCommandStep(
     string SqlTemplate,
     IReadOnlyList<string> ParameterColumnNames) : ProgramStep;
 
+/// <summary>One pre-load Execute SQL Task, resolved to its own named, testable
+/// <see cref="StatementClassName"/> (<see cref="SqlStatementBuilderEmitter"/>) -- the exact same
+/// treatment <see cref="ProgramSqlStep"/> already gives a post-flow SQL step.</summary>
+public sealed record ProgramPreLoadStatement(string TaskName, string StatementClassName);
+
 public sealed record ProgramRequest(
     string PackageName,
     string RootNamespace,
     string DbContextTypeName,
-    List<string> PreLoadStatements,
+    List<ProgramPreLoadStatement> PreLoadStatements,
     List<FileSystemActionPlan> PreLoadFileActions,
     List<ProgramStep> Steps)
 {
@@ -310,20 +333,33 @@ public sealed record ProgramRequest(
     /// than being whatever <c>Get&lt;T&gt;</c> happens to fall back to.</summary>
     public IReadOnlyList<PackageVariableSeed> VariableSeeds { get; init; } = [];
 
-    /// <summary>Failure-precedence-constraint successors, emitted as EtlPackage.FailureHandlers --
-    /// a position PackageRunner reaches only after rolling the package transaction back.</summary>
+    /// <summary>Failure-precedence-constraint successors, emitted inline in the catch block's own
+    /// try/catch-per-handler loop -- a position reached only after the transaction has already
+    /// been rolled back, each isolated so a throwing handler never replaces the original
+    /// exception.</summary>
     public IReadOnlyList<FailureHandlerPlan> FailureHandlers { get; init; } = [];
 }
 
 /// <summary>
-/// Emits one package's Program.cs. Always uses the "locals inside the IEtlPackage factory"
-/// shape (matching the hand-written LoadReferenceData/Program.cs), even for a single flow --
-/// per the generate plan's own Phase 1 table: "ProgramEmitter always emits the multi-flow
-/// form... It works for N=1 and removes a branch from the emitter." This means a generated
-/// single-flow Program.cs is NOT byte-identical to the hand-written LoadEmployees/Program.cs
-/// (which uses a separate ILoadTask DI registration instead) -- a known, plan-endorsed
-/// divergence, not a bug; both shapes are functionally identical, wired through the same
-/// Etl.Core.Pipeline.EtlPackage/DataFlowStep types.
+/// Emits one package's Program.cs as a flat, readable script -- open a transaction, construct
+/// every step, run each one by name in order (grouped under a "// Flow N:" heading per
+/// independent SSIS branch when the package has more than one), commit, with the rollback/
+/// failure-handler path written out right there. There is no generic runner: earlier versions of
+/// this emitter built a data structure (<c>new EtlPackage(Steps: [...])</c>) and handed it to
+/// <c>Etl.Core.Pipeline.PackageRunner</c>, which lived in a different file entirely -- to
+/// understand what a package does, a reader had to read both. That indirection bought nothing
+/// (every package still runs sequentially, one connection, one transaction) and hid real
+/// structure: a package whose control flow has several independent branches (the real client
+/// package MFDBUpdate.dtsx: four columns of Create-temp-table -> load -> load -> UpdateDates)
+/// collapsed into one undifferentiated step list. <c>IPackageRunner</c>/<c>IEtlPackage</c>/
+/// <c>EtlPackage</c>/<c>ConditionalStep</c> are gone from <c>Etl.Core</c> entirely; every step
+/// class (<c>DataFlowStep</c>, <c>ExecuteSqlStep</c>, <c>MulticastStep</c>, ...) is unchanged and
+/// still exposes <c>RunAsync(IUnitOfWork, LoadContext, CancellationToken)</c>, which is all this
+/// emitter now calls directly, in order, from the flat script body.
+///
+/// A generated single-flow Program.cs is still NOT byte-identical to the hand-written
+/// LoadEmployees/Program.cs (which registers its one step as a DI service instead of a plain
+/// local) -- a known divergence, not a bug; both shapes are functionally identical.
 /// </summary>
 public static class ProgramEmitter
 {
@@ -382,10 +418,22 @@ public static class ProgramEmitter
         // folder generated, so this using must be conditional (unlike Model, which always
         // exists: DbContextEmitter emits a table-less DbContext even then). Confirmed real: an
         // OLE DB Command-only package failed CS0234 ("namespace 'Mapping' does not exist")
-        // before this fix, caught by actually building the generated project.
-        var usesMapping = flows.Count > 0 || splits.Count > 0 || multicasts.Count > 0 || dataFlowLoops.Count > 0;
+        // before this fix, caught by actually building the generated project. A post-flow SQL
+        // step (ProgramSqlStep/ProgramSecondaryConnectionSqlStep) ALSO lands its own
+        // {Name}Statement class in Mapping/ (SqlStatementBuilderEmitter) -- an OLE DB
+        // Command-only flow plus a post-flow SQL step and nothing else would otherwise repeat
+        // the exact same CS0234 this comment already describes. A pre-load statement gets the
+        // identical treatment (also SqlStatementBuilderEmitter, also landing in Mapping/), so an
+        // OLE DB Command-only flow plus a pre-load statement and nothing else needs the same
+        // inclusion here. A ForEach File Loop's own body Execute SQL Task gets the identical
+        // {TaskName}Statement treatment (SqlStatementBuilderEmitter.EmitParameterized) -- included
+        // defensively for the same reasoning, though not evidenced in any real package today
+        // (every fixture with a ForEach Loop also has an ordinary Data Flow Task alongside it).
+        var usesMapping = flows.Count > 0 || splits.Count > 0 || multicasts.Count > 0 || dataFlowLoops.Count > 0
+            || request.Steps.OfType<ProgramSqlStep>().Any() || request.Steps.OfType<ProgramSecondaryConnectionSqlStep>().Any()
+            || request.PreLoadStatements.Count > 0 || request.Steps.OfType<ProgramForEachFileLoopStep>().Any();
 
-        var lines = new List<string> { "using Etl.Core.Abstractions;" };
+        var lines = new List<string> { "using System.Data;", "using System.Diagnostics;", "using Etl.Core.Abstractions;" };
         if (usesCsv) lines.Add("using Etl.Core.Csv;");
         if (usesSql || usesFlatFileSink || usesLookupPreload || usesRowCount || usesExcelWhereFilter || usesStandaloneSort) lines.Add("using Etl.Core.Data;");
         if (usesExcel) lines.Add("using Etl.Core.Excel;");
@@ -506,38 +554,51 @@ public static class ProgramEmitter
             lines.Add("");
         }
 
-        lines.Add("builder.Services.AddScoped<IEtlPackage>(sp =>");
-        lines.Add("{");
-        var orderedLocalNames = new List<string>();
+        lines.Add("using var host = builder.Build();");
+        lines.Add("");
+        lines.Add("await using var scope = host.Services.CreateAsyncScope();");
+        lines.Add("var sp = scope.ServiceProvider;");
+        lines.Add("");
+        lines.Add("var uow = sp.GetRequiredService<IUnitOfWork>();");
+        lines.Add("var notifier = sp.GetRequiredService<IPackageResultNotifier>();");
+        lines.Add("var logger = sp.GetRequiredService<ILogger<Program>>();");
+        lines.Add("");
 
         // ONE PackageVariables for the whole run, shared by every Script Task step -- that
         // sharing IS the feature (RBC_Demo_ETL has one Script Task stamping
-        // User::BatchStartTime and another reading it back). Declared here rather than
-        // registered in DI so the sharing is visible in the generated file instead of implied
-        // by a lifetime.
+        // User::BatchStartTime and another reading it back). Declared at top level, before any
+        // step is constructed, so every construction site below (and every guard predicate later)
+        // can already reference it directly -- there is no factory lambda any more for it to be
+        // scoped to.
         // Also emitted when any step is GATED, not just when a Script Task exists: a conditional
         // precedence constraint's own condition reads variables from this same bag, and a package
         // can have a gated step with no Script Task at all. Also emitted when any flow has a
         // RowCount to reproduce (2026-09-02, gap-audit Phase 3.2) -- CountingRowSource<TRow>
-        // needs the same shared bag, wrapped inline at the DataFlowStep construction site below
-        // (not via its own DI registration -- IRowSource<TRow> is registered earlier, in a
-        // separate factory that has no access to this lambda-scoped local).
-        if (request.Steps.Any(step => step is ProgramScriptTaskStep || step.Guard is not null
-            || (step is ProgramFlowStep { Flow.RowCountVariableNames.Count: > 0 })))
+        // needs the same shared bag, wrapped inline at the DataFlowStep construction site below.
+        var needsPackageVariables = request.Steps.Any(step => step is ProgramScriptTaskStep || step.Guard is not null
+            || (step is ProgramFlowStep { Flow.RowCountVariableNames.Count: > 0 }));
+        if (needsPackageVariables)
         {
-            lines.Add("    var packageVariables = new PackageVariables();");
+            lines.Add("var packageVariables = new PackageVariables();");
             foreach (var seed in request.VariableSeeds)
-                lines.Add($"    packageVariables.Set(\"{seed.SsisName}\", {seed.CSharpLiteral}); // design-time default from the .dtsx");
+                lines.Add($"packageVariables.Set(\"{seed.SsisName}\", {seed.CSharpLiteral}); // design-time default from the .dtsx");
             lines.Add("");
         }
+
+        // Pass 1: construct every step's own local, in the plan's own topological order.
+        // Deliberately NOT grouped by flow here -- grouping only matters for the readability of
+        // the RunAsync calls below (pass 2); constructing a step object has no side effects
+        // beyond resolving its own dependencies, so construction order has no functional effect.
+        var locals = new List<string>();
+        var stepLocals = new List<(ProgramStep Step, string Local)>();
         foreach (var step in request.Steps)
         {
-            var localsBefore = orderedLocalNames.Count;
+            var localsBefore = locals.Count;
             switch (step)
             {
                 case ProgramFlowStep { Flow: var flow }:
                     var flowLocal = FlowLocalName(flow.EntityName);
-                    orderedLocalNames.Add(flowLocal);
+                    locals.Add(flowLocal);
                     // A RowCount's own count is only meaningful once the source is exhausted, so
                     // it wraps the row source itself (nested, one CountingRowSource per RowCount)
                     // rather than the sink -- every row still reaches the transform/sink exactly
@@ -551,74 +612,74 @@ public static class ProgramEmitter
                         rowSourceExpr = $"new SortingRowSource<{flow.RowTypeName}, {sortKey.KeyClrType}>(\"{flow.StepName}.Sort\", {rowSourceExpr}, row => row.{sortKey.KeyColumnName}, Comparer<{sortKey.KeyClrType}>.Default)";
                     foreach (var variableName in flow.RowCountVariableNames ?? [])
                         rowSourceExpr = $"new CountingRowSource<{flow.RowTypeName}>(\"{flow.StepName}.RowCount\", {rowSourceExpr}, packageVariables, \"{variableName}\")";
-                    lines.Add($"    var {flowLocal} = new DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>(");
-                    lines.Add($"        \"{flow.StepName}\",");
-                    lines.Add($"        {rowSourceExpr},");
-                    lines.Add($"        sp.GetRequiredService<IRowTransform<{flow.RowTypeName}, {flow.EntityName}>>(),");
-                    lines.Add($"        sp.GetRequiredService<IBulkSink<{flow.EntityName}>>(),");
-                    lines.Add($"        sp.GetRequiredService<ILogger<DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>>>());");
+                    lines.Add($"var {flowLocal} = new DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>(");
+                    lines.Add($"    \"{flow.StepName}\",");
+                    lines.Add($"    {rowSourceExpr},");
+                    lines.Add($"    sp.GetRequiredService<IRowTransform<{flow.RowTypeName}, {flow.EntityName}>>(),");
+                    lines.Add($"    sp.GetRequiredService<IBulkSink<{flow.EntityName}>>(),");
+                    lines.Add($"    sp.GetRequiredService<ILogger<DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>>>());");
                     lines.Add("");
                     break;
                 case ProgramSqlStep sqlStep:
                     var sqlLocal = SqlStepLocalName(sqlStep.StepName);
-                    orderedLocalNames.Add(sqlLocal);
-                    lines.Add($"    var {sqlLocal} = new ExecuteSqlStep(\"{sqlStep.StepName}\", {CSharpStringLiteral(sqlStep.Sql)}, sp.GetRequiredService<ILogger<ExecuteSqlStep>>());");
+                    locals.Add(sqlLocal);
+                    lines.Add($"var {sqlLocal} = new ExecuteSqlStep(\"{sqlStep.StepName}\", {sqlStep.StatementClassName}.BuildStatement(), sp.GetRequiredService<ILogger<ExecuteSqlStep>>());");
                     lines.Add("");
                     break;
                 case ProgramSecondaryConnectionSqlStep secondaryStep:
                     var secondaryLocal = SqlStepLocalName(secondaryStep.StepName); // same lowercase-first convention, generic enough to reuse
-                    orderedLocalNames.Add(secondaryLocal);
-                    lines.Add($"    var {secondaryLocal} = new SecondaryConnectionSqlStep(\"{secondaryStep.StepName}\", \"{secondaryStep.ConnectionManagerName}\", {SecondaryConnectionLocalName(secondaryStep.ConnectionManagerName)}, {CSharpStringLiteral(secondaryStep.Sql)}, sp.GetRequiredService<ILogger<SecondaryConnectionSqlStep>>());");
+                    locals.Add(secondaryLocal);
+                    lines.Add($"var {secondaryLocal} = new SecondaryConnectionSqlStep(\"{secondaryStep.StepName}\", \"{secondaryStep.ConnectionManagerName}\", {SecondaryConnectionLocalName(secondaryStep.ConnectionManagerName)}, {secondaryStep.StatementClassName}.BuildStatement(), sp.GetRequiredService<ILogger<SecondaryConnectionSqlStep>>());");
                     lines.Add("");
                     break;
                 case ProgramScriptTaskStep scriptStep:
                     var scriptLocal = SqlStepLocalName(scriptStep.StepName); // same lowercase-first convention, generic enough to reuse
-                    orderedLocalNames.Add(scriptLocal);
-                    lines.Add($"    var {scriptLocal} = new {scriptStep.ClassName}(packageVariables, sp);");
+                    locals.Add(scriptLocal);
+                    lines.Add($"var {scriptLocal} = new {scriptStep.ClassName}(packageVariables, sp);");
                     lines.Add("");
                     break;
                 case ProgramFileSystemStep fsStep:
                     var fsLocal = SqlStepLocalName(fsStep.StepName); // same lowercase-first convention, generic enough to reuse
-                    orderedLocalNames.Add(fsLocal);
-                    lines.Add($"    var {fsLocal} = new FileSystemStep(\"{fsStep.StepName}\", {FileSystemActionExpr(fsStep.Action)}, sp.GetRequiredService<ILogger<FileSystemStep>>());");
+                    locals.Add(fsLocal);
+                    lines.Add($"var {fsLocal} = new FileSystemStep(\"{fsStep.StepName}\", {FileSystemActionExpr(fsStep.Action)}, sp.GetRequiredService<ILogger<FileSystemStep>>());");
                     lines.Add("");
                     break;
                 case ProgramForEachFileLoopStep loopStep:
                     var loopLocal = SqlStepLocalName(loopStep.StepName); // same lowercase-first convention, generic enough to reuse
-                    orderedLocalNames.Add(loopLocal);
-                    lines.Add($"    var {loopLocal} = new ForEachLoopStep(");
-                    lines.Add($"        \"{loopStep.StepName}\",");
-                    lines.Add($"        new ForEachFileLoopAction({CSharpStringLiteral(loopStep.Folder)}, {CSharpStringLiteral(loopStep.FileSpec)}, {(loopStep.Recurse ? "true" : "false")}, ForEachFileNameMode.{loopStep.NameMode}),");
-                    lines.Add($"        {loopStep.CurrentFileParamName} => {loopStep.SqlExpression},");
-                    lines.Add("        sp.GetRequiredService<ILogger<ForEachLoopStep>>());");
+                    locals.Add(loopLocal);
+                    lines.Add($"var {loopLocal} = new ForEachLoopStep(");
+                    lines.Add($"    \"{loopStep.StepName}\",");
+                    lines.Add($"    new ForEachFileLoopAction({CSharpStringLiteral(loopStep.Folder)}, {CSharpStringLiteral(loopStep.FileSpec)}, {(loopStep.Recurse ? "true" : "false")}, ForEachFileNameMode.{loopStep.NameMode}),");
+                    lines.Add($"    {loopStep.CurrentFileParamName} => {loopStep.StatementClassName}.BuildStatement({loopStep.CurrentFileParamName}),");
+                    lines.Add("    sp.GetRequiredService<ILogger<ForEachLoopStep>>());");
                     lines.Add("");
                     break;
                 case ProgramForEachDataFlowLoopStep dfLoopStep:
                     var dfLoopLocal = SqlStepLocalName(dfLoopStep.StepName); // same lowercase-first convention, generic enough to reuse
-                    orderedLocalNames.Add(dfLoopLocal);
-                    lines.Add($"    var {dfLoopLocal} = new ForEachFileDataFlowStep<{dfLoopStep.RowTypeName}, {dfLoopStep.EntityName}>(");
-                    lines.Add($"        \"{dfLoopStep.StepName}\",");
-                    lines.Add($"        new ForEachFileLoopAction({CSharpStringLiteral(dfLoopStep.Folder)}, {CSharpStringLiteral(dfLoopStep.FileSpec)}, {(dfLoopStep.Recurse ? "true" : "false")}, ForEachFileNameMode.{dfLoopStep.NameMode}),");
-                    lines.Add($"        {dfLoopStep.CurrentFileParamName} => new CsvRowSource<{dfLoopStep.RowTypeName}>({CSharpStringLiteral(dfLoopStep.SourceComponentName)}, new CsvSourceOptions {{ FilePath = {dfLoopStep.FilePathExpression} }}, new {dfLoopStep.RowTypeName}Map()),");
-                    lines.Add($"        sp.GetRequiredService<IRowTransform<{dfLoopStep.RowTypeName}, {dfLoopStep.EntityName}>>(),");
-                    lines.Add($"        sp.GetRequiredService<IBulkSink<{dfLoopStep.EntityName}>>(),");
-                    lines.Add($"        sp.GetRequiredService<ILogger<DataFlowStep<{dfLoopStep.RowTypeName}, {dfLoopStep.EntityName}>>>());");
+                    locals.Add(dfLoopLocal);
+                    lines.Add($"var {dfLoopLocal} = new ForEachFileDataFlowStep<{dfLoopStep.RowTypeName}, {dfLoopStep.EntityName}>(");
+                    lines.Add($"    \"{dfLoopStep.StepName}\",");
+                    lines.Add($"    new ForEachFileLoopAction({CSharpStringLiteral(dfLoopStep.Folder)}, {CSharpStringLiteral(dfLoopStep.FileSpec)}, {(dfLoopStep.Recurse ? "true" : "false")}, ForEachFileNameMode.{dfLoopStep.NameMode}),");
+                    lines.Add($"    {dfLoopStep.CurrentFileParamName} => new CsvRowSource<{dfLoopStep.RowTypeName}>({CSharpStringLiteral(dfLoopStep.SourceComponentName)}, new CsvSourceOptions {{ FilePath = {dfLoopStep.FilePathExpression} }}, new {dfLoopStep.RowTypeName}Map()),");
+                    lines.Add($"    sp.GetRequiredService<IRowTransform<{dfLoopStep.RowTypeName}, {dfLoopStep.EntityName}>>(),");
+                    lines.Add($"    sp.GetRequiredService<IBulkSink<{dfLoopStep.EntityName}>>(),");
+                    lines.Add($"    sp.GetRequiredService<ILogger<DataFlowStep<{dfLoopStep.RowTypeName}, {dfLoopStep.EntityName}>>>());");
                     lines.Add("");
                     break;
                 case ProgramConditionalSplitStep splitStep:
                     var splitLocal = SplitStepLocalName(splitStep.StepName);
-                    orderedLocalNames.Add(splitLocal);
-                    lines.Add($"    var {splitLocal} = new ConditionalSplitStep<{splitStep.RowTypeName}>(");
-                    lines.Add($"        \"{splitStep.StepName}\",");
-                    lines.Add($"        sp.GetRequiredService<IRowSource<{splitStep.RowTypeName}>>(),");
-                    lines.Add($"        sp.GetRequiredService<IRowRouter<{splitStep.RowTypeName}>>(),");
-                    lines.Add("        [");
+                    locals.Add(splitLocal);
+                    lines.Add($"var {splitLocal} = new ConditionalSplitStep<{splitStep.RowTypeName}>(");
+                    lines.Add($"    \"{splitStep.StepName}\",");
+                    lines.Add($"    sp.GetRequiredService<IRowSource<{splitStep.RowTypeName}>>(),");
+                    lines.Add($"    sp.GetRequiredService<IRowRouter<{splitStep.RowTypeName}>>(),");
+                    lines.Add("    [");
                     for (var i = 0; i < splitStep.Branches.Count; i++)
                     {
                         var branch = splitStep.Branches[i];
                         var comma = i < splitStep.Branches.Count - 1 ? "," : "";
-                        lines.Add($"            new ConditionalSplitBranch<{splitStep.RowTypeName}, {branch.EntityName}>(");
-                        lines.Add($"                \"{branch.OutputName}\",");
+                        lines.Add($"        new ConditionalSplitBranch<{splitStep.RowTypeName}, {branch.EntityName}>(");
+                        lines.Add($"            \"{branch.OutputName}\",");
                         // Constructed directly, not via sp.GetRequiredService<IRowTransform<...>>() --
                         // two or more branches can share EntityName (a Union All remerge, see
                         // PackagePlanner.ResolveBranch/PackageGenerator.GenerateConditionalSplitFlow),
@@ -630,20 +691,20 @@ public static class ProgramEmitter
                         // TransformEmitter.BuildFile), so `new` is always safe here -- simpler than a
                         // keyed-DI registration, and correct for every branch shape, not just colliding
                         // ones.
-                        lines.Add($"                new {branch.TransformClassName}(),");
-                        lines.Add($"                sp.GetRequiredService<IBulkSink<{branch.EntityName}>>()){comma}");
+                        lines.Add($"            new {branch.TransformClassName}(),");
+                        lines.Add($"            sp.GetRequiredService<IBulkSink<{branch.EntityName}>>()){comma}");
                     }
-                    lines.Add("        ],");
-                    lines.Add($"        sp.GetRequiredService<ILogger<ConditionalSplitStep<{splitStep.RowTypeName}>>>());");
+                    lines.Add("    ],");
+                    lines.Add($"    sp.GetRequiredService<ILogger<ConditionalSplitStep<{splitStep.RowTypeName}>>>());");
                     lines.Add("");
                     break;
                 case ProgramMulticastStep multicastStep:
                     var multicastLocal = SplitStepLocalName(multicastStep.StepName); // same lowercase-first convention, generic enough to reuse
-                    orderedLocalNames.Add(multicastLocal);
-                    lines.Add($"    var {multicastLocal} = new MulticastStep<{multicastStep.RowTypeName}>(");
-                    lines.Add($"        \"{multicastStep.StepName}\",");
-                    lines.Add($"        sp.GetRequiredService<IRowSource<{multicastStep.RowTypeName}>>(),");
-                    lines.Add("        [");
+                    locals.Add(multicastLocal);
+                    lines.Add($"var {multicastLocal} = new MulticastStep<{multicastStep.RowTypeName}>(");
+                    lines.Add($"    \"{multicastStep.StepName}\",");
+                    lines.Add($"    sp.GetRequiredService<IRowSource<{multicastStep.RowTypeName}>>(),");
+                    lines.Add("    [");
                     for (var i = 0; i < multicastStep.Branches.Count; i++)
                     {
                         var branch = multicastStep.Branches[i];
@@ -654,87 +715,156 @@ public static class ProgramEmitter
                         // generic IRowTransform<TRow,TEntity> DI registration) -- IBulkSink<TEntity>
                         // resolves correctly via DI regardless of whether it's a SqlBulkSink or a
                         // FlatFileBulkSink, since both registration paths add the same service type.
-                        lines.Add($"            new ConditionalSplitBranch<{multicastStep.RowTypeName}, {branch.EntityName}>(");
-                        lines.Add($"                \"{branch.OutputName}\",");
-                        lines.Add($"                new {branch.TransformClassName}(),");
-                        lines.Add($"                sp.GetRequiredService<IBulkSink<{branch.EntityName}>>()){comma}");
+                        lines.Add($"        new ConditionalSplitBranch<{multicastStep.RowTypeName}, {branch.EntityName}>(");
+                        lines.Add($"            \"{branch.OutputName}\",");
+                        lines.Add($"            new {branch.TransformClassName}(),");
+                        lines.Add($"            sp.GetRequiredService<IBulkSink<{branch.EntityName}>>()){comma}");
                     }
-                    lines.Add("        ],");
-                    lines.Add($"        sp.GetRequiredService<ILogger<MulticastStep<{multicastStep.RowTypeName}>>>());");
+                    lines.Add("    ],");
+                    lines.Add($"    sp.GetRequiredService<ILogger<MulticastStep<{multicastStep.RowTypeName}>>>());");
                     lines.Add("");
                     break;
                 case ProgramOleDbCommandStep cmdStep:
                     var cmdLocal = SqlStepLocalName(cmdStep.StepName); // same lowercase-first convention, generic enough to reuse
-                    orderedLocalNames.Add(cmdLocal);
-                    lines.Add($"    var {cmdLocal} = new OleDbCommandStep<{cmdStep.RowTypeName}>(");
-                    lines.Add($"        \"{cmdStep.StepName}\",");
-                    lines.Add($"        sp.GetRequiredService<IRowSource<{cmdStep.RowTypeName}>>(),");
-                    lines.Add($"        {CSharpStringLiteral(cmdStep.SqlTemplate)},");
-                    lines.Add($"        row => new object?[] {{ {string.Join(", ", cmdStep.ParameterColumnNames.Select(c => $"row.{c}"))} }},");
-                    lines.Add($"        sp.GetRequiredService<ILogger<OleDbCommandStep<{cmdStep.RowTypeName}>>>());");
+                    locals.Add(cmdLocal);
+                    lines.Add($"var {cmdLocal} = new OleDbCommandStep<{cmdStep.RowTypeName}>(");
+                    lines.Add($"    \"{cmdStep.StepName}\",");
+                    lines.Add($"    sp.GetRequiredService<IRowSource<{cmdStep.RowTypeName}>>(),");
+                    lines.Add($"    {CSharpStringLiteral(cmdStep.SqlTemplate)},");
+                    lines.Add($"    row => new object?[] {{ {string.Join(", ", cmdStep.ParameterColumnNames.Select(c => $"row.{c}"))} }},");
+                    lines.Add($"    sp.GetRequiredService<ILogger<OleDbCommandStep<{cmdStep.RowTypeName}>>>());");
                     lines.Add("");
                     break;
             }
 
-            // A gated step is wrapped in its own second local rather than inline in the Steps list:
-            // it keeps the wrapper readable, and it works uniformly for every step kind above
-            // without any of them knowing about guards. Every case adds exactly one local, so the
-            // one just added is the step to wrap -- checked rather than assumed.
-            if (step.Guard is { } guard && orderedLocalNames.Count == localsBefore + 1)
+            // Every case above adds exactly one local, so the one just added belongs to the step
+            // that produced it -- checked rather than assumed, mirroring how the guard/flow-group
+            // stamping in PackageGenerator's own switch already treats "no local added" as "this
+            // step contributed nothing" (a flow that failed its own gate, e.g.).
+            if (locals.Count == localsBefore + 1) stepLocals.Add((step, locals[^1]));
+        }
+
+        lines.Add("var startedAtUtc = sp.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;");
+        lines.Add("startedAtUtc = new DateTime(startedAtUtc.Ticks - (startedAtUtc.Ticks % TimeSpan.TicksPerMillisecond), DateTimeKind.Utc);");
+        lines.Add("var load = new LoadContext(Guid.NewGuid(), startedAtUtc, PackageName);");
+        lines.Add("var stopwatch = Stopwatch.StartNew();");
+        lines.Add("var results = new List<StepResult>();");
+        lines.Add("");
+        lines.Add("logger.LogInformation(\"Starting {Package}...\", PackageName);");
+        lines.Add("await uow.BeginAsync(IsolationLevel.ReadCommitted, CancellationToken.None);");
+        lines.Add("try");
+        lines.Add("{");
+        // Hazard 1 (see the generate plan's own "five hazards to preserve"): fetched here, first,
+        // while this transaction's own connection is guaranteed idle. A lazy fetch from inside a
+        // step reproduced a real deadlock -- a SqlRowSource reading while a destination's
+        // SqlBulkCopy is actively streaming on the same connection -- see
+        // IUnitOfWork.GetBindTokenAsync's own doc comment for the full account.
+        lines.Add("    // Fetched once, here, while this transaction's connection is guaranteed idle -- a lazy fetch");
+        lines.Add("    // from inside a step reproduced a real deadlock (SqlRowSource reading while SqlBulkCopy streams).");
+        lines.Add("    await uow.GetBindTokenAsync(CancellationToken.None);");
+        lines.Add("");
+
+        foreach (var stmt in request.PreLoadStatements)
+        {
+            lines.Add($"    logger.LogInformation(\"{{Package}}: executing pre-load statement: {{Sql}}\", PackageName, {stmt.StatementClassName}.BuildStatement());");
+            lines.Add($"    await uow.ExecuteSqlAsync({stmt.StatementClassName}.BuildStatement(), CancellationToken.None);");
+        }
+        if (request.PreLoadStatements.Count > 0) lines.Add("");
+
+        foreach (var action in request.PreLoadFileActions)
+        {
+            var destinationArg = action.DestinationPath is null ? "\"\"" : CSharpStringLiteral(" -> " + action.DestinationPath);
+            lines.Add($"    logger.LogInformation(\"{{Package}}: executing pre-load file action: {{Operation}} {{Source}}{{Destination}}\", PackageName, FileSystemOperation.{action.Operation}, {CSharpStringLiteral(action.SourcePath)}, {destinationArg});");
+            lines.Add($"    await FileSystemActionRunner.RunAsync({FileSystemActionExpr(action)}, CancellationToken.None);");
+        }
+        if (request.PreLoadFileActions.Count > 0) lines.Add("");
+
+        // Pass 2: run every step, grouped by independent SSIS branch ("// Flow N:") so a package
+        // whose control flow genuinely has several unrelated branches reads that way here too --
+        // see PackageStep.FlowGroup's own doc comment. Grouping is purely visual/structural: a
+        // precedence constraint never crosses between two different flow groups by construction,
+        // so reordering stepLocals this way is always a valid topological order, identical to the
+        // plan's own. A single-group package (every package with a plain, unbranched control flow
+        // -- both of this PoC's own two) emits no headers at all and stays exactly as clean as
+        // before this capability existed.
+        var flowGroupsPresent = stepLocals.Select(x => x.Step.FlowGroup).Distinct().ToList();
+        var showFlowHeaders = flowGroupsPresent.Count > 1;
+        var flowDisplayNumbers = flowGroupsPresent
+            .Select((group, i) => (group, display: i + 1))
+            .ToDictionary(x => x.group, x => x.display);
+        var flowDisplayNames = stepLocals
+            .GroupBy(x => x.Step.FlowGroup)
+            .ToDictionary(g => g.Key, g => string.Join(" → ", g.Select(x => StepDisplayName(x.Step))));
+        var orderedStepLocals = flowGroupsPresent
+            .SelectMany(group => stepLocals.Where(x => x.Step.FlowGroup == group))
+            .ToList();
+
+        for (var i = 0; i < orderedStepLocals.Count; i++)
+        {
+            var (step, local) = orderedStepLocals[i];
+            var isFirstInGroup = i == 0 || orderedStepLocals[i - 1].Step.FlowGroup != step.FlowGroup;
+            if (isFirstInGroup)
             {
-                var inner = orderedLocalNames[^1];
-                var gatedLocal = $"{inner}Gated";
-                orderedLocalNames[^1] = gatedLocal;
-                lines.Add($"    var {gatedLocal} = new ConditionalStep(");
-                lines.Add($"        {inner},");
-                lines.Add($"        {CSharpStringLiteral(guard.SsisExpression)},");
-                lines.Add($"        v => {guard.CSharpPredicate},");
-                lines.Add("        packageVariables,");
-                lines.Add("        sp.GetRequiredService<ILogger<ConditionalStep>>());");
-                lines.Add("");
+                if (i > 0) lines.Add("");
+                if (showFlowHeaders)
+                    lines.Add($"    // Flow {flowDisplayNumbers[step.FlowGroup]}: {flowDisplayNames[step.FlowGroup]}");
+            }
+
+            if (step.Guard is { } guard)
+            {
+                var stepName = StepDisplayName(step);
+                lines.Add($"    // Guard: {guard.SsisExpression}");
+                lines.Add($"    if ({guard.CSharpPredicate})");
+                lines.Add($"        results.Add(await {local}.RunAsync(uow, load, CancellationToken.None));");
+                lines.Add("    else");
+                lines.Add("    {");
+                lines.Add($"        logger.LogInformation(\"{{Step}}: skipped -- its precedence constraint's condition ({{Condition}}) evaluated false\", {CSharpStringLiteral(stepName)}, {CSharpStringLiteral(guard.SsisExpression)});");
+                lines.Add($"        results.Add(new StepResult({CSharpStringLiteral(stepName)}, 0, 0, TimeSpan.Zero) {{ Skipped = true }});");
+                lines.Add("    }");
+            }
+            else
+            {
+                lines.Add($"    results.Add(await {local}.RunAsync(uow, load, CancellationToken.None));");
             }
         }
-        lines.Add("    return new EtlPackage(");
-        lines.Add("        Name: PackageName,");
-        lines.Add($"        PreLoadStatements: [{string.Join(", ", request.PreLoadStatements.Select(CSharpStringLiteral))}],");
-        lines.Add($"        Steps: [{string.Join(", ", orderedLocalNames)}],");
-        // FailureHandlers is emitted only when there IS one -- it is an optional EtlPackage
-        // parameter defaulting to empty, so adding "FailureHandlers: []" to every package would
-        // change the generated text of every existing package for no behavioural difference.
-        var fileActions = $"        PreLoadFileActions: [{string.Join(", ", request.PreLoadFileActions.Select(FileSystemActionExpr))}]";
+        lines.Add("");
+
+        lines.Add("    await uow.CommitAsync(CancellationToken.None);");
+        lines.Add("    logger.LogInformation(\"{Package}: succeeded in {Ms} ms\", PackageName, stopwatch.ElapsedMilliseconds);");
+        lines.Add("}");
+        lines.Add("catch (Exception ex)");
+        lines.Add("{");
+        // Hazard 3: rollback and failure handlers use CancellationToken.None, not ct, deliberately
+        // -- a cancelled run still needs its own failure recorded (and, per hazard 4 below, still
+        // needs a chance to run its own failure handlers).
+        lines.Add("    await uow.RollbackAsync(CancellationToken.None);");
+        lines.Add("    logger.LogError(ex, \"{Package} failed after {Steps} step(s); transaction rolled back\", PackageName, results.Count);");
+        lines.Add("");
         if (request.FailureHandlers.Count == 0)
         {
-            lines.Add(fileActions + ");");
+            lines.Add("    await notifier.NotifyAsync(new PackageResult(PackageName, false, results, stopwatch.Elapsed, ex), CancellationToken.None);");
         }
         else
         {
-            lines.Add(fileActions + ",");
-            lines.Add($"        FailureHandlers: [{string.Join(", ", request.FailureHandlers.Select(FailureHandlerExpr))}]);");
+            // Hazard 4: strictly after the rollback above -- IUnitOfWork.ExecuteSqlWithoutTransactionAsync
+            // itself throws while a transaction is still active, so a handler can never silently
+            // enlist in a transaction that is about to be discarded. Each handler is isolated in
+            // its own try/catch so a throwing handler never replaces the original exception.
+            lines.Add("    var handlersRun = new List<string>();");
+            foreach (var handler in request.FailureHandlers)
+            {
+                lines.Add($"    try {{ await uow.ExecuteSqlWithoutTransactionAsync({CSharpStringLiteral(handler.Sql)}, CancellationToken.None); handlersRun.Add({CSharpStringLiteral(handler.TaskName)}); }}");
+                lines.Add($"    catch (Exception hEx) {{ logger.LogError(hEx, \"{{Package}}: failure handler {{Handler}} itself failed; the original failure stands\", PackageName, {CSharpStringLiteral(handler.TaskName)}); }}");
+            }
+            lines.Add("");
+            lines.Add("    await notifier.NotifyAsync(new PackageResult(PackageName, false, results, stopwatch.Elapsed, ex) { FailureHandlersRun = handlersRun }, CancellationToken.None);");
         }
-        lines.Add("});");
-        lines.Add("");
-
-        lines.Add("using var host = builder.Build();");
-        lines.Add("");
-        lines.Add("await using var scope = host.Services.CreateAsyncScope();");
-        lines.Add("var runner = scope.ServiceProvider.GetRequiredService<IPackageRunner>();");
-        lines.Add("var package = scope.ServiceProvider.GetRequiredService<IEtlPackage>();");
-        lines.Add("var notifier = scope.ServiceProvider.GetRequiredService<IPackageResultNotifier>();");
-        lines.Add("var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();");
-        lines.Add("");
-        lines.Add("logger.LogInformation(\"Starting {Package}...\", package.Name);");
-        lines.Add("var result = await runner.RunAsync(package, CancellationToken.None);");
-        lines.Add("await notifier.NotifyAsync(result, CancellationToken.None);");
-        lines.Add("");
-        lines.Add("if (result.Succeeded)");
-        lines.Add("{");
-        lines.Add("    foreach (var step in result.Steps)");
-        lines.Add("        logger.LogInformation(\"{Step}: {Rows:N0} rows loaded\", step.Name, step.RowsWritten);");
-        lines.Add("    return ExitCode.Success;");
+        lines.Add("    return ExitCode.LoadFailed;");
         lines.Add("}");
         lines.Add("");
-        lines.Add("logger.LogError(result.Error, \"{Package} failed\", package.Name);");
-        lines.Add("return ExitCode.LoadFailed;");
+        lines.Add("await notifier.NotifyAsync(new PackageResult(PackageName, true, results, stopwatch.Elapsed, null), CancellationToken.None);");
+        lines.Add("foreach (var step in results) logger.LogInformation(\"{Step}: {Rows:N0} rows loaded\", step.Name, step.RowsWritten);");
+        lines.Add("return ExitCode.Success;");
 
         return new EmitResult([new GeneratedFile("Program.cs", Rendering.JoinLines(lines))], []);
     }
@@ -755,12 +885,25 @@ public static class ProgramEmitter
     private static string SecondaryConnectionLocalName(string connectionManagerName) =>
         char.ToLowerInvariant(connectionManagerName[0]) + connectionManagerName[1..] + "ConnectionString";
 
-    /// <summary>e.g. <c>new FileSystemPreLoadAction(FileSystemOperation.Copy, "C:\...", "D:\...", true)</c> -- shared by pre-load emission and the post-flow ProgramFileSystemStep case, since both need the exact same literal expression.</summary>
-    /// <summary>One Etl.Core FailureHandlerAction literal. Sibling of <see cref="FileSystemActionExpr"/>
-    /// -- same "plain data record, emitted inline in the EtlPackage construction" shape.</summary>
-    private static string FailureHandlerExpr(FailureHandlerPlan handler) =>
-        $"new FailureHandlerAction({CSharpStringLiteral(handler.TaskName)}, {CSharpStringLiteral(handler.Sql)})";
+    /// <summary>The step's own display name for a "// Flow N:" heading, a skipped-guard log line,
+    /// or a skipped-guard StepResult -- every concrete ProgramStep carries one, under whatever
+    /// field name its own record uses (StepName directly, or Flow.StepName for a plain flow).</summary>
+    private static string StepDisplayName(ProgramStep step) => step switch
+    {
+        ProgramFlowStep f => f.Flow.StepName,
+        ProgramSqlStep s => s.StepName,
+        ProgramSecondaryConnectionSqlStep s => s.StepName,
+        ProgramScriptTaskStep s => s.StepName,
+        ProgramFileSystemStep s => s.StepName,
+        ProgramForEachFileLoopStep s => s.StepName,
+        ProgramForEachDataFlowLoopStep s => s.StepName,
+        ProgramConditionalSplitStep s => s.StepName,
+        ProgramMulticastStep s => s.StepName,
+        ProgramOleDbCommandStep s => s.StepName,
+        _ => throw new InvalidOperationException($"Unhandled ProgramStep type {step.GetType().Name}"),
+    };
 
+    /// <summary>e.g. <c>new FileSystemPreLoadAction(FileSystemOperation.Copy, "C:\...", "D:\...", true)</c> -- shared by pre-load emission and the post-flow ProgramFileSystemStep case, since both need the exact same literal expression.</summary>
     private static string FileSystemActionExpr(FileSystemActionPlan action) =>
         $"new FileSystemPreLoadAction(FileSystemOperation.{action.Operation}, {CSharpStringLiteral(action.SourcePath)}, {(action.DestinationPath is null ? "null" : CSharpStringLiteral(action.DestinationPath))}, {(action.Overwrite ? "true" : "false")})";
 

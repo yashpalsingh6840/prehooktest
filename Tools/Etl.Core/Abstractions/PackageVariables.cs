@@ -18,9 +18,9 @@ namespace Etl.Core.Abstractions;
 /// would be inventing semantics no `.dtsx` evidence asked for.
 ///
 /// One instance per package run, created by generated <c>Program.cs</c> and shared by every
-/// Script Task step. Not thread-safe, matching <see cref="Pipeline.PackageRunner"/>'s own strictly
-/// sequential execution -- if steps ever run concurrently this needs revisiting alongside
-/// <see cref="IUnitOfWork"/>, which has exactly the same constraint.
+/// Script Task step. Not thread-safe, matching a generated <c>Program.cs</c>'s own strictly
+/// sequential execution of its steps -- if steps ever run concurrently this needs revisiting
+/// alongside <see cref="IUnitOfWork"/>, which has exactly the same constraint.
 /// </summary>
 public sealed class PackageVariables
 {

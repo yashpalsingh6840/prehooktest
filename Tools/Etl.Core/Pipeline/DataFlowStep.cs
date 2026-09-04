@@ -36,8 +36,8 @@ public sealed class DataFlowStep<TRow, TEntity>(
 
         var written = await sink.WriteAsync(uow, Project(ct), ct);
 
-        // Fails before the package's transaction commits (still inside PackageRunner's try
-        // block) rather than silently succeeding with an empty load.
+        // Fails before the package's transaction commits (still inside the generated Program.cs's
+        // own try block) rather than silently succeeding with an empty load.
         if (read == 0)
             throw new InvalidOperationException(
                 $"{name}: source '{source.Name}' produced zero rows -- refusing to commit an empty load.");

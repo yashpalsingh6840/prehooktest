@@ -49,6 +49,17 @@ run, a `generate-report.md` naming every gap, and (new) a self-contained
 session) end up working from the generated solution directly with no other doc in view, open
 that file first; it's written specifically to not assume anything else here is visible.
 
+For a plain SQL-destination flow with a Derived Column (no Data Conversion/Lookup/Aggregate/
+Conditional Split), `generate` ALSO writes a starter xUnit test project at
+`<out>\generate\<PackageName>.Tests\` -- a sibling directory of the main project, listed in
+`Generated.slnx` under its own `/tests/` folder. Each `[Fact]` asserts a transform's `Map(row,
+ctx)` against a representative row, with every expected value computed (not guessed) through the
+same oracle-verified expression evaluator `ssisx testgen` uses -- **`dotnet test` on this project
+is a real, legitimate verification step you can and should run** (unlike anything touching a real
+database, see below): it needs no client data or connection at all. It's a starter, not full
+coverage -- a column outside its own pilot scope is a named, non-blocking gap in
+`generate-report.md`, not silently skipped.
+
 **Does NOT do, and should never be asked to do in this environment:**
 - Does not build the generated code (you, or Copilot, run `dotnet build` separately to check
   it compiles).

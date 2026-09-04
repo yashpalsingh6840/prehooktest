@@ -37,7 +37,7 @@ public class PackagePlannerTests
         Assert.Empty(plan.Gaps);
         // The Execute SQL Task lives INSIDE the Sequence Container -- proves nested pre-load
         // SQL is folded into the same flat list a root-level one would be.
-        Assert.Equal(["TRUNCATE TABLE dbo.SyntheticNestedTarget;"], plan.PreLoadStatements);
+        Assert.Equal([new PreLoadSqlStatementPlan("SQL_Truncate", "TRUNCATE TABLE dbo.SyntheticNestedTarget;")], plan.PreLoadStatements);
 
         Assert.Equal(2, plan.Flows.Count);
         // DFT_NestedLoad is nested inside SEQ_Load; DFT_RootLoad is a root-level sibling that
@@ -144,7 +144,7 @@ public class PackagePlannerTests
         var plan = PackagePlanner.Plan(package);
 
         Assert.Empty(plan.Gaps);
-        Assert.Equal(["TRUNCATE TABLE dbo.Employee;"], plan.PreLoadStatements);
+        Assert.Equal([new PreLoadSqlStatementPlan("SQL_TruncateTarget", "TRUNCATE TABLE dbo.Employee;")], plan.PreLoadStatements);
 
         var flow = Assert.Single(plan.Flows);
         Assert.Equal("DFT_LoadEmployees", flow.TaskName);
@@ -161,7 +161,7 @@ public class PackagePlannerTests
         var plan = PackagePlanner.Plan(package);
 
         Assert.Empty(plan.Gaps);
-        Assert.Equal(["TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;"], plan.PreLoadStatements);
+        Assert.Equal([new PreLoadSqlStatementPlan("SQL_TruncateTargets", "TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;")], plan.PreLoadStatements);
 
         Assert.Equal(2, plan.Flows.Count);
         Assert.Equal("DFT_LoadDepartment", plan.Flows[0].TaskName);
@@ -181,10 +181,9 @@ public class PackagePlannerTests
 
         var plan = PackagePlanner.Plan(package);
 
-        Assert.Contains(
-            "IF OBJECT_ID('dbo.SyntheticLoadATemp') IS NULL\nCREATE TABLE dbo.SyntheticLoadATemp (ID INT NOT NULL, Name NVARCHAR(50) NOT NULL, Amount DECIMAL(12,2) NOT NULL, EntryDate DATE NOT NULL);",
-            plan.PreLoadStatements);
-        Assert.DoesNotContain(plan.PreLoadStatements, sql => sql.Contains("UPDATE dbo.SyntheticLoadATemp"));
+        Assert.Contains(plan.PreLoadStatements, s => s.TaskName == "SQL_CreateLoadATemp" && s.Sql ==
+            "IF OBJECT_ID('dbo.SyntheticLoadATemp') IS NULL\nCREATE TABLE dbo.SyntheticLoadATemp (ID INT NOT NULL, Name NVARCHAR(50) NOT NULL, Amount DECIMAL(12,2) NOT NULL, EntryDate DATE NOT NULL);");
+        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Sql.Contains("UPDATE dbo.SyntheticLoadATemp"));
 
         var flowStepIndex = plan.Steps.FindIndex(s => s is FlowStep flow && flow.Flow.TaskName == "DFT_LoadA");
         var sqlStepIndex = plan.Steps.FindIndex(s => s is SqlStep sql && sql.TaskName == "SQL_UpdateLoadA");
@@ -304,7 +303,7 @@ public class PackagePlannerTests
         var plan = PackagePlanner.Plan(package);
 
         Assert.Empty(plan.Gaps);
-        Assert.Equal(["TRUNCATE TABLE dbo.SyntheticFileSystemTaskTarget;"], plan.PreLoadStatements);
+        Assert.Equal([new PreLoadSqlStatementPlan("SQL_PreLoad", "TRUNCATE TABLE dbo.SyntheticFileSystemTaskTarget;")], plan.PreLoadStatements);
 
         var preLoadAction = Assert.Single(plan.PreLoadFileActions);
         Assert.Equal("Copy", preLoadAction.Operation);

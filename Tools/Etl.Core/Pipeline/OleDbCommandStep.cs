@@ -33,8 +33,8 @@ public sealed class OleDbCommandStep<TRow>(
             written += await uow.ExecuteSqlAsync(sqlTemplate, parameterValues(row), ct);
         }
 
-        // Fails before the package's transaction commits (still inside PackageRunner's try
-        // block) rather than silently succeeding with an empty load -- same rule as
+        // Fails before the package's transaction commits (still inside the generated Program.cs's
+        // own try block) rather than silently succeeding with an empty load -- same rule as
         // DataFlowStep/ConditionalSplitStep/MulticastStep.
         if (read == 0)
             throw new InvalidOperationException(

@@ -24,9 +24,9 @@ namespace Ssis.Extract.FixtureBuilder;
 /// <list type="bullet">
 /// <item><b>Branch 1</b> (a 3-node chain): Execute SQL (create-if-missing) -> Flat File
 /// Source -> OLE DB Destination -> Execute SQL (post-load update). Proves an Execute SQL
-/// Task sequenced AFTER a Data Flow Task extracts correctly -- <c>PackageRunner</c> in the
-/// C# rewrite only models pre-load SQL today, so this is what makes that gap concrete
-/// rather than theoretical.</item>
+/// Task sequenced AFTER a Data Flow Task extracts correctly -- the generated C# rewrite
+/// only modeled pre-load SQL at the time this fixture was built, so this is what made
+/// that gap concrete rather than theoretical.</item>
 /// <item><b>Branch 2</b> (a single Data Flow Task, no precedence to branch 1): two
 /// independent OLE DB Source -> OLE DB Destination pairs with NO transform between them --
 /// the direct-copy shape neither PoC package has, and no code in <c>Etl.Core</c> models.</item>
@@ -342,7 +342,7 @@ internal static class Program
     /// nests anything, so <c>Ssis.Extract.Codegen.PackagePlanner</c> (root-level only until
     /// now) had zero real evidence for the nested case. Deliberately excludes an Execute SQL
     /// Task positioned AFTER a Data Flow Task -- that's the separate, already-documented
-    /// "PackageRunner only models pre-load SQL" gap (SyntheticParallelShapes' own branch 1);
+    /// "the generated code only models pre-load SQL" gap (SyntheticParallelShapes' own branch 1);
     /// mixing it in here would muddy what this fixture is testing.
     /// Written to <c>tests/Ssis.Extract.Tests/Fixtures/</c> directly (test-only, not
     /// registered in SSIS.dtproj) -- the same tier the ForEach/Lookup-Split/Script-Component
@@ -5123,7 +5123,7 @@ internal static class Program
     /// shape that exercises a translated conditional precedence constraint end to end:
     ///
     ///  - all three gates are <c>EvalOp=ExpressionAndConstraint</c> with the constraint half left at
-    ///    Success -- the one form the probe measured as reproducible under PackageRunner's single
+    ///    Success -- the one form the probe measured as reproducible under the generated code's single
     ///    whole-package transaction, and the real evidenced form (RBC_Demo_ETL's own
     ///    SCR_NotifyAndLogProgress -> DFT_BuildSalesSummary).
     ///  - SQL_GateTrue's condition reads a variable at its DESIGN-TIME default, so it proves the

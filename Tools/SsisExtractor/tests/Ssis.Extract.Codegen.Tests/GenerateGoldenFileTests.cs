@@ -29,10 +29,15 @@ public class GenerateGoldenFileTests
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
         Assert.NotEmpty(result.Files);
-        foreach (var file in result.Files.Where(f => f.RelativePath.EndsWith(".cs", StringComparison.Ordinal)))
+        // SiblingFiles (a {PackageName}.Tests/ starter test project, TestProjectEmitter/
+        // TransformTestEmitter) are covered here too -- their own RelativePath already starts
+        // with "{PackageName}.Tests/", a distinct top-level segment from result.Files' own
+        // ("Model/", "Csv/", "Program.cs", ...), so the two lists can merge with no collision.
+        var allFiles = result.Files.Concat(result.SiblingFiles).ToList();
+        foreach (var file in allFiles.Where(f => f.RelativePath.EndsWith(".cs", StringComparison.Ordinal)))
             CodeAssertions.AssertNoSyntaxErrors(file.Content);
 
-        AssertMatchesGolden(package.ObjectName, result.Files);
+        AssertMatchesGolden(package.ObjectName, allFiles);
     }
 
     private static void AssertMatchesGolden(string packageName, List<GeneratedFile> files)

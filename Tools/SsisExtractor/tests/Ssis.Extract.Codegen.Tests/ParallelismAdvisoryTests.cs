@@ -7,7 +7,7 @@ namespace Ssis.Extract.Codegen.Tests;
 
 /// <summary>
 /// SSIS runs executables with no ordering constraint between them concurrently; the generated
-/// PackageRunner runs every step in sequence. The data is identical either way, so this is an
+/// Program.cs runs every step in sequence. The data is identical either way, so this is an
 /// advisory (non-blocking) gap -- but it has to be REPORTED, because saying nothing about it is
 /// what actually misleads: a package whose four branches ran in parallel generates code that
 /// looks complete and takes four times as long.

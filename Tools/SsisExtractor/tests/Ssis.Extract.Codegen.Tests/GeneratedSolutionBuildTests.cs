@@ -77,6 +77,7 @@ public class GeneratedSolutionBuildTests
         yield return ["SyntheticConditionalSplit.dtsx"];      // router + multiple sinks
         yield return ["SyntheticAggregate.dtsx"];             // Aggregate row source
         yield return ["SyntheticFlatFileDestination.dtsx"];   // flat-file sink + a SQL flow beside it
+        yield return ["SyntheticDataConversion.dtsx"];        // {Package}.Tests sibling project (TransformTestEmitter)
     }
 
     [Theory]

@@ -34,7 +34,7 @@ namespace Etl.Core.Data;
 /// any read that isn't racing a same-run write, just not sufficient for the TRUNCATE case.
 ///
 /// This call to <see cref="IUnitOfWork.GetBindTokenAsync"/> MUST hit that method's own cache,
-/// never issue a fresh command on the writer's connection -- <see cref="Etl.Core.Pipeline.PackageRunner"/>
+/// never issue a fresh command on the writer's connection -- a generated <c>Program.cs</c>
 /// pre-fetches the token once, right after the transaction begins, specifically so it is already
 /// cached by the time this runs. A real, reproduced deadlock is why: a SqlRowSource feeding a
 /// SqlBulkSink destination is read from WHILE that destination's own SqlBulkCopy is actively

@@ -4896,6 +4896,16 @@ global list is a third real restructure. Sized but not started: the honest next 
 sequential generated run against a hand-parallelized copy before committing to that change, since
 four branches hitting the same database may just move the bottleneck to SQL Server I/O.
 
+**Partially superseded 2026-09-04, and worth flagging so this passage is not misread as still fully
+current:** the "Make generated Program.cs a flat, readable script" round (below) added VISUAL/
+STRUCTURAL flow grouping — each independent SSIS control-flow branch gets its own `// Flow N:
+<name> → <name>` heading in the generated `Program.cs`, computed via `PackagePlanner`'s new
+`FlowGroup` (weakly-connected components over a container's own precedence constraints). That is
+readability only: every step, in every flow group, still runs strictly sequentially, one
+`await theStep.RunAsync(...)` at a time. Everything else in this passage is unchanged and still
+true — true CONCURRENT execution (`Task.WhenAll` across branches, a `SqlTransaction`/`IUnitOfWork`
+per branch, `PreLoadStatements` no longer one flat global list) remains unbuilt, for exactly the
+reasons already given above.
 
 ### AI-assisted gap filling, chunk 3 — Tier-2 seams + `ssisx apply-fills` (2026-08-31)
 
@@ -6552,6 +6562,56 @@ runs rather than defaulting silently — a new rule 3a in the instructions file 
 `--framework net8.0` for every `generate` call on such an engagement, not just the first one; ask
 if unsure, don't guess net10.0), a new "Choosing a .NET target framework" section in the guide
 with both example commands, and a new ready-to-paste prompt for the .NET-8-client scenario.
+
+### Program.cs made a flat, readable script — `IPackageRunner`/`IEtlPackage` deleted (2026-09-04)
+
+Prompted by a real client package this project only just looked at closely enough to notice the
+problem in: `MFDBUpdate.dtsx` has **four independent top-level branches**, each its own
+`Execute SQL Task (create temp table) -> Data Flow (text file -> temp) -> Data Flow (temp -> main)
+-> Execute SQL Task (UpdateDates ...)`. Every one of those 16 steps used to land in the exact same
+flat `IEtlPackage.Steps` list, in topological order, with nothing in the generated code — and
+nothing in `generate-report.md` — showing that they were four separate, unrelated stories rather
+than one long undifferentiated sequence. Reading that generated `Program.cs` cold, a human (or an
+AI assistant working from it, per the `Tools/COPILOT_GUIDE.md` workflow) had no way to tell where
+one branch ended and the next began without re-deriving the precedence graph by hand from the
+original `.dtsx` — exactly the kind of silent information loss this project's whole "gaps not
+guesses" discipline exists to prevent, just one level up from a missing column or a missing script.
+
+**What changed:** generated `Program.cs` is no longer a data structure (`new EtlPackage(Steps:
+[...])`) handed to a generic `IPackageRunner`/`PackageRunner` that lived in `Etl.Core` — it is now
+a flat, sequential script that opens the transaction, constructs each step as a local variable,
+and calls `await theStep.RunAsync(uow, load, ct)` on each in execution order directly, with
+rollback/failure-handler logic written out in the `catch` block inline rather than delegated to a
+shared runner method. Steps belonging to the same independent SSIS control-flow branch (computed
+via a new `FlowGroup` — weakly-connected components over each container's own precedence
+constraints, on `PackagePlanner.PackageStep`/`ProgramEmitter.ProgramStep`) are now visually
+grouped under their own `// Flow N: <name> → <name>` comment heading, so `MFDBUpdate.dtsx`'s own
+four branches now read as four clearly separated blocks in the generated file instead of one
+16-step wall. `IPackageRunner`, `IEtlPackage`, `EtlPackage`, and `ConditionalStep` are gone from
+`Etl.Core` entirely — every step type (`ExecuteSqlStep`, `DataFlowStep`, `ScriptTaskStep`, a
+conditional gate, ...) is still there and unchanged in what it does; only the orchestration layer
+that used to sit above them was removed.
+
+**This is a readability/structure change, not a concurrency one — worth being explicit about
+since it is easy to misread `FlowGroup` as the parallel-execution work the "Not built,
+deliberately" passage above still says is unbuilt.** It is not: every step across every flow
+group still runs strictly sequentially, one `await` at a time, in the same single whole-package
+transaction as before. `FlowGroup` only decides where a `// Flow N:` heading goes in the emitted
+text; it changes nothing about execution order or about the one-`SqlConnection`-per-`IUnitOfWork`
+constraint that passage explains.
+
+**Fully verified, not just designed.** Full suites green in both repos —
+`Ssis.Extract.Tests` 156/156, `Ssis.Runtime.Expressions.Tests` 149/149, `Ssis.Extract.Cli.Tests`
+9/9, `Ssis.Extract.Codegen.Tests` 319/319, `Etl.Core.Tests` 90/90, `LoadEmployees.Tests` 11/11,
+`LoadReferenceData.Tests` 7/7 — plus three real end-to-end checks a green suite alone wouldn't
+catch: a real run against `.\SQLFORPOC_2022` (12/8/10 rows, unchanged from before this refactor);
+a real multi-branch package from the third-party `SSIS_From_Sandeep` portfolio
+(`Package_Exports`) regenerated and confirmed to show 3 separate `// Flow N:` groups, not one
+undifferentiated list; and a full AI-gap-fill round trip (8 seams filled, `apply-fills` → 0
+warnings/0 errors, `fills-applied.json` all `Applied`) proving the seam mechanism survived the
+rewrite untouched. A real FORCED failure was also run against the generated exe, not just the
+happy path: the transaction rolled back and the failure handler's own row landed independently,
+confirming the inlined catch-block logic reproduces `PackageRunner`'s old behaviour exactly.
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**

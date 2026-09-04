@@ -168,6 +168,15 @@ internal static class Program
             expression) degrades that one piece to a GenerationGap rather than a guess --
             every gap, with its reason, is listed in generate-report.md alongside how many
             files each package produced.
+            A plain SQL-destination flow with a Derived Column (no Data Conversion) also gets a
+            STARTER xUnit test project at <out>/generate/<Package>.Tests/ -- a sibling directory,
+            never nested inside <Package>/, so the main project's own compile glob never picks up
+            a test file. One [Fact] per transform asserts Map(row, ctx) against a representative
+            row; every expected value is computed (not guessed) via the same oracle-verified
+            expression evaluator `ssisx testgen`/gate 2 already uses. This is a starter, not full
+            coverage -- extend it by hand for edge cases; anything outside its own pilot scope
+            (Lookup/Aggregate/Conditional Split/Merge Join/Data Conversion flows, or a
+            non-string-typed computed column) is a named, non-blocking gap, not a silent gap.
             --framework selects the generated solution's target framework -- net10.0
             (default, unchanged) or net8.0. This is not just a TargetFramework string: Etl.Core's
             EF Core SqlServer provider (10.0.11) targets net10.0 ONLY, so net8.0 pins a

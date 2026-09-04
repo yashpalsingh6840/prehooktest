@@ -2,7 +2,6 @@ using System.Reflection;
 using Etl.Core.Abstractions;
 using Etl.Core.Csv;
 using Etl.Core.Data;
-using Etl.Core.Pipeline;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,15 +13,15 @@ namespace Etl.Core.Hosting;
 /// One-call bootstrap every package console app uses. Host.CreateApplicationBuilder already
 /// layers appsettings.json -> appsettings.{Environment}.json -> environment variables ->
 /// command line args, and wires console logging -- this adds the shared config layer, User
-/// Secrets, the option sections that replace SSIS parameters, and the UnitOfWork/PackageRunner
-/// every package needs.
+/// Secrets, the option sections that replace SSIS parameters, and the UnitOfWork every package
+/// needs.
 /// </summary>
 /// <remarks>
 /// Takes <paramref name="packageName"/> explicitly rather than the parameterless shape an
 /// earlier version had. Two reasons: it gives every package a single source of truth for its own
 /// name (resolved from DI as <see cref="PackageIdentity"/>, instead of a second string literal
-/// typed again when building the IEtlPackage), and it keeps this method from being the place
-/// every optional feature gets unconditionally wired in -- e.g. email notifications are NOT
+/// typed again in the generated <c>Program.cs</c>'s own flat script), and it keeps this method
+/// from being the place every optional feature gets unconditionally wired in -- e.g. email notifications are NOT
 /// registered here; a package opts in explicitly via
 /// <c>builder.Services.AddEmailNotifications(builder.Configuration)</c> in its own Program.cs.
 /// </remarks>
@@ -58,7 +57,6 @@ public static class EtlHost
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<ISqlBulkCopyFactory, SqlBulkCopyFactory>();
         builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
-        builder.Services.AddScoped<IPackageRunner, PackageRunner>();
 
         return builder;
     }

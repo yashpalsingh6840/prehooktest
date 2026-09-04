@@ -13,7 +13,7 @@ public class ProgramEmitterTests
             PackageName: "LoadEmployees",
             RootNamespace: "LoadEmployees",
             DbContextTypeName: "EmployeeDbContext",
-            PreLoadStatements: plan.PreLoadStatements,
+            PreLoadStatements: [new ProgramPreLoadStatement("SQL_TruncateTarget", "SQL_TruncateTargetStatement")],
             PreLoadFileActions: plan.PreLoadFileActions,
             Steps:
             [
@@ -31,9 +31,8 @@ public class ProgramEmitterTests
         Assert.Contains("builder.Services.AddEmailNotifications(builder.Configuration);", file.Content);
         Assert.Contains("return new CsvRowSource<EmployeeCsvRow>(\"FF_SRC_Employees\", csvOptions, new EmployeeCsvRowMap());", file.Content);
         Assert.Contains("var employeeFlow = new DataFlowStep<EmployeeCsvRow, Employee>(", file.Content);
-        Assert.Contains("PreLoadStatements: [\"TRUNCATE TABLE dbo.Employee;\"],", file.Content);
-        Assert.Contains("Steps: [employeeFlow],", file.Content);
-        Assert.Contains("PreLoadFileActions: []);", file.Content);
+        Assert.Contains("await uow.ExecuteSqlAsync(SQL_TruncateTargetStatement.BuildStatement(), CancellationToken.None);", file.Content);
+        Assert.Contains("results.Add(await employeeFlow.RunAsync(uow, load, CancellationToken.None));", file.Content);
         Assert.Contains("return ExitCode.Success;", file.Content);
         Assert.Contains("return ExitCode.LoadFailed;", file.Content);
 
@@ -50,7 +49,7 @@ public class ProgramEmitterTests
             PackageName: "LoadReferenceData",
             RootNamespace: "LoadReferenceData",
             DbContextTypeName: "ReferenceDataDbContext",
-            PreLoadStatements: plan.PreLoadStatements,
+            PreLoadStatements: [new ProgramPreLoadStatement("SQL_TruncateTargets", "SQL_TruncateTargetsStatement")],
             PreLoadFileActions: plan.PreLoadFileActions,
             Steps:
             [
@@ -66,16 +65,16 @@ public class ProgramEmitterTests
         Assert.Contains("var departmentFlow = new DataFlowStep<DepartmentCsvRow, Department>(", file.Content);
         Assert.Contains("var designationFlow = new DataFlowStep<DesignationCsvRow, Designation>(", file.Content);
         Assert.Contains(
-            "PreLoadStatements: [\"TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;\"],",
+            "await uow.ExecuteSqlAsync(SQL_TruncateTargetsStatement.BuildStatement(), CancellationToken.None);",
             file.Content);
-        Assert.Contains("Steps: [departmentFlow, designationFlow],", file.Content);
-        Assert.Contains("PreLoadFileActions: []);", file.Content);
+        Assert.Contains("results.Add(await departmentFlow.RunAsync(uow, load, CancellationToken.None));", file.Content);
+        Assert.Contains("results.Add(await designationFlow.RunAsync(uow, load, CancellationToken.None));", file.Content);
 
-        // Department must be wired (and appear in Steps) before Designation -- matches the
-        // real package's own topological order (PackagePlanner already proved this ordering
-        // in PackagePlannerTests; this asserts ProgramEmitter preserves it into the DI wiring).
-        Assert.True(file.Content.IndexOf("var departmentFlow", StringComparison.Ordinal)
-                  < file.Content.IndexOf("var designationFlow", StringComparison.Ordinal));
+        // Department must run before Designation -- matches the real package's own topological
+        // order (PackagePlanner already proved this ordering in PackagePlannerTests; this asserts
+        // ProgramEmitter preserves it into the emitted run calls).
+        Assert.True(file.Content.IndexOf("results.Add(await departmentFlow", StringComparison.Ordinal)
+                  < file.Content.IndexOf("results.Add(await designationFlow", StringComparison.Ordinal));
 
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }
@@ -98,28 +97,38 @@ public class ProgramEmitterTests
             PackageName: "SyntheticParallelShapes",
             RootNamespace: "SyntheticParallelShapes",
             DbContextTypeName: "SyntheticParallelShapesDbContext",
-            PreLoadStatements: ["IF OBJECT_ID('dbo.SyntheticLoadATemp') IS NULL CREATE TABLE dbo.SyntheticLoadATemp (ID INT);"],
+            PreLoadStatements: [new ProgramPreLoadStatement("SQL_CreateLoadATemp", "SQL_CreateLoadATempStatement")],
             PreLoadFileActions: [],
             Steps:
             [
                 new ProgramFlowStep(new ProgramFlowSpec("DFT_LoadA", new CsvFlowSource("FF_SRC_LoadA", "LoadA"), "LoadACsvRow", "LoadA", "LoadATransform", new SqlFlowSink())),
-                new ProgramSqlStep("SQL_UpdateLoadA", "UPDATE dbo.SyntheticLoadATemp SET EntryDate = EntryDate;"),
+                new ProgramSqlStep("SQL_UpdateLoadA", "SQL_UpdateLoadAStatement"),
             ]);
 
         var result = ProgramEmitter.Emit(request);
         var file = Assert.Single(result.Files);
 
         Assert.Contains("var loadAFlow = new DataFlowStep<LoadACsvRow, LoadA>(", file.Content);
+        // Same treatment for a pre-load statement: a call to its own named statement class, never
+        // an inline SQL literal (SqlStatementBuilderEmitter's own job is producing that class's
+        // file, which this hand-built request bypasses entirely).
+        Assert.Contains("await uow.ExecuteSqlAsync(SQL_CreateLoadATempStatement.BuildStatement(), CancellationToken.None);", file.Content);
+        // ProgramEmitter only ever wires a call to the named statement class (SqlStatementBuilderEmitter's
+        // own job is producing that class's file, which this hand-built request bypasses entirely) --
+        // never an inline SQL literal.
         Assert.Contains(
-            "var sQL_UpdateLoadAStep = new ExecuteSqlStep(\"SQL_UpdateLoadA\", \"UPDATE dbo.SyntheticLoadATemp SET EntryDate = EntryDate;\", sp.GetRequiredService<ILogger<ExecuteSqlStep>>());",
+            "var sQL_UpdateLoadAStep = new ExecuteSqlStep(\"SQL_UpdateLoadA\", SQL_UpdateLoadAStatement.BuildStatement(), sp.GetRequiredService<ILogger<ExecuteSqlStep>>());",
             file.Content);
-        Assert.Contains("Steps: [loadAFlow, sQL_UpdateLoadAStep],", file.Content);
-        Assert.Contains("PreLoadFileActions: []);", file.Content);
+        Assert.Contains("results.Add(await loadAFlow.RunAsync(uow, load, CancellationToken.None));", file.Content);
+        Assert.Contains("results.Add(await sQL_UpdateLoadAStep.RunAsync(uow, load, CancellationToken.None));", file.Content);
 
-        // The local variable declaration order must also put the SQL step after the flow --
-        // it references the local, so declaring it out of order wouldn't even compile.
+        // Both the local variable construction order AND the RunAsync call order must put the SQL
+        // step after the flow -- matching the plan's own topological order (the two locals are
+        // otherwise independent of one another; this ordering is preserved, not required to compile).
         Assert.True(file.Content.IndexOf("var loadAFlow", StringComparison.Ordinal)
                   < file.Content.IndexOf("var sQL_UpdateLoadAStep", StringComparison.Ordinal));
+        Assert.True(file.Content.IndexOf("results.Add(await loadAFlow", StringComparison.Ordinal)
+                  < file.Content.IndexOf("results.Add(await sQL_UpdateLoadAStep", StringComparison.Ordinal));
 
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }

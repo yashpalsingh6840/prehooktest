@@ -40,14 +40,14 @@ public class DisabledExecutableTests
 
         // The disabled task's own statement appears nowhere -- neither position it could have
         // taken (pre-load list, or a post-flow SqlStep).
-        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Contains("disabled-ran"));
+        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Sql.Contains("disabled-ran"));
         Assert.DoesNotContain(plan.Steps.OfType<SqlStep>(), s => s.Sql.Contains("disabled-ran"));
 
         // Its successors are unaffected, which is the half that a naive "skip the branch" fix
         // would have got wrong: the flow still plans, and the Execute SQL Task after the flow is
         // still correctly a post-flow step rather than a pre-load statement.
         Assert.Single(plan.Flows);
-        Assert.Contains(plan.PreLoadStatements, s => s.Contains("'pre'"));
+        Assert.Contains(plan.PreLoadStatements, s => s.Sql.Contains("'pre'"));
         Assert.Contains(plan.Steps.OfType<SqlStep>(), s => s.TaskName == "SQL_MarkPost");
     }
 
@@ -61,7 +61,7 @@ public class DisabledExecutableTests
 
         var plan = PackagePlanner.Plan(package);
 
-        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Contains("inside-disabled-seq"));
+        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Sql.Contains("inside-disabled-seq"));
         Assert.DoesNotContain(plan.Steps.OfType<SqlStep>(), s => s.Sql.Contains("inside-disabled-seq"));
         Assert.DoesNotContain(plan.Steps.OfType<SqlStep>(), s => s.TaskName == "SQL_InsideDisabledSeq");
     }

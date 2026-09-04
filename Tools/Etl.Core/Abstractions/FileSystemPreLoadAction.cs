@@ -2,14 +2,12 @@ namespace Etl.Core.Abstractions;
 
 /// <summary>
 /// A pre-load file operation -- e.g. archiving a source workbook before a Data Flow Task reads
-/// it. Kept as a separate list on <see cref="IEtlPackage"/>
-/// (<see cref="IEtlPackage.PreLoadFileActions"/>), not folded into <see cref="IEtlPackage.PreLoadStatements"/>
-/// or <see cref="IEtlPackage.Steps"/>: it isn't SQL (so it can't join the string list), and it
-/// isn't transactional/row-counted the way an <see cref="ILoadTask"/> step is (a file copy can't
-/// be rolled back, and reporting "0 rows" for it in <see cref="PackageResult.Steps"/> would be
-/// misleading). Runs after every <see cref="IEtlPackage.PreLoadStatements"/> entry and before
-/// any <see cref="IEtlPackage.Steps"/> entry -- SSIS-evidenced order (RBC_Demo_ETL's
-/// Package_Advanced.dtsx: SQL_TruncateTargets, an Execute SQL Task, always precedes
+/// it. Kept as its own action list in a generated <c>Program.cs</c>, not folded into the pre-load
+/// SQL statement list or the ordered step list: it isn't SQL (so it can't join the string list),
+/// and it isn't transactional/row-counted the way an <see cref="ILoadTask"/> step is (a file copy
+/// can't be rolled back, and reporting "0 rows" for it in <see cref="PackageResult.Steps"/> would
+/// be misleading). Runs after every pre-load SQL statement and before any step -- SSIS-evidenced
+/// order (RBC_Demo_ETL's Package_Advanced.dtsx: SQL_TruncateTargets, an Execute SQL Task, always precedes
 /// FST_ArchiveWorkbook, a File System Task, inside the same Sequence Container). A package
 /// whose real precedence constraints interleave SQL and file pre-load actions in some OTHER
 /// order is a gap for the generator to report, not something this two-list shape can express.

@@ -155,6 +155,17 @@ internal static class GenerateCommand
                 File.WriteAllText(path, file.Content);
             }
 
+            // Unlike result.Files, each RelativePath here is already relative to generateDir
+            // itself (e.g. "LoadEmployees.Tests/LoadEmployees.Tests.csproj") -- see
+            // PackageGenerateResult.SiblingFiles' own doc comment for why a starter test
+            // project must be a SIBLING of the main project, not nested inside it.
+            foreach (var file in result.SiblingFiles)
+            {
+                var path = Path.Combine(generateDir, file.RelativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, file.Content);
+            }
+
             // Work packets live under <out>/gaps/, deliberately NOT inside <out>/generate/ --
             // that tree is "the buildable solution" and nothing else, so a stray .md never ends up
             // in a project directory someone is about to `dotnet build`.
@@ -185,7 +196,7 @@ internal static class GenerateCommand
         // Tools/ in view at all, so nothing there was ever going to be picked up automatically.
         WriteAiAssistantGuide(Path.Combine(outDir, "HOW-TO-FILL-GAPS.md"), allGaps, fillsDir, outDir);
 
-        var totalFiles = results.Sum(r => r.Files.Count);
+        var totalFiles = results.Sum(r => r.Files.Count + r.SiblingFiles.Count);
         var totalGaps = results.Sum(r => r.Gaps.Count) + fixedFileGaps.Count;
         var packets = allGaps.Count(g => g.PacketPath is not null);
         Console.WriteLine($"generate: {totalFiles} file(s) written across {results.Count} package(s), {totalGaps} gap(s) -- see {reportPath}");
@@ -279,6 +290,13 @@ internal static class GenerateCommand
         "    <PackageVersion Include=\"Microsoft.Extensions.Hosting\" Version=\"10.0.11\" />",
         "    <PackageVersion Include=\"Microsoft.Extensions.Configuration.UserSecrets\" Version=\"10.0.11\" />",
         "    <PackageVersion Include=\"System.Text.Encoding.CodePages\" Version=\"10.0.11\" />",
+        // Same versions this tool's own test projects already build with on this machine
+        // (Tools/SsisExtractor/tests/*/*.csproj) -- a real, already-proven-working choice rather
+        // than a guessed "latest" one. Only referenced by a {PackageName}.Tests project
+        // (TestProjectEmitter), never by the main generated project itself.
+        "    <PackageVersion Include=\"Microsoft.NET.Test.Sdk\" Version=\"17.8.0\" />",
+        "    <PackageVersion Include=\"xunit\" Version=\"2.5.3\" />",
+        "    <PackageVersion Include=\"xunit.runner.visualstudio\" Version=\"2.5.3\" />",
         "  </ItemGroup>",
         "",
         "</Project>",
@@ -360,6 +378,20 @@ internal static class GenerateCommand
         foreach (var r in results.Where(r => r.Files.Any(f => f.RelativePath == "Program.cs")).OrderBy(r => r.PackageName, StringComparer.Ordinal))
             slnLines.Add($"    <Project Path=\"{r.PackageName}/{r.PackageName}.csproj\" />");
         slnLines.Add("  </Folder>");
+
+        var testProjectPackageNames = results
+            .Where(r => r.SiblingFiles.Any(f => f.RelativePath == $"{r.PackageName}.Tests/{r.PackageName}.Tests.csproj"))
+            .Select(r => r.PackageName)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+        if (testProjectPackageNames.Count > 0)
+        {
+            slnLines.Add("  <Folder Name=\"/tests/\">");
+            foreach (var packageName in testProjectPackageNames)
+                slnLines.Add($"    <Project Path=\"{packageName}.Tests/{packageName}.Tests.csproj\" />");
+            slnLines.Add("  </Folder>");
+        }
+
         slnLines.Add("</Solution>");
         File.WriteAllText(Path.Combine(generateDir, "Generated.slnx"), JoinLines(slnLines));
 
@@ -435,15 +467,15 @@ internal static class GenerateCommand
         sb.AppendLine("Phase 3 of the `ssisx generate` plan: one runnable C# project per package, written under `generate/<Package>/`, plus Directory.Build.props/Directory.Packages.props/Shared/appsettings.Shared.json/Generated.slnx written once under `generate/`. Every generated file carries no hand-editing expectation -- regenerate freely; anything a human needs to add belongs in the package's own appsettings.json or a sibling file this tool never writes.");
         sb.AppendLine();
 
-        var totalFiles = results.Sum(r => r.Files.Count);
+        var totalFiles = results.Sum(r => r.Files.Count + r.SiblingFiles.Count);
         var totalGaps = results.Sum(r => r.Gaps.Count) + fixedFileGaps.Count;
         sb.AppendLine($"**{totalFiles} file(s) written across {results.Count} package(s), {totalGaps} gap(s).**");
         sb.AppendLine();
 
-        sb.AppendLine("| Package | Files written | Gaps |");
-        sb.AppendLine("|---|---|---|");
+        sb.AppendLine("| Package | Files written | Starter tests | Gaps |");
+        sb.AppendLine("|---|---|---|---|");
         foreach (var r in results.OrderBy(r => r.PackageName, StringComparer.Ordinal))
-            sb.AppendLine($"| {r.PackageName} | {r.Files.Count} | {r.Gaps.Count} |");
+            sb.AppendLine($"| {r.PackageName} | {r.Files.Count} | {r.SiblingFiles.Count} | {r.Gaps.Count} |");
         sb.AppendLine();
 
         sb.AppendLine("## Gaps -- not silently dropped, each has a reason");

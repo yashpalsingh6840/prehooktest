@@ -12,7 +12,7 @@ namespace Ssis.Extract.Codegen.Tests;
 ///
 /// <list type="bullet">
 /// <item><c>ExpressionAndConstraint</c> with the constraint half at Success becomes a guard on the
-///   step it gates (an <c>Etl.Core</c> ConditionalStep).</item>
+///   step it gates (a real <c>if</c>/<c>else</c> in the generated <c>Program.cs</c>).</item>
 /// <item>A pure <c>Value=Failure</c> constraint becomes a FAILURE HANDLER -- run after the package
 ///   transaction is rolled back, committing on its own, with the package still failing.</item>
 /// </list>
@@ -45,11 +45,11 @@ public class ConditionalConstraintTests
 
         var gated = plan.Steps.OfType<SqlStep>().ToDictionary(s => s.TaskName);
         Assert.Equal(
-            "(v.GetRequired<int>(\"User::Threshold\") == 0)",
+            "(packageVariables.GetRequired<int>(\"User::Threshold\") == 0)",
             gated["SQL_GateTrue"].Guard!.CSharpPredicate);
         Assert.Equal("@[User::Threshold] == 0", gated["SQL_GateTrue"].Guard!.SsisExpression);
         Assert.Equal(
-            "(v.GetRequired<int>(\"User::RowsLoaded\") > 0)",
+            "(packageVariables.GetRequired<int>(\"User::RowsLoaded\") > 0)",
             gated["SQL_GateFromScript"].Guard!.CSharpPredicate);
 
         // The unconditional steps stay unguarded -- a guard applied to everything would pass this
@@ -66,7 +66,7 @@ public class ConditionalConstraintTests
     }
 
     [Fact]
-    public void Generate_WrapsAGatedStepInAConditionalStep_SharingOneSeededPackageVariables()
+    public void Generate_EmitsAnIfElseGuard_SharingOneSeededPackageVariables()
     {
         var package = LoadSyntheticFixture("SyntheticCondGuard.dtsx");
 
@@ -81,14 +81,23 @@ public class ConditionalConstraintTests
         Assert.Contains("packageVariables.Set(\"User::Threshold\", 0);", program.Content);
         Assert.Contains("packageVariables.Set(\"User::RowsLoaded\", 0);", program.Content);
 
-        Assert.Contains("var sQL_GateTrueStepGated = new ConditionalStep(", program.Content);
-        Assert.Contains("        sQL_GateTrueStep,", program.Content);
-        Assert.Contains("        v => (v.GetRequired<int>(\"User::Threshold\") == 0),", program.Content);
-        Assert.Contains("        sp.GetRequiredService<ILogger<ConditionalStep>>());", program.Content);
+        // A gated step's own bare local is constructed unconditionally (it has no side effects of
+        // its own); the CONDITION is applied at the call site, as a real if/else -- ConditionalStep
+        // no longer exists.
+        Assert.Contains("var sQL_GateTrueStep = new ExecuteSqlStep(", program.Content);
+        Assert.Contains("// Guard: @[User::Threshold] == 0", program.Content);
+        Assert.Contains("if ((packageVariables.GetRequired<int>(\"User::Threshold\") == 0))", program.Content);
+        Assert.Contains("results.Add(await sQL_GateTrueStep.RunAsync(uow, load, CancellationToken.None));", program.Content);
+        Assert.Contains(
+            "logger.LogInformation(\"{Step}: skipped -- its precedence constraint's condition ({Condition}) evaluated false\", \"SQL_GateTrue\", \"@[User::Threshold] == 0\");",
+            program.Content);
+        Assert.Contains("results.Add(new StepResult(\"SQL_GateTrue\", 0, 0, TimeSpan.Zero) { Skipped = true });", program.Content);
 
-        // The GATED local is what reaches Steps, not the bare one -- getting this wrong would
-        // compile cleanly and run the step unconditionally, so it is asserted directly.
-        Assert.Contains("sQL_GateTrueStepGated, sQL_GateFalseStepGated, sQL_GateFromScriptStepGated]", program.Content);
+        // The unconditional steps (the Script Task and the flow) still run unguarded -- a guard
+        // applied to everything would pass this suite's positive assertions while breaking every
+        // package that has no conditional edge.
+        Assert.Contains("results.Add(await sCR_SetRowsStep.RunAsync(uow, load, CancellationToken.None));", program.Content);
+        Assert.Contains("results.Add(await syntheticCondGuardTargetFlow.RunAsync(uow, load, CancellationToken.None));", program.Content);
         CodeAssertions.AssertNoSyntaxErrors(program.Content);
     }
 
@@ -109,7 +118,7 @@ public class ConditionalConstraintTests
         Assert.Contains("hoisted into the flat pre-load list", gap.Reason);
         Assert.True(gap.IsBlocking);
         Assert.Equal(GapKind.ConditionalConstraint, gap.Kind);
-        Assert.Contains(plan.PreLoadStatements, s => s.Contains("TRUNCATE"));
+        Assert.Contains(plan.PreLoadStatements, s => s.Sql.Contains("TRUNCATE"));
     }
 
     /// <summary>
@@ -204,7 +213,7 @@ public class ConditionalConstraintTests
         // statement. Generating it in both places is exactly the bug this closes -- it would run on
         // every successful run.
         Assert.DoesNotContain(plan.Steps.OfType<SqlStep>(), s => s.TaskName == "SQL_Handler");
-        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Contains("handled"));
+        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Sql.Contains("handled"));
 
         // ...while the genuinely unconditional post-flow task still is one.
         Assert.Contains(plan.Steps.OfType<SqlStep>(), s => s.TaskName == "SQL_Body");
@@ -219,8 +228,15 @@ public class ConditionalConstraintTests
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
         var program = Assert.Single(result.Files, f => f.RelativePath.EndsWith("Program.cs"));
-        Assert.Contains("FailureHandlers: [new FailureHandlerAction(\"SQL_Handler\",", program.Content);
-        Assert.Contains("Steps: [syntheticFailureHandlerTargetFlow, sQL_BodyStep],", program.Content);
+        // Run strictly after the rollback, inside the catch block's own try/catch-per-handler loop
+        // -- IUnitOfWork.ExecuteSqlWithoutTransactionAsync itself throws while a transaction is
+        // still active, so this can never enlist in the (already-discarded) load transaction.
+        Assert.Contains(
+            "try { await uow.ExecuteSqlWithoutTransactionAsync(\"INSERT dbo.SyntheticFailureHandlerLog (Marker) VALUES (N'handled');\", CancellationToken.None); handlersRun.Add(\"SQL_Handler\"); }",
+            program.Content);
+        Assert.Contains("results.Add(await syntheticFailureHandlerTargetFlow.RunAsync(uow, load, CancellationToken.None));", program.Content);
+        Assert.Contains("results.Add(await sQL_BodyStep.RunAsync(uow, load, CancellationToken.None));", program.Content);
+        Assert.Contains("FailureHandlersRun = handlersRun", program.Content);
         Assert.DoesNotContain("sQL_HandlerStep", program.Content);
         CodeAssertions.AssertNoSyntaxErrors(program.Content);
     }

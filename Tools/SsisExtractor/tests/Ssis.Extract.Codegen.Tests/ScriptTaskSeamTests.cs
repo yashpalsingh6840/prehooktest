@@ -43,7 +43,7 @@ public class ScriptTaskSeamTests
 
         // The Execute SQL Task is genuinely pre-flow and ordered first, so hoisting it is correct
         // and must not be reported as an inversion.
-        Assert.Contains(plan.PreLoadStatements, s => s.Contains("TRUNCATE"));
+        Assert.Contains(plan.PreLoadStatements, s => s.Sql.Contains("TRUNCATE"));
         Assert.DoesNotContain(plan.Gaps, g => g.Location.EndsWith(".Hoisting"));
     }
 

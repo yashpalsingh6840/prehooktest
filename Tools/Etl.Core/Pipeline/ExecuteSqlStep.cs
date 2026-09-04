@@ -6,9 +6,9 @@ namespace Etl.Core.Pipeline;
 
 /// <summary>
 /// An Execute SQL Task positioned AFTER at least one Data Flow Task -- runs inside the same
-/// transaction as every other step (PackageRunner's own uow), unlike a pre-load statement,
-/// which PackageRunner runs from IEtlPackage.PreLoadStatements before any step at all. Row
-/// count is reported as written, not read -- there is nothing upstream to read from.
+/// transaction as every other step (the package's own shared uow), unlike a pre-load statement,
+/// which a generated Program.cs runs from its own pre-load statement list before any step at
+/// all. Row count is reported as written, not read -- there is nothing upstream to read from.
 /// </summary>
 public sealed class ExecuteSqlStep(string name, string sql, ILogger<ExecuteSqlStep> logger) : ILoadTask
 {

@@ -15,7 +15,13 @@ public sealed class DepartmentTransform : IRowTransform<DepartmentCsvRow, Depart
         DepartmentName = row.DepartmentName,
         CostCenter = row.CostCenter,
         HeadCount = row.HeadCount,
-        DepartmentKey = WidthGuard.Wstr($"{SsisFn.Upper(row.DepartmentCode)}-{SsisFn.Str(row.DepartmentID)}", 25, nameof(Department.DepartmentKey), ctx.RowNumber),
-        LoadedAtUtc = ctx.LoadedAtUtc,
+        DepartmentKey = ComputeDepartmentKey(row, ctx),
+        LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),
     };
+
+    // (DT_WSTR,25)(UPPER(DepartmentCode) + "-" + (DT_WSTR,10)DepartmentID)
+    public static string ComputeDepartmentKey(DepartmentCsvRow row, in RowContext ctx) => WidthGuard.Wstr($"{SsisFn.Upper(row.DepartmentCode)}-{SsisFn.Str(row.DepartmentID)}", 25, nameof(Department.DepartmentKey), ctx.RowNumber);
+
+    // GETUTCDATE()
+    public static DateTime ComputeLoadedAtUtc(DepartmentCsvRow row, in RowContext ctx) => ctx.LoadedAtUtc;
 }

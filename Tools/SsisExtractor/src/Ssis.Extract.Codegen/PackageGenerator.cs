@@ -12,7 +12,19 @@ public sealed record PackageGenerateResult(
     List<GeneratedFile> Files,
     List<GenerationGap> Gaps,
     string? TargetServer = null,
-    string? TargetDatabase = null);
+    string? TargetDatabase = null)
+{
+    /// <summary>Files that must NOT land under <c>generate/{PackageName}/</c> alongside
+    /// <see cref="Files"/> -- each one's own <see cref="GeneratedFile.RelativePath"/> is relative
+    /// to the `--out` directory's own <c>generate/</c> folder directly. Today this is exactly
+    /// <c>{PackageName}.Tests/</c>'s own project file and starter test classes: a sibling
+    /// directory, not a subdirectory of the main project, is what keeps the main project's own
+    /// SDK-style <c>**/*.cs</c> compile glob from picking up test files that reference xUnit (a
+    /// package reference the main, non-test project never takes) -- see
+    /// <c>GenerateCommand.WriteFixedFiles</c>'s own doc comment for the rest of that wiring.
+    /// Defaults to empty so every existing caller/test is unaffected.</summary>
+    public List<GeneratedFile> SiblingFiles { get; init; } = [];
+}
 
 /// <summary>
 /// One package's worth of orchestration over the 8 emitters + <see cref="PackagePlanner"/>:
@@ -41,6 +53,10 @@ public static partial class PackageGenerator
         var ns = namespacePrefix is null ? package.ObjectName : $"{namespacePrefix}.{package.ObjectName}";
         var files = new List<GeneratedFile>();
         var gaps = new List<GenerationGap>();
+        // {PackageName}.Tests/ -- populated per-flow (see the plain single-destination flow
+        // path below), written to a SIBLING directory of the main project, never nested inside
+        // it. Empty unless at least one flow's own starter test was actually generated.
+        var testFiles = new List<GeneratedFile>();
 
         // A connection manager whose sensitive property is DPAPI-encrypted (ProtectionLevel
         // EncryptSensitiveWithUserKey/EncryptSensitiveWithPassword) is undecryptable outside the
@@ -301,6 +317,33 @@ public static partial class PackageGenerator
                 continue;
             }
 
+            // A starter unit test for the transform that just got wired -- see
+            // TransformTestEmitter's own doc comment for exactly what's covered. Now includes a
+            // Data-Conversion-produced destination column referenced DIRECTLY (TransformTestEmitter
+            // itself detects and gaps the harder case -- a Derived Column expression that
+            // CROSS-REFERENCES a Data-Conversion column -- rather than misgenerating a row
+            // initializer for a property that doesn't exist). Still scoped away from a Flat File
+            // Destination: that destination's own row/write shape hasn't been verified against
+            // this emitter yet.
+            if (!isFlatFileDestination)
+            {
+                var testResult = TransformTestEmitter.Emit(new TransformTestRequest(
+                    TestNamespace: $"{package.ObjectName}.Tests",
+                    TransformClassName: transformClassName,
+                    MappingNamespace: $"{ns}.Mapping",
+                    RowTypeNamespace: programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql",
+                    RowTypeName: rowTypeName,
+                    EntityNamespace: $"{ns}.Model",
+                    EntityName: entityName,
+                    Pipeline: flow.Pipeline,
+                    DerivedColumn: flow.DerivedColumn,
+                    DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+                    DestinationComponent: flow.DestinationComponent));
+                gaps.AddRange(testResult.Gaps);
+                foreach (var testFile in testResult.Files)
+                    testFiles.Add(testFile with { RelativePath = $"{package.ObjectName}.Tests/{testFile.RelativePath}" });
+            }
+
             var rowCountVariableNames = flow.RowCounts is { Count: > 0 }
                 ? flow.RowCounts.Select(rc => rc.VariableName).ToList()
                 : null;
@@ -364,7 +407,7 @@ public static partial class PackageGenerator
                     programSteps.Add(programOleDbCommand);
                     break;
                 case SqlStep sqlStep:
-                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, gaps));
+                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, $"{ns}.Mapping", gaps));
                     break;
                 case ScriptTaskStep { Task: var scriptTask }:
                 {
@@ -383,7 +426,7 @@ public static partial class PackageGenerator
                     break;
                 case ForEachFileLoopStep loopStep:
                 {
-                    var programLoop = ResolveForEachFileLoop(loopStep.Loop, gaps);
+                    var programLoop = ResolveForEachFileLoop(loopStep.Loop, files, $"{ns}.Mapping", gaps);
                     if (programLoop is not null) programSteps.Add(programLoop);
                     break;
                 }
@@ -393,23 +436,39 @@ public static partial class PackageGenerator
             }
 
             // Carried across rather than re-derived, and applied here rather than in each case
-            // above so no per-kind branch needs to know guards exist. A step whose own gate failed
-            // contributes no program step at all, in which case there is nothing to gate -- the
-            // guard is not silently lost either, since that flow already reported its own gap.
-            if (step.Guard is { } guard && programSteps.Count == programStepsBefore + 1)
-                programSteps[^1] = programSteps[^1] with
-                {
-                    Guard = new ProgramStepGuard(guard.SsisExpression, guard.CSharpPredicate),
-                };
+            // above so no per-kind branch needs to know guards/flow-groups exist. A step whose own
+            // gate failed contributes no program step at all, in which case there is nothing to
+            // stamp -- the guard/flow-group is not silently lost either, since that flow already
+            // reported its own gap.
+            if (programSteps.Count == programStepsBefore + 1)
+            {
+                programSteps[^1] = programSteps[^1] with { FlowGroup = step.FlowGroup };
+                if (step.Guard is { } guard)
+                    programSteps[^1] = programSteps[^1] with
+                    {
+                        Guard = new ProgramStepGuard(guard.SsisExpression, guard.CSharpPredicate),
+                    };
+            }
         }
 
         if (wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0 || wiredDataFlowLoops.Count > 0)
         {
+            // Named, testable statement class (SqlStatementBuilderEmitter) rather than an
+            // anonymous string literal embedded in Program.cs -- same treatment ResolveSqlStep
+            // already gives a post-flow SQL step, applied here to a pre-load one.
+            var preLoadStatements = new List<ProgramPreLoadStatement>();
+            foreach (var stmt in plan.PreLoadStatements)
+            {
+                var statementClassName = stmt.TaskName + "Statement";
+                Merge(files, gaps, SqlStatementBuilderEmitter.Emit($"{ns}.Mapping", stmt.TaskName, stmt.Sql));
+                preLoadStatements.Add(new ProgramPreLoadStatement(stmt.TaskName, statementClassName));
+            }
+
             Merge(files, gaps, ProgramEmitter.Emit(new ProgramRequest(
                 PackageName: package.ObjectName,
                 RootNamespace: ns,
                 DbContextTypeName: $"{package.ObjectName}DbContext",
-                PreLoadStatements: plan.PreLoadStatements,
+                PreLoadStatements: preLoadStatements,
                 PreLoadFileActions: plan.PreLoadFileActions,
                 Steps: programSteps)
             {
@@ -432,9 +491,14 @@ public static partial class PackageGenerator
                 SecondaryConnections: secondaryConnections.Values.ToList())));
 
             gaps.Add(new GenerationGap($"{package.ObjectName}.Notification", "a .dtsx carries no notification-recipient information -- OnSuccessRecipients/OnFailureRecipients were generated empty; fill in appsettings.json manually", IsBlocking: false));
+
+            // The test PROJECT file itself is only worth emitting once at least one starter
+            // test class exists to put in it -- an empty xUnit project is not useful output.
+            if (testFiles.Count > 0)
+                testFiles.Add(TestProjectEmitter.Emit(package.ObjectName));
         }
 
-        return new PackageGenerateResult(package.ObjectName, files, gaps, targetServer, targetDatabase);
+        return new PackageGenerateResult(package.ObjectName, files, gaps, targetServer, targetDatabase) { SiblingFiles = testFiles };
     }
 
     private static void Merge(List<GeneratedFile> files, List<GenerationGap> gaps, EmitResult result)
@@ -2155,15 +2219,22 @@ public static partial class PackageGenerator
     /// </summary>
     private static ProgramStep ResolveSqlStep(
         PackageSpec package, SqlStep sqlStep, string? targetServer, string? targetDatabase,
-        Dictionary<string, SecondaryConnectionRequest> secondaryConnections, List<GenerationGap> gaps)
+        Dictionary<string, SecondaryConnectionRequest> secondaryConnections, List<GeneratedFile> files,
+        string mappingNamespace, List<GenerationGap> gaps)
     {
+        // Named, testable statement class (SqlStatementBuilderEmitter) rather than an anonymous
+        // string literal embedded in Program.cs -- emitted once here regardless of which of the
+        // two ProgramStep shapes below this resolves to, since both reference it identically.
+        var statementClassName = sqlStep.TaskName + "Statement";
+        Merge(files, gaps, SqlStatementBuilderEmitter.Emit(mappingNamespace, sqlStep.TaskName, sqlStep.Sql));
+
         if (sqlStep.ConnectionManagerName is not { } cmName
             || FindConnectionManager(package, cmName) is not { } cm
             || cm.Parsed is not { Server: { } server, Database: { } database } parsed
             || targetServer is null || targetDatabase is null
             || (server == targetServer && database == targetDatabase))
         {
-            return new ProgramSqlStep(sqlStep.TaskName, sqlStep.Sql);
+            return new ProgramSqlStep(sqlStep.TaskName, statementClassName);
         }
 
         if (!secondaryConnections.ContainsKey(cmName))
@@ -2173,16 +2244,20 @@ public static partial class PackageGenerator
                 : new SecondaryConnectionRequest(cmName, "Windows", null, server, database);
         }
 
-        return new ProgramSecondaryConnectionSqlStep(sqlStep.TaskName, cmName, sqlStep.Sql);
+        return new ProgramSecondaryConnectionSqlStep(sqlStep.TaskName, cmName, statementClassName);
     }
 
     /// <summary>Translates a <see cref="ForEachFileLoopPlan"/>'s own raw SSIS facts into
     /// everything <see cref="ProgramForEachFileLoopStep"/> needs: the per-iteration SQL
-    /// expression (via <see cref="ForEachLoopEmitter"/>) and the resolved
-    /// <c>Etl.Core.Abstractions.ForEachFileNameMode</c> member name. Either can fail
-    /// independently, each with its own gap -- this step is simply omitted from the package
-    /// (not fatal to the rest of it), matching every other single-step gap in this file.</summary>
-    private static ProgramForEachFileLoopStep? ResolveForEachFileLoop(ForEachFileLoopPlan loop, List<GenerationGap> gaps)
+    /// expression (via <see cref="ForEachLoopEmitter"/>, emitted as its own named, parameterized
+    /// <c>{InnerTaskName}Statement</c> class -- <see cref="SqlStatementBuilderEmitter.EmitParameterized"/>,
+    /// the same treatment <see cref="ResolveSqlStep"/> already gives an ordinary Execute SQL
+    /// Task) and the resolved <c>Etl.Core.Abstractions.ForEachFileNameMode</c> member name. Either
+    /// can fail independently, each with its own gap -- this step is simply omitted from the
+    /// package (not fatal to the rest of it), matching every other single-step gap in this
+    /// file.</summary>
+    private static ProgramForEachFileLoopStep? ResolveForEachFileLoop(
+        ForEachFileLoopPlan loop, List<GeneratedFile> files, string mappingNamespace, List<GenerationGap> gaps)
     {
         const string currentFileParamName = "currentFile";
         var translated = ForEachLoopEmitter.TranslateSqlTemplate(loop.SqlTemplate, loop.VariableName, currentFileParamName);
@@ -2195,8 +2270,12 @@ public static partial class PackageGenerator
         var nameMode = ResolveForEachFileNameMode(loop.NameRetrievalTypeRaw, loop.TaskName, gaps);
         if (nameMode is null) return null;
 
+        var statementClassName = loop.InnerTaskName + "Statement";
+        Merge(files, gaps, SqlStatementBuilderEmitter.EmitParameterized(
+            mappingNamespace, loop.InnerTaskName, currentFileParamName, ((TranslatedOk)translated).CSharpExpression));
+
         return new ProgramForEachFileLoopStep(loop.TaskName, loop.Folder, loop.FileSpec, loop.Recurse, nameMode,
-            currentFileParamName, ((TranslatedOk)translated).CSharpExpression);
+            currentFileParamName, statementClassName);
     }
 
     /// <summary>Raw values from Microsoft's public IDTSForEachFileEnumerator documentation --
