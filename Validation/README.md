@@ -1,6 +1,6 @@
 # ssis-validate -- gate 3 prep (golden corpus + comparison harness)
 
-Status: **prep work for [`Migration-Validation-Plan.md`](../Migration-Validation-Plan.md)
+Status: **prep work for [`Migration-Validation-Plan.md`](../Docs/Migration-Validation-Plan.md)
 §5, built before a C# rewrite exists.** A golden corpus captured from both of this PoC's real
 SSIS packages, a portable comparison harness verified against a self-test stand-in job (not a
 real rewrite -- there isn't one yet), and a Docker Compose SQL-Server-on-Linux target proving

@@ -300,18 +300,37 @@ public static class PackageClassEmitter
         var componentMethods = new CodeWriter();
         componentMethods.Indent();
 
+        // Only a SqlFlowSource (or a composite that nests one -- Merge Join/Union/Aggregate can
+        // all have a SQL side) needs `uow`, to bind its own connection to the package's active
+        // transaction (see SqlRowSource's own doc comment). Csv/FixedWidth/Excel read from a file
+        // and never touch it -- declaring an unused `uow` parameter on every source method
+        // regardless would be a real, visible wart in generated code meant to be read and reviewed.
+        bool SourceNeedsUow(FlowSourceSpec source) => source switch
+        {
+            SqlFlowSource => true,
+            MergeJoinFlowSource mj => SourceNeedsUow(mj.LeftSource) || SourceNeedsUow(mj.RightSource),
+            UnionFlowSource union => union.Sides.Any(SourceNeedsUow),
+            AggregateFlowSource agg => SourceNeedsUow(agg.InnerSource),
+            _ => false,
+        };
+
         string EmitSourceMethod(string rowTypeName, FlowSourceSpec source)
         {
             // A component's own SSIS object name is free text ("OLE DB Source" -- the exact
             // schema default nobody renames, per PackageGenerator.SanitizeIdentifier's own doc
             // comment) and not necessarily a valid C# identifier.
             var name = Reserve(PackageGenerator.SanitizeIdentifier(source.ComponentName));
-            componentMethods.OpenBlock($"internal IRowSource<{rowTypeName}> {name}(IUnitOfWork uow)");
+            var uowParam = SourceNeedsUow(source) ? "IUnitOfWork uow" : "";
+            componentMethods.OpenBlock($"internal IRowSource<{rowTypeName}> {name}({uowParam})");
             EmitSource(componentMethods, rowTypeName, source, "return ");
             componentMethods.CloseBlock();
             componentMethods.Blank();
             return name;
         }
+
+        // Mirrors SourceNeedsUow's own decision at the CALL site -- a source method that declared
+        // no `uow` parameter must be called with no argument either, or it won't compile.
+        string SourceCallArgs(FlowSourceSpec source) => SourceNeedsUow(source) ? "uow" : "";
 
         // A destination component carries no name of its own anywhere in the plan (unlike a
         // source, an OLE DB/Flat File Destination's own .dtsx object name was never threaded this
@@ -337,7 +356,7 @@ public static class PackageClassEmitter
                 case ProgramFlowStep { Flow: var flow }:
                 {
                     var sourceMethodName = EmitSourceMethod(flow.RowTypeName, flow.Source);
-                    methods.Line($"var source = {sourceMethodName}(uow);");
+                    methods.Line($"var source = {sourceMethodName}({SourceCallArgs(flow.Source)});");
                     if (flow.SortKey is { } sortKey)
                         methods.Line($"source = new SortingRowSource<{flow.RowTypeName}, {sortKey.KeyClrType}>({Str(flow.StepName + ".Sort")}, source, row => row.{sortKey.KeyColumnName}, Comparer<{sortKey.KeyClrType}>.Default);");
                     foreach (var variableName in flow.RowCountVariableNames ?? [])
@@ -398,7 +417,7 @@ public static class PackageClassEmitter
                 case ProgramConditionalSplitStep splitStep:
                 {
                     var splitSourceMethodName = EmitSourceMethod(splitStep.RowTypeName, splitStep.Source);
-                    methods.Line($"var source = {splitSourceMethodName}(uow);");
+                    methods.Line($"var source = {splitSourceMethodName}({SourceCallArgs(splitStep.Source)});");
                     methods.Line($"var step = new ConditionalSplitStep<{splitStep.RowTypeName}>(");
                     methods.Indent();
                     methods.Line($"{Str(splitStep.StepName)},");
@@ -432,7 +451,7 @@ public static class PackageClassEmitter
                 case ProgramMulticastStep multicastStep:
                 {
                     var multicastSourceMethodName = EmitSourceMethod(multicastStep.RowTypeName, multicastStep.Source);
-                    methods.Line($"var source = {multicastSourceMethodName}(uow);");
+                    methods.Line($"var source = {multicastSourceMethodName}({SourceCallArgs(multicastStep.Source)});");
                     methods.Line($"var step = new MulticastStep<{multicastStep.RowTypeName}>(");
                     methods.Indent();
                     methods.Line($"{Str(multicastStep.StepName)},");
@@ -462,7 +481,7 @@ public static class PackageClassEmitter
                 }
                 case ProgramOleDbCommandStep cmdStep:
                     var cmdSourceMethodName = EmitSourceMethod(cmdStep.RowTypeName, cmdStep.Source);
-                    methods.Line($"var source = {cmdSourceMethodName}(uow);");
+                    methods.Line($"var source = {cmdSourceMethodName}({SourceCallArgs(cmdStep.Source)});");
                     methods.Line($"var step = new OleDbCommandStep<{cmdStep.RowTypeName}>(");
                     methods.Indent();
                     methods.Line($"{Str(cmdStep.StepName)},");
@@ -515,6 +534,13 @@ public static class PackageClassEmitter
                 case ContainerNode cn:
                 {
                     var body = new CodeWriter();
+                    // `body`'s own lines get spliced into `methods` via RawLine, which bypasses
+                    // `methods`'s CURRENT indent rather than adding to it -- so `body` has to bake
+                    // in its own absolute indent up front. `methods` sits at level 1 ("inside the
+                    // class body") right up until its own OpenBlock call below pushes it to level 2
+                    // for this container method's body -- so `body` needs level 2 baked in too, the
+                    // same two-Indent() shape `run` uses for its own method-body content.
+                    body.Indent();
                     body.Indent();
                     foreach (var child in cn.Children)
                     {

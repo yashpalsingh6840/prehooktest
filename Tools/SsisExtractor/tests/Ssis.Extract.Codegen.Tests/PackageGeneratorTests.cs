@@ -971,7 +971,10 @@ public class PackageGeneratorTests
         var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticExcelSource.cs");
         Assert.Contains("using Etl.Core.Excel;", classFile.Content);
         Assert.Contains("using SyntheticExcelSource.Excel;", classFile.Content);
-        Assert.Contains("var source = ExcelSource(uow);", classFile.Content);
+        // No `uow` parameter/argument -- an Excel source never touches the package's transaction,
+        // unlike a SQL one (see PackageClassEmitter.SourceNeedsUow's own doc comment).
+        Assert.Contains("var source = ExcelSource();", classFile.Content);
+        Assert.Contains("internal IRowSource<SyntheticExcelSourceTargetExcelRow> ExcelSource()", classFile.Content);
         Assert.Contains(
             "return new ExcelRowSource<SyntheticExcelSourceTargetExcelRow>(\"Excel Source\", new ExcelSourceOptions { FilePath = File(\"Excel Source\"), WorksheetName = \"DripEligibility$\", HasHeaderRow = true }, SyntheticExcelSourceTargetExcelRowReader.Read);",
             classFile.Content);
@@ -1059,7 +1062,9 @@ public class PackageGeneratorTests
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
         var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticExcelSourceSqlCommandWhere.cs");
-        Assert.Contains("var source = ExcelSource(uow);", classFile.Content);
+        // No `uow` parameter/argument -- an Excel source (even with a WHERE filter applied
+        // client-side) never touches the package's transaction.
+        Assert.Contains("var source = ExcelSource();", classFile.Content);
         Assert.Contains(
             "return new FilteringRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", new ExcelRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", new ExcelSourceOptions { FilePath = File(\"Excel Source\"), WorksheetName = \"DripEligibility$\", HasHeaderRow = true }, SyntheticExcelSourceSqlCommandWhereTargetExcelRowReader.Read), row => row.CustomerID > 5);",
             classFile.Content);

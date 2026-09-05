@@ -4,7 +4,7 @@ Status: **slice 5 of 6 complete, minus `pull`; slice 6's object-model oracle als
 Script Task AND Script Component source extraction (plan §4.5, both halves) also done;
 `ssisx conformance` (gate 1) and `ssisx testgen` + `Ssis.Runtime.Expressions` (gate 2) of the
 migration-validation plan — also done**
-(build plan: `../../Phase0-Extractor-Plan.md` §8). Slice 6 bundles two things: `enrich`
+(build plan: `../../Docs/Phase0-Extractor-Plan.md` §8). Slice 6 bundles two things: `enrich`
 (needs SSISDB catalog access this engagement does not have, plan §11 decision 4 -- **out
 of scope rather than pending**, same as slice 5's `pull`; `ssisx diff` against a deployed
 `.ispac` covers the drift-detection use case `pull` existed to serve, offline) and the
@@ -165,7 +165,7 @@ test constructing that XML shape by hand. Full detail in `docs/report-schema.md`
 **The first output this tool produces that something else consumes rather than a human
 reads.** Everything above describes the old package; this turns the spec into the list of
 obligations a replacement must satisfy, and an exit code CI can gate on — gate 1 of
-`../../Migration-Validation-Plan.md` §3.
+`../../Docs/Migration-Validation-Plan.md` §3.
 
 ```powershell
 ssisx conformance --input ..\..\SSIS --out out          # generate rules + claim stubs

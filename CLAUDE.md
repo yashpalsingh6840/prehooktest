@@ -6670,6 +6670,141 @@ flags were inspected directly and confirmed present, one per dual-position task.
 Failure (e.g. Completion OR expression, Success OR expression) — only the one combination measured
 against real SSIS is generated; the others are plausible by analogy but not guessed at.
 
+### The method-per-task emitter rewrite, all 8 phases (2026-09-04/05) — `Program.cs` is no longer a flat script
+
+Motivated by a real readability failure, not a stylistic preference: reading
+`Out/walkthrough/walkthrough/Package_Advanced.walkthrough.md` (svk's own human-readable
+walkthrough, see the SsisValidationKit section below) beside the OLD generated `Program.cs` for
+the same package, there was no way to map one to the other — `SEQ_Prepare` left no trace at all
+(hoisted into a package-global pre-load list), the three components that ran CONCURRENTLY under
+real SSIS were three indistinguishable `results.Add(await ...)` lines, and every source/sink was
+built inside a `builder.Services.AddScoped<IRowSource<T>>(sp => {...})` DI lambda far from where
+it actually ran. Full design in `Docs/Emitter-Rewrite-Plan.md`; user-confirmed acceptance bar was
+"the smallest possible unit of work per SSIS component, each one independently testable and
+verifiable end to end" — driving every design choice below.
+
+**What changed, per phase:**
+1. **`CodeWriter`** (indent-aware `Line`/`OpenBlock`/`CloseBlock`/`Indent`/`Dedent`) replaces
+   `ProgramEmitter`'s old hand-tracked `"    "` indent strings. `PipelineFlowOrder`/
+   `ComponentInsight` moved from `Tools/SsisValidationKit/src/SvkCore` into `Ssis.Extract.Dtsx` so
+   the new emitter and svk's own walkthrough builder share the identical component numbering —
+   a walkthrough row and a generated method are the same number by construction, not by
+   convention.
+2. **`PackagePlanner`**: `PackageStep` gained `ContainerPath` (a Sequence Container is no longer
+   silently flattened) and `Wave` (0-based topological level within a container, from
+   `ControlFlowDagSpec.ParallelLevels` — two steps sharing a Wave had no precedence constraint
+   under real SSIS). Pre-load hoisting is GONE entirely — every step, including a pre-flow
+   Execute SQL/File System Task, is now an ordinary step at its true position. The now-redundant
+   `ReportParallelismFlattening` advisory (and its whole test file) is deleted, since parallelism
+   is generated for real now rather than merely noted.
+3. **`PackageClassEmitter`** (new, replacing most of the old 1200+-line `ProgramEmitter`): one
+   `internal` method per SSIS task/pipeline component, named and ordered exactly like the
+   package's own control flow — a Sequence Container becomes a method that calls its own children
+   in order (`SEQ_Prepare`), every source/sink is constructed DIRECTLY inside the method that uses
+   it, no DI-lambda indirection. `Program.cs` itself shrinks to ~10 lines of bootstrap
+   (`EtlHost.Create` → construct the package class → `RunAsync`).
+4. **Per-component methods, `internal` not `private`** — deliberately, so the generated
+   `{Package}.Tests` project (`InternalsVisibleTo`) can call any one of them in isolation. A
+   component folded into a transform (Derived Column, Data Conversion, Union All, Sort, Row Count)
+   gets no method of its own — named in the owning method's doc comment instead, honest rather
+   than pretending finer granularity than actually exists.
+5. **`TestProjectEmitter`/`TransformTestEmitter`/`SqlStatementBuilderEmitter`/
+   `SqlStatementTestEmitter`/`ColumnExpressionBuilders`** (new): starter `[Fact]`s per component —
+   an Execute SQL Task's own `{Task}Statement.BuildStatement()` gets a text-assertion test with no
+   database needed, a transform gets one assertion per output column (unchanged from before this
+   round, just now emitted via the shared `ColumnExpressionBuilders` rather than duplicated logic).
+6. **File paths from `appsettings.json`, not absolute literals** — a File System Task/ForEach
+   folder now resolves through `File(key)` (`FileSourceOptions`) the same way a CSV source already
+   did, closing a real portability gap (`Package_Advanced`'s old `Program.cs` had the third
+   party's own `D:\OneDrive\...` path baked in three times).
+7. **Real concurrency** — the biggest behavioral change of the eight. Contiguous same-Wave root
+   steps of width 1 stay sequential inside the one ambient transaction, exactly as before; a Wave
+   of width > 1 becomes a genuine `Task.WhenAll`, each branch in its OWN transaction via a new
+   `RunBranchAsync` helper (fresh `AsyncServiceScope` → fresh `IUnitOfWork` → its own
+   `BeginAsync`/bind-token/commit-or-rollback). The ambient transaction is committed immediately
+   before a concurrent wave and reopened immediately after (a `uowActive` flag, declared OUTSIDE
+   the `try` so the `catch` can see it, guards the ambient rollback for the case where the ambient
+   transaction isn't active when a branch fails). This surfaced one real, previously-latent
+   `Etl.Core.Data.UnitOfWork` bug, found only by an actual live run, not a unit test:
+   `CommitAsync`/`RollbackAsync` never cleared `_tx`/`_bindToken`, so re-`BeginAsync`ing the SAME
+   instance (needed to reopen the ambient transaction after a wave) threw "A transaction is
+   already active." Fixed by clearing both fields after commit/rollback, mirrored into
+   `D:\PoC\SSIS_Rewrite`. `PackageVariables` is now `ConcurrentDictionary`-backed (single-operation
+   safety only, not cross-branch read-modify-write — no tracked package needs that). `_results`
+   becomes a `ConcurrentBag<StepResult>` only for packages that actually have concurrency.
+8. **Task-level seams** — needed ZERO code changes: a Script Task already generates as its own
+   class with a `partial RunScriptAsync` seam, constructed inline from its owning task method, a
+   shape entirely independent of how `Program.cs` itself is structured. Verified rather than
+   assumed: regenerated `Package.dtsx` with `--seams`/no fills → exactly 8 `CS8795`s (one per
+   unfilled seam); applied the existing `fills-library` fills → 0 warnings/0 errors.
+
+**Verified against the plan's own bar, not just "it builds":**
+- Regenerated all 5 real `SSIS_From_Sandeep` packages + this PoC's own 2 with `--seams
+  --etl-core --fills` → **0 warnings/0 errors**, `fills-applied.json` shows all 4 existing
+  `Package` fills still applying cleanly (Script Task seam signature unaffected by the rewrite).
+- **Concurrency proven real, not cosmetic**, against `.\SQLFORPOC_2022` with debug+timestamped
+  logging on `SyntheticFlatFileDestination.dtsx` (3 independent root flows): 5 separate
+  `BeginAsync` calls total (ambient-before/3 branches/ambient-after), two branch transactions
+  began within 1.3ms of each other, and one branch's own work genuinely overlapped another's
+  completion in wall-clock time.
+- **Partial-failure semantics proven live**: broke one branch's own output path via
+  `appsettings.json` only (no code/`.dtsx` change) and reran — exit code 1, the failing branch's
+  file never written, the TWO SIBLING branches' already-committed work stood (their own CSV file
+  and SQL row both present, read back from the database, not trusted from the exit code), and the
+  generated code's own `if (uowActive)` guard confirmed the ambient rollback was correctly
+  skipped since the ambient transaction wasn't active at the failure point. One honest gap: no
+  fixture combines real concurrency with an `OnError` event handler, so that specific combination
+  (does the handler still fire when a concurrent sibling fails) remains unevidenced.
+- **Live no-regression run**: `LoadEmployees`+`LoadReferenceData` against `.\SQLFORPOC_2022`
+  (both sequential, no concurrency) — still 12/8/10 rows, byte-identical golden files confirm the
+  rewrite changes nothing observable for a package with no parallel waves.
+
+**Two real bugs found AFTER all 8 phases were "done," by actually reading the generated output**
+(the user's own review, not a test) — worth recording as a reminder that a green suite proves the
+emitter didn't regress its OWN prior behavior, never that newly-generated code is actually clean:
+1. **A Sequence Container's own method body was indented at the WRONG level** (4 spaces instead
+   of 8, matching the class-body level rather than one level deeper) — `PackageClassEmitter`'s
+   `ContainerNode` case built its own nested `CodeWriter` (`body`) with only ONE `Indent()` call,
+   then spliced its lines into `methods` via `RawLine`, which bypasses `methods`'s OWN current
+   indent entirely (by design, for splicing an already-fully-indented writer's output — see
+   `CodeWriter.RawLine`'s own doc comment) rather than adding to it. Every OTHER top-level writer
+   in this file (`run`, `methods` itself) already bakes in its correct ABSOLUTE indent up front for
+   exactly this reason; the container case's `body` writer just had the wrong number of levels
+   baked in. Fixed with a second `body.Indent()` call (mirroring `run`'s own two-`Indent()`
+   pattern, same comment shape), so `body`'s baseline now correctly matches wherever `methods`
+   will be sitting (level 2: "inside the class" + "inside this specific method's body") at the
+   point it gets spliced in.
+2. **Every source method declared an unused `IUnitOfWork uow` parameter**, even a file-based
+   source (Excel/CSV/fixed-width) that never touches it — `EmitSourceMethod` hardcoded
+   `(IUnitOfWork uow)` unconditionally, reasonable for a SQL source (which binds its own
+   connection to the package's active transaction, see `SqlRowSource`'s own doc comment) but a
+   real, visible wart on every other source in code meant to be read and reviewed. Fixed with a
+   new `SourceNeedsUow(FlowSourceSpec)` (recursive — a Merge Join/Union/Aggregate needs `uow` only
+   if ONE of its nested sides does) driving both the method's own declared signature and every
+   call site's argument list (`SourceCallArgs`), so `EXCEL_SRC_Drip()` and `OLESRC_CustomerIds(uow)`
+   each declare exactly what they use, never more.
+
+Both fixed, verified against the real motivating case (`Package_Advanced.dtsx`, whose `SEQ_Prepare`
+and `EXCEL_SRC_Drip` were the exact two examples that surfaced this): regenerated, both defects
+gone, `dotnet build` still 0 warnings/0 errors. Two golden files (`LoadEmployees.cs.txt`/
+`LoadReferenceData.cs.txt`, both flat-file-sourced, so both had the same unused-`uow` wart) patched
+to match; two `PackageGeneratorTests` (the Excel-source assertions) updated the same way. Full
+suite green afterward: 315/315 in `Ssis.Extract.Codegen.Tests`.
+
+**Also fixed the same session, unrelated to the emitter itself but caught reviewing what to
+commit:** moving `Migration-Validation-Plan.md`/`Phase0-Extractor-Plan.md`/
+`PoC-Architecture-Overview.md` into a new `Docs/` folder (alongside the new
+`Emitter-Rewrite-Plan.md`) broke 7 relative Markdown links across `Tools/SsisExtractor/README.md`,
+`Tools/SsisExtractor/docs/{conformance,gate2,report,spec}-schema.md`, `Validation/README.md`, and
+`Validation/docs/gate3-harness.md` — each needed one more `../Docs/` segment. Fixed, not left as a
+silent regression from an otherwise-unrelated repo tidy-up.
+
+**Not built:** an `OnError` handler firing correctly when a CONCURRENT sibling branch fails (no
+fixture combines both), and true concurrency across `Etl.Core.Data.SqlRowSource` connections that
+share a bind token beyond the two known-safe shapes already measured (`sp_bindsession`, see the
+2026-09-01 round above) — nothing new needed this round, but nobody has stress-tested a wider wave
+count than 3.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

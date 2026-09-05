@@ -98,6 +98,17 @@ branches in one shared transaction either). Everything that ran sequentially in 
 package still shares one transaction end to end, same as before. This is stated in the generated
 class's own doc comment and in `generate-report.md` -- read those rather than assuming.
 
+**A source/sink method's own parameter list is not the same for every one -- don't assume they
+all look alike when writing a test or a fill against one.** A source that reads from SQL (an OLE
+DB/ADO NET Source, or a Merge Join/Union/Aggregate that nests one) takes `(IUnitOfWork uow)`,
+because it binds its own connection to the package's active transaction -- a later flow reading a
+table an earlier one just wrote (still uncommitted) would otherwise deadlock. A source that reads
+from a file (CSV, fixed-width, Excel) or writes to a sink takes **no `uow` parameter at all**,
+since it never touches the transaction. Called sites match: `EXCEL_SRC_Drip()`, but
+`OLESRC_CustomerIds(uow)`. If you're calling one of these methods directly from a hand-written
+test, check its own declared signature rather than copying a `(uow)` call from a different
+component.
+
 ## Running against one package vs. many (the flexibility this exists for)
 
 Every command that reads packages (`extract`, `graph`, `report`, `conformance`, `testgen`,

@@ -79,7 +79,7 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
 
     internal async Task DFT_LoadDepartment(IUnitOfWork uow, CancellationToken ct)
     {
-        var source = FF_SRC_Department(uow);
+        var source = FF_SRC_Department();
         var transform = new DepartmentTransform();
         var sink = DepartmentDestination();
 
@@ -89,7 +89,7 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
 
     internal async Task DFT_LoadDesignation(IUnitOfWork uow, CancellationToken ct)
     {
-        var source = FF_SRC_Designation(uow);
+        var source = FF_SRC_Designation();
         var transform = new DesignationTransform();
         var sink = DesignationDestination();
 
@@ -97,7 +97,7 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
         await Step(step, uow, ct);
     }
 
-    internal IRowSource<DepartmentCsvRow> FF_SRC_Department(IUnitOfWork uow)
+    internal IRowSource<DepartmentCsvRow> FF_SRC_Department()
     {
         return new CsvRowSource<DepartmentCsvRow>("FF_SRC_Department", new CsvSourceOptions { FilePath = File("Department") }, new DepartmentCsvRowMap());
     }
@@ -107,7 +107,7 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
         return new SqlBulkSink<Department>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<Department>>());
     }
 
-    internal IRowSource<DesignationCsvRow> FF_SRC_Designation(IUnitOfWork uow)
+    internal IRowSource<DesignationCsvRow> FF_SRC_Designation()
     {
         return new CsvRowSource<DesignationCsvRow>("FF_SRC_Designation", new CsvSourceOptions { FilePath = File("Designation") }, new DesignationCsvRowMap());
     }

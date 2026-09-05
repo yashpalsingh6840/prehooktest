@@ -1,6 +1,6 @@
 # spec.json contract
 
-Status: **slice 5** (see `../../../Phase0-Extractor-Plan.md` §8 for the build-slice list).
+Status: **slice 5** (see `../../../Docs/Phase0-Extractor-Plan.md` §8 for the build-slice list).
 This document describes what `ssisx extract` writes today; it will grow with each slice
 rather than being rewritten, so a diff on this file is itself a changelog of the contract.
 `ssisx report`/`ssisx diff` output is documented separately in `report-schema.md`.

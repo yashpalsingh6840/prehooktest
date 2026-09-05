@@ -97,12 +97,16 @@ written specifically for that situation; this file assumes `Tools\` itself is wh
    `--etl-core` from what the user actually gave you (a real client folder path), never a
    placeholder like `D:\Something\SSIS` copied from a doc. If you are not sure what folder to
    point at, ask.
-9. **Budget your own reads.** Do not open `CLAUDE.md`, `Phase0-Extractor-Plan.md`,
-   `Migration-Validation-Plan.md`, or `docs/report-schema.md` -- they are this project's own
-   multi-hundred-KB development history, not written for you, and reading them will burn your
-   context for no benefit. Everything you need to operate this tool is in `COPILOT_GUIDE.md`
-   and `ssisx --help`. If a command's own `--help` output and the guide disagree, trust
-   `--help` -- it is generated from the same code that runs.
+9. **Budget your own reads.** Do not open `CLAUDE.md`, anything under `Docs\` (e.g.
+   `Docs\Emitter-Rewrite-Plan.md`, `Docs\Phase0-Extractor-Plan.md`,
+   `Docs\Migration-Validation-Plan.md`, `Docs\SsisValidationKit-Plan.md`), or
+   `SsisExtractor\docs\report-schema.md` -- they are this project's own multi-hundred-KB
+   development history and internal design plans, not written for you, and reading them will
+   burn your context for no benefit. None of this exists at all in a client-only copy of this
+   `Tools\` folder -- it's only reachable here because this is the full dev repo. Everything you
+   need to operate this tool is in `COPILOT_GUIDE.md` and `ssisx --help`. If a command's own
+   `--help` output and the guide disagree, trust `--help` -- it is generated from the same code
+   that runs.
 
 ## The one-sentence workflow
 

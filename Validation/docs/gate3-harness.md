@@ -1,6 +1,6 @@
 # Gate 3 prep — golden corpus + comparison harness
 
-Pre-work for [`Migration-Validation-Plan.md`](../../Migration-Validation-Plan.md) §5
+Pre-work for [`Migration-Validation-Plan.md`](../../Docs/Migration-Validation-Plan.md) §5
 (golden-dataset integration test in CI), built **before** a C# rewrite exists. Gate 3 itself
 needs two things that don't exist yet if you wait for the rewrite to start this: a captured
 golden corpus, and a comparison harness. Both are built now, against the two current SSIS

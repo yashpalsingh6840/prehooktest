@@ -78,7 +78,7 @@ internal sealed partial class LoadEmployeesPackage(IServiceProvider services)
 
     internal async Task DFT_LoadEmployees(IUnitOfWork uow, CancellationToken ct)
     {
-        var source = FF_SRC_Employees(uow);
+        var source = FF_SRC_Employees();
         var transform = new EmployeeTransform();
         var sink = EmployeeDestination();
 
@@ -86,7 +86,7 @@ internal sealed partial class LoadEmployeesPackage(IServiceProvider services)
         await Step(step, uow, ct);
     }
 
-    internal IRowSource<EmployeeCsvRow> FF_SRC_Employees(IUnitOfWork uow)
+    internal IRowSource<EmployeeCsvRow> FF_SRC_Employees()
     {
         return new CsvRowSource<EmployeeCsvRow>("FF_SRC_Employees", new CsvSourceOptions { FilePath = File("Employee") }, new EmployeeCsvRowMap());
     }
