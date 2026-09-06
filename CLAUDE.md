@@ -7029,6 +7029,21 @@ each one was believed at the time and each one turned out to be a partial answer
    `dotnet build` calls, forcing a transient, non-reused MSBuild node for each one specifically so
    its own process lifetime -- and its own pipe handles -- can never outlive it.
 
+**Correction (2026-09-06, found by an independent review commissioned later the same day -- see
+"Independent three-part review" below): this write-up is itself incomplete.** The shipped fix
+carries a FOURTH mechanism this list never mentions:
+`[assembly: Xunit.CollectionBehavior(DisableTestParallelization = true)]` at the top of
+`GeneratedSolutionBuildTests.cs`, with its own comment stating THIS -- not `-nodeReuse:false`
+alone -- is what actually closes the gap between the isolated-run speed and the full-project
+speed: xUnit's default per-class test-collection parallelism was letting this one class's 10+
+real subprocess spawns run at the same wall-clock time as the other ~335 fast unit tests in the
+same test run, which is what caused the MSBuild-node/NuGet-lock contention in the first place.
+The code is correct and is genuinely what keeps runs fast (re-verified independently, see below);
+only this narrative was missing a piece of it. Left the three points above as originally written
+(a true, still-useful account of the false starts) rather than rewritten, and recorded the
+correction here instead, per this file's own long-standing convention for a wrong or incomplete
+claim once evidence contradicts it.
+
 **Verified properly this time: three consecutive clean full-suite runs (355 tests each,
 `dotnet build-server shutdown` before each), not one lucky sample** -- 1m4s, 1m2s, 1m3s, 355/355
 every time. Then the WHOLE `SsisExtractor.slnx` (`dotnet test SsisExtractor.slnx`, all four test
@@ -7353,6 +7368,90 @@ trait. **Verified end to end, not just re-passed**: regenerated the fixture with
 green (5/5, was 4/4), then the FULL suite across both repos: 149+156+16+**356**
 (`Ssis.Extract.Codegen.Tests`, was 355, +1 for the new regression test) + 94+11+7 = **789 total**
 (was 788), zero regressions elsewhere.
+
+### Independent three-part review, commissioned after committing the plan (2026-09-06, later the same day)
+
+With all 10 Verification items checked and the work committed (`cc3d923`), the user asked for a
+genuinely independent review before moving on -- not a self-check, one written as a standalone
+prompt (`Docs/Generated-Tests-Plan-Review-Prompt.md`, kept in the repo for reuse) and handed to
+three fresh general-purpose agents in parallel, each told explicitly not to trust any prior
+"done"/"fixed" claim in this file and to back every finding with something actually run or read.
+
+**Part B (non-regression: `ssisx extract`/`conformance`/`testgen`/`generate`, `svk walkthrough`/
+`sampledata`) -- clean.** Every count matched this file exactly (100% coverage, 31/49 conformance
+rules, 5-covered/3-skipped testgen expressions), `conformance` was confirmed idempotent (byte-
+identical `conformance-report.json` across two runs), the walkthrough's Rule column cross-checked
+exactly against a fresh `conformance` run, and `SvkCore`'s governance boundary held by direct
+`ProjectReference` read, not just its own doc comment. One byte-diff nuance surfaced independently,
+already known: `LoadEmployees.cs` isn't byte-identical to pre-plan output because of the
+`uowActive`/Lookup-preload fix (see Item 2 above) riding in the same commit -- the agent re-derived
+the identical root cause from `git diff` on `PackageClassEmitter.cs` on its own, landing on the
+same explanation as this file's own account without being told it.
+
+**Part C (slowness fix robustness) -- confirmed ROBUST, plus the doc-completeness correction
+recorded in that section above.** Three isolated runs (68-70s), three full-suite runs (73-82s),
+and a genuine adversarial run (3 concurrent background loops, one deliberately spinning up
+persistent MSBuild nodes with node reuse left ON) all landed in a tight, consistent range with
+zero failures -- the adversarial run cost only ~20-30% (89s), nowhere near the original
+multi-hour stalls, and live process inspection during cleanup directly reconfirmed real leftover
+`/nodemode:1 /nodeReuse:true` MSBuild/VBCSCompiler processes, the exact mechanism the fix targets.
+All three previously-documented code components (`-nodeReuse:false`, concurrent `ReadToEndAsync`,
+timeout-driven `Kill(entireProcessTree: true)`) confirmed present by direct line-level read. The
+one real finding -- the missing `CollectionBehavior(DisableTestParallelization = true)` mechanism
+-- is now folded into that section's own write-up above.
+
+**Part A (plan completeness) -- two real, previously-silent gaps found, both closed the same
+session; two minor items left as-is.** A third and fourth instance of the "wired for shape X, not
+shape Y" bug class this file has already named twice (Conditional Split's own missing source test,
+the post-Phase-4 review round's Merge Join/Multicast transform-test gap):
+
+1. **`GenerateLookupThenAggregateFlow` (the real `DFT_LookupAndAggregate` composed shape) reached
+   its own return with NO "Aggregate source" starter test AND no gap either** -- unlike every
+   other flow shape, which degrades to an honest advisory when it can't produce real coverage.
+   Root cause: the standalone `GenerateAggregateFlow`'s own `testCandidates` parameter (feeding
+   `EmitAggregateSourceTest`) was never threaded through `GenerateLookupFlow`/
+   `GenerateLookupThenAggregateFlow` at all. **Fixed, and a second, real bug was caught fixing
+   it, not shipped**: a first attempt threaded `testCandidates` through unconditionally and
+   naively reused the standalone template's own `row => row.{GroupByOutputColumnName}` key
+   selector -- caught only by actually BUILDING the generated test (not by the gap-count report,
+   which showed nothing wrong): `CS0117`, `row.Region` doesn't exist, because in this composed
+   shape "Region" is a Lookup-copied reference column that only resolves via
+   `lKP_CountryCache[row.Country].Region`, never a bare row property (confirmed by reading the
+   real production `AGG_ByRegion()` method directly). Fixed properly by gating the real test on
+   `lookupKey is null` (the GroupBy value is a plain passthrough column -- safe, matches the
+   standalone template's own assumption) and falling back to the same honest
+   `GapKind.TestOracle` advisory `GenerateLookupFlow`'s own downstream-transform gap already uses
+   for the `lookupKey is not null` case (the one real evidenced shape,
+   `SyntheticLookupThenAggregate.dtsx`'s own "GroupBy Region"). Verified end to end: regenerated
+   the real fixture, confirmed the broken test is GONE and the honest advisory fires instead
+   (`TEST-ORACLE:SyntheticLookupThenAggregate:SyntheticLookupThenAggregateTarget`), 0 warnings/0
+   errors, 1/1 (`RunAsyncTests.cs` only) green.
+2. **`GenerateForEachDataFlowLoop` (a ForEach Loop whose body is a whole Data Flow Task) had zero
+   test coverage and zero gap, silently** -- the taxonomy's own "ForEach loop" row only covers the
+   SQL-statement-per-iteration shape; this Data-Flow-per-iteration shape has no dedicated test
+   shape at all (its own CSV source has no static Tier-A sample file to point a test at -- the
+   path is computed per iteration, not a fixed location), so building real coverage was correctly
+   judged out of scope for a same-session fix. Closed instead with the same honest
+   `GapKind.TestOracle` advisory pattern, naming exactly what has no coverage (the per-iteration
+   source, the transform, the sink) and why. Verified: regenerated `SyntheticForEachDataFlowLoop.dtsx`,
+   confirmed the new gap fires (`TEST-ORACLE:SyntheticForEachDataFlowLoop:FEL_SampleFiles`),
+   0 warnings/0 errors, 1/1 green.
+
+Both fixes threaded a real, existing precedent (the Lookup flow's own downstream-transform
+advisory) rather than inventing a new shape -- consistent with the plan's own "a component
+outside this pilot's own scope is a named, non-blocking gap, not a silent gap" design. Two
+existing tests updated to pin both fixes as regressions
+(`LookupFlowTests.Generate_WiresALookupThenAggregateFlow_ThroughAMulticast`,
+`PackageGeneratorTests.Generate_WiresAForEachDataFlowLoop_ConstructingAFreshCsvRowSourcePerIteration`)
+-- no new test FILES this round, so the suite count is unchanged: 149+156+16+357+94+11+7 = **790**,
+all green.
+
+**Two minor items surfaced, left as named follow-ups, not fixed:** `generate-report.md`'s "Starter
+tests" column counts every `testFiles` entry (including non-`[Fact]` infrastructure like
+`TestDoubles/*.cs`), not actual test methods -- a labeling inaccuracy, not a functional bug. And
+`/ssisx-rewrite`'s own Step-0 resume decision tree has no terminal state for a seam whose source
+is genuinely stripped (an unfillable `TEST-ORACLE`/`LOCAL-DATA` gap that will never close) -- it
+resumes at the same step forever, which is harmless (idempotent) but not a clean "done" state.
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**

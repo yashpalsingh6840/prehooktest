@@ -66,6 +66,15 @@ public class LookupFlowTests
         Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
         Assert.Contains(result.Gaps, g => g.Reason.Contains("Multicast 'MCAST_Matched' output 'Multicast Output 2'") && g.Reason.Contains("User::MatchedRows"));
         Assert.Contains(result.Gaps, g => g.Reason.Contains("Lookup 'LKP_Country' output 'Lookup No Match Output'") && g.Reason.Contains("User::UnmatchedRows"));
+        // A real, previously-silent gap caught 2026-09-06 by an independent review: this composed
+        // flow used to reach this point with NO "Aggregate source" starter test AND no gap either
+        // (unlike every other flow shape). The GroupBy value ("Region") only resolves through the
+        // Lookup cache here, not a plain row property, so it correctly degrades to an honest
+        // advisory rather than a naive reuse of the standalone Aggregate flow's own test template
+        // (which was tried first and caught -- by actually building the generated test, not the
+        // gap count -- emitting a CS0117 referencing a "Region" property that doesn't exist).
+        Assert.Contains(result.Gaps, g => g.Kind == GapKind.TestOracle && g.Reason.Contains("Lookup-copied reference column"));
+        Assert.DoesNotContain(result.SiblingFiles, f => f.RelativePath.EndsWith("AggregateRowSourceTests.cs"));
 
         var classFile = result.Files.Single(f => f.RelativePath == "SyntheticLookupThenAggregate.cs").Content;
 

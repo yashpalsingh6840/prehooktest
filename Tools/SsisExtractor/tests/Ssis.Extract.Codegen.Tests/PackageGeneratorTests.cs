@@ -929,9 +929,19 @@ public class PackageGeneratorTests
         Assert.Contains("await FEL_SampleFiles(uow, ct);", classFile.Content); // referenced in RunAsync
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        // Only the unavoidable, non-blocking Notification gap.
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticForEachDataFlowLoop.Notification", gap.Location);
+        // Two non-blocking gaps: the unavoidable Notification one, plus a real, previously-silent
+        // gap caught 2026-09-06 by an independent review -- this loop-body shape used to reach
+        // this point with NO starter test coverage AND no acknowledgment at all (unlike every
+        // other flow shape, which degrades to an honest advisory when it can't test something).
+        // No test files exist beyond RunAsyncTests.cs (asserted separately below).
+        Assert.Equal(2, result.Gaps.Count);
+        var testOracleGap = Assert.Single(result.Gaps, g => g.Kind == GapKind.TestOracle);
+        Assert.False(testOracleGap.IsBlocking);
+        Assert.Contains("no starter test coverage in this pilot", testOracleGap.Reason);
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticForEachDataFlowLoop.Notification");
+
+        Assert.DoesNotContain(result.SiblingFiles, f => f.RelativePath.EndsWith("SourceTests.cs"));
+        Assert.DoesNotContain(result.SiblingFiles, f => f.RelativePath.EndsWith("TransformTests.cs"));
     }
 
     [Fact]

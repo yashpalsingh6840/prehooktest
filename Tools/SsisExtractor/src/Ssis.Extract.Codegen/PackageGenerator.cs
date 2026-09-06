@@ -231,7 +231,8 @@ public static partial class PackageGenerator
                     var lookupFlow = GenerateLookupFlow(
                         package, ns, flow, lookup, cacheClassName, resolvedJoinKey, fileSourceEntries, files, tables,
                         functionsUsed, primaryKeysByDestination, gaps,
-                        ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+                        ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
+                        aggregateSourceTestCandidates);
                     if (lookupFlow is not null)
                     {
                         wiredFlows[flow] = lookupFlow;
@@ -1862,7 +1863,7 @@ public static partial class PackageGenerator
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
         HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams)
+        bool emitSeams, List<AggregateSourceTestCandidate>? testCandidates = null)
     {
         if (flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination")
         {
@@ -2021,7 +2022,8 @@ public static partial class PackageGenerator
             {
                 return GenerateLookupThenAggregateFlow(package, ns, flow, lookup, cacheClassName, joinKey, keyType,
                     outputToReference, aggregatePlan, entityName, fileSourceEntries, files, tables, functionsUsed,
-                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
+                    testCandidates);
             }
 
             // Not evidenced anywhere (the one real case always goes through an Aggregate) --
@@ -2207,7 +2209,8 @@ public static partial class PackageGenerator
         Dictionary<string, string> outputToReference, AggregatePlan aggregate, string entityName,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
         HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
-        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase, bool emitSeams)
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase, bool emitSeams,
+        List<AggregateSourceTestCandidate>? testCandidates = null)
     {
         var lookupVariableName = LowerFirst(cacheClassName);
 
@@ -2254,6 +2257,48 @@ public static partial class PackageGenerator
             groupByClrType, entityName, lookupKey, lookupFilter, files, tables, functionsUsed,
             primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
         if (emitted is null) return null;
+
+        // "Aggregate source" starter test (same coverage the standalone GenerateAggregateFlow
+        // already gets -- see its own identical block) -- a real, previously-latent gap: this
+        // composed Lookup+Aggregate flow used to reach this point and simply never populate
+        // testCandidates at all (silently no test AND no gap, unlike every other flow shape that
+        // degrades to an honest advisory when it can't test something), caught 2026-09-06 by an
+        // independent review against Docs/Generated-Tests-Plan.md.
+        //
+        // Gated on lookupKey being null -- i.e. the GroupBy column is a plain passthrough SOURCE
+        // column, not a Lookup-copied reference one. EmitAggregateSourceTest's own template always
+        // emits a bare `row => row.{GroupByOutputColumnName}` key selector, which is correct ONLY
+        // for that plain-passthrough shape. When lookupKey IS set (the one real evidenced case,
+        // SyntheticLookupThenAggregate.dtsx's own "GroupBy Region" -- Region only exists via
+        // `lKP_CountryCache[row.Country].Region`, never as a bare row property), a naive reuse of
+        // that same template was caught, by actually BUILDING the generated test (not by the gap
+        // count, which showed nothing wrong), producing CS0117/CS1061 -- `row.Region` doesn't exist
+        // on the raw source row at all. Rather than build a second, cache-aware test template under
+        // time pressure, that case degrades to the same honest advisory GenerateLookupFlow's own
+        // downstream-transform gap already uses, instead of risking a second wrong-guess test.
+        if (lookupKey is not null)
+        {
+            gaps.Add(new GenerationGap(entityName,
+                $"'{entityName}' groups by '{aggregate.GroupByOutputColumnName}', a Lookup-copied reference column (via '{lookup.Name}') -- no starter test was generated for it: EmitAggregateSourceTest's own template assumes the GroupBy value is a plain row property, which is wrong once it only resolves through the Lookup cache. Add an assertion by hand.",
+                IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: aggregate.Component.RefId));
+        }
+        else if (innerSource is SqlFlowSource && flow.OleDbSource is { } lookupSourceComponent)
+        {
+            var lookupSourceOutput = lookupSourceComponent.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            var lookupResolvedSourceColumns = lookupSourceOutput is null ? null : PipelineResolver.Resolve(lookupSourceOutput).Columns;
+            if (lookupResolvedSourceColumns is not null)
+            {
+                var lookupTestFunctions = aggregate.Functions
+                    .Where(f => f.SourceColumnName is not null)
+                    .Select(f => (Function: f, Type: lookupResolvedSourceColumns.FirstOrDefault(c => c.PipelineColumnName == f.SourceColumnName)?.Type))
+                    .Where(x => x.Type is not null)
+                    .Select(x => new ComponentTestEmitter.AggregateSourceTestFunction(x.Function.OutputColumnName, x.Function.SourceColumnName!, x.Type!.ClrTypeName, x.Function.AggregationTypeRaw))
+                    .ToList();
+                testCandidates?.Add(new AggregateSourceTestCandidate(
+                    aggregate.Component.Name, $"{ns}.Sql", sourceRowTypeName, $"{ns}.Sql", emitted.Value.RowTypeName,
+                    aggregate.GroupByOutputColumnName, groupByClrType, lookupTestFunctions));
+            }
+        }
 
         var preload = new LookupPreload(
             VariableName: lookupVariableName,
@@ -2963,6 +3008,20 @@ public static partial class PackageGenerator
         foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
 
         if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
+
+        // No starter test coverage exists for this loop-body shape at all -- a real, previously-
+        // silent gap (caught 2026-09-06 by an independent review against Docs/Generated-Tests-Plan.md):
+        // this function never called ComponentTestEmitter/TransformTestEmitter AND never reported a
+        // gap either, unlike every other flow shape that degrades to an honest advisory when it
+        // can't produce real coverage (see GenerateLookupFlow's own identical-shaped gap for its
+        // downstream transform). The per-iteration CSV source has no static Tier-A sample file to
+        // point a "Source -- CSV" test at (its own FileSourceEntryRequest is a folder, not a file --
+        // see fileSourceEntries.Add below), and the taxonomy's own "ForEach loop" row only covers
+        // the SQL-statement-per-iteration shape, not this Data-Flow-per-iteration one -- a new test
+        // shape, not something this pilot can safely synthesize yet.
+        gaps.Add(new GenerationGap(loop.TaskName,
+            $"{flow.TaskName}: this loop body's own generated methods (the per-iteration CSV source, '{transformClassName}', and the SQL sink) have no starter test coverage in this pilot -- a ForEach-Loop-over-a-Data-Flow-Task has no Tier-A sample file to synthesize (the source path is computed per iteration, not a static location) and no dedicated test shape yet. Verify by hand.",
+            IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: flow.DestinationComponent.RefId));
 
         primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
         tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
