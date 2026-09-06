@@ -1777,12 +1777,41 @@ public static class PackagePlanner
 
     private static DataFlowPlan? PlanDataFlow(string taskName, PipelineSpec pipeline, List<GenerationGap> gaps)
     {
+        // Computed up front (moved ahead of the MergeJoin/Union carve-outs below, which used to
+        // return before this was ever consulted) so BOTH of those can check their own resolved
+        // input count against the TOTAL source count in the pipeline -- a real, previously-SILENT
+        // correctness bug, found 2026-09-06 by a third independent review, one level worse than
+        // the Aggregate+Multicast bug fixed earlier the same day: a Merge Join/Union genuinely
+        // resolving its own 2 (or N) sources correctly said nothing at all about a THIRD,
+        // completely unrelated source/destination pair sitting in the SAME Data Flow Task -- that
+        // pair silently vanished (no file, no gap, no mention anywhere), while the flow it WAS
+        // wired for reported a clean, complete-looking generation. Confirmed against a disposable
+        // fixture built specifically to reproduce it (a genuine 2-source UnionAll plus a wholly
+        // separate, unconnected OLE DB Source -> OLE DB Destination pair in one Data Flow Task):
+        // the extra pair never appeared anywhere, not even in gaps.json.
+        var sourceComponents = pipeline.Components
+            .Where(c => c.ComponentClassId == "Microsoft.FlatFileSource" || c.ComponentClassId == "Microsoft.ExcelSource" || SourceInfo.IsSqlSource(c))
+            .ToList();
+
         // Checked before the multi-source gate below -- a Merge Join is EXACTLY the "something
         // merges them" case that gate's own comment names, so it must resolve its own two
-        // sources structurally before that gate ever sees (and rejects) them.
+        // sources structurally before that gate ever sees (and rejects) them. A Merge Join is
+        // ALWAYS exactly two-sided -- if the pipeline has MORE source components than that, at
+        // least one of them cannot be a side of this join at all, so this is gapped explicitly
+        // rather than silently generating a flow that accounts for only two of the three-plus
+        // real source components in the task.
         var mergeJoinComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.MergeJoin");
         if (mergeJoinComponent is not null)
+        {
+            if (sourceComponents.Count > 2)
+            {
+                var names = string.Join(", ", sourceComponents.Select(c => c.Name));
+                gaps.Add(new GenerationGap(taskName,
+                    $"this Data Flow Task has {sourceComponents.Count} source components ({names}) but Merge Join '{mergeJoinComponent.Name}' only ever consumes two -- the extra source(s) would otherwise be silently dropped with no file and no gap of their own"));
+                return null;
+            }
             return PlanMergeJoin(taskName, pipeline, mergeJoinComponent, gaps);
+        }
 
         // Same carve-out, for a genuinely multi-independent-source Microsoft.Merge/UnionAll --
         // gap-audit Phase 3.6 (2026-09-02). Gated on there being NO Conditional Split/Multicast
@@ -1797,7 +1826,22 @@ public static class PackagePlanner
         var unionComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId is "Microsoft.Merge" or "Microsoft.UnionAll");
         var hasSplitOrMulticastUpstream = pipeline.Components.Any(c => c.ComponentClassId is "Microsoft.ConditionalSplit" or "Microsoft.Multicast");
         if (unionComponent is not null && !hasSplitOrMulticastUpstream)
-            return PlanUnion(taskName, pipeline, unionComponent, gaps);
+        {
+            var unionPlan = PlanUnion(taskName, pipeline, unionComponent, gaps);
+            if (unionPlan?.Union is null) return null; // PlanUnion already added the reason
+            // A Union's own Sides only ever account for the source components it actually
+            // resolved a backward walk to -- if the pipeline has MORE source components than
+            // that, at least one is unrelated to this Union entirely and would otherwise vanish
+            // silently, exactly like the disposable fixture built to prove this.
+            if (sourceComponents.Count > unionPlan.Union.Sides.Count)
+            {
+                var names = string.Join(", ", sourceComponents.Select(c => c.Name));
+                gaps.Add(new GenerationGap(taskName,
+                    $"this Data Flow Task has {sourceComponents.Count} source components ({names}) but Merge/UnionAll '{unionComponent.Name}' only accounts for {unionPlan.Union.Sides.Count} of them -- the extra source(s) would otherwise be silently dropped with no file and no gap of their own"));
+                return null;
+            }
+            return unionPlan;
+        }
 
         // More than one source component in a single Data Flow Task means something merges them
         // (Merge/Merge Join/Union All feeding a single destination directly, not via a
@@ -1812,9 +1856,6 @@ public static class PackagePlanner
         // with two UNRELATED source/destination pairs (SyntheticParallelShapes.dtsx's own
         // DFT_DirectCopy) is also caught here, one step earlier than its pre-existing
         // "no Derived Column found" gate -- still correctly gapped, just with a clearer reason.
-        var sourceComponents = pipeline.Components
-            .Where(c => c.ComponentClassId == "Microsoft.FlatFileSource" || c.ComponentClassId == "Microsoft.ExcelSource" || SourceInfo.IsSqlSource(c))
-            .ToList();
         if (sourceComponents.Count > 1)
         {
             var names = string.Join(", ", sourceComponents.Select(c => c.Name));

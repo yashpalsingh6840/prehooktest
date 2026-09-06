@@ -80,7 +80,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources|union-plus-extra-source]");
             return 2;
         }
 
@@ -277,6 +277,10 @@ internal static class Program
         {
             return BuildMergeInterleaveProbeFixture(args[0]);
         }
+        if (fixtureName == "union-plus-extra-source")
+        {
+            return BuildUnionPlusExtraSourceFixture(args[0]);
+        }
         if (fixtureName == "union-two-sources")
         {
             return BuildUnionTwoSourcesFixture(args[0]);
@@ -287,7 +291,7 @@ internal static class Program
         }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', or 'event-handler-probe'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', 'union-plus-extra-source', or 'event-handler-probe'.");
 
             return 2;
         }
@@ -3880,6 +3884,126 @@ internal static class Program
 
         AttachPath(pipe, unionOutput, destMeta.InputCollection[0]);
         ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// The same 2-source UnionAll -> Flat File Destination shape as
+    /// <see cref="BuildUnionTwoSourcesFixture"/>, PLUS a wholly separate, unconnected OLE DB
+    /// Source -> OLE DB Destination pair in the SAME Data Flow Task. Built 2026-09-06 to
+    /// reproduce a real, previously-silent correctness bug found by a third independent review:
+    /// PlanDataFlow's own MergeJoin/Union carve-out used to return PlanUnion's result
+    /// unconditionally, before the generic "more than one source component" gate ever ran --
+    /// so a genuinely-resolved 2-source Union said nothing at all about a THIRD, completely
+    /// unrelated source elsewhere in the same pipeline, which vanished with no file and no gap.
+    /// The extra pair reuses SyntheticMulticastAggregateSibling's own backing tables (Source ->
+    /// TargetA) rather than declaring new ones.
+    ///
+    /// Backing tables: synthetic-union-two-sources-tables.sql (for the union side) plus
+    /// synthetic-multicast-aggregate-sibling-tables.sql (for the extra, unrelated pair).
+    /// </summary>
+    private static int BuildUnionPlusExtraSourceFixture(string outputPath)
+    {
+        var outDir = Path.Combine(TestFixturesDir(), "synthetic-union-plus-extra-source-output");
+        Directory.CreateDirectory(outDir);
+        var exportPath = Path.Combine(outDir, "union-export.csv");
+
+        var pkg = new RtPackage { Name = "SyntheticUnionPlusExtraSource" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var ffCm = AddFlatFileDestinationConnectionManager(pkg, "CM_FF_Export", exportPath,
+            format: "Delimited", columnNamesInFirstDataRow: true,
+            ("ID", 20, false), ("Name", 50, true));
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_UnionPlusExtraSource";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var leftSrcMeta = AddOleDbComponent(pipe, "OLE DB Source Left", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Name FROM dbo.SyntheticMergeProbeLeft ORDER BY ID DESC");
+        ResolveOleDbMetadata(leftSrcMeta, isDestination: false);
+
+        var rightSrcMeta = AddOleDbComponent(pipe, "OLE DB Source Right", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Name FROM dbo.SyntheticMergeProbeRight ORDER BY ID DESC");
+        ResolveOleDbMetadata(rightSrcMeta, isDestination: false);
+
+        var unionMeta = pipe.ComponentMetaDataCollection.New();
+        unionMeta.ComponentClassID = "Microsoft.UnionAll";
+        var unionInst = unionMeta.Instantiate();
+        unionInst.ProvideComponentProperties();
+        unionMeta.Name = "UNION_TwoSources";
+
+        var unionFirstInputId = unionMeta.InputCollection[0].ID;
+        var leftOutput = leftSrcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+        var rightOutput = rightSrcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+
+        AttachPath(pipe, leftOutput, unionMeta.InputCollection.GetObjectByID(unionFirstInputId));
+        unionInst.AcquireConnections(null);
+        unionInst.ReinitializeMetaData();
+        unionInst.ReleaseConnections();
+
+        var unionSecondInputId = unionMeta.InputCollection.New().ID;
+        AttachPath(pipe, rightOutput, unionMeta.InputCollection.GetObjectByID(unionSecondInputId));
+        unionInst.AcquireConnections(null);
+        unionInst.ReinitializeMetaData();
+        unionInst.ReleaseConnections();
+
+        foreach (var dangling in unionMeta.InputCollection.Cast<IDTSInput100>()
+                     .Where(i => i.ID != unionFirstInputId && i.ID != unionSecondInputId)
+                     .ToList())
+        {
+            unionMeta.InputCollection.RemoveObjectByID(dangling.ID);
+        }
+
+        var unionFirstInput = unionMeta.InputCollection.GetObjectByID(unionFirstInputId);
+        MarkInputColumnsUsed(unionInst, unionFirstInput, "ID", "Name");
+
+        var unionSecondInput = unionMeta.InputCollection.GetObjectByID(unionSecondInputId);
+        MarkInputColumnsUsed(unionInst, unionSecondInput, "ID", "Name");
+
+        var unionOutput = unionMeta.OutputCollection[0];
+        foreach (IDTSInputColumn100 inCol in unionSecondInput.InputColumnCollection)
+        {
+            var matchingOutputCol = unionOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>()
+                .FirstOrDefault(oc => oc.Name == inCol.Name)
+                ?? throw new InvalidOperationException($"fixture build error: UnionAll has no output column named '{inCol.Name}' to map the second input's own column onto.");
+            unionInst.SetInputColumnProperty(unionSecondInput.ID, inCol.ID, "OutputColumnLineageID", matchingOutputCol.LineageID);
+        }
+
+        var destMeta = pipe.ComponentMetaDataCollection.New();
+        destMeta.ComponentClassID = "Microsoft.FlatFileDestination";
+        var destInst = destMeta.Instantiate();
+        destInst.ProvideComponentProperties();
+        destMeta.Name = "Flat File Destination";
+        destInst.SetComponentProperty("Overwrite", true);
+
+        var destConn = destMeta.RuntimeConnectionCollection[0];
+        destConn.ConnectionManagerID = ffCm.ID;
+        destConn.ConnectionManager = DtsConvert.GetExtendedInterface(ffCm);
+
+        AttachPath(pipe, unionOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        // --- The extra, wholly UNRELATED source/destination pair -- never connected to the
+        // Union above at all. Reuses SyntheticMulticastAggregateSibling's own backing tables. ---
+        var extraSrcMeta = AddOleDbComponent(pipe, "OLE DB Source Extra", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, Region, CustomerID FROM dbo.SyntheticMulticastAggSiblingSource");
+        ResolveOleDbMetadata(extraSrcMeta, isDestination: false);
+        var extraOutput = extraSrcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+
+        var extraDestMeta = AddOleDbComponent(pipe, "OLE DB Destination Extra", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticMulticastAggSiblingTargetA]");
+        AttachPath(pipe, extraOutput, extraDestMeta.InputCollection[0]);
+        ResolveOleDbMetadata(extraDestMeta, isDestination: true);
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));

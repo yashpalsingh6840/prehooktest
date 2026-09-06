@@ -900,6 +900,27 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ReportsAGap_WhenAUnionAllCoexistsWithAWhollyUnrelatedExtraSource()
+    {
+        // SyntheticUnionPlusExtraSource.dtsx (2026-09-06) -- a real, previously-SILENT
+        // correctness bug found by a third independent review: PlanDataFlow's own
+        // MergeJoin/Union carve-out used to return PlanUnion's result unconditionally, before
+        // the generic "more than one source component" gate ever ran -- so a genuinely-resolved
+        // 2-source UnionAll (the SAME shape as SyntheticUnionTwoSources.dtsx above) said nothing
+        // at all about a THIRD, completely unrelated OLE DB Source -> OLE DB Destination pair
+        // sitting in the same Data Flow Task, which used to vanish with no file and no gap.
+        var package = LoadSyntheticFixture("SyntheticUnionPlusExtraSource.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Flows);
+        var gap = Assert.Single(plan.Gaps, g => g.Location == "DFT_UnionPlusExtraSource");
+        Assert.True(gap.IsBlocking);
+        Assert.Contains("3 source components", gap.Reason);
+        Assert.Contains("only accounts for 2 of them", gap.Reason);
+    }
+
+    [Fact]
     public void Plan_DoesNotIntercept_TheDivergeThenReconvergeUnionAllShape()
     {
         // SyntheticConditionalSplitRemerge.dtsx: ONE shared upstream source -> Conditional

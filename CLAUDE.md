@@ -7523,6 +7523,75 @@ comment/dead branch, named here rather than silently left for someone to redisco
 Full suite green after both fixes: 149+156+16+**358**+94+11+7 = **791** (was 790, +1 for the new
 `Generate_ReportsABlockingGap_ForAMulticastAndAggregateWithNoLookup` test).
 
+### A third independent review -- a fourth bug in the same class, arguably worse than the third (2026-09-06, later still)
+
+After committing the Multicast+Aggregate correctness fix (`a2fc2a6`), a THIRD standalone review
+prompt (`Docs/Generated-Tests-Plan-Review-Prompt-3.md`) was written and handed to a fresh agent,
+explicitly told two reviews in a row had each found something real and its job was to find a
+third instance of the underlying CLASS of bug -- planner fields resolved independently, generator
+dispatch not checking for both -- not merely to re-confirm the two just-shipped fixes.
+
+**Both prior fixes held up under adversarial re-verification.** The previously-untested
+`lookupKey is null` branch of the Lookup+Aggregate fix was independently built and proven
+correct; the Multicast+Aggregate gap was re-confirmed to fire exactly as committed, placed
+correctly in the dispatch order, and reasoned (not built, but directly) to generalize correctly
+to a 3-branch Multicast and to an Aggregate reached via a discarded-RowCount/Sort/Union hop,
+since the check is pure component co-presence, not shape-specific.
+
+**But the hunt for a third instance found a fourth -- confirmed by building, and arguably worse:
+`PlanDataFlow`'s own MergeJoin/Union early-return happens BEFORE the generic "more than one
+source component" gate ever runs, so a genuinely-resolved Merge Join or Union said nothing at
+all about a THIRD, completely unrelated source/destination pair sitting in the SAME Data Flow
+Task -- that whole pair (a real table's worth of production logic) vanished with no file and no
+gap, while the flow it WAS wired for reported a clean, complete-looking generation.** Confirmed
+against a disposable fixture built specifically to reproduce it (a genuine 2-source UnionAll plus
+a wholly separate, unconnected OLE DB Source -> OLE DB Destination pair reusing existing backing
+tables): `ssisx generate` reported the union flow's own gaps and nothing else -- the extra pair
+never appeared in `generate-report.md`, `gaps.json`, or the generated `DbContext`. Reasoned
+(directly, from the code, not built) that `MergeJoin` has the identical defect and is if anything
+MORE exposed, since it lacks even the partial guard (`hasSplitOrMulticastUpstream`) Union already
+had for an unrelated reason.
+
+**Fixed the same session, symmetrically for both.** `PlanDataFlow` now computes the full
+`sourceComponents` list BEFORE either carve-out (previously computed only afterward, for the
+generic gate both carve-outs used to bypass entirely): a Merge Join is always exactly two-sided,
+so `sourceComponents.Count > 2` is gapped explicitly before `PlanMergeJoin` ever runs; a Union's
+own resolved `Sides.Count` is compared against `sourceComponents.Count` AFTER `PlanUnion`
+succeeds, gapping (and discarding the otherwise-valid plan) if any source went unaccounted for.
+New permanent fixture, `SyntheticUnionPlusExtraSource.dtsx` (`Ssis.Extract.FixtureBuilder`'s new
+`union-plus-extra-source` mode, extending the existing `union-two-sources` recipe with a third,
+wholly unconnected source/destination pair) -- verified end to end: `ssisx generate` now reports
+**0 files written, 1 blocking gap** naming all three source components and explaining exactly
+why, instead of silently succeeding with a table's worth of logic missing. New regression test,
+`PackagePlannerTests.Plan_ReportsAGap_WhenAUnionAllCoexistsWithAWhollyUnrelatedExtraSource`.
+
+**A second, real but currently-non-live finding, deliberately left as a named follow-up, not
+fixed:** `flow.Aggregate` and `flow.OleDbCommand` CAN coexist on one `DataFlowPlan`
+(`PackagePlanner.cs`, the OLE DB Command resolution branch has no `aggregate is null` guard), and
+`PackageGenerator`'s dispatch checks `Aggregate` before `OleDbCommand` -- but this currently fails
+SAFELY rather than silently: `DestinationInfo.IsFastLoadConfigured` happens to always return
+`false` for an OLE DB Command component (it has no destination side at all), so
+`GenerateAggregateFlow` gaps out with a confusingly-worded but non-broken message ("destination
+'X' is not configured for fast load"). Confirmed by building a disposable fixture reproducing
+this exact shape. The safety here is INCIDENTAL, not a deliberate guard the way the two just-added
+checks are -- if that unrelated fast-load check were ever loosened or bypassed, this composition
+would silently mis-generate the same way the two now-fixed bugs did. Named here rather than
+silently left for someone to rediscover; not fixed this round, since it is not currently a live
+bug and the review's own time was better spent confirming what already breaks.
+
+**Two other checks came back clean, verified by reading code (not built, but directly):**
+`ConditionalSplit`+`MergeJoin` is safely refused (`ResolveMergeJoinSide` requires each input be
+fed directly by a `Microsoft.Sort`, so a split-fed input reports a precise gap rather than
+mis-generating); `ConditionalSplit`+`Union` and two-of-three `{Aggregate, MergeJoin, Union}` are
+each either already-handled by an existing mechanism or structurally impossible (both
+`PlanMergeJoin`/`PlanUnion` return before `Aggregate` is ever resolved, and hardcode it to `null`
+in their own `DataFlowPlan`). The `GenerateMergeJoinFlow` dead-code assessment from the prior
+round was independently re-confirmed correct (`PlanMergeJoin` always hardcodes
+`DerivedColumn`/`DataConversion` to `null`, so that branch genuinely can never fire).
+
+Full suite green after this fix: 149+156+16+**359**+94+11+7 = **792** (was 791, +1 for the new
+planner test).
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,
