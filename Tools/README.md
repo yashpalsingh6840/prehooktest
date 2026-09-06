@@ -242,12 +242,15 @@ From there, [`COPILOT_GUIDE.md`](COPILOT_GUIDE.md)'s own "Prompts you can paste 
 Chat" section has the rest (generate one package, generate a named batch, work a gap, confirm a
 build) -- copy them as-is, filling in the real client folder path and package name(s).
 
-**Or run the whole thing as one command:** `.github/prompts/ssisx-rewrite.prompt.md` (`/ssisx-
-rewrite` in Copilot Chat) sequences every step below -- extract, an optional `svk` walkthrough,
-generate, apply-fills, build, and test -- for one named package, stopping at each of the two
-places a human decision is actually required (Tier-1/2 gaps, then test-oracle/local-data gaps)
-rather than guessing past them. Each step is still independently runnable via its own prompt if
-you'd rather go one at a time:
+**The standard pipeline for "run the tool" -- one package, a named few, or a whole folder, in a
+chat session:** `.github/prompts/ssisx-rewrite.prompt.md` (`/ssisx-rewrite` in Copilot Chat)
+sequences every step below -- extract, an optional `svk` walkthrough, generate, apply-fills,
+build, test, and a code-coverage report -- stopping at each of the two places a human decision is
+actually required (Tier-1/2 gaps, then test-oracle/local-data gaps) rather than guessing past
+them. It is agent-driven on purpose: each step is the agent's own tool call, so it can actually
+read a gap's own work packet and draft a fill, then stop for a human's confirmation -- something
+a plain script cannot do. Each step is still independently runnable via its own prompt if you'd
+rather go one at a time:
 
 | # | Step | Prompt |
 |---|---|---|
@@ -258,10 +261,22 @@ you'd rather go one at a time:
 | 5 | Apply + build | `ssisx-fill.prompt.md` (its own closing step) |
 | 6 | Test-oracle/local-data fills -- **AI, stops for review** | `ssisx-test.prompt.md` |
 | 7 | Apply + build + test | `ssisx-test.prompt.md` (its own closing step) |
+| 8 | Code coverage | `SsisExtractor/scripts/Run-Coverage.ps1`, called directly |
 
-Re-running `/ssisx-rewrite` for the same package is always safe -- it detects what already
-exists on disk (an extracted spec, a generated project, filled-in fills) and resumes from
-there rather than redoing finished work.
+Re-running `/ssisx-rewrite` is always safe -- it detects what already exists on disk (an
+extracted spec, a generated project, filled-in fills) per package and resumes from there rather
+than redoing finished work. **Never deletes any TestData, fill, or generated output along the
+way** -- a human may want to review or hand-supply data at any point.
+
+**No Claude/Copilot chat session available at all?** `SsisExtractor/scripts/Run-Pipeline.ps1`
+runs the same 5 mechanical steps (everything except the two AI-fill steps) as one script call --
+CI, a scripted regression check, an ops person with no AI session at hand. It can apply fills
+already on disk, but it can never write one (a script has no way to read a work packet and
+reason about an answer); if a chat session is available, use `/ssisx-rewrite` instead:
+
+```powershell
+.\SsisExtractor\scripts\Run-Pipeline.ps1 -InputPath <client-folder> -OutputPath out -Framework net10.0
+```
 
 `Etl.Core/` here is a **portable copy** -- see this project's own internal dev notes for where
 it's actually developed and how to refresh it; that's not this file's concern, since this

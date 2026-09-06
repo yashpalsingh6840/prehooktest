@@ -90,17 +90,27 @@ from a different component.
 
 ## The two sample-data tiers -- what each answers, and why they don't replace each other
 
-**Tier A -- deterministic, synthesized, ships with every `generate` run, zero AI, zero fills.**
-`ssisx` emits a 2-3 row sample per CSV/fixed-width source into
+**2026-09-06 update: every file-based source's own real-read test now needs its `LOCAL-DATA` fill,
+not just Excel.** Earlier, a CSV/fixed-width source's starter test read a tool-synthesized Tier-A
+sample and passed with zero fills; that made it the one shape inconsistent with SQL (needs a real
+server) and Excel (needs a real workbook) -- a package could report "tests pass" while its only
+real read was against fabricated data. `PackageHarness` now points every file-based source at the
+SAME `TestData/` folder for its real read, so CSV/fixed-width sources are Integration-tagged and
+gapped exactly like SQL/Excel now. The `.Name`-only test (no file, no server) still needs nothing
+and still always passes.
+
+**Tier A -- deterministic, synthesized, ships with every `generate` run, zero AI, zero fills, a
+REFERENCE ONLY now.** `ssisx` still emits a 2-3 row sample per CSV/fixed-width source into
 `{Package}.Tests/SampleData/{Component}.csv`, built straight from the connection manager's own
 declared column names, widths, delimiters and types -- the same representative-value convention
-(`RepresentativeLiteral`) transform/sink starter tests already use, so a source test, a
-transform test, and a sink test for the same package all agree on what a plain string/int/etc.
-looks like. This is what makes `dotnet test --filter Category!=Integration` pass immediately
-after a fresh `generate`, with nothing filled in yet.
+(`RepresentativeLiteral`) transform/sink starter tests already use. Nothing at runtime, production
+or test, reads this file any more -- it exists purely as a schema-correct STARTING POINT for
+writing the real `LOCAL-DATA` fill (the same role `svk sampledata` plays for a package with no
+`ssisx generate` output at all), not a fallback the harness itself falls back to.
 
 **Tier B -- realistic, human/AI-supplied, and the actual fix for a baked-in original-author
-path.** `appsettings.Development.json` (generated, unconditionally, gap or not) overrides every
+path -- now the ONLY thing that makes any file-based source's own real-read test pass.**
+`appsettings.Development.json` (generated, unconditionally, gap or not) overrides every
 `FileSource:Files:<Key>:SourceFolder` to a package-relative `TestData` folder -- the wiring is
 fully derivable, so it's never gapped. Only the DATA is missing (the original connection
 manager's own configured path belongs to the original author's machine, not this one), and THAT
@@ -109,13 +119,14 @@ becomes a `LocalFileSourceData` gap/work packet. Answering one is a **`LOCAL-DAT
 the Tier-A sample's own `{FileSourceKey}.csv` name, which is frequently different (the packet
 always states the real name explicitly; never guess it from the gap's own `Location`). This
 serves two purposes at once: a real local `dotnet run` with `DOTNET_ENVIRONMENT=Development`
-reads realistic data instead of the original machine-specific path, and an optional, richer
-no-server test tier can use realistic values when present.
+reads realistic data instead of the original machine-specific path, and the source's own
+Integration-tagged read test can use it too, once supplied -- `PackageHarness` points at the exact
+same `TestData/<real file name>` `appsettings.Development.json` does.
 
-**Excel is the one shape where Tier A does not exist at all** -- this generator's own
-`ExcelRowSource` has no `.xlsx` WRITER anywhere, so an Excel source's own `LOCAL-DATA` gap is not
-an upgrade over something already working, it is the ONLY way its own
-`[Trait("Category", "Integration")]`-tagged real read test can ever actually run.
+**Excel never had a Tier A at all** -- this generator's own `ExcelRowSource` has no `.xlsx` WRITER
+anywhere, so an Excel source's own `LOCAL-DATA` gap was always the ONLY way its own
+`[Trait("Category", "Integration")]`-tagged real read test could ever actually run; CSV/fixed-width
+sources are simply consistent with that now, rather than an exception.
 
 ## The `Category=Integration` convention
 

@@ -35,6 +35,10 @@ public static class TestProjectEmitter
             "    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" />",
             "    <PackageReference Include=\"xunit\" />",
             "    <PackageReference Include=\"xunit.runner.visualstudio\" />",
+            "    <PackageReference Include=\"coverlet.collector\">",
+            "      <PrivateAssets>all</PrivateAssets>",
+            "      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>",
+            "    </PackageReference>",
             "  </ItemGroup>",
             "",
             // Links (never copies) the main project's own TestData/ folder alongside this test

@@ -7611,6 +7611,246 @@ accident. New regression test,
 Full suite green after this hardening: 149+156+16+**360**+94+11+7 = **793** (was 792, +1 for the
 new planner test).
 
+### Every file-based source's real read is now `Category=Integration`, not just Excel — a deliberate, user-requested regression (2026-09-06, later still)
+
+Prompted by a real conversation, not a review finding: a hand-run session pointed out that
+`PackageHarness`'s Excel entry got a manual hand-edit (per the earlier "why does D:\tmp's
+generated PackageHarness.cs point Excel at a fake path" exchange) while CSV/fixed-width sources
+already worked, via a DIFFERENT mechanism — a tool-synthesized Tier-A sample (`SampleData/*.csv`).
+Asked directly whether every package's test data should instead be sourced from
+`appsettings.Development.json` (the file that already, unconditionally, points every
+`FileSource:Files:<Key>:SourceFolder` at a package-relative `TestData` folder). Investigated
+first, not assumed: confirmed the test project never reads either `appsettings.json` file at all
+— `PackageHarness.cs` builds its own hand-written `ServiceCollection` in code, deliberately
+decoupled from `IConfiguration` so a test behaves identically on any machine regardless of what
+config files or `DOTNET_ENVIRONMENT` happen to be set. Framed the real tradeoff before touching
+anything (`AskUserQuestion`): redirecting ALL sources (not just Excel) to `TestData/` means every
+CSV/fixed-width source's own real-read test — previously always-green on synthetic data — now
+needs its own `LOCAL-DATA` fill first, same as SQL (needs a real server) and Excel (needs a real
+workbook) already did. The user explicitly chose this, informed of the consequence: **"All
+sources, everywhere."**
+
+**What shipped, in `Ssis.Extract.Codegen`:**
+- `TestDoublesEmitter.cs`: the `sampleDataFiles`/`placeholderFileKeys` split (CSV/fixed-width
+  pointed at a tool-synthesized `SampleData/` folder; Excel pointed at a deliberately-missing
+  placeholder) is now ONE unified `testDataFiles` list — every file-based source, uniformly,
+  points at `Path.Combine(AppContext.BaseDirectory, "TestData")` + its own REAL declared file
+  name (never the Tier-A sample's own `{key}.csv` name, which is frequently different).
+- `ComponentTestEmitter.cs`: `EmitCsvSourceReadTest` (row-count/column assertions against a
+  known-synthetic sample) is retired; a new `EmitFileSourceTest` takes over, mirroring
+  `EmitSqlSourceTest`/`EmitExcelSourceTest`'s own two-fact shape exactly — a `.Name`-only `[Fact]`
+  (neither `CsvRowSource<TRow>` nor `FixedWidthRowSource<TRow>` opens its file at construction, so
+  this still needs nothing real) plus a `[Trait("Category", "Integration")]`-tagged real-read
+  `[Fact]` asserting only `Assert.NotNull(rows)` — real data content is as unknowable here as a
+  real SQL query's result, so no stronger assertion is honest. The generated test file is now
+  named `{sourceMethodName}SourceTests.cs`, not `{rowTypeName}SourceTests.cs` — a real, previously
+  cosmetic-only risk this also closes: two different flows' own Flat File Sources routinely share
+  the SSIS-default component name, but `sourceMethodName` (from `methodInventory`, C#-unique by
+  construction) never collides the way a bare row-type-derived name theoretically could.
+- `PackageGenerator.cs`: `PlanDataFlow`'s per-flow dispatch gained one unconditional `allWiredSources`
+  branch for `CsvFlowSource`/`FixedWidthFlowSource` (previously a SEPARATE, Tier-A-gated loop that
+  silently emitted NOTHING if `SampleDataEmitter` failed to synthesize a sample for an unusual
+  format — now unconditional, matching SQL/Excel's own always-emit behavior). The real `TestData/`
+  file name is resolved directly from `candidate.ConnectionManager.Parsed?.FilePath` (CSV/fixed-
+  width) or the already-built `fileSourceEntries` list (Excel) — the SAME resolution
+  `BuildFileSourceEntry` already uses for `appsettings.json`, reused rather than re-derived, so the
+  two can never disagree. `SampleDataEmitter`/`SampleData/*.csv` generation is UNCHANGED and still
+  runs — kept deliberately, now serving purely as a schema-correct reference for writing the real
+  `LOCAL-DATA` fill (the same role `svk sampledata` already plays for a package with no
+  `ssisx generate` output at all), consumed by nothing at runtime any more.
+
+**A real, previously-shipped bug was caught and fixed as a direct consequence of this change, not
+a rewrite for its own sake.** The old `LocalFileSourceData` gap message named the WRONG file for a
+human to save their realistic data as: it used the Tier-A sample's own invented name
+(`sample.FileName`, e.g. `Employee.csv`) as a fallback, which for `LoadEmployees`' real connection
+manager is `Employees.csv` (plural) — a human following the old gap message's instructions
+verbatim would have saved their file under the wrong name and the fill would silently never be
+found. Caught by reviewing the regenerated golden `README.md.txt` diff by eye (the standing rule),
+not assumed correct. The gap message now names the SAME real file name `PackageHarness`/
+`appsettings.Development.json` actually resolve, computed identically in both places.
+
+**Verified four ways:**
+1. **Golden-file regression, reviewed by eye per the standing rule, not trusted blindly.** Exactly
+   the expected 7-file diff across both PoC packages (`EmployeeCsvRowSourceTests.cs.txt`/
+   `Department`/`DesignationCsvRowSourceTests.cs.txt` deleted, `FF_SRC_{Entity}SourceTests.cs.txt`
+   added under the new naming, `PackageHarness.cs.txt`/`README.md.txt` updated) — confirmed the
+   `PackageHarness.cs` diff shows exactly `SourceFolder = ... "SampleData" → "TestData"` and
+   `SourceFileName = "Employee.csv" → "Employees.csv"` (the real name), nothing else moved.
+2. **Full suite green**: 149+156+16+360 = 681 across all four `ssisx` test projects, zero
+   regressions beyond the expected golden diff.
+3. **A real end-to-end round trip against the live `SSIS_From_Sandeep` portfolio**
+   (`Package_Advanced`/`Package_Exports`/`Package_Legacy`, regenerated fresh into a scratch
+   `D:\tmp` dir): confirmed `Category!=Integration` stays 100% green (10+9+7 = 26 tests, the
+   `.Name`-only ones, unaffected) while `Category=Integration` now correctly FAILS with a clean
+   `FileNotFoundException` naming `TestData/CustomersFixed.txt` for the fixed-width source with no
+   fill supplied — then supplied a real fixed-width file matching the exact declared schema
+   (`CustomerID`/`FullName`/`Email`/`CountryCode`, fixed widths, no header) and reran: **passes**.
+   Did the identical round trip for Excel (a real `.xlsx` via `openpyxl`, dropped under
+   `TestData/DripEligibility.xlsx`) and confirmed it now works through the SAME unified mechanism
+   with ZERO manual `PackageHarness.cs` hand-editing needed — the tool's own default output is
+   correct out of the box, closing the gap that originally required a manual fix earlier this
+   session.
+4. **Docs corrected in the same pass**, not left stale: `Tools/COPILOT_TESTING_GUIDE.md`'s own
+   "two sample-data tiers" section (previously stated Tier A "is what makes the suite green
+   immediately after generate" — no longer true), `Tools/.github/copilot-instructions.md`'s
+   `LOCAL-DATA` rule wording, and `Docs/Generated-Tests-Plan.md`'s own Tier-A section (a dated
+   correction note, not a rewrite of the historical record, matching this file's own convention).
+   `ssisx --help`'s own "should pass with ZERO fills applied right after a fresh generate" claim
+   was checked and left UNCHANGED — it is still literally true, since `Category!=Integration`
+   still passes with zero fills; only WHICH tests carry the `Integration` tag changed.
+
+### The standard 5-step pipeline, `Run-Pipeline.ps1`/`/ssisx-pipeline`, code coverage, and a real happy-path regression found running it for real (2026-09-06, later still)
+
+Prompted directly: the user wanted one durable, always-do-these-5-steps pipeline for running
+this tool against a package or a folder — extract, `svk` walkthrough/sampledata, generate,
+apply-fills, then build + test + a code-coverage report — invokable from either a Claude session
+or GitHub Copilot chat, with one hard rule threaded through everything: **never delete any
+TestData, fill, or generated output unless explicitly told to**, so a human always has the
+flexibility to manually review or hand-supply data between runs.
+
+**What shipped:**
+- `coverlet.collector` wired into every generated `{Package}.Tests.csproj` by default
+  (`TestProjectEmitter.cs`/`GenerateCommand.BuildDirectoryPackagesProps`) — closes a real,
+  previously-manual step (this session's own earlier coverage measurement needed hand-patching
+  each `.csproj` with `coverlet.collector` before `--collect:"XPlat Code Coverage"` would work at
+  all). Golden files regenerated and reviewed; the diff is exactly the intended
+  `<PackageReference Include="coverlet.collector">` block.
+- `Tools/SsisExtractor/scripts/Run-Coverage.ps1` (new): runs `dotnet test --filter
+  Category!=Integration --collect:"XPlat Code Coverage"` per `{Package}.Tests` project, parses
+  each `coverage.cobertura.xml` (plain `[xml]` cast, no external tool), and reports line/branch
+  coverage split into "own generated code" vs. "shared `Etl.Core`" — the same split done by hand
+  earlier this session, now a real, reusable script. Never deletes a prior `TestResults\` run;
+  picks the most-recently-written cobertura file instead.
+- `Tools/SsisExtractor/scripts/Run-Pipeline.ps1` (new): the actual 5-step orchestrator, callable
+  for one package (`-Package`) or a whole folder. Resolves `ssisx.exe`/`svk.exe` next to itself
+  if published there (the client-deployment convention `Run-Survey.ps1` already established),
+  falling back to `dotnet run --project` against source otherwise (works in this dev repo too).
+  `-OutputPath`/`-FillsPath` are created if missing, NEVER recreated/wiped if present — no
+  `Remove-Item` anywhere in either new script.
+- `Tools/.github/prompts/ssisx-pipeline.prompt.md` (new): the Copilot-invocable `/ssisx-pipeline`
+  wrapper, calling `Run-Pipeline.ps1` rather than re-deriving its steps in prose (same
+  anti-duplication discipline `ssisx-rewrite.prompt.md` already established). Deliberately a
+  DIFFERENT, lighter-weight command than `/ssisx-rewrite`: this one only ever APPLIES fills
+  already on disk and reports where things stand; it never writes a Tier-1/2/test-oracle/
+  local-data fill itself, and never stops at an AI boundary the way `/ssisx-rewrite` does.
+- `Tools/.github/copilot-instructions.md` gained two new numbered rules (14: never delete
+  TestData/fills/generated output; 15: `/ssisx-pipeline` is the default for "run the tool") plus
+  a pointer from the existing manual command sequence. `Tools/COPILOT_GUIDE.md`/`Tools/README.md`
+  gained the new pipeline's own section/table, a coverage subsection, and a new top-of-list
+  ready-to-paste prompt.
+- **A real, pre-existing contradiction was caught and fixed while updating the docs, not
+  introduced by this round**: `COPILOT_GUIDE.md`'s own "What's disposable and what isn't" table
+  said `out\` was "100% disposable, delete freely" — true when written, but no longer true since
+  `out\generate\<Package>\TestData\` can now hold a real, hand-supplied `LOCAL-DATA` file (the
+  2026-09-06 "every source, everywhere" round, earlier the same day). Fixed the table and its own
+  "if you ever want a clean regenerate" paragraph to match the new rule.
+
+**Two real bugs found actually RUNNING the new pipeline end to end, neither found by the
+existing test suite (`GeneratedSolutionBuildTests` only checks that the generated solution
+BUILDS, never that its own generated tests PASS — a real, named limitation in that suite's own
+verification depth, left as a follow-up rather than fixed this round):**
+
+1. **A classic PowerShell gotcha in `Run-Pipeline.ps1` itself**: `Invoke-Tool`'s helper function
+   did `& $tool.Cmd @allArgs; return $LASTEXITCODE` with the external command's own stdout left
+   unsuppressed — PowerShell merges an external command's passthrough stdout with a function's
+   own `return` value into ONE combined output array when both are captured by the caller,
+   corrupting `$extractExit`/`$generateExit` into a multi-line string instead of a plain integer.
+   Fixed by piping every native-tool invocation through `| ForEach-Object { Write-Host $_ }`
+   (streams to the console in real time without entering the function's own output stream) —
+   confirmed necessary by reproducing the exact corrupted `Write-Error` message before the fix,
+   not assumed. A related, doubly-real gotcha: `$ErrorActionPreference = 'Stop'` (set globally in
+   both new scripts) upgrades ANY native command's stderr line into a terminating exception —
+   including `dotnet test`'s own legitimate `[FAIL]` output, which aborted the whole pipeline on
+   the first real test failure instead of gracefully reporting it. Fixed by using `'Continue'`
+   globally and `-ErrorAction Stop` explicitly on each genuinely-fatal `Write-Error` call instead.
+2. **A real, previously-undiscovered regression from the SAME-DAY "every source, everywhere"
+   TestData round** (see that section above): the happy-path `RunAsync_Succeeds_
+   AgainstFakesWithNoFaultInjected` starter test — supposed to be always-green, fakes-only, no
+   real data needed — actually runs the WHOLE pipeline end to end, including a real CSV/fixed-
+   width read through the SAME `PackageHarness`-registered `FileSourceOptions` the isolated
+   source-read test uses. Once that read started requiring a real `TestData/` file (the earlier
+   round's own change), the happy-path test broke too — invisible to every unit test in this
+   repo's own suite, only found by literally running `Run-Pipeline.ps1` against this PoC's real
+   packages and reading the failure. Framed the fix as a real design fork before touching
+   anything (`AskUserQuestion`): exclude CSV/fixed-width from the happy-path eligibility check too
+   (simple, consistent, but loses the happy-path test for most real packages), or have
+   `PackageHarness` synthesize a throwaway placeholder file for JUST this one test. The user chose
+   the second. Implemented via a new `PackageHarness(bool useSampleDataForFileSources = false)`
+   constructor parameter: `false` (every existing caller, including the isolated Integration
+   read test) keeps pointing at the real `TestData/<real file name>`, unchanged; `true` (used ONLY
+   by the happy-path test, via `RunAsyncFailureTestEmitter`) points the SAME CSV/fixed-width keys
+   at the Tier-A synthetic sample (`SampleData/`, already generated unconditionally and kept
+   specifically as a reference after the earlier round) instead — reusing existing, already-
+   verified content rather than inventing new placeholder-generation logic. Threaded through via a
+   new `sampleDataFallbackEntries` list in `PackageGenerator.cs`, built from the SAME
+   `sampleDataByKey` dictionary already populated for the Tier-A reference files. Deliberately does
+   NOT cover Excel (no Tier-A sample exists for it at all) — harmless by construction, since
+   `PackageClassEmitter.SupportsFakeHappyPath` already excludes any Excel-sourced package from the
+   happy-path test regardless, for an unrelated, pre-existing reason.
+
+**Verified four ways:**
+1. **Golden-file regression, reviewed by eye** — exactly the intended diff:
+   `PackageHarness.cs.txt` gained the `useSampleDataForFileSources` parameter and per-key ternary,
+   `RunAsyncTests.cs.txt` shows the happy-path test's own harness construction changed to
+   `new PackageHarness(useSampleDataForFileSources: true)`, nothing else moved.
+2. **Full suite green**: 149+156+16+360 = 681, zero regressions.
+3. **A real, live end-to-end run of `Run-Pipeline.ps1`** against this PoC's own real `SSIS/`
+   folder (all 4 packages, `net10.0`) — republished a genuinely STALE `ssisx.exe` that had been
+   sitting next to `Tools/SsisExtractor/scripts/` since 2026-08-25 (a disposable, gitignored,
+   safe-to-rebuild-any-time build artifact per `Publish-Survey.ps1`'s own doc comment, not user
+   data — confirmed via `git status` showing it untracked before republishing it) — first run
+   surfaced bug 2 above for real (`Assert.Equal() Failure: Expected: 0, Actual: 1` on all 3
+   CSV-sourced packages); after both fixes, a clean rerun: exit code 0, all 3 packages' own
+   `dotnet test` green, `coverage-report.md` written with real line/branch/own-code percentages
+   per package (27.9–30.3% blended, 90.7–93.5% own-code — the Etl.Core-diluted blended figure
+   this file's own coverage-measurement round already explained).
+4. **Confirmed additive-only in practice, not just by reading the script**: reran the pipeline
+   twice in a row against the same `-OutputPath` and confirmed nothing under it was touched
+   except regenerated/overwritten-in-place files — no folder disappeared, no prior `TestResults\`
+   run was removed.
+
+**Not done, deliberately out of scope for this round:** actually strengthening
+`GeneratedSolutionBuildTests` to run the generated tests themselves (not just build), which is
+what would have caught bug 2 automatically instead of needing a live pipeline run to surface it —
+named here as a real, precise follow-up rather than silently left for someone to rediscover.
+
+### Correction, same day: `/ssisx-pipeline` retired — `/ssisx-rewrite` is the standard command, not the script
+
+The section above framed `Run-Pipeline.ps1`/`/ssisx-pipeline` as "the standard thing to run from
+chat." The user pushed back with the right question: a PowerShell script **cannot invoke AI at
+all** — once called, it runs to completion as a closed box, with no point where it could pause
+and hand a gap's own work packet to an LLM. That's exactly why Step 4 of that script could only
+ever *apply* fills already on disk, never *write* one — a structural mismatch between "wrap
+everything in one script" and "some steps need a human/AI in the loop," not a detail to work
+around later.
+
+**The fix, once framed this way, was obvious: when a Claude/Copilot chat session is available,
+the AGENT should take each step as its own tool call — extract, walkthrough, generate, read the
+gap report, draft a fill, stop for confirmation, apply, build, test, coverage — exactly the shape
+`/ssisx-rewrite` already had for steps 1-4/6-7. It only needed two things it was missing: a
+coverage step, and whole-folder scope (it was single-package only).** Both added:
+`ssisx-rewrite.prompt.md` gained a new "Scope" section (blank `package` = every package in
+`inputPath`, looped one at a time, each completing its own AI boundaries before the next starts)
+and a new Step 8 (`Run-Coverage.ps1`, called directly — a purely mechanical sub-step, fine to
+invoke without agent judgement even inside an otherwise agent-driven pipeline).
+
+**`ssisx-pipeline.prompt.md` was deleted outright** — a `.prompt.md` file only makes sense as a
+chat-invocable wrapper, and the whole point of `Run-Pipeline.ps1` is the OPPOSITE case: no chat
+session available at all (CI, an ops person with no AI session). Keeping a slash command for
+that would have kept inviting exactly the confusion this correction fixes. `Run-Pipeline.ps1`
+and `Run-Coverage.ps1` themselves are UNCHANGED in behavior — still real, tested, additive-only
+scripts — only their own doc comments were rewritten to state plainly: use `/ssisx-rewrite` when
+a chat session exists; reach for these scripts only when one genuinely doesn't.
+
+Updated to match: `Tools/.github/copilot-instructions.md` (rules 14/15 — rule 15 now names
+`/ssisx-rewrite` as the standard, describes the whole-folder+coverage extension, and states the
+"why agent-driven" reasoning explicitly rather than asserting it), `Tools/COPILOT_GUIDE.md` (the
+`/ssisx-rewrite` section merged with the former standalone pipeline section, its own 8-row table
+gaining the coverage step, its "Prompts to paste" entry rewritten to invoke `/ssisx-rewrite`
+rather than the script), and `Tools/README.md` (same merge). No `Ssis.Extract.Codegen`/CLI code
+changed this round — this was entirely a prompt/doc-level correction, so the full suite (681
+tests) is unaffected and was not re-run for this specific change.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

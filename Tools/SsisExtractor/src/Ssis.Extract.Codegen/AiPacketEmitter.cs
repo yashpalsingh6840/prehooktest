@@ -323,7 +323,7 @@ public static class AiPacketEmitter
         """ + PinnedTestingApiBlock + """
 
 
-        The evidence below tells you WHICH of three shapes this is -- read it before writing anything:
+        The evidence below tells you WHICH of four shapes this is -- read it before writing anything:
 
         - **A Conditional Split case** this pilot's own oracle-based evaluator could not resolve to a
           boolean for a representative row (see the reason above). Construct your OWN representative
@@ -339,6 +339,12 @@ public static class AiPacketEmitter
           only reachable through the whole transform), and assert the exact expected value -- state
           your reasoning for what "correct" means for this column, since nothing here computes it for
           you the way `TransformTestEmitter`'s own oracle-verified assertions do.
+        - **An Aggregate GroupBy/count source**, whose own starter test could not be generated
+          because its GroupBy key resolves through a Lookup cache rather than a plain row property.
+          Construct a real `AggregateRowSource<TSourceRow,TKey,TRow>` directly (the same class
+          production code uses), feeding it a small in-memory fake `IRowSource<TSourceRow>` and a
+          key-selector function using a plain dictionary as a stand-in for the Lookup cache (no real
+          database needed) -- then assert the grouped/counted output rows.
 
         **If you cannot determine a correct expected value with confidence, say so instead of
         guessing one** -- a test asserting a wrong value is worse than no test at all, since it looks
@@ -470,10 +476,16 @@ public static class AiPacketEmitter
     };
 
     /// <summary>
-    /// Dispatches to one of three shapes by trying, in order, what <see cref="GapSpec.EvidenceRefId"/>
+    /// Dispatches to one of four shapes by trying, in order, what <see cref="GapSpec.EvidenceRefId"/>
     /// actually resolves to -- a Script Task companion test, a Script Component column companion
-    /// test, or a Conditional Split router test (see <see cref="TestOracleContract"/>'s own three
-    /// bullets, which this must stay in lockstep with).
+    /// test, a Conditional Split router test, or an Aggregate GroupBy/count source test (see
+    /// <see cref="TestOracleContract"/>'s own bullets, which this must stay in lockstep with).
+    /// The fourth (Aggregate) shape was added 2026-09-06 after a real gap
+    /// (<c>Package_Transforms</c>'s own <c>RegionSummary</c>, whose GroupBy key resolves through a
+    /// Lookup cache rather than a plain row property) fell through to the generic "could not
+    /// resolve" fallback below -- <see cref="PipelineComponentSpec.Aggregate"/> was never checked
+    /// at all, not a bug in the refId lookup itself (<see cref="FindComponent"/> already resolved
+    /// the component correctly).
     /// </summary>
     private static string TestOracleEvidence(PackageSpec package, GenerationGap gap)
     {
@@ -511,7 +523,69 @@ public static class AiPacketEmitter
             return sb.ToString();
         }
 
+        if (found?.Component.Aggregate is { } agg)
+        {
+            var (taskName, component) = found.Value;
+            var pipeline = FindPipeline(package, component.RefId);
+
+            var asb = new StringBuilder();
+            asb.Append($"- **Data Flow Task:** `{taskName}`\n");
+            asb.Append($"- **Component:** `{component.Name}`\n\n");
+            asb.Append("### Every aggregate column, in declared order\n\n");
+            asb.Append("| Output | Role | Source column |\n|---|---|---|\n");
+            foreach (var col in agg.Columns)
+            {
+                var role = AggregationTypeName(col.AggregationTypeRaw);
+                var sourceName = ResolveLineageColumnName(pipeline, col.SourceColumnLineageId);
+                asb.Append($"| `{col.OutputColumnName}` | {role} | {(sourceName is null ? "_(unresolved)_" : $"`{sourceName}`")} |\n");
+            }
+            asb.Append("\n_A `GroupBy` column resolving through a Lookup's own reference cache" +
+                        " (rather than a plain source column) needs a stand-in for that cache in" +
+                        " a fakes-only test -- see this project's own `RegionSummary` precedent for" +
+                        " the shape (construct the real `AggregateRowSource<TSourceRow,TKey,TRow>`" +
+                        " directly with a plain dictionary standing in for the Lookup cache)._\n");
+            return asb.ToString();
+        }
+
         return $"_Could not resolve the source of this test-oracle gap (refId `{gap.EvidenceRefId}`) -- report this, it is a bug in AiPacketEmitter._\n";
+    }
+
+    private static string AggregationTypeName(int? raw) => raw switch
+    {
+        0 => "GroupBy",
+        1 => "Count",
+        2 => "CountAll",
+        3 => "CountDistinct",
+        4 => "Sum",
+        5 => "Average",
+        6 => "Minimum",
+        7 => "Maximum",
+        _ => $"(unrecognized AggregationType {raw?.ToString() ?? "(none)"})",
+    };
+
+    /// <summary>Finds the whole pipeline containing the component identified by <paramref name="componentRefId"/>
+    /// -- <see cref="FindComponent"/> only ever hands back the one matching component, not the
+    /// pipeline it lives in, but resolving an Aggregate column's own source column needs to search
+    /// every OTHER component's output columns in that SAME data flow for the matching LineageId.</summary>
+    private static PipelineSpec? FindPipeline(PackageSpec package, string componentRefId) =>
+        PackageTree.AllExecutables(package)
+            .Select(e => e.DataFlowTask?.Pipeline)
+            .FirstOrDefault(p => p is not null && p.Components.Any(c => c.RefId == componentRefId));
+
+    /// <summary>Resolves a lineageId to the NAME of the output column that produced it, searching
+    /// every component's own outputs in the given pipeline -- the same join key
+    /// <c>Ssis.Extract.Dtsx.LineageBuilder</c> uses globally, but scoped to one pipeline and done
+    /// locally here rather than pulling in that whole machinery for a single evidence lookup.</summary>
+    private static string? ResolveLineageColumnName(PipelineSpec? pipeline, string? lineageId)
+    {
+        if (pipeline is null || lineageId is null) return null;
+        foreach (var component in pipeline.Components)
+            foreach (var output in component.Outputs)
+            {
+                var column = output.Columns.FirstOrDefault(c => c.LineageId == lineageId);
+                if (column is not null) return column.Name;
+            }
+        return null;
     }
 
     /// <summary>

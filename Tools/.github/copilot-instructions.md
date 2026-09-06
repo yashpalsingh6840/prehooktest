@@ -138,11 +138,36 @@ written specifically for that situation; this file assumes `Tools\` itself is wh
     AI's own confidence is never sign-off, and continuing anyway defeats the one property this
     whole gap taxonomy exists to protect. Re-running it for the same package is always safe -- it
     detects what already exists on disk and resumes rather than redoing finished work.
+14. **Never delete any TestData, fill, or generated output -- ever -- unless explicitly told
+    to.** This applies to a client's own supplied real data just as much as to this tool's own
+    disposable `<out>/generate/` tree. If a genuinely clean run is needed, that is its own
+    explicit request from the human -- never something to do on your own judgement as part of
+    "running the tool" or "cleaning up."
+15. **`.github/prompts/ssisx-rewrite.prompt.md` (`/ssisx-rewrite`) is the STANDARD thing to run
+    whenever asked to "run the tool" / "generate this package" / "process this folder", in THIS
+    chat session** -- it now covers one package, a named few, or a whole folder (leave `package`
+    blank), through extract -> `svk` walkthrough/sampledata -> generate -> Tier-1/2 fills (AI
+    boundary) -> apply+build -> test-oracle/local-data fills (AI boundary) -> apply+build+test ->
+    code coverage. It is agent-driven ON PURPOSE: you take each step as your own tool call, so you
+    can actually read a gap's own work packet and draft a fill, then stop for the human's
+    confirmation -- something no plain script can do. `Tools/SsisExtractor/scripts/
+    Run-Pipeline.ps1` runs the SAME 5 mechanical steps as a single script call, but ONLY for when
+    no Claude/Copilot chat session is available at all (CI, an ops person with no AI session) --
+    it can apply fills already on disk, never write one, so do not reach for it here. Coverage
+    (`Run-Coverage.ps1`, a purely mechanical sub-step even within `/ssisx-rewrite`) is measured on
+    the package's OWN generated code separately from the shared `Etl.Core` library -- see
+    `Tools/COPILOT_TESTING_GUIDE.md`'s coverage section for why the blended total reads lower and
+    is not the number to quote.
 
 ## The one-sentence workflow
 
 **Survey once (cheap, whole portfolio, read-only) -> generate one package (or a named few) at
 a time -> read its gaps -> either wait for a human decision/fill, or move to the next package.**
+
+For the common case -- one package or a folder, start to finish, with nothing deleted along the
+way -- reach for `/ssisx-rewrite` (rule 15) instead of the manual command sequence below; it runs
+every step as your own tool calls, stopping at the two AI boundaries for a human's confirmation.
+The sequence below is the detailed, step-by-step reference for when finer control is needed.
 
 `ssisx` is not on PATH -- build it once (`cd SsisExtractor && dotnet build SsisExtractor.slnx -c
 Debug && cd ..`, from this `Tools\` folder), then call the built exe directly:
@@ -196,10 +221,12 @@ expected, not a failure. Read `out\generate-report.md`.
     the packet -- see rule 11). Write it under `fills-library\<Package>\Tests\<Name>Tests.cs`,
     with a `// ssisx-fill: GapId=... Author=... Date=... EvidenceSha256=...` comment as the
     file's own FIRST line (there is no seam to place it above -- this is a brand-new file).
-  - **`LOCAL-DATA:...`** -- a realistic sample file to replace the synthetic Tier-A placeholder
-    (see rule 4's own exception). The packet names the EXACT file name in its own "Save as" line
-    -- use that name verbatim. Write it under `fills-library\<Package>\TestData\<that exact
-    name>`, with NO comment of any kind (a data file has no provenance convention).
+  - **`LOCAL-DATA:...`** -- a realistic sample file this source's own Integration-tagged read
+    test actually needs (see rule 4's own exception) -- CSV/fixed-width/Excel alike, all resolve
+    through the same `TestData/` folder; there is no separate synthetic fallback any of them read
+    instead. The packet names the EXACT file name in its own "Save as" line -- use that name
+    verbatim. Write it under `fills-library\<Package>\TestData\<that exact name>`, with NO
+    comment of any kind (a data file has no provenance convention).
 - **Tier 2 (`MissingLogic`)** -- a Script Task/Script Component's real source IS in the `.dtsx`;
   it just needs porting to C#. Read the work packet (it includes the actual script text), write
   the `.cs` file it describes under `fills-library\<Package>\` (NOT `out\fills\...` -- see rule

@@ -124,7 +124,11 @@ public static class RunAsyncFailureTestEmitter
             lines.Add("    [Fact]");
             lines.Add("    public async Task RunAsync_Succeeds_AgainstFakesWithNoFaultInjected()");
             lines.Add("    {");
-            lines.Add("        using var harness = new PackageHarness();");
+            // useSampleDataForFileSources: true -- this test runs the WHOLE pipeline against fakes,
+            // including a real CSV/fixed-width read, so it needs the harness's own Tier-A synthetic
+            // sample rather than the real TestData/ file a LOCAL-DATA fill may not have supplied yet
+            // (see PackageHarness's own doc comment on this parameter).
+            lines.Add("        using var harness = new PackageHarness(useSampleDataForFileSources: true);");
             lines.Add("        var package = harness.Package();");
             lines.Add("");
             lines.Add("        var exitCode = await package.RunAsync(CancellationToken.None);");

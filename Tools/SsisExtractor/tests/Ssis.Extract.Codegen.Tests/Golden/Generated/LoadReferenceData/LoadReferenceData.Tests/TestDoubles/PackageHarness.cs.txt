@@ -22,8 +22,12 @@ namespace LoadReferenceData.TestDoubles;
 /// per DI scope (so RunBranchAsync's own per-branch transactions are individually observable
 /// -- see {Package}.cs's own concurrent-wave handling), a null logger for every ILogger&lt;T&gt;,
 /// a fixed TimeProvider, and empty FileSourceOptions/DatabaseOptions/BulkCopyOptions (populated
-/// for real once a Tier-A sample-data fixture exists -- see the generated-tests plan's own
-/// SampleDataEmitter, a later phase). No SQL Server involved anywhere by default: the DbContext
+/// for real once a testDataFiles entry exists). Every file-based source -- CSV, fixed-width,
+/// Excel alike -- resolves through a package-relative TestData/ folder, the SAME folder
+/// appsettings.Development.json points a real local run at (see the LOCAL-DATA work packet):
+/// there is no separate, tool-synthesized fallback here, so a source's own read test needs
+/// its real LOCAL-DATA fill applied before it can pass -- see EmitFileSourceTest's own doc
+/// comment. No SQL Server involved anywhere by default: the DbContext
 /// behind each FakeUnitOfWork is the real generated LoadReferenceDataDbContext, configured with a
 /// connection string that is NEVER opened -- EF only needs the model to answer schema/column
 /// questions (see FakeUnitOfWork.BulkInsertAsync). NewRealUnitOfWorkAsync() is the one
@@ -61,7 +65,13 @@ internal sealed class PackageHarness : IDisposable
     /// it any time before RunAsync() is called takes effect.</summary>
     public Exception? ThrowOnGetBindToken { get; set; }
 
-    public PackageHarness()
+    /// <param name="useSampleDataForFileSources">True ONLY for the happy-path RunAsync
+    /// starter test, which runs the WHOLE pipeline (including a real CSV/fixed-width read)
+    /// and so needs SOME parseable file even with no LOCAL-DATA fill supplied yet -- points
+    /// every CSV/fixed-width source at the Tier-A synthetic sample (SampleData/) instead of
+    /// the real TestData/ file. Every OTHER test (the isolated source-read Integration test
+    /// included) leaves this false and gets the real TestData/ file, exactly as before.</param>
+    public PackageHarness(bool useSampleDataForFileSources = false)
     {
         var services = new ServiceCollection();
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
@@ -77,8 +87,8 @@ internal sealed class PackageHarness : IDisposable
         {
             Files =
             {
-                ["Department"] = new FileSourceEntry { SourceFolder = Path.Combine(AppContext.BaseDirectory, "SampleData"), SourceFileName = "Department.csv" },
-                ["Designation"] = new FileSourceEntry { SourceFolder = Path.Combine(AppContext.BaseDirectory, "SampleData"), SourceFileName = "Designation.csv" },
+                ["Department"] = useSampleDataForFileSources ? new FileSourceEntry { SourceFolder = Path.Combine(AppContext.BaseDirectory, "SampleData"), SourceFileName = "Department.csv" } : new FileSourceEntry { SourceFolder = Path.Combine(AppContext.BaseDirectory, "TestData"), SourceFileName = "Departments.csv" },
+                ["Designation"] = useSampleDataForFileSources ? new FileSourceEntry { SourceFolder = Path.Combine(AppContext.BaseDirectory, "SampleData"), SourceFileName = "Designation.csv" } : new FileSourceEntry { SourceFolder = Path.Combine(AppContext.BaseDirectory, "TestData"), SourceFileName = "Designations.csv" },
             },
         }));
         services.AddSingleton<IOptions<BulkCopyOptions>>(Options.Create(new BulkCopyOptions()));

@@ -23,19 +23,19 @@ public static class TestDoublesEmitter
 {
     public static EmitResult Emit(
         string rootNamespace, string packageClassName, string dbContextTypeName,
-        IReadOnlyList<(string Key, string FileName)>? sampleDataFiles = null,
+        IReadOnlyList<(string Key, string FileName)>? testDataFiles = null,
         IReadOnlyList<string>? sinkFileKeys = null,
         IReadOnlyList<string>? fileSystemTaskKeys = null,
         IReadOnlyList<string>? forEachLoopKeys = null,
-        IReadOnlyList<string>? placeholderFileKeys = null,
-        IReadOnlyList<string>? secondaryConnectionManagerNames = null)
+        IReadOnlyList<string>? secondaryConnectionManagerNames = null,
+        IReadOnlyList<(string Key, string FileName)>? sampleDataFallbackFiles = null)
     {
         var ns = $"{rootNamespace}.TestDoubles";
         var files = new List<GeneratedFile>
         {
             new("TestDoubles/FakeUnitOfWork.cs", EmitFakeUnitOfWork(ns)),
             new("TestDoubles/RecordingNotifier.cs", EmitRecordingNotifier(ns)),
-            new("TestDoubles/PackageHarness.cs", EmitPackageHarness(rootNamespace, ns, packageClassName, dbContextTypeName, sampleDataFiles ?? [], sinkFileKeys ?? [], fileSystemTaskKeys ?? [], forEachLoopKeys ?? [], placeholderFileKeys ?? [], secondaryConnectionManagerNames ?? [])),
+            new("TestDoubles/PackageHarness.cs", EmitPackageHarness(rootNamespace, ns, packageClassName, dbContextTypeName, testDataFiles ?? [], sinkFileKeys ?? [], fileSystemTaskKeys ?? [], forEachLoopKeys ?? [], secondaryConnectionManagerNames ?? [], sampleDataFallbackFiles ?? [])),
         };
         return new EmitResult(files, []);
     }
@@ -228,9 +228,10 @@ public static class TestDoublesEmitter
 
     private static string EmitPackageHarness(
         string rootNamespace, string ns, string packageClassName, string dbContextTypeName,
-        IReadOnlyList<(string Key, string FileName)> sampleDataFiles, IReadOnlyList<string> sinkFileKeys,
+        IReadOnlyList<(string Key, string FileName)> testDataFiles, IReadOnlyList<string> sinkFileKeys,
         IReadOnlyList<string> fileSystemTaskKeys, IReadOnlyList<string> forEachLoopKeys,
-        IReadOnlyList<string> placeholderFileKeys, IReadOnlyList<string> secondaryConnectionManagerNames)
+        IReadOnlyList<string> secondaryConnectionManagerNames,
+        IReadOnlyList<(string Key, string FileName)> sampleDataFallbackFiles)
     {
         const string fakeConnectionString =
             "Server=(local);Database=Fake;Trusted_Connection=True;TrustServerCertificate=True;";
@@ -267,8 +268,12 @@ public static class TestDoublesEmitter
             "/// per DI scope (so RunBranchAsync's own per-branch transactions are individually observable",
             "/// -- see {Package}.cs's own concurrent-wave handling), a null logger for every ILogger&lt;T&gt;,",
             "/// a fixed TimeProvider, and empty FileSourceOptions/DatabaseOptions/BulkCopyOptions (populated",
-            "/// for real once a Tier-A sample-data fixture exists -- see the generated-tests plan's own",
-            "/// SampleDataEmitter, a later phase). No SQL Server involved anywhere by default: the DbContext",
+            "/// for real once a testDataFiles entry exists). Every file-based source -- CSV, fixed-width,",
+            "/// Excel alike -- resolves through a package-relative TestData/ folder, the SAME folder",
+            "/// appsettings.Development.json points a real local run at (see the LOCAL-DATA work packet):",
+            "/// there is no separate, tool-synthesized fallback here, so a source's own read test needs",
+            "/// its real LOCAL-DATA fill applied before it can pass -- see EmitFileSourceTest's own doc",
+            "/// comment. No SQL Server involved anywhere by default: the DbContext",
             $"/// behind each FakeUnitOfWork is the real generated {dbContextTypeName}, configured with a",
             "/// connection string that is NEVER opened -- EF only needs the model to answer schema/column",
             "/// questions (see FakeUnitOfWork.BulkInsertAsync). NewRealUnitOfWorkAsync() is the one",
@@ -310,7 +315,13 @@ public static class TestDoublesEmitter
             "    /// it any time before RunAsync() is called takes effect.</summary>",
             "    public Exception? ThrowOnGetBindToken { get; set; }",
             "",
-            "    public PackageHarness()",
+            "    /// <param name=\"useSampleDataForFileSources\">True ONLY for the happy-path RunAsync",
+            "    /// starter test, which runs the WHOLE pipeline (including a real CSV/fixed-width read)",
+            "    /// and so needs SOME parseable file even with no LOCAL-DATA fill supplied yet -- points",
+            "    /// every CSV/fixed-width source at the Tier-A synthetic sample (SampleData/) instead of",
+            "    /// the real TestData/ file. Every OTHER test (the isolated source-read Integration test",
+            "    /// included) leaves this false and gets the real TestData/ file, exactly as before.</param>",
+            "    public PackageHarness(bool useSampleDataForFileSources = false)",
             "    {",
             "        var services = new ServiceCollection();",
             "        services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));",
@@ -348,7 +359,7 @@ public static class TestDoublesEmitter
             lines.Add("        };");
             lines.Add("        services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(secondaryConnectionConfig).Build());");
         }
-        if (sampleDataFiles.Count == 0 && sinkFileKeys.Count == 0 && fileSystemTaskKeys.Count == 0 && forEachLoopKeys.Count == 0 && placeholderFileKeys.Count == 0)
+        if (testDataFiles.Count == 0 && sinkFileKeys.Count == 0 && fileSystemTaskKeys.Count == 0 && forEachLoopKeys.Count == 0)
         {
             lines.Add("        services.AddSingleton<IOptions<FileSourceOptions>>(Options.Create(new FileSourceOptions()));");
         }
@@ -369,41 +380,54 @@ public static class TestDoublesEmitter
             // and a shared flat folder would let two different loops' own test files collide.
             foreach (var key in forEachLoopKeys)
                 lines.Add($"        Directory.CreateDirectory(ForEachLoopFolder(\"{key}\"));");
-            // Tier A (Docs/Generated-Tests-Plan.md): points every Flat File Source this package
-            // has at its own emitted SampleData/ file, resolved against THIS assembly's own build
-            // output (SampleData/ is CopyToOutputDirectory -- see TestProjectEmitter), never the
-            // working directory a test happens to be run from. A Flat File Destination's own key
-            // (sinkFileKeys) points at _sinkOutputDirectory instead -- a real, writable, per-
-            // instance temp location, not a checked-in file -- so "Sink -- flat file" starter
-            // tests can write for real and read the result back with no format-duplication risk.
-            // A File System Task's own source/destination connection-manager keys
-            // (fileSystemTaskKeys) share that same directory, each with a distinct ".fst.dat"
-            // suffix so a copy's source and destination never collide with a sink's own
-            // ".out.txt" files or with each other. A ForEach Loop's own key (forEachLoopKeys)
+            // Every file-based source this package has (CSV, fixed-width, Excel alike) points at
+            // TestData/<real file name> -- the SAME package-relative folder
+            // appsettings.Development.json points a real local run at, resolved against THIS
+            // assembly's own build output (TestData/ is CopyToOutputDirectory -- see
+            // TestProjectEmitter), never the working directory a test happens to be run from.
+            // Deliberately NOT a tool-synthesized fallback: there is one real production path
+            // (appsettings.json's own SourceFileName, unchanged by the Development override) and
+            // this harness names that exact file, so a source's own read test fails clearly
+            // (FileNotFoundException) until its LOCAL-DATA fill actually supplies that file --
+            // see EmitFileSourceTest/EmitExcelSourceTest's own doc comments for why those tests
+            // are tagged [Trait("Category", "Integration")] rather than assumed to pass. A Flat
+            // File Destination's own key (sinkFileKeys) points at _sinkOutputDirectory instead --
+            // a real, writable, per-instance temp location, not a checked-in file -- so "Sink --
+            // flat file" starter tests can write for real and read the result back with no
+            // format-duplication risk. A File System Task's own source/destination connection-
+            // manager keys (fileSystemTaskKeys) share that same directory, each with a distinct
+            // ".fst.dat" suffix so a copy's source and destination never collide with a sink's
+            // own ".out.txt" files or with each other. A ForEach Loop's own key (forEachLoopKeys)
             // points at its own dedicated SUBFOLDER (ForEachLoopFolder(key)) instead of a single
             // file, since this is the one shape that reads a FOLDER of files, not one file.
             lines.Add("        services.AddSingleton<IOptions<FileSourceOptions>>(Options.Create(new FileSourceOptions");
             lines.Add("        {");
             lines.Add("            Files =");
             lines.Add("            {");
-            foreach (var (key, fileName) in sampleDataFiles)
-                lines.Add($"                [\"{key}\"] = new FileSourceEntry {{ SourceFolder = Path.Combine(AppContext.BaseDirectory, \"SampleData\"), SourceFileName = \"{fileName}\" }},");
+            var sampleDataFallbackByKey = sampleDataFallbackFiles.ToDictionary(f => f.Key, f => f.FileName);
+            foreach (var (key, fileName) in testDataFiles)
+            {
+                var realEntry = $"new FileSourceEntry {{ SourceFolder = Path.Combine(AppContext.BaseDirectory, \"TestData\"), SourceFileName = \"{fileName}\" }}";
+                if (sampleDataFallbackByKey.TryGetValue(key, out var sampleFileName))
+                {
+                    var sampleEntry = $"new FileSourceEntry {{ SourceFolder = Path.Combine(AppContext.BaseDirectory, \"SampleData\"), SourceFileName = \"{sampleFileName}\" }}";
+                    lines.Add($"                [\"{key}\"] = useSampleDataForFileSources ? {sampleEntry} : {realEntry},");
+                }
+                else
+                {
+                    // No Tier-A sample exists for this key (Excel) -- always the real file. Safe
+                    // even under useSampleDataForFileSources=true: PackageClassEmitter.
+                    // SupportsFakeHappyPath already excludes any Excel-sourced package from ever
+                    // constructing the harness that way in the first place.
+                    lines.Add($"                [\"{key}\"] = {realEntry},");
+                }
+            }
             foreach (var key in sinkFileKeys)
                 lines.Add($"                [\"{key}\"] = new FileSourceEntry {{ SourceFolder = _sinkOutputDirectory, SourceFileName = \"{key}.out.txt\" }},");
             foreach (var key in fileSystemTaskKeys)
                 lines.Add($"                [\"{key}\"] = new FileSourceEntry {{ SourceFolder = _sinkOutputDirectory, SourceFileName = \"{key}.fst.dat\" }},");
             foreach (var key in forEachLoopKeys)
                 lines.Add($"                [\"{key}\"] = new FileSourceEntry {{ SourceFolder = ForEachLoopFolder(\"{key}\"), SourceFileName = \"\" }},");
-            // A source method whose OWN construction (not just ReadAsync) reads File(key) --
-            // ExcelSourceOptions builds its own FilePath eagerly, unlike Sql/Csv/FixedWidth's own
-            // lazily-opened options -- would throw KeyNotFoundException on the mere ".Name" starter
-            // test if nothing were registered at all (confirmed by running it before this existed).
-            // DELIBERATELY points at a file that does not exist: the ".Name"-only test never reads
-            // it, and the separate [Trait("Category", "Integration")] test that DOES is meant to
-            // fail clearly (FileNotFoundException) unless Tier-B realistic data has been supplied
-            // for real -- see the generated-tests plan's own Tier B section.
-            foreach (var key in placeholderFileKeys)
-                lines.Add($"                [\"{key}\"] = new FileSourceEntry {{ SourceFolder = _sinkOutputDirectory, SourceFileName = \"{key}.missing\" }},");
             lines.Add("            },");
             lines.Add("        }));");
         }

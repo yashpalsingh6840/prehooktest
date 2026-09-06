@@ -132,6 +132,19 @@ spec — those assertions are facts, not guesses. Everything else becomes a pack
 
 They answer different questions, and collapsing them into one breaks a guarantee.
 
+> **2026-09-06 UPDATE, superseding this section's own "hard requirement" below**: on the user's
+> explicit request (a CSV/fixed-width source silently passing on synthetic data was inconsistent
+> with SQL/Excel, which have always needed a real server/workbook), `PackageHarness` no longer
+> points at Tier A for ANY file-based source's real-read test — every one (CSV, fixed-width,
+> Excel) now resolves through `TestData/`, the same folder `appsettings.Development.json` already
+> overrides, and is `[Trait("Category", "Integration")]`-tagged until its own `LOCAL-DATA` fill is
+> supplied. Tier A still ships (unchanged: `SampleDataEmitter`, `SampleData/*.csv`, `Copy
+> ToOutputDirectory`) but purely as a schema-correct reference for writing that fill — nothing at
+> runtime reads it any more. The suite-is-green-with-zero-fills guarantee still holds, exactly as
+> stated below, but now via the `.Name`-only test (never opens a file) plus the retagging, not via
+> Tier A being what the real read consumes. See `Tools/COPILOT_TESTING_GUIDE.md`'s own updated
+> "two sample-data tiers" section for the full account.
+
 **Tier A — deterministic, synthesized, ships with every `generate` run, zero AI, zero fills.**
 `ssisx` emits a 2–3 row sample per CSV / fixed-width source into
 `{Package}.Tests/SampleData/{Component}.csv` (`CopyToOutputDirectory`), built from the connection

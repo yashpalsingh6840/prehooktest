@@ -33,7 +33,7 @@ public class RunAsyncTests
     [Fact]
     public async Task RunAsync_Succeeds_AgainstFakesWithNoFaultInjected()
     {
-        using var harness = new PackageHarness();
+        using var harness = new PackageHarness(useSampleDataForFileSources: true);
         var package = harness.Package();
 
         var exitCode = await package.RunAsync(CancellationToken.None);

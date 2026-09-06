@@ -160,6 +160,37 @@ public class AiPacketEmitterTests
         Assert.Contains("<Package>.Tests/Fills/", content);
     }
 
+    /// <summary>
+    /// Added 2026-09-06 after a real gap (Package_Transforms's own RegionSummary, whose GroupBy
+    /// key resolves through a Lookup cache) fell through to the generic "could not resolve" text
+    /// -- TestOracleEvidence only ever checked ScriptComponent/ConditionalSplit, never Aggregate,
+    /// even though FindComponent already resolved the component correctly. Guards against that
+    /// 4th shape regressing back to the fallback message.
+    /// </summary>
+    [Fact]
+    public void Emit_BuildsATestOracleAggregatePacket_FromTheRealGroupByAndCountColumns()
+    {
+        var package = LoadSyntheticFixture("SyntheticAggregate.dtsx");
+        var aggregate = TestFixtures.FindComponent(package, "Microsoft.Aggregate", "AGG_ByRegion");
+        var gaps = new List<GenerationGap>
+        {
+            new("RegionSummary", "GroupBy value only resolves through a Lookup cache", false, GapKind.TestOracle, aggregate.RefId),
+        };
+
+        var result = AiPacketEmitter.Emit(package, gaps);
+        var spec = Assert.Single(result.Gaps);
+        Assert.Equal(GapTier.MissingDatum, spec.Tier);
+        Assert.False(spec.IsBlocking);
+
+        var content = Assert.Single(result.Packets).Content;
+        // Must NOT fall through to the generic unresolved-evidence message.
+        Assert.DoesNotContain("Could not resolve the source of this test-oracle gap", content);
+        Assert.Contains("### Every aggregate column, in declared order", content);
+        Assert.Contains("| `Region` | GroupBy |", content);
+        Assert.Contains("| `CustomerCount` | Count |", content);
+        Assert.Contains("AGG_ByRegion", content);
+    }
+
     [Fact]
     public void Emit_BuildsALocalFileSourceDataPacket_FromTheRealFlatFileSchema()
     {

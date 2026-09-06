@@ -303,6 +303,10 @@ internal static class GenerateCommand
         "    <PackageVersion Include=\"Microsoft.NET.Test.Sdk\" Version=\"17.14.1\" />",
         "    <PackageVersion Include=\"xunit\" Version=\"2.9.3\" />",
         "    <PackageVersion Include=\"xunit.runner.visualstudio\" Version=\"3.1.4\" />",
+        // Lets `dotnet test --collect:\"XPlat Code Coverage\"` work out of the box against every
+        // generated {Package}.Tests project -- previously had to be patched in by hand per package
+        // (a real, avoidable manual step) to compute a code-coverage report at all.
+        "    <PackageVersion Include=\"coverlet.collector\" Version=\"6.0.4\" />",
         "  </ItemGroup>",
         "",
         "</Project>",

@@ -1,12 +1,12 @@
 ---
 mode: agent
-description: One-command pipeline for rewriting a single named package -- extract, walkthrough, generate, fill (two AI boundaries), apply, build, test. Sequences the existing per-step prompts; does not restate their command lines.
+description: The standard end-to-end pipeline, agent-driven -- one package, a named few, or a whole folder -- extract, walkthrough, generate, fill (two AI boundaries), apply, build, test, coverage. Sequences the existing per-step prompts; does not restate their command lines. Use THIS whenever a Claude/Copilot chat session is available -- Run-Pipeline.ps1 is the mechanical fallback for when one is not (see its own doc comment).
 ---
 
-# ssisx: rewrite one package, end to end
+# ssisx: rewrite one package, a named few, or a whole folder -- end to end
 
 - **Input folder:** `${input:inputPath:Absolute path to the SSIS folder/project}`
-- **Package:** `${input:package:Package ObjectName, e.g. LoadEmployees}`
+- **Package(s):** `${input:package:Package ObjectName(s), comma-separated -- leave blank for EVERY package in inputPath}`
 - **Target framework:** `${input:framework:net8.0 or net10.0 - the CLIENT's runtime}`
 
 If `<framework>` was left blank or looks like a placeholder, **ask before generating** -- see
@@ -15,7 +15,32 @@ If `<framework>` was left blank or looks like a placeholder, **ask before genera
 This prompt **orchestrates the other prompts by reference**. Every step below names the prompt
 that actually does the work rather than restating its commands -- if a step's own prompt file
 changes, this one does not need to change with it. `--package <package>` is threaded through
-every step: this never touches any other package in `<inputPath>`.
+every step: this never touches any package not in scope.
+
+**Why this is agent-driven rather than one script call**: gap-filling (Steps 4 and 6 below)
+needs a human/AI actually reading a work packet and writing something, which a plain script
+cannot do -- it can only run deterministic commands and report an exit code. Running this
+prompt means YOU (the agent) take each step as your own tool call, so you can react mid-flight:
+read the actual gap report, draft a fill, and stop for the human's confirmation, rather than a
+script silently continuing past an unfilled gap into a build failure. `Run-Pipeline.ps1`
+(`Tools/SsisExtractor/scripts/Run-Pipeline.ps1`) exists for the opposite case -- no AI session
+available at all -- and is purely mechanical for exactly this reason: it can apply fills already
+on disk, but it can never write one.
+
+## Scope -- one package, a named few, or the whole folder
+
+If `<package>` names one or more packages (comma-separated), run every step below once per named
+package, in the order given, completing one package's own Steps 0-8 before starting the next.
+
+If `<package>` was left blank, first run Step 1 (extract) once for the whole `<inputPath>`, read
+its own summary for the full list of package names, then run Steps 0/2-8 once per package in that
+list, in the order the summary lists them -- Step 1 itself does not repeat per package, since
+`ssisx extract`/`report` already cover the whole folder in one call.
+
+Either way, **complete one package fully (through whichever step it reaches, including stopping
+at an AI boundary) before starting the next** -- never batch every package's Tier-1/2 gaps into
+one combined review; each package's own gaps are reviewed and confirmed on their own. Give a
+combined closing report (see the end of this file) once every package in scope has been run.
 
 ## Step 0 -- detect where we're picking up (filesystem-detected, not a state file)
 
@@ -95,14 +120,29 @@ Follow `ssisx-test.prompt.md` Step 3 in full (apply-fills, build, `dotnet test -
 Category!=Integration`). Report the final result: build status, test pass/fail/skip counts, and
 any gap of any tier still outstanding for `<package>`.
 
+## Step 8 -- code coverage
+
+Run `Tools/SsisExtractor/scripts/Run-Coverage.ps1 -GeneratedRoot <out>/generate -Package
+<package>` -- this is a purely mechanical utility (parses `coverage.cobertura.xml`, no AI
+involved), so it's fine to call directly even though the rest of this pipeline is agent-driven.
+Read the row it prints/writes to `coverage-report.md` for `<package>` and report both figures:
+"own generated code" (the honest one for a starter-test baseline) and the blended "Line %"
+(lower, dragged down by the shared `Etl.Core` library's own infrastructure -- see
+`Tools/COPILOT_TESTING_GUIDE.md`'s coverage section for why). Never deletes a prior
+`TestResults\` folder -- safe to re-run any time.
+
 ## Closing report
 
-Summarize the whole run: which steps executed vs. were skipped as already-done, both AI
-boundaries' outcomes, the final build/test result, and the reminder to `git add fills-library &&
-git commit` if anything was written to it.
+If this ran for more than one package (Scope section above), give ONE combined summary at the
+end covering every package: which fully completed vs. which stopped at an AI boundary and is
+waiting on a human, plus per-package build/test/coverage results. For a single package, or as
+the per-package summary within that combined report: which steps executed vs. were skipped as
+already-done, both AI boundaries' outcomes, the final build/test/coverage result, and the
+reminder to `git add fills-library && git commit` if anything was written to it.
 
 ## Logging
 
 Each step already logs itself per its own prompt's `## Logging` section -- do not duplicate
 that here. Append one closing line to `session-logs/<yyyy-MM-dd>-session.md` summarizing this
-whole `/ssisx-rewrite <package>` run and where it stopped (if it stopped at an AI boundary).
+whole `/ssisx-rewrite` run (every package in scope) and where each stopped (if it stopped at an
+AI boundary).

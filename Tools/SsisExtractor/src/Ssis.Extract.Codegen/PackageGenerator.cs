@@ -232,7 +232,7 @@ public static partial class PackageGenerator
                         package, ns, flow, lookup, cacheClassName, resolvedJoinKey, fileSourceEntries, files, tables,
                         functionsUsed, primaryKeysByDestination, gaps,
                         ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
-                        aggregateSourceTestCandidates);
+                        aggregateSourceTestCandidates, csvSampleCandidates);
                     if (lookupFlow is not null)
                     {
                         wiredFlows[flow] = lookupFlow;
@@ -312,7 +312,8 @@ public static partial class PackageGenerator
             {
                 var mergeJoinFlow = GenerateMergeJoinFlow(
                     package, ns, flow, mergeJoin, fileSourceEntries, files, testFiles, tables, functionsUsed,
-                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
+                    csvSampleCandidates);
                 if (mergeJoinFlow is not null) wiredFlows[flow] = mergeJoinFlow;
                 continue;
             }
@@ -349,7 +350,7 @@ public static partial class PackageGenerator
                 var oleDbCommandStep = GenerateOleDbCommandFlow(
                     package, ns, flow, oleDbCommandPlan, fileSourceEntries, files, gaps,
                     ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
-                    oleDbCommandTestCandidates);
+                    oleDbCommandTestCandidates, csvSampleCandidates);
                 if (oleDbCommandStep is not null) wiredOleDbCommands[flow] = oleDbCommandStep;
                 continue;
             }
@@ -614,58 +615,114 @@ public static partial class PackageGenerator
             // plus the one starter test that's always emittable regardless of this package's own
             // shape -- see RunAsyncFailureTestEmitter's own doc comment for why GetBindTokenAsync
             // specifically is the universal fault-injection point.
-            // Tier A (Docs/Generated-Tests-Plan.md): one deterministic sample CSV per delimited
-            // Flat File Source captured above by ResolveFlowSource, built BEFORE
-            // TestDoublesEmitter.Emit since PackageHarness's own FileSourceOptions wiring needs
-            // the resolved (Key, FileName) list.
+            // 2026-09-06: every file-based source's own starter READ test now points at the SAME
+            // package-relative TestData/ folder appsettings.Development.json already overrides
+            // FileSource:Files:<Key>:SourceFolder to (see TestDoublesEmitter's own doc comment) --
+            // there is no separate, tool-synthesized Tier-A fallback the test harness reads
+            // instead. A synthetic reference sample is still written to SampleData/ below (a
+            // schema-correct STARTING POINT for the LOCAL-DATA fill, the same role svk sampledata
+            // already plays for a package with no ssisx-generate-produced reference at all) but
+            // nothing at runtime -- production or test -- reads it any more; only TestData/<real
+            // file name>, filled in by a human/AI, makes the read test in
+            // ComponentTestEmitter.EmitFileSourceTest actually pass. This makes CSV/fixed-width
+            // sources consistent with SQL (needs a real server) and Excel (needs a real workbook):
+            // every file/database-backed source's own real read is now Integration-tagged and
+            // gapped as LocalFileSourceData/needs-a-real-server until supplied, rather than one
+            // shape (CSV/fixed-width) quietly passing on synthetic data while the others don't.
+            //
+            // A real bug, found running the Integration suite for real against a live database
+            // (not by this project's own test suite): csvSampleCandidates used to only ever be
+            // populated by the plain single-destination/ConditionalSplit/Multicast paths'
+            // ResolveFlowSource calls -- a CSV/fixed-width source feeding a Lookup+Aggregate
+            // composed flow (RBC_Demo_ETL's own DFT_LookupAndAggregate, once its Lookup preload
+            // stopped failing against a real server) or a Merge Join side (DFT_SortAndMergeJoin)
+            // got NO TestData/SampleData wiring and NO LocalFileSourceData gap at all -- so
+            // PackageHarness's fake FileSourceOptions had no entry for it, and the generated
+            // code's own File(key) call threw KeyNotFoundException the instant that flow's local
+            // BuildRawSource/BuildLeft/BuildRight function actually ran. Fixed by threading
+            // csvSampleCandidates into GenerateLookupFlow/GenerateLookupThenAggregateFlow/
+            // GenerateOleDbCommandFlow's own ResolveFlowSource calls and into
+            // ResolveMergeJoinSideSource (GenerateAggregateFlow needs no such fix -- it already
+            // requires flow.OleDbSource, i.e. a SQL-only source, so its own ResolveFlowSource call
+            // can never take the CSV branch). This closes the TestData/gap-reporting half of the
+            // gap for every flow shape; it deliberately does NOT add a starter SOURCE TEST for
+            // these nested sources, since none of them get their own top-level generated method
+            // to test against (each is a local function inside the owning flow's one method, e.g.
+            // AGG_ByRegion()'s own BuildRawSource()) -- that remains the allWiredSources loop's
+            // own documented, separate limitation below.
             var sampleDataByKey = new Dictionary<string, SampleDataResult>();
+            var testDataFileEntries = new List<(string Key, string FileName)>();
             foreach (var candidate in csvSampleCandidates)
             {
                 // A fixed-width/RaggedRight source needs a genuinely different sample-file SHAPE
                 // (padded fixed-position text, not comma-delimited) -- see SampleDataEmitter's own
-                // "Source -- fixed-width" doc comment.
+                // "Source -- fixed-width" doc comment. Kept purely as a schema-correct reference
+                // now -- see this block's own comment above -- so a failure to synthesize one
+                // (unusual delimiter/format SampleDataEmitter doesn't model) no longer blocks
+                // anything: the real TestData/ file name is resolved independently, below.
                 var sample = FlatFileRuntimeShape.IsFixedWidthWithoutHeader(candidate.ConnectionManager.FlatFileFormat)
                     ? SampleDataEmitter.EmitFixedWidth(candidate.FileSourceKey, candidate.ConnectionManager)
                     : SampleDataEmitter.EmitCsv(candidate.FileSourceKey, candidate.ConnectionManager);
                 if (sample is not null)
                     sampleDataByKey[candidate.FileSourceKey] = sample;
 
+                // The real file name a human/AI must supply under TestData/ -- the connection
+                // manager's own declared file name (matching BuildFileSourceEntry's own
+                // resolution, reused here rather than re-derived independently, so the two can
+                // never disagree), NOT the Tier-A sample's own {key}.csv/.txt name.
+                var realFileName = Path.GetFileName(candidate.ConnectionManager.Parsed?.FilePath);
+                if (string.IsNullOrEmpty(realFileName)) realFileName = "TODO";
+                testDataFileEntries.Add((candidate.FileSourceKey, realFileName));
+
                 // "LocalFileSourceData" taxonomy row (Docs/Generated-Tests-Plan.md's own Tier B):
-                // the Tier-A synthetic sample just emitted (if any) is what already makes the test
-                // suite pass with zero fills -- this is the OPTIONAL richer upgrade, so it is
-                // always reported, non-blocking, regardless of whether Tier-A synthesis succeeded.
+                // this is now the ONLY way this source's own Integration-tagged read test gets
+                // real data to run against, not an optional upgrade over an already-passing test.
                 gaps.Add(new GenerationGap(candidate.FileSourceKey,
-                    $"'{candidate.FileSourceKey}' still reads {(sample is not null ? "a deterministic synthetic sample" : "no sample data at all")} -- a REALISTIC file matching this connection manager's own declared schema would replace it under `TestData/{sample?.FileName ?? candidate.ConnectionManager.ObjectName}` (see the LOCAL-DATA work packet).",
+                    $"'{candidate.FileSourceKey}' has no real data yet -- its own Integration-tagged read test needs a REALISTIC file matching this connection manager's own declared schema at `TestData/{realFileName}` (see the LOCAL-DATA work packet; a schema-correct but synthetic reference was written to `SampleData/{sample?.FileName ?? candidate.FileSourceKey}` as a starting point, not a substitute).",
                     IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: candidate.ConnectionManager.RefId));
             }
             foreach (var sample in sampleDataByKey.Values)
                 testFiles.Add(sample.File with { RelativePath = $"{package.ObjectName}.Tests/{sample.File.RelativePath}" });
 
+            // The Tier-A synthetic sample's own (Key, FileName) -- a SECOND, PARALLEL PackageHarness
+            // wiring, distinct from testDataFileEntries above, used ONLY by the happy-path RunAsync
+            // starter test (RunAsyncFailureTestEmitter's own "succeeds against fakes" test). That
+            // test actually runs the WHOLE pipeline, including a real CSV/fixed-width read, so once
+            // every source's real read moved to needing a LOCAL-DATA fill (2026-09-06), the
+            // happy-path test would otherwise fail on a fresh generate with none supplied yet --
+            // this fallback is what keeps it fakes-only-green while the isolated source-read test
+            // (via testDataFileEntries) still correctly demands the real file. Deliberately does
+            // NOT cover Excel (no Tier-A sample exists for it at all) -- harmless, since
+            // PackageClassEmitter.SupportsFakeHappyPath already excludes any Excel-sourced package
+            // from ever needing this fallback in the first place.
+            var sampleDataFallbackEntries = sampleDataByKey.Select(kv => (kv.Key, kv.Value.FileName)).ToList();
+
             var className = PackageClassEmitter.ClassName(package.ObjectName);
             var dbContextTypeName = $"{package.ObjectName}DbContext";
-            var sampleDataFileEntries = sampleDataByKey.Select(kv => (kv.Key, kv.Value.FileName)).ToList();
             var sinkFileKeys = flatFileSinkCandidates.Select(c => c.Sink.FileSourceKey).Distinct().ToList();
             var distinctFileSystemTaskKeys = fileSystemTaskKeys.Distinct().ToList();
             var forEachLoopKeys = programSteps.OfType<ProgramForEachFileLoopStep>().Select(s => s.FileSourceKey).Distinct().ToList();
             // An Excel source's own ExcelSourceOptions resolves File(key) EAGERLY at construction
             // time (unlike Sql/Csv/FixedWidth's own lazily-opened options), so even the ".Name"-only
-            // starter test needs SOME registered entry -- there is no Tier-A sample data for Excel
-            // (no .xlsx writer in this stack), so this is a deliberately-missing placeholder file,
-            // not real sample data -- see EmitPackageHarness's own comment for why.
+            // starter test needs SOME registered entry -- folded into the same testDataFileEntries
+            // list as CSV/fixed-width now (there was never a Tier-A synthesizer for Excel -- no
+            // .xlsx writer in this stack -- so this was always the ONLY way its own Integration-
+            // tagged read test could ever get real data to run against).
             var excelFlowSources = wiredFlows.Values.Select(f => f.Source)
                 .Concat(wiredMulticasts.Values.Select(m => m.Source))
                 .Concat(wiredOleDbCommands.Values.Select(c => c.Source))
                 .OfType<ExcelFlowSource>().DistinctBy(s => s.FileSourceKey).ToList();
-            var excelSourceKeys = excelFlowSources.Select(s => s.FileSourceKey).ToList();
-            // "LocalFileSourceData" taxonomy row -- Excel has no Tier-A synthesizer at all (no
-            // .xlsx writer in this stack), so this is the ONLY way an Excel source's own
-            // Integration-tagged read test ever gets real data to run against, not merely a
-            // richer upgrade over an existing synthetic placeholder.
             foreach (var excel in excelFlowSources)
+            {
+                var connectionManager = fileSourceEntries.FirstOrDefault(e => e.Key == excel.FileSourceKey);
+                var realFileName = connectionManager?.SourceFileName;
+                if (string.IsNullOrEmpty(realFileName)) realFileName = $"{excel.FileSourceKey}.xlsx";
+                testDataFileEntries.Add((excel.FileSourceKey, realFileName));
                 gaps.Add(new GenerationGap(excel.FileSourceKey,
-                    $"'{excel.FileSourceKey}' (worksheet '{excel.WorksheetName}') has no Tier-A synthetic sample at all -- this tool has no .xlsx writer. A real workbook matching the declared schema under `TestData/{excel.FileSourceKey}.xlsx` is the only way its own Integration-tagged read test can run (see the LOCAL-DATA work packet).",
+                    $"'{excel.FileSourceKey}' (worksheet '{excel.WorksheetName}') has no Tier-A synthetic sample at all -- this tool has no .xlsx writer. A real workbook matching the declared schema under `TestData/{realFileName}` is the only way its own Integration-tagged read test can run (see the LOCAL-DATA work packet).",
                     IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: null));
-            foreach (var f in TestDoublesEmitter.Emit(ns, className, dbContextTypeName, sampleDataFileEntries, sinkFileKeys, distinctFileSystemTaskKeys, forEachLoopKeys, excelSourceKeys, secondaryConnections.Keys.ToList()).Files)
+            }
+            foreach (var f in TestDoublesEmitter.Emit(ns, className, dbContextTypeName, testDataFileEntries, sinkFileKeys, distinctFileSystemTaskKeys, forEachLoopKeys, secondaryConnections.Keys.ToList(), sampleDataFallbackEntries).Files)
                 testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
             var runAsyncTest = RunAsyncFailureTestEmitter.Emit(ns, className, plan.FailureHandlers.Count > 0, supportsFakeHappyPath, usesLookupPreload);
             testFiles.Add(runAsyncTest with { RelativePath = $"{package.ObjectName}.Tests/{runAsyncTest.RelativePath}" });
@@ -704,42 +761,21 @@ public static partial class PackageGenerator
                     testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
             }
 
-            // Source -- CSV (Phase 2 of the generated-tests plan): one starter test per generated
-            // CSV source method, matched back to its own row type/sample data via
-            // csvSampleCandidates -- matched by ROW TYPE NAME, never SsisName/ComponentName (a
-            // Flat File Source's own SSIS object name is free text, routinely left at the schema
-            // default across every Data Flow Task in a package, so two different flows' sources
-            // can and do share one -- caught for real generating SyntheticParallelShapes.dtsx,
-            // where this originally compiled a starter test against the WRONG row type). A
-            // genuinely delimited Flat File Source is never in SourceNeedsUow's true set (see
-            // PackageClassEmitter.SourceNeedsUow), so this always calls the source method with no
-            // uow argument.
-            foreach (var sourceEntry in methodInventory.Where(m => m.Kind == "Source"))
-            {
-                var candidate = csvSampleCandidates.FirstOrDefault(c => c.RowTypeName == sourceEntry.RowTypeName);
-                if (candidate is null) continue;
-                if (!sampleDataByKey.TryGetValue(candidate.FileSourceKey, out var sample)) continue;
-                var sourceTest = ComponentTestEmitter.EmitCsvSourceReadTest(
-                    $"{package.ObjectName}.Tests", ns, candidate.RowTypeNamespace, candidate.RowTypeName,
-                    sourceEntry.MethodName, sourceNeedsUow: false, sample.Columns);
-                testFiles.Add(sourceTest with { RelativePath = $"{package.ObjectName}.Tests/{sourceTest.RelativePath}" });
-            }
-
-            // Source -- SQL / Excel (Phase 2 of the generated-tests plan): matched the same way as
-            // "Source -- CSV" above (by ROW TYPE NAME, against every wired flow's own already-
-            // resolved Source, not re-derived) -- neither needs a candidate list of its own the way
-            // csvSampleCandidates does, since there is no Tier-A sample data to thread through for
-            // either: SQL because a real query result is unknowable at generation time, Excel
-            // because this tool has no .xlsx writer at all (see EmitExcelSourceTest's own doc
-            // comment). wiredSplits/wiredMulticasts/wiredOleDbCommands all carry the same
-            // (RowTypeName, Source) shape as wiredFlows' own ProgramFlowSpec -- a real, previously-
-            // latent gap (caught 2026-09-06 verifying the generated-tests plan against
+            // Source -- CSV / fixed-width / SQL / Excel (Phase 2 of the generated-tests plan; unified
+            // 2026-09-06 -- see this method's own testDataFileEntries comment above): matched by ROW
+            // TYPE NAME, never SsisName/ComponentName (a Flat File Source's own SSIS object name is
+            // free text, routinely left at the schema default across every Data Flow Task in a
+            // package, so two different flows' sources can and do share one -- caught for real
+            // generating SyntheticParallelShapes.dtsx, where this originally compiled a starter test
+            // against the WRONG row type), against every wired flow's own already-resolved Source.
+            // wiredSplits/wiredMulticasts/wiredOleDbCommands all carry the same (RowTypeName, Source)
+            // shape as wiredFlows' own ProgramFlowSpec -- a real, previously-latent gap (caught
+            // 2026-09-06 verifying the generated-tests plan against
             // SyntheticConditionalSplitRemerge.dtsx's own walkthrough) had wiredSplits missing from
-            // this concat entirely, so a Conditional Split flow's own source method compiled fine
-            // but got no starter test at all, unlike the structurally identical Multicast case. A
-            // SQL/Excel source nested inside a Merge Join/Union/Aggregate side is still deliberately
-            // NOT covered here -- each of those flows' own Source is an inner side, not the flow's
-            // OUTERMOST one, matching csvSampleCandidates' own "ordinary flow only" scoping.
+            // this concat entirely, so a Conditional Split flow's own source method compiled fine but
+            // got no starter test at all, unlike the structurally identical Multicast case. A source
+            // nested inside a Merge Join/Union/Aggregate side is still deliberately NOT covered here
+            // -- each of those flows' own Source is an inner side, not the flow's OUTERMOST one.
             var allWiredSources = wiredFlows.Values.Select(f => (f.RowTypeName, f.Source))
                 .Concat(wiredSplits.Values.Select(s => (s.RowTypeName, s.Source)))
                 .Concat(wiredMulticasts.Values.Select(m => (m.RowTypeName, m.Source)))
@@ -750,7 +786,17 @@ public static partial class PackageGenerator
                 var (rowTypeName, source) = allWiredSources.FirstOrDefault(s => s.RowTypeName == sourceEntry.RowTypeName);
                 if (rowTypeName is null) continue;
 
-                if (source is SqlFlowSource)
+                if (source is CsvFlowSource or FixedWidthFlowSource)
+                {
+                    // A genuinely delimited/fixed-width Flat File Source is never in
+                    // SourceNeedsUow's true set (see PackageClassEmitter.SourceNeedsUow), so this
+                    // always calls the source method with no uow argument.
+                    var fileSourceTest = ComponentTestEmitter.EmitFileSourceTest(
+                        $"{package.ObjectName}.Tests", ns, $"{ns}.Csv", rowTypeName,
+                        sourceEntry.MethodName, sourceNeedsUow: false, source.ComponentName);
+                    testFiles.Add(fileSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{fileSourceTest.RelativePath}" });
+                }
+                else if (source is SqlFlowSource)
                 {
                     var sqlSourceTest = ComponentTestEmitter.EmitSqlSourceTest(
                         $"{package.ObjectName}.Tests", ns, $"{ns}.Sql", rowTypeName, sourceEntry.MethodName, source.ComponentName);
@@ -1069,7 +1115,7 @@ public static partial class PackageGenerator
     private static (string RowTypeName, FlowSourceSpec Source)? ResolveMergeJoinSideSource(
         PackageSpec package, string ns, string rowTypeBaseName, PipelineComponentSpec sourceComponent,
         PipelineComponentSpec destinationForSqlCheck, List<FileSourceEntryRequest> fileSourceEntries,
-        List<GeneratedFile> files, List<GenerationGap> gaps)
+        List<GeneratedFile> files, List<GenerationGap> gaps, List<CsvSampleCandidate>? csvSampleCandidates = null)
     {
         if (sourceComponent.ComponentClassId == "Microsoft.FlatFileSource" && sourceComponent.FlatFileSource?.ConnectionName is { } csvCmName
             && FindConnectionManager(package, csvCmName) is { } csvConnectionManager)
@@ -1084,11 +1130,13 @@ public static partial class PackageGenerator
             if (FlatFileRuntimeShape.IsFixedWidthWithoutHeader(format))
             {
                 Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+                csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", sourceComponent.Name));
                 return (rowTypeName, new FixedWidthFlowSource(sourceComponent.Name, fileSourceKey,
                     FlatFileRuntimeShape.BuildColumnPlans(format!), format!.HeaderRowsToSkip ?? 0));
             }
 
             Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+            csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", sourceComponent.Name));
             return (rowTypeName, new CsvFlowSource(sourceComponent.Name, fileSourceKey, format?.HeaderRowsToSkip ?? 0));
         }
 
@@ -1121,7 +1169,7 @@ public static partial class PackageGenerator
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GeneratedFile> testFiles,
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination,
         List<GenerationGap> gaps, ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams)
+        bool emitSeams, List<CsvSampleCandidate>? csvSampleCandidates = null)
     {
         var entityName = TryResolveEntityName(flow.TaskName, flow.DestinationComponent, gaps);
         if (entityName is null) return null;
@@ -1133,9 +1181,9 @@ public static partial class PackageGenerator
         }
 
         var baseName = SanitizeIdentifier(mergeJoin.Component.Name);
-        var leftResult = ResolveMergeJoinSideSource(package, ns, baseName + "Left", mergeJoin.Left.SourceComponent, flow.DestinationComponent, fileSourceEntries, files, gaps);
+        var leftResult = ResolveMergeJoinSideSource(package, ns, baseName + "Left", mergeJoin.Left.SourceComponent, flow.DestinationComponent, fileSourceEntries, files, gaps, csvSampleCandidates);
         if (leftResult is null) return null;
-        var rightResult = ResolveMergeJoinSideSource(package, ns, baseName + "Right", mergeJoin.Right.SourceComponent, flow.DestinationComponent, fileSourceEntries, files, gaps);
+        var rightResult = ResolveMergeJoinSideSource(package, ns, baseName + "Right", mergeJoin.Right.SourceComponent, flow.DestinationComponent, fileSourceEntries, files, gaps, csvSampleCandidates);
         if (rightResult is null) return null;
         var (leftRowTypeName, leftSource) = leftResult.Value;
         var (rightRowTypeName, rightSource) = rightResult.Value;
@@ -1763,7 +1811,7 @@ public static partial class PackageGenerator
         PackageSpec package, string ns, DataFlowPlan flow, OleDbCommandPlan commandPlan,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams, List<OleDbCommandTestCandidate>? testCandidates = null)
+        bool emitSeams, List<OleDbCommandTestCandidate>? testCandidates = null, List<CsvSampleCandidate>? csvSampleCandidates = null)
     {
         var sourceComponent = flow.OleDbSource ?? flow.ExcelSource ?? flow.FlatFileSource;
         if (sourceComponent is null)
@@ -1784,7 +1832,7 @@ public static partial class PackageGenerator
         }
 
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
-        var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow, destinationForSqlCheck: null, fileSourceEntries, files, gaps);
+        var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow, destinationForSqlCheck: null, fileSourceEntries, files, gaps, csvSampleCandidates: csvSampleCandidates);
         if (sourceResult is null) return null; // ResolveFlowSource already added the reason
         var (rowTypeName, programSource) = sourceResult.Value;
 
@@ -1903,7 +1951,7 @@ public static partial class PackageGenerator
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
         HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams, List<AggregateSourceTestCandidate>? testCandidates = null)
+        bool emitSeams, List<AggregateSourceTestCandidate>? testCandidates = null, List<CsvSampleCandidate>? csvSampleCandidates = null)
     {
         if (flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination")
         {
@@ -2063,7 +2111,7 @@ public static partial class PackageGenerator
                 return GenerateLookupThenAggregateFlow(package, ns, flow, lookup, cacheClassName, joinKey, keyType,
                     outputToReference, aggregatePlan, entityName, fileSourceEntries, files, tables, functionsUsed,
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
-                    testCandidates);
+                    testCandidates, csvSampleCandidates);
             }
 
             // Not evidenced anywhere (the one real case always goes through an Aggregate) --
@@ -2085,7 +2133,7 @@ public static partial class PackageGenerator
         }
 
         var nullableColumnNames = ResolveNullableColumnNames(flow);
-        var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames);
+        var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
         if (sourceResult is null) return null; // ResolveFlowSource already added the reason
         var (rowTypeName, programSource) = sourceResult.Value;
 
@@ -2250,7 +2298,7 @@ public static partial class PackageGenerator
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
         HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase, bool emitSeams,
-        List<AggregateSourceTestCandidate>? testCandidates = null)
+        List<AggregateSourceTestCandidate>? testCandidates = null, List<CsvSampleCandidate>? csvSampleCandidates = null)
     {
         var lookupVariableName = LowerFirst(cacheClassName);
 
@@ -2283,7 +2331,7 @@ public static partial class PackageGenerator
         var sourceNullableColumnNames = new HashSet<string>(
             aggregate.Functions.Select(f => f.SourceColumnName).Where(n => n is not null)!);
         var sourceRowBaseName = SanitizeIdentifier(aggregate.Component.Name) + "Source";
-        var sourceResult = ResolveFlowSource(package, ns, sourceRowBaseName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, sourceNullableColumnNames);
+        var sourceResult = ResolveFlowSource(package, ns, sourceRowBaseName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, sourceNullableColumnNames, csvSampleCandidates);
         if (sourceResult is null) return null; // ResolveFlowSource already added the reason
         var (sourceRowTypeName, innerSource) = sourceResult.Value;
 
