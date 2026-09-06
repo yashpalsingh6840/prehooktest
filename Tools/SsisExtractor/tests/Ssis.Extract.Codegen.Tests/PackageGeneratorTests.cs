@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using Ssis.Extract.Dtsx;
+using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Package;
 using Ssis.Extract.Model.Shared;
 
@@ -15,6 +16,44 @@ public class PackageGeneratorTests
         var fixturesDir = Path.GetFullPath(Path.Combine(
             Path.GetDirectoryName(ThisFilePath())!, "..", "Ssis.Extract.Tests", "Fixtures"));
         return DtsxPackageReader.Read(Path.Combine(fixturesDir, dtsxFileName), noRedact: false);
+    }
+
+    // Docs/Generated-Tests-Plan.md's own "Opt-out": --skip-tests omits the whole
+    // {Package}.Tests project, and its own TEST-ORACLE/LocalFileSourceData gaps alongside it --
+    // there is nothing for either to be an oracle/sample-data answer to once no test exists at
+    // all. Uses a package with a real Script Task AND a real CSV source so both companion-gap
+    // removal paths are exercised in one test, not just one.
+    [Fact]
+    public void Generate_OmitsTheWholeTestsProject_AndItsOwnTestOracleAndLocalDataGaps_WhenSkipTestsIsSet()
+    {
+        var package = LoadSyntheticFixture("SyntheticScriptTaskSeams.dtsx");
+
+        var withTests = PackageGenerator.Generate(package, namespacePrefix: null, emitSeams: true, skipTests: false);
+        var withoutTests = PackageGenerator.Generate(package, namespacePrefix: null, emitSeams: true, skipTests: true);
+
+        // Sanity: the fixture genuinely produces test-related gaps when tests are ON, or this
+        // test would pass vacuously.
+        Assert.Contains(withTests.Gaps, g => g.Kind == GapKind.TestOracle);
+        Assert.Contains(withTests.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
+        Assert.NotEmpty(withTests.SiblingFiles);
+
+        Assert.Empty(withoutTests.SiblingFiles);
+        Assert.DoesNotContain(withoutTests.Gaps, g => g.Kind is GapKind.TestOracle or GapKind.LocalFileSourceData);
+        // The unrelated ScriptTask seam gaps (a genuinely different concern from --skip-tests)
+        // are completely unaffected -- skipping tests never silently hides a real seam gap.
+        Assert.Equal(
+            withTests.Gaps.Count(g => g.Kind == GapKind.ScriptTask),
+            withoutTests.Gaps.Count(g => g.Kind == GapKind.ScriptTask));
+
+        // README.md must not describe tests that were never written -- checked directly, not
+        // assumed, since PackageReadmeEmitter reads the same (now-cleared) testFiles list. The
+        // WITH-tests README names this exact file in SQL_Truncate's own "Test" column; confirmed
+        // present there first, then confirmed absent once tests are skipped.
+        var readmeWithTests = Assert.Single(withTests.Files, f => f.RelativePath == "README.md");
+        Assert.Contains("SQL_TruncateStatementTests.cs", readmeWithTests.Content);
+
+        var readmeWithoutTests = Assert.Single(withoutTests.Files, f => f.RelativePath == "README.md");
+        Assert.DoesNotContain("SQL_TruncateStatementTests.cs", readmeWithoutTests.Content);
     }
 
     [Fact]
@@ -110,9 +149,11 @@ public class PackageGeneratorTests
             preLoadStatementFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(preLoadStatementFile.Content);
 
-        // The only real gap is the unavoidable, non-blocking Notification one.
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticPostFlowSql.Notification", gap.Location);
+        // The only two real gaps: the unavoidable, non-blocking Notification one, and a
+        // LocalFileSourceData gap for the CSV source (Docs/Generated-Tests-Plan.md phase 3).
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Single(result.Gaps, g => g.Location == "SyntheticPostFlowSql.Notification");
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
     }
 
     [Fact]
@@ -160,9 +201,31 @@ public class PackageGeneratorTests
         // Never the password -- same rule as TargetDatabase.
         Assert.DoesNotContain("Password", appSettingsFile.Content);
 
-        // The only real gap is the unavoidable, non-blocking Notification one.
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticSecondConnectionSql.Notification", gap.Location);
+        // "Secondary-connection SQL" taxonomy row (Docs/Generated-Tests-Plan.md) -- a step-level
+        // starter test asserting SQL_CacheSet_SecondDb never touches the shared uow, needing no
+        // real server (see TestDoublesEmitter's own unreachableSecondaryServer comment). Verified
+        // for real end to end (generated, built, actually run -- both green and deliberately
+        // corrupted-red) against .\SQLFORPOC_2022 -- see CLAUDE.md.
+        var stepTestFile = Assert.Single(result.SiblingFiles, f => f.RelativePath == "SyntheticSecondConnectionSql.Tests/SQL_CacheSet_SecondDbStepTests.cs");
+        Assert.Contains("await Assert.ThrowsAsync<SqlException>(() => package.SQL_CacheSet_SecondDb(uow, CancellationToken.None));", stepTestFile.Content);
+        Assert.Contains("Assert.Empty(uow.ExecutedSql);", stepTestFile.Content);
+        Assert.Contains("Assert.False(uow.BeginCalled);", stepTestFile.Content);
+
+        // PackageHarness must wire a fake, fast-failing SecondaryConnections config entry for
+        // this connection manager, or Config() would throw "not registered" before the step ever
+        // gets a chance to prove it never touches uow.
+        var harnessFile = Assert.Single(result.SiblingFiles, f => f.RelativePath == "SyntheticSecondConnectionSql.Tests/TestDoubles/PackageHarness.cs");
+        Assert.Contains("[\"SecondaryConnections:CM_SqlSecondDb:Server\"] = \"(local)\\\\NonexistentInstance12345\",", harnessFile.Content);
+        Assert.Contains("services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(secondaryConnectionConfig).Build());", harnessFile.Content);
+
+        // The only two real gaps: the unavoidable, non-blocking Notification one, and a
+        // LocalFileSourceData gap for the CSV source (Docs/Generated-Tests-Plan.md phase 3) --
+        // both non-blocking, neither affects generatability.
+        Assert.Equal(2, result.Gaps.Count);
+        var notificationGap = Assert.Single(result.Gaps, g => g.Location == "SyntheticSecondConnectionSql.Notification");
+        Assert.False(notificationGap.IsBlocking);
+        var localDataGap = Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
+        Assert.False(localDataGap.IsBlocking);
     }
 
     [Fact]
@@ -395,11 +458,22 @@ public class PackageGeneratorTests
         CodeAssertions.AssertNoSyntaxErrors(entityFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(readerFile.Content);
 
-        // Two expected gaps: the SqlCommand-mode column-name assumption, and the unavoidable
-        // Notification one -- same shape as SyntheticDataConversion.dtsx's own test.
-        Assert.Equal(2, result.Gaps.Count);
+        // Five expected gaps: the SqlCommand-mode column-name assumption, the unavoidable
+        // Notification one, a non-blocking one from RouterTestEmitter's own pilot scope (its
+        // representative-row oracle evaluation has no way to resolve CustomerId_i4, a
+        // Data-Conversion-produced value deliberately excluded from the row it builds, so the
+        // condition's own evaluation throws "unresolved reference" and this pilot skips the
+        // whole router starter test rather than guessing), and -- since TransformTestEmitter is
+        // now called once per Conditional Split branch (Docs/Generated-Tests-Plan.md's own
+        // "extended to every flow path" promise, closed for this shape) -- TWO cross-reference
+        // gaps for TenureDays, one per branch (Valid/Invalid), both hitting the identical
+        // "not attempted" pilot-scope limit the single-destination case already states, since
+        // BOTH branches independently reference the same Data-Conversion-produced SignupDate_dt.
+        Assert.Equal(5, result.Gaps.Count);
         Assert.Contains(result.Gaps, g => g.Reason.Contains("assumes each result-set column is named/aliased"));
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticDataConversionSplit.Notification");
+        Assert.Contains(result.Gaps, g => g.Location == "CSPLIT_ValidityRouter" && g.Reason.Contains("unresolved reference"));
+        Assert.Equal(2, result.Gaps.Count(g => g.Location == "SyntheticDataConversionSplitTarget.TenureDays" && g.Reason.Contains("cross-reference", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -540,6 +614,28 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_EmitsAStarterSourceTest_ForAConditionalSplitFlowsSqlSource()
+    {
+        // Real, previously-latent gap (caught 2026-09-06 verifying the generated-tests plan by
+        // hand against SyntheticConditionalSplitRemerge.dtsx's own walkthrough): its own OLE DB
+        // Source method compiled fine in production code, but PackageGenerator's "Source -- SQL /
+        // Excel" starter-test loop scanned wiredFlows/wiredMulticasts/wiredOleDbCommands only --
+        // never wiredSplits -- so a Conditional Split flow's own source got no test at all, unlike
+        // the structurally identical Multicast case (which DOES get one). Fixed by adding
+        // wiredSplits to that concat and threading csvSampleCandidates into
+        // GenerateConditionalSplitFlow's own ResolveFlowSource call, matching Multicast's already-
+        // correct wiring.
+        var package = LoadSyntheticFixture("SyntheticConditionalSplitRemerge.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var sourceTest = Assert.Single(result.SiblingFiles, f => f.RelativePath == "SyntheticConditionalSplitRemerge.Tests/OLEDBSourceSourceTests.cs");
+        Assert.Contains("Category", sourceTest.Content);
+        Assert.Contains("Integration", sourceTest.Content);
+        CodeAssertions.AssertNoSyntaxErrors(sourceTest.Content);
+    }
+
+    [Fact]
     public void Generate_WiresBothFileSystemTaskPositions_PreLoadAndPostFlow()
     {
         // SyntheticFileSystemTask.dtsx: SQL_PreLoad -> FST_PreLoadCopy (pre-load) -> DFT_Load ->
@@ -577,10 +673,12 @@ public class PackageGeneratorTests
                   < classFile.Content.IndexOf("await FST_PostLoadCopy(uow, ct);", StringComparison.Ordinal));
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        // Only the unavoidable, non-blocking Notification gap -- this fixture is fully
+        // Only the unavoidable, non-blocking Notification gap plus a LocalFileSourceData gap for
+        // the CSV source (Docs/Generated-Tests-Plan.md phase 3) -- this fixture is fully
         // generatable.
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticFileSystemTask.Notification", gap.Location);
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Single(result.Gaps, g => g.Location == "SyntheticFileSystemTask.Notification");
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
     }
 
     [Fact]
@@ -981,11 +1079,14 @@ public class PackageGeneratorTests
         Assert.Contains("var step = new DataFlowStep<SyntheticExcelSourceTargetExcelRow, SyntheticExcelSourceTarget>(", classFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        // Only the unavoidable, non-blocking Notification gap -- no Derived Column needed, and
-        // no numeric-type-mismatch gap either, since this fixture's own CustomerID is FLOAT
-        // (matching the worksheet's real r8 type exactly, unlike RBC_Demo_ETL's own INT column).
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticExcelSource.Notification", gap.Location);
+        // The unavoidable, non-blocking Notification gap plus a LocalFileSourceData gap (Excel
+        // has no Tier-A synthesizer at all -- Docs/Generated-Tests-Plan.md phase 3) -- no Derived
+        // Column needed, and no numeric-type-mismatch gap either, since this fixture's own
+        // CustomerID is FLOAT (matching the worksheet's real r8 type exactly, unlike
+        // RBC_Demo_ETL's own INT column).
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Single(result.Gaps, g => g.Location == "SyntheticExcelSource.Notification");
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
     }
 
     [Fact]
@@ -1015,8 +1116,9 @@ public class PackageGeneratorTests
             classFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticExcelSourceSqlCommand.Notification", gap.Location);
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Single(result.Gaps, g => g.Location == "SyntheticExcelSourceSqlCommand.Notification");
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
     }
 
     [Fact]
@@ -1070,8 +1172,9 @@ public class PackageGeneratorTests
             classFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticExcelSourceSqlCommandWhere.Notification", gap.Location);
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Single(result.Gaps, g => g.Location == "SyntheticExcelSourceSqlCommandWhere.Notification");
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
     }
 
     // Grammar edge cases (unknown column, OR, mixed operators, type mismatches) are tested
@@ -1137,9 +1240,12 @@ public class PackageGeneratorTests
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
         // Only the unavoidable/expected gaps: the SqlCommand-mode advisory, the Script Task seam
-        // (this fixture's post-flow reader), and Notification -- none about RC_RowsLoaded itself.
-        Assert.Equal(3, result.Gaps.Count);
+        // (this fixture's post-flow reader) plus its own companion TEST-ORACLE gap
+        // (Docs/Generated-Tests-Plan.md phase 3 -- "a filled seam is human logic"), and
+        // Notification -- none about RC_RowsLoaded itself.
+        Assert.Equal(4, result.Gaps.Count);
         Assert.DoesNotContain(result.Gaps, g => g.Location.Contains("RC_RowsLoaded", StringComparison.Ordinal));
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.TestOracle);
     }
 
     [Fact]

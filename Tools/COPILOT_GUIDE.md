@@ -11,8 +11,10 @@ when it needs more detail -- reads for the full picture). If you only read one s
 |---|---|
 | `SsisExtractor/` | `ssisx` -- the CLI itself (extract, report, conformance, testgen, diff, generate, apply-fills). Already built and tested; you run it, you don't modify it. |
 | `Etl.Core/` | The hand-written C# runtime library every generated project depends on (SQL bulk-copy, CSV reading, the package-run host, email notification). `ssisx generate` does not produce this from a `.dtsx` -- pass `--etl-core Etl.Core` on every `generate` call and the command copies it in for you (see below); skip that flag and the generated solution will not build. |
+| `SsisValidationKit/` | `svk` -- a separate, standalone, **optional** tool, built by the same one-time build as `ssisx` (see below). Two read-only, deterministic commands: `svk walkthrough` (a human-readable execution-order review doc + a claims file per package) and `svk sampledata` (schema-correct sample CSV/SQL/DDL). Never edits `SsisExtractor/`, never generates C#, never gates `generate`/`apply-fills` -- see "Reviewing with `svk`" below. |
 | `.github/copilot-instructions.md` | Hard rules Copilot auto-loads for this workspace. |
 | `COPILOT_GUIDE.md` | This file. |
+| `COPILOT_TESTING_GUIDE.md` | The deeper "how testing works here" reference -- `PackageHarness`'s full API, the two sample-data tiers, the `Category=Integration` convention. Not usually needed: a `TEST-ORACLE` work packet already embeds the one pinned block you need. |
 
 **Nothing here needs SSIS installed, SQL Server installed, or the original SSIS project open.**
 `ssisx` parses the raw `.dtsx`/`.dtproj` XML directly. It does not need, and will never ask for,
@@ -31,12 +33,42 @@ dotnet build SsisExtractor.slnx -c Debug
 cd ..
 ```
 
+**This one build also produces `svk`** (`SsisValidationKit\src\SvkCli\bin\Debug\net8.0\svk.exe`)
+-- `SvkCore`/`SvkCli` are project entries inside `SsisExtractor.slnx` too, so there is no second
+solution to build. `svk` is entirely optional (see "Reviewing with `svk`" below); skip it if you
+never call `svk <command>`.
+
 That produces `SsisExtractor\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe`, relative to this
 `Tools\` folder. **Everywhere this guide says `ssisx <command> ...` below, substitute that real
 path** (or `dotnet run --project SsisExtractor\src\Ssis.Extract.Cli -- <command> ...` if you'd
 rather skip the separate build step). Do not guess at a different path, and do not assume
 `ssisx` resolves on its own -- if a command fails with "not recognized", the build step above
 was skipped or `Tools\` isn't the current directory.
+
+## Reviewing with `svk` (optional, read-only, never a gate)
+
+`SsisValidationKit\` is a **separate, standalone tool** from `ssisx` -- its own solution
+(`SsisValidationKit.slnx`), its own README. It only ever reads what `ssisx extract` already
+wrote; it never edits anything under `SsisExtractor\`, and it never generates C#. Two commands,
+both fully deterministic (same input/`--seed` -> byte-identical output every time -- neither is
+an AI step, there is nothing here to triage):
+
+```powershell
+$svk = "SsisValidationKit\src\SvkCli\bin\Debug\net8.0\svk.exe"
+
+# A human-readable execution-order review doc per package (real SSIS order, concurrency
+# callouts, linked conformance rule IDs) + a claims file to record "I checked this component".
+& $svk walkthrough --spec out --out out\walkthrough --claims out\walkthrough\claims --package LoadEmployees
+
+# Deterministic sample CSV/SQL/DDL, type/length-correct against the package's own declared
+# schema, including a Lookup's own reference table where a join key is resolvable.
+& $svk sampledata --spec out --out out\sampledata --package LoadEmployees --rows 20 --seed 42
+```
+
+`--spec` points at the SAME `--out` folder a prior `ssisx extract` call wrote to (it reads
+`packages\<Package>.spec.json` from there) -- not a separate spec location. Neither command is
+required before `ssisx generate`; running `generate` with no prior `svk` step at all works
+exactly the same. Full reference: `SsisValidationKit\README.md`.
 
 ## What `ssisx generate` does and does NOT do
 
@@ -49,16 +81,21 @@ run, a `generate-report.md` naming every gap, and (new) a self-contained
 session) end up working from the generated solution directly with no other doc in view, open
 that file first; it's written specifically to not assume anything else here is visible.
 
-For a plain SQL-destination flow with a Derived Column (no Data Conversion/Lookup/Aggregate/
-Conditional Split), `generate` ALSO writes a starter xUnit test project at
-`<out>\generate\<PackageName>.Tests\` -- a sibling directory of the main project, listed in
-`Generated.slnx` under its own `/tests/` folder. Each `[Fact]` asserts a transform's `Map(row,
-ctx)` against a representative row, with every expected value computed (not guessed) through the
-same oracle-verified expression evaluator `ssisx testgen` uses -- **`dotnet test` on this project
-is a real, legitimate verification step you can and should run** (unlike anything touching a real
-database, see below): it needs no client data or connection at all. It's a starter, not full
-coverage -- a column outside its own pilot scope is a named, non-blocking gap in
-`generate-report.md`, not silently skipped.
+`generate` ALSO writes a starter xUnit test project at `<out>\generate\<PackageName>.Tests\` -- a
+sibling directory of the main project, listed in `Generated.slnx` under its own `/tests/` folder
+-- for every generated method, not just a narrow pilot shape: `RunAsync`'s own failure/happy
+paths, every Execute SQL Task/File System Task/Sequence Container, every source and sink (CSV,
+fixed-width, Excel, SQL, SQL/flat-file destinations), a Conditional Split's router, transforms,
+Merge Join mappers, OLE DB Command, ForEach loops, Multicast, and Aggregate. Every expected value
+is computed (not guessed) -- transform/router assertions go through the same oracle-verified
+expression evaluator `ssisx testgen` uses. **`dotnet test --filter Category!=Integration` on this
+project is a real, legitimate verification step you can and should run, right after a fresh
+`generate` with zero fills applied** (unlike anything touching a real database, see below): it
+needs no client data or connection at all. Full detail, including the two-tier sample-data
+system and the `Category=Integration` convention, is in **`COPILOT_TESTING_GUIDE.md`** -- read
+that before writing or reviewing a generated test. A component outside this pilot's own scope is
+a named, non-blocking gap in `generate-report.md` (often a `TEST-ORACLE`/`LOCAL-DATA` one -- see
+"Working a gap"), not silently skipped.
 
 **Does NOT do, and should never be asked to do in this environment:**
 - Does not build the generated code (you, or Copilot, run `dotnet build` separately to check
@@ -213,6 +250,40 @@ zero gaps. A package with open gaps will fail to build with `CS8795` (an unimple
 until its Tier-2 fills are written and applied -- **that failure is intentional**, not
 something to patch around; see "Working a gap".
 
+## Testing the generated code
+
+```powershell
+dotnet test out\generate\Generated.slnx --filter Category!=Integration
+```
+
+That is the always-green baseline: every generated test that needs a real database, a real
+`.xlsx` file, or a real secondary-connection server is tagged `[Trait("Category", "Integration")]`
+and excluded by this filter -- what's left should pass with **zero fills applied**, right after a
+fresh `generate`, on any machine. Running WITHOUT the filter (`dotnet test` alone) will attempt
+those Integration-tagged tests too, which need real data/a real server this environment does not
+have -- do not do that here unless a human has explicitly pointed you at one.
+
+Two things a generated test needs that a gap can't derive on its own become work packets, same
+as any other gap -- see "Working a gap" in the instructions file and the two new prompts below:
+a **`TEST-ORACLE`** gap (a Conditional Split case, or a test for a Script Task/Component seam
+once it's filled) asks for a whole new test file under `fills-library\<Package>\Tests\`; a
+**`LOCAL-DATA`** gap asks for a realistic sample file under `fills-library\<Package>\TestData\`
+to replace the synthetic placeholder that already makes the suite pass. Full depth --
+`PackageHarness`'s complete API, the two sample-data tiers, why a source/sink method's own
+`uow` parameter varies -- is in **`COPILOT_TESTING_GUIDE.md`**; you should not usually need it,
+since a `TEST-ORACLE` packet already embeds everything its own answer needs.
+
+**Opting out: `--skip-tests`.** Add it to any `generate` call to omit the whole
+`<Package>.Tests` project (and its own `TestOracle`/`LocalFileSourceData` gaps) for that
+package -- named plainly, unlike `--unsafe-skip-seams`, because skipping tests loses coverage
+but can never produce silently wrong code. `appsettings.Development.json`/`TestData\` wiring is
+unaffected either way -- that also serves a real, non-test `dotnet run --environment
+Development`, which `--skip-tests` has no opinion about.
+
+```powershell
+ssisx generate --input <folder> --out out --recursive --package LoadEmployees --etl-core Etl.Core --fills fills-library --skip-tests
+```
+
 ## What's disposable and what isn't -- fills live OUTSIDE `out\`, permanently
 
 **The short version: Tier-1/Tier-2 work never lives inside `out\` at all.** It lives at
@@ -250,6 +321,31 @@ prompt below for the exact recovery steps. **After writing or editing anything u
 `fills-library\`, commit it** (`git add fills-library && git commit`) -- an uncommitted fill is
 still one accidental folder-delete away from being lost, same as before this fix, just one step
 removed.
+
+## The one-command pipeline: `/ssisx-rewrite`
+
+Rewriting one package by hand means remembering five-plus separate commands in the right order,
+twice interrupted by AI work. `.github/prompts/ssisx-rewrite.prompt.md` (`/ssisx-rewrite` in
+Copilot Chat) sequences the existing per-step prompts instead of restating their command lines,
+so each step stays independently runnable and this file doesn't drift out of sync with them:
+
+| # | Step | Prompt | Kind |
+|---|---|---|---|
+| 1 | Extract + survey | `ssisx-extract.prompt.md` | deterministic |
+| 2 | Walkthrough (`svk`, advisory) | `ssisx-walkthrough.prompt.md` | deterministic |
+| 3 | Generate | `ssisx-generate.prompt.md` | deterministic |
+| 4 | Tier-1/2 gap fills | `ssisx-fill.prompt.md` | **AI -- stops for review** |
+| 5 | Apply + build | `ssisx-fill.prompt.md`'s own closing step | deterministic |
+| 6 | Test-oracle/local-data fills | `ssisx-test.prompt.md` | **AI -- stops for review** |
+| 7 | Apply + build + test | `ssisx-test.prompt.md`'s own closing step | deterministic |
+
+**It always stops at both AI boundaries and reports** rather than continuing on its own
+judgement -- a Tier-1 answer or a test's expected value is only used once a human has actually
+reviewed it, never on an AI's own confidence. **Resuming is filesystem-detected, not tracked in
+a separate state file:** re-running `/ssisx-rewrite <Package>` checks what already exists on
+disk (an extracted spec, a generated project, non-empty `fills-library\<Package>\`) and picks
+up from there, so it's always safe to run again after a partial stop. `--package <Package>` is
+threaded through every step -- it never touches any other package.
 
 ## Prompts you can paste into Copilot Chat
 
@@ -306,6 +402,23 @@ the client's `.dtsx` files, and `<out>` with wherever you want output written (e
 > `fills-library\<PackageName>.decisions.json` (NOT `<out>\fills\...`) in the format the packet
 > specifies, and remind me to commit `fills-library` afterward.
 
+**Work a TEST-ORACLE gap (a starter test the emitter couldn't derive on its own):**
+> Open the work packet at `<out>\gaps\<PackageName>\<GapId>.md` -- it embeds everything you need
+> (the pinned testing-API block, and either the Conditional Split's own cases or the Script
+> Task/Component source this test exercises). Write the whole test file it describes under
+> `fills-library\<PackageName>\Tests\<Name>Tests.cs` (NOT under `<out>\`), with a
+> `// ssisx-fill:` comment as the file's own FIRST line (there is no seam to place it above --
+> this is a brand-new file, unlike a Tier-2 port). Then run
+> `ssisx apply-fills --out <out> --fills fills-library` and tell me what it reports.
+
+**Work a LOCAL-DATA gap (supply a realistic sample file):**
+> Open the work packet at `<out>\gaps\<PackageName>\<GapId>.md` -- its own "Save as" line names
+> the EXACT file name to use, and its own column table gives the exact schema. Write a realistic
+> file (same columns, order, delimiter/widths, header) matching it under
+> `fills-library\<PackageName>\TestData\<that exact name>`, with NO comment of any kind (a data
+> file has no provenance convention). Then run `ssisx apply-fills --out <out> --fills
+> fills-library` and confirm it reports `Applied`.
+
 **A Tier-3 gap (tool doesn't support this shape):**
 > This gap is Tier 3 (`MissingToolSupport`). Don't try to work around it -- summarize what SSIS
 > feature it is (from the gap's reason text) so I can decide whether it's worth asking for a
@@ -329,3 +442,15 @@ broken:**
 > `fills-library\<Package>\` for me and tell me which of these two situations we're actually in
 > before concluding anything is broken. (If you see an OLD `out\fills\` folder from before this
 > convention existed, that's leftover state -- move anything real in it into `fills-library\`.)
+
+**Review with `svk` before generating (optional):**
+> Run `svk walkthrough --spec <out> --out <out>\walkthrough --claims <out>\walkthrough\claims
+> --package <PackageName>`, then `svk sampledata --spec <out> --out <out>\sampledata --package
+> <PackageName> --rows 20 --seed 42`. Summarize the walkthrough's component count and whether it
+> flagged any SSIS-side concurrency, and list which sample-data files were written vs. skipped
+> (with the reason). Don't run `generate` yet.
+
+**Run the whole pipeline for one package:**
+> Run `/ssisx-rewrite` for package `<PackageName>` against `<client-folder>`, targeting
+> `<net8.0 or net10.0>`. Stop and report at both AI boundaries rather than continuing past them
+> yourself.

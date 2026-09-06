@@ -492,11 +492,17 @@ public class TransformEmitterTests
 
         // A seam is outstanding work, not a resolution: the gap stays, stays BLOCKING, and keeps
         // its Tier-2 classification so the work packet is still produced.
-        var gap = Assert.Single(result.Result.Gaps);
+        Assert.Equal(2, result.Result.Gaps.Count);
+        var gap = Assert.Single(result.Result.Gaps, g => g.Kind == GapKind.ScriptComponentColumn);
         Assert.Equal("StagingCustomers.FullName", gap.Location);
         Assert.True(gap.IsBlocking);
-        Assert.Equal(GapKind.ScriptComponentColumn, gap.Kind);
         Assert.Contains("CS8795", gap.Reason);
+
+        // Companion "Script Task / Script Component seam" taxonomy row: a filled seam is human
+        // logic, and a test for it is a separate, non-blocking TEST-ORACLE work item.
+        var testGap = Assert.Single(result.Result.Gaps, g => g.Kind == GapKind.TestOracle);
+        Assert.Equal("StagingCustomers.FullName", testGap.Location);
+        Assert.False(testGap.IsBlocking);
     }
 
     [Fact]

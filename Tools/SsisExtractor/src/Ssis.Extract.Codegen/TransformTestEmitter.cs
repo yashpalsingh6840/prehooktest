@@ -20,7 +20,7 @@ public sealed record TransformTestRequest(
     string EntityNamespace,
     string EntityName,
     PipelineSpec Pipeline,
-    PipelineComponentSpec? DerivedColumn,
+    IReadOnlyList<PipelineComponentSpec>? DerivedColumns,
     PipelineComponentSpec DestinationComponent,
     IReadOnlyList<PipelineComponentSpec>? DataConversions = null);
 
@@ -48,10 +48,20 @@ public sealed record TransformTestRequest(
 /// can never disagree about what the input actually was.</para>
 ///
 /// <para><b>Pilot scope, stated plainly rather than silently narrowed:</b> a flow needs a Derived
-/// Column and/or a Data Conversion to get a starter test at all (Lookup/Aggregate/Conditional
-/// Split/Merge Join/numeric-coercion flows still get none -- each is a materially different shape
-/// needing its own row-construction/expected-value strategy, the same "pilot one thing first"
-/// discipline the rest of this project's own generate-tool-simplification work has followed).
+/// Column and/or a Data Conversion to get a starter test at all. This now includes a Conditional
+/// Split/Multicast branch's own per-branch Derived Column (see <see cref="TransformTestRequest.DerivedColumns"/>,
+/// plural -- a branch can carry both a shared upstream one and its own), called once per branch
+/// from <c>PackageGenerator.GenerateConditionalSplitFlow</c>/<c>GenerateMulticastFlow</c> the same
+/// way the single-destination path already does. Lookup/Merge Join/numeric-coercion flows still
+/// get none -- each is a materially different shape needing its own row-construction strategy,
+/// but each of those now surfaces a non-blocking <c>TestOracle</c> gap instead of staying silent
+/// when it actually has a Derived Column/Data Conversion to be missing a test for
+/// (see <c>PackageGenerator.GenerateMergeJoinFlow</c>/<c>GenerateLookupFlow</c>). Aggregate is the
+/// one exception left with no gap at all, and deliberately so: its own row type has only group/
+/// aggregated columns, with no clean analog of "the flow's own Derived Column" to gap on the way
+/// there is for the other shapes (a pre-aggregation Derived Column, if any, belongs to the
+/// SOURCE side, a different question) -- naming that correctly needs its own design work, not a
+/// mechanical one-liner, so it is named here as a real follow-up rather than guessed at.
 /// Within a Derived-Column-bearing flow, a computed column is only asserted when its own OUTPUT
 /// type is string (<c>DT_WSTR</c>/<c>DT_STR</c>) -- every real evidenced Derived Column output in
 /// the tracked portfolio's simplest flows is string-typed (a WidthGuard-wrapped concatenation),
@@ -85,17 +95,24 @@ public static class TransformTestEmitter
         // expected value against yet (a pure passthrough flow's own "test" would just restate the
         // mapping with no independent check of anything). Not a gap: there is genuinely nothing
         // missing here, this shape is simply out of THIS emitter's pilot scope.
+        var derivedColumns = request.DerivedColumns ?? [];
         var dataConversions = request.DataConversions ?? [];
-        if (request.DerivedColumn is null && dataConversions.Count == 0) return new EmitResult([], []);
+        if (derivedColumns.Count == 0 && dataConversions.Count == 0) return new EmitResult([], []);
 
         var gaps = new List<GenerationGap>();
         var lineage = LineageBuilder.Build(request.Pipeline);
         var columnTypes = TransformEmitter.BuildColumnTypeLookup(request.Pipeline);
 
+        // A Conditional Split/Multicast branch can carry BOTH a shared upstream Derived Column
+        // and its own per-branch one (e.g. SyntheticConditionalSplitRemerge.dtsx) -- first
+        // registration wins on a name collision, matching TransformEmitter's own
+        // TransformRequest.DerivedColumns merge precedent (no evidenced real package needs a
+        // second one to win).
         var computedByName = new Dictionary<string, PipelineOutputColumnSpec>();
-        foreach (var output in request.DerivedColumn?.Outputs.Where(o => o.IsErrorOut != true) ?? [])
-            foreach (var col in output.Columns.Where(c => c.Expression is not null))
-                computedByName.TryAdd(col.Name, col);
+        foreach (var derivedColumn in derivedColumns)
+            foreach (var output in derivedColumn.Outputs.Where(o => o.IsErrorOut != true))
+                foreach (var col in output.Columns.Where(c => c.Expression is not null))
+                    computedByName.TryAdd(col.Name, col);
 
         // A Data Conversion output column has no Expression at all (see DataConvertPayload's own
         // doc comment) -- keyed separately here, same split TransformEmitter itself makes.
@@ -283,7 +300,7 @@ public static class TransformTestEmitter
             "",
             $"namespace {request.TestNamespace};",
             "",
-            $"public class {request.EntityName}TransformTests",
+            $"public class {request.TransformClassName}Tests",
             "{",
             "    [Fact]",
             "    public void Map_ComputesExpectedOutput_ForARepresentativeRow()",
@@ -301,14 +318,16 @@ public static class TransformTestEmitter
         lines.Add("    }");
         lines.Add("}");
 
-        return new EmitResult([new GeneratedFile($"{request.EntityName}TransformTests.cs", Rendering.JoinLines(lines))], gaps);
+        return new EmitResult([new GeneratedFile($"{request.TransformClassName}Tests.cs", Rendering.JoinLines(lines))], gaps);
     }
 
     /// <summary>One representative literal per CLR type this pilot's row/entity properties can
     /// take -- deliberately the SAME small, fixed values <c>ssisx testgen</c>'s own NormalValue
     /// uses (via <see cref="RepresentativeOracleValue"/>), so a human reading both a testgen file
-    /// and a starter test recognizes the same convention.</summary>
-    private static string RepresentativeLiteral(string clrTypeName) => clrTypeName switch
+    /// and a starter test recognizes the same convention. <c>internal</c> (not <c>private</c>) so
+    /// <see cref="ComponentTestEmitter"/> can reuse the exact same values for a sink/source starter
+    /// test's own synthesized rows, rather than a second, independently-drifting literal set.</summary>
+    internal static string RepresentativeLiteral(string clrTypeName) => clrTypeName switch
     {
         "string" => "\"Sample\"",
         "short" => "(short)7",
@@ -325,8 +344,11 @@ public static class TransformTestEmitter
 
     /// <summary>The SsisValue-typed counterpart of <see cref="RepresentativeLiteral"/>, for
     /// feeding <see cref="Ssis.Runtime.Expressions.SsisExpression.Evaluate"/> the same
-    /// representative input a referenced row property was assigned.</summary>
-    private static SsisValue RepresentativeOracleValue(SsisType type) => type switch
+    /// representative input a referenced row property was assigned. <c>internal</c> (not
+    /// <c>private</c>) so <see cref="RouterTestEmitter"/> can independently evaluate a Conditional
+    /// Split case's own FriendlyExpression against the identical representative values, rather
+    /// than a second, independently-drifting set.</summary>
+    internal static SsisValue RepresentativeOracleValue(SsisType type) => type switch
     {
         SsisType.WStr or SsisType.Str => SsisValue.OfString("Sample", type),
         SsisType.I2 or SsisType.I4 or SsisType.I8 => SsisValue.OfInt(7, type),
@@ -346,10 +368,13 @@ public static class TransformTestEmitter
     /// <c>SsisFnEmitter</c>'s own emitted <c>SsisFn.ToNullable*</c> body uses (same
     /// <c>NumberStyles</c>/<c>CultureInfo</c> arguments), on the SAME raw string the row's own
     /// property is assigned -- computed, not hand-encoded, so it can never quietly drift from
-    /// what the generated code actually does for this input.</summary>
-    private readonly record struct DataConversionRepresentative(string RawLiteral, string ExpectedLiteral);
+    /// what the generated code actually does for this input. <c>internal</c> (not <c>private</c>)
+    /// so <see cref="ComponentTestEmitter"/> can reuse it for a Merge Join mapper's own
+    /// Data-Conversion-derived join key/column starter test, rather than a second,
+    /// independently-drifting representative set.</summary>
+    internal readonly record struct DataConversionRepresentative(string RawLiteral, string ExpectedLiteral);
 
-    private static DataConversionRepresentative? RepresentativeDataConversion(string? targetDataType, int? length)
+    internal static DataConversionRepresentative? RepresentativeDataConversion(string? targetDataType, int? length)
     {
         switch (targetDataType?.ToLowerInvariant())
         {

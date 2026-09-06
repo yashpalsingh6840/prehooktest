@@ -8,6 +8,14 @@ public class GapIdentityTests
     [InlineData(GapKind.LookupJoinKey, true, GapTier.MissingDatum)]
     [InlineData(GapKind.ScriptTask, true, GapTier.MissingLogic)]
     [InlineData(GapKind.ScriptComponentColumn, true, GapTier.MissingLogic)]
+    // Both new phase-3 kinds reuse MissingDatum -- deliberately, per Docs/Generated-Tests-Plan.md's
+    // own "Two new gap kinds -- no new tier" design: both need only IsBlocking=false plus a work
+    // packet, which MissingDatum already grants with zero changes to GapTier itself. Reported
+    // non-blocking regardless of the `isBlocking` argument here, since neither is ever constructed
+    // with IsBlocking=true in practice -- confirmed by every real call site (RouterTestEmitter,
+    // ScriptTaskEmitter, TransformEmitter, PackageGenerator).
+    [InlineData(GapKind.TestOracle, false, GapTier.MissingDatum)]
+    [InlineData(GapKind.LocalFileSourceData, false, GapTier.MissingDatum)]
     // An unclassified BLOCKING gap is missing tool support -- deliberately NOT AI-fillable, since
     // patching one per package would hide a systemic emitter gap behind N one-off patches.
     [InlineData(GapKind.Unclassified, true, GapTier.MissingToolSupport)]
@@ -38,6 +46,36 @@ public class GapIdentityTests
         var gap = new GenerationGap("StagingCustomers.FullName", "reason", true, GapKind.ScriptComponentColumn);
 
         Assert.Equal("SCRIPT-COLUMN:Package:StagingCustomers.FullName", GapIdentity.ComputeId("Package", gap));
+    }
+
+    [Fact]
+    public void ComputeId_UsesTheNewPhase3Tokens_ForTestOracleAndLocalFileSourceData()
+    {
+        var oracleGap = new GenerationGap("CSPLIT_X", "reason", false, GapKind.TestOracle);
+        var dataGap = new GenerationGap("FF_SRC_Foo", "reason", false, GapKind.LocalFileSourceData);
+
+        Assert.Equal("TEST-ORACLE:Package:CSPLIT_X", GapIdentity.ComputeId("Package", oracleGap));
+        Assert.Equal("LOCAL-DATA:Package:FF_SRC_Foo", GapIdentity.ComputeId("Package", dataGap));
+    }
+
+    /// <summary>A ScriptComponentColumn gap and its own companion TestOracle gap deliberately
+    /// share a Location (see TransformEmitter's own doc comment) -- proving the different KIND
+    /// token alone is enough to keep their GapIds distinct, with no collision/disambiguation
+    /// hash needed.</summary>
+    [Fact]
+    public void AssignIds_KeepsACompanionTestOracleGap_DistinctFromItsSeamGap_AtTheSameLocation()
+    {
+        var gaps = new List<GenerationGap>
+        {
+            new("StagingCustomers.FullName", "seam", true, GapKind.ScriptComponentColumn),
+            new("StagingCustomers.FullName", "companion test", false, GapKind.TestOracle),
+        };
+
+        var assigned = GapIdentity.AssignIds("Package", gaps);
+
+        Assert.Equal(2, assigned.Count);
+        Assert.Contains(assigned, a => a.GapId == "SCRIPT-COLUMN:Package:StagingCustomers.FullName");
+        Assert.Contains(assigned, a => a.GapId == "TEST-ORACLE:Package:StagingCustomers.FullName");
     }
 
     /// <summary>

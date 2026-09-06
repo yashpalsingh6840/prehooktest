@@ -6805,6 +6805,555 @@ share a bind token beyond the two known-safe shapes already measured (`sp_bindse
 2026-09-01 round above) — nothing new needed this round, but nobody has stress-tested a wider wave
 count than 3.
 
+### Generated-tests plan (`Docs/Generated-Tests-Plan.md`) — Phase 2 closed, Phase 3 built (2026-09-06)
+
+Phases 1/2 (foundation + per-component deterministic tests — `TestDoublesEmitter`/
+`ComponentTestEmitter`/`SampleDataEmitter`/`PackageReadmeEmitter`, every taxonomy row generating
+a starter test) were built in earlier sessions; see the plan doc itself for that history. This
+session closed the one row Phase 2 had left deferred, then built the whole of Phase 3.
+
+**Phase 2's last row, "Secondary-connection SQL," closed.** The taxonomy asks for "assert it
+never touches the passed `uow`," mirroring `Etl.Core.Tests`' own `SecondaryConnectionSqlStepTests`
+— a comment in `SqlStatementTestEmitter.EmitStepTest` had deferred this to "an Integration-tagged
+test, a later phase," assuming it needed a real server. It doesn't: `TestDoublesEmitter`'s
+`PackageHarness` now wires a deliberately UNREACHABLE, fast-failing `SecondaryConnections:<CM>`
+config entry (`(local)\NonexistentInstance12345`, 1s timeout — the identical value the Etl.Core
+test already uses), so `SqlStatementTestEmitter.EmitSecondaryConnectionStepTest` asserts a real
+`SqlException` propagates and `uow.ExecutedSql`/`BeginCalled` stay untouched, with **no
+`[Trait("Category", "Integration")]` needed at all** — stronger than the deferred plan. A real
+regression was caught before it shipped: the first pass added `using
+Microsoft.Extensions.Configuration;` unconditionally, breaking the golden files for every package
+with NO secondary connection (an unused using) — fixed by gating the `using` the same way the
+config body itself is gated. Verified end to end: generated `SyntheticSecondConnectionSql.dtsx`,
+built (0/0), ran green, deliberately corrupted the assertion to red, reverted to green; also
+regenerated this PoC's own `LoadEmployees`/`LoadReferenceData` (no secondary connection) to
+confirm zero stray `using`. **A second, genuinely pre-existing, unrelated drift was found and
+fixed the same session**, caught only by reviewing a routine `SSISX_REGENERATE_GOLDEN=1` diff by
+eye (the standing rule, not skipped): `LoadEmployees.cs.txt`/`LoadReferenceData.cs.txt`'s own
+golden files were stale relative to the ALREADY-CURRENT `PackageClassEmitter.cs` (missing the
+`uowActive` try-block pattern from the emitter rewrite's own concurrent-wave handling) and their
+own `.csproj.txt` goldens were missing the `TestData\**` item groups from Phase 1's own Tier-B
+wiring — neither caused by this session's changes, confirmed by grepping the current emitter
+source directly before trusting the regeneration. Final confirmed state:
+**347/347** (337 fast unit tests + all 10 real-build `GeneratedSolutionBuildTests` cycles), zero
+regressions.
+
+**Phase 3 — the AI tier.** `GapKind.TestOracle`/`LocalFileSourceData` added to
+`Ssis.Extract.Model.Analysis.GapSpec` (both reuse `GapTier.MissingDatum` per the plan's own
+explicit "no new tier" decision — that tier already grants a work packet while staying
+non-blocking, with zero changes to `GapTier` itself). `GapSpec` also gained
+`ExpectedFileName` — the REAL `TestData/` file name a `LocalFileSourceData` fill must use,
+resolved from the connection manager's own configured `SourceFileName`
+(`appsettings.Development.json` only ever overrides `SourceFolder`), which is frequently
+DIFFERENT from the Tier-A synthetic sample's own `{FileSourceKey}.csv` name — this distinction
+is exactly why `ExpectedFileName` had to be its own field rather than reusing `Location`.
+
+**Where the two new kinds get produced, three call sites, all non-blocking:**
+- `RouterTestEmitter`'s own two pre-existing fallback gaps (a Conditional Split case the
+  oracle-based evaluator can't resolve to boolean for a representative row) are now classified
+  `GapKind.TestOracle` with `EvidenceRefId` pointing at the split component — this needed NO new
+  fallback logic, just classifying what already existed.
+- `ScriptTaskEmitter`/`TransformEmitter`'s Script Task/Script Component seam gaps each gained a
+  COMPANION `TestOracle` gap at the SAME `Location` (a different `GapId` KIND prefix keeps the
+  two distinct with no collision) — "a filled seam is human logic; a test for it is a
+  test-oracle packet," per the taxonomy table's own wording, is a literal second work item, not
+  folded into the seam's own packet.
+- `PackageGenerator.Generate`'s existing CSV/fixed-width Tier-A-sample loop and Excel-source
+  loop each gained a `LocalFileSourceData` gap alongside what they already emit — always
+  reported, regardless of whether Tier-A synthesis itself succeeded (CSV/fixed-width) or is
+  simply unavailable (Excel has no `.xlsx` writer at all, so this is its ONLY path to real
+  Integration-tested data, not an upgrade).
+
+**`AiPacketEmitter` gained the two contracts/evidence builders/response formats**, plus ONE new
+shared constant, `PinnedTestingApiBlock` (`FakeUnitOfWork`'s public surface, `PackageHarness`
+usage, the `Category=Integration` convention, "read the package README for signatures") —
+embedded verbatim in the `TestOracleContract` and copied by hand into
+`Tools/COPILOT_TESTING_GUIDE.md` (a markdown file has no way to literally share a C# constant;
+kept in sync by discipline, the same risk class as every other doc in this project).
+`TestOracleEvidence` dispatches to one of three shapes purely from what `EvidenceRefId` resolves
+to (a Script Task, a Script Component, or a Conditional Split) — no new gap-shape field needed.
+`LocalFileSourceDataEvidence` resolves two ways: by connection-manager `RefId` for CSV/fixed-width
+(straight from `FlatFileFormatSpec`), or by COMPONENT NAME for Excel (no per-generation
+connection-manager thread exists for it, but `BuildExcelFlowSource` already derives its own
+`FileSourceKey` — the gap's `Location` — directly from the Excel Source component's own `Name`,
+so searching for a component with that exact name is sufficient). A real formatting bug (a
+doubled-underscore Markdown artifact, `,__not`, from a naive string-concatenation split across an
+italic span) was caught reading the actual rendered packet, not assumed correct from the code —
+fixed, not left in a shipped packet.
+
+**`ApplyFillsCommand` gained routing for two new subfolders**, structurally different from the
+existing seam mechanism (a whole new file, never a splice into one that already exists):
+`fills/<Package>/Tests/*.cs` (TEST-ORACLE) is copied to `generate/<Package>.Tests/Fills/`,
+matched ONLY by its own `// ssisx-fill:` comment — expected as the file's FIRST non-blank line
+(a new `ExtractLeadingProvenance`, distinct from the seam-relative `ExtractProvenance`) — since
+there is no seam NAME to fall back on the way a Script Component/Task fill has; a file with no
+comment, or a `GapId` this package doesn't currently have, is `Orphaned`, not `Unattributed` —
+a real, deliberate asymmetry from the seam mechanism, stated in the response-format contract
+text. `fills/<Package>/TestData/*` (LOCAL-DATA) is copied to `generate/<Package>/TestData/`,
+matched purely by FILENAME against `GapSpec.ExpectedFileName` — a raw data file has no universal
+comment syntax, so there is genuinely no staleness check possible here, stated plainly in the
+packet's own contract rather than silently missing; `Applied`/`Orphaned` only. A stale
+TEST-ORACLE fill still bumps the exit code to 3 (same as a stale seam) and is correctly excluded
+from "still open" (mirroring the pre-existing `stillUnfilled`/`staleMethods` exclusion) — caught
+live during end-to-end verification, not designed up front: a first pass double-counted a stale
+gap in both sections.
+
+**Verified end to end, the real acceptance bar** (`SyntheticScriptTaskSeams.dtsx --seams`, a real
+package with 2 Script Task seams + 1 CSV source): both TEST-ORACLE companion gaps and 1 LOCAL-DATA
+gap appeared in `gaps.json` with real evidence and packets; wrote a real `.cs` fill under
+`fills/<Package>/Tests/` (matching provenance) and a real `.csv` fill under
+`fills/<Package>/TestData/` (matching `ExpectedFileName`); `apply-fills` reported both `Applied`
+and copied them to the right place; corrupting the TEST-ORACLE fill's `EvidenceSha256` reported
+`Stale` and did NOT copy it (confirmed the file was genuinely absent from `Fills/`); a
+mismatched-name `TestData/` file reported `Orphaned` and was NOT copied. Unit-test coverage added
+alongside: `GapIdentityTests` (tier mapping for both kinds, a companion-gap-shares-a-Location
+collision check), `AiPacketEmitterTests` (real router/CSV-schema evidence from real fixtures,
+`ExpectedFileName` resolution), and 7 new `ApplyFillsCommandTests` (Applied/Stale/Orphaned for
+both new subfolder kinds, including a gap with no derivable `ExpectedFileName` at all being
+permanently unmatchable, by design). Regression: 344 in `Ssis.Extract.Codegen.Tests` (was 337),
+16 in `Ssis.Extract.Cli.Tests` (was 9), `Ssis.Extract.Tests`/`Ssis.Runtime.Expressions.Tests`
+unaffected (156/149); `GeneratedSolutionBuildTests`' own real generate+build cycle across 10
+fixtures still green — nothing about production-code SHAPE changed this round, only gap
+classification and reporting.
+
+**Docs updated to match**: `Tools/.github/copilot-instructions.md` gained rules 10/11 (read the
+package README before writing a test; a TEST-ORACLE packet is self-contained) and rule 4 gained
+an explicit carve-out for `LocalFileSourceData` (supplying a realistic sample file is NOT the
+"inventing input to fake a run" rule 4 otherwise forbids — a real, necessary clarification, since
+the literal old wording would have told Copilot to refuse the one gap kind whose entire job is
+exactly that). "Working a gap"'s Tier-1 section now branches by the THREE different sub-shapes
+(decisions.json / `Tests/` / `TestData/`) instead of assuming one. `Tools/COPILOT_GUIDE.md`
+gained a "Testing the generated code" section and two new ready-to-paste prompts, and its own
+stale "only a plain SQL-destination flow with a Derived Column gets tests" sentence (true when
+first written, false since Phase 2 widened coverage to every taxonomy row) was corrected.
+`GenerateCommand.WriteAiAssistantGuide` (`HOW-TO-FILL-GAPS.md`) gained a `Kind` column and the
+same three-way Tier-1 split. New `Tools/COPILOT_TESTING_GUIDE.md` — the deeper reference, meant
+to be read rarely, since a `TEST-ORACLE` packet already embeds its own pinned API block verbatim.
+
+**`--skip-tests` (the plan's own "Opt-out," flagged as missing, then built the same session).**
+Grepped first, confirmed genuinely never implemented in any earlier session despite being in
+Phase 2's own plan scope. Threaded as a new optional `PackageGenerator.Generate(..., bool
+skipTests = false)` parameter, deliberately implemented as ONE cut point rather than guarding
+dozens of individual `testFiles.Add(...)`/emitter call sites scattered through the ~2800-line
+method: right after the Notification gap is added (after every other gap for the package already
+exists) and right before the README/final result are built, `if (skipTests) { testFiles.Clear();
+gaps.RemoveAll(g => g.Kind is GapKind.TestOracle or GapKind.LocalFileSourceData); }` — this is
+what let the README (which reads the same `testFiles`/`gaps` lists) and the final
+`SiblingFiles`/`Gaps` both correctly reflect "no tests" with a single change, rather than two
+separately-maintained cut points that could drift apart. `appsettings.Development.json` is
+deliberately UNCHANGED either way — it also serves a real, non-test `dotnet run --environment
+Development`, which `--skip-tests` has no opinion about. `Generated.slnx`'s own existing
+`.Where(r => r.SiblingFiles.Any(f => f.RelativePath == "{Package}.Tests/{Package}.Tests.csproj"))`
+filter (already conditional, built in an earlier session) needed NO changes at all — an empty
+`SiblingFiles` list naturally produces no `<Project>` entry, confirmed by reading the emitted
+`.slnx` directly rather than assumed. Verified end to end on a real fixture with both a Script
+Task AND a CSV source (so both companion-gap-removal paths are exercised, not just one):
+`--skip-tests` genuinely omits the whole `{Package}.Tests` directory and its own
+`TestOracle`/`LocalFileSourceData` gaps while leaving the UNRELATED `ScriptTask` seam gaps
+completely untouched; the generated solution (a clean package, `LoadEmployees`) builds
+**0 warnings/0 errors** with `--skip-tests`. `ssisx --help`'s own `generate` section was
+corrected in the same pass — it had the SAME stale "only a plain SQL-destination flow with a
+Derived Column gets tests" sentence `COPILOT_GUIDE.md` had, now describing the real, full
+taxonomy. One new unit test (`Generate_OmitsTheWholeTestsProject_AndItsOwnTestOracleAndLocalDataGaps_WhenSkipTestsIsSet`),
+asserting the sanity check (tests ON genuinely produces both gap kinds — the test isn't vacuous),
+the omission, the untouched `ScriptTask` count, and the specific README content difference (a
+real generated test file name present/absent, not a loose ".Tests" substring check — the first
+version of this assertion was wrong, since README's own static prose mentions "`{Package}.Tests/`"
+regardless of whether any test was actually generated for that specific package). Regression:
+345 in `Ssis.Extract.Codegen.Tests` (was 344 immediately after Phase 3's own gap-kind work, +1
+here for this round's own test).
+
+**Not built this round, deliberately out of scope for Phase 3 itself:** Phase 4 (shipping `svk`,
+the `/ssisx-walkthrough`/`/ssisx-test`/`/ssisx-rewrite` prompt files, the one-command pipeline).
+
+**Known, deliberately-deferred anomaly, noted rather than chased mid-phase (2026-09-06):**
+`GeneratedSolutionBuildTests` (10 real `ssisx generate` + `dotnet build` cycles) took 1.46 minutes
+run in isolation, but **2h31m** twice in a row when run as part of the whole
+`Ssis.Extract.Codegen.Tests` project alongside 337+ other fast unit tests, in the same session,
+same code, no failures either way (always 10/10). Process inspection mid-run showed near-zero CPU
+time despite high wall-clock time across every spawned `dotnet.exe`/`testhost.exe` -- pointing at
+each fixture's own implicit NuGet restore stalling on something slow (a network call to a package
+feed, most likely) rather than the build itself being expensive; not root-caused further. The
+user asked to note this and investigate once every `Docs/Generated-Tests-Plan.md` phase is done,
+not mid-phase -- see memory `ssis_generatedsolutionbuildtests_slow_runs` for the full diagnostic
+detail and where to pick it up.
+
+**Anomaly investigated and ACTUALLY fixed 2026-09-06, next session, before Phase 4 started (per
+the user's own explicit request) -- in three real, independent rounds, the first two of which
+looked conclusive and were not.** Worth recording the false starts, not just the ending, since
+each one was believed at the time and each one turned out to be a partial answer:
+
+1. **First theory, believed and later shown incomplete: "concurrent dotnet contention."**
+   Isolating the full 355-test project with nothing else running reproduced the fast baseline
+   (1m21s). Deliberately running 3 background loops of continuous `ssisx generate`+`dotnet build`
+   alongside it reproduced a real, severe slowdown (14+ minutes and climbing). This looked like
+   the whole story and was written up as root-caused. **It was not**: a LATER supposedly-isolated
+   run (confirmed zero other dotnet processes beforehand) also hung, for 27+ minutes, disproving
+   "concurrent EXTERNAL activity" as a complete explanation.
+2. **Two real bugs found and fixed from that contradiction, both genuine, both necessary but
+   NOT sufficient on their own:**
+   - `GeneratedSolutionBuildTests.Run()`'s helper called `process.StandardOutput.ReadToEnd()`
+     then `process.StandardError.ReadToEnd()` SEQUENTIALLY -- the textbook `Process`
+     stdout/stderr deadlock/backpressure risk (Microsoft's own docs warn against exactly this
+     pattern): if the child fills the OS pipe buffer on the stream not yet being drained (a real
+     trigger was caught live: ~2.5KB from 10 MSB3026 locked-file retry warnings alone), the child
+     blocks on that write while the parent is still blocked reading the other stream. Fixed with
+     concurrent `ReadToEndAsync()` on both streams.
+   - `WaitForExit(int)` does **not** kill the process when its timeout elapses -- confirmed this
+     was leaving stale, lock-holding `testhost`/`dotnet build` processes alive for 25+ minutes
+     past when they should have exited, causing a LATER, unrelated build to fail with
+     MSB3026/MSB3027 (a real build failure was caught live from this). Fixed: `Kill(entireProcessTree:
+     true)` on timeout.
+   - Also added a `-p:RestoreSources="<local global-packages folder>"` override scoped to these
+     spawned `dotnet build` calls ONLY (never the shipped `ssisx generate` output or any
+     client-facing doc/config) -- every package version these 10+1 fixtures need was already
+     cached locally, so this removes any NuGet-restore network dependency from the test entirely,
+     regardless of whether that was ever the actual cause.
+   - **Isolated `GeneratedSolutionBuildTests` alone was now reliably fast (1m28s, 10/10) -- but
+     the full 355-test project was STILL slow (1h50m+ before being stopped) even with these two
+     real fixes in place.** Genuinely surprising, and reported honestly as still-unsolved rather
+     than declared fixed a second time on partial evidence.
+3. **The actual mechanism, found via live process/file forensics, not further guessing:** a
+   verbose run showed the FIRST fixture's own build had visibly FINISHED (every output file's
+   mtime static for 90+ seconds, `bin`/`obj` fully populated) while the outer test method was
+   still blocked. `Get-CimInstance Win32_Process` on the live, stuck run showed real
+   `/nodemode:1 /nodeReuse:true` MSBuild server-node processes -- MSBuild's own PERSISTENT
+   background build-server feature, which can inherit the redirected stdout/stderr PIPE HANDLES
+   from the `dotnet build` process that spawned it and then **outlive** that process, still
+   running as a detached background service. If that persistent node held the write end of the
+   pipe open, `ReadToEndAsync()` would never see EOF and would block indefinitely -- exactly
+   matching the observed symptom (near-zero CPU, high wall-clock, on a build that had already
+   finished writing its own output) -- and exactly explains why the concurrent-dotnet-loops
+   experiment "reproduced" it (more concurrent builds meant more chances to spin up/reuse such a
+   node) without that being the true mechanism. **Fix:** added `-nodeReuse:false` to both spawned
+   `dotnet build` calls, forcing a transient, non-reused MSBuild node for each one specifically so
+   its own process lifetime -- and its own pipe handles -- can never outlive it.
+
+**Verified properly this time: three consecutive clean full-suite runs (355 tests each,
+`dotnet build-server shutdown` before each), not one lucky sample** -- 1m4s, 1m2s, 1m3s, 355/355
+every time. Then the WHOLE `SsisExtractor.slnx` (`dotnet test SsisExtractor.slnx`, all four test
+projects together): 149+156+16+355 = 676/676 green, the codegen project's own 355 still landing
+at 57s inside that combined run. `Docs/Generated-Tests-Plan.md`'s own memory
+(`ssis_generatedsolutionbuildtests_slow_runs`) and this section were both wrong once already this
+session in the direction of overclaiming "fixed" -- the three fixes above, together, are what
+finally made every run land consistently fast; no further anomaly observed across 5 consecutive
+full runs total (2 during the diagnosis, 3 for confirmation) after all three were in place.
+
+### Generated-tests plan — Phase 4, shipping `svk` + the one-command pipeline (2026-09-06)
+
+Closes `Docs/Generated-Tests-Plan.md` entirely -- all four phases now done. `svk`
+(`SsisValidationKit/`) ships alongside `ssisx` for real (one build produces both exes), and the
+per-step Copilot prompts gained a `/ssisx-rewrite` orchestrator plus the two missing per-step
+prompts (`ssisx-walkthrough`, `ssisx-test`) the pipeline needed.
+
+**What was built:**
+- `SsisExtractor.slnx` gained a new `/svk/` folder with `SvkCore.csproj`/`SvkCli.csproj` as
+  project entries (relative paths into `../SsisValidationKit/src/...`) -- `SsisValidationKit/`
+  itself is untouched, its own `SsisValidationKit.slnx` still builds standalone. `SvkCore.csproj`
+  got the governance boundary pinned as a doc comment on its own `ProjectReference` block (the
+  real enforcement point, not just a README claim): it may reference ONLY `Ssis.Extract.Model`/
+  `Ssis.Extract.Dtsx`, never `Ssis.Extract.Codegen`/`Ssis.Extract.Cli`, regardless of now sharing
+  a solution file with them.
+- **Hit the exact same XML-comment double-hyphen trap this file's own "Tools reorganized for
+  real client portability" section already documents, a second time, in a second file type.**
+  The first draft of both the new `SsisExtractor.slnx` comment AND the `SvkCore.csproj` comment
+  used `--`
+  as a plain prose dash -- `dotnet build` failed with `MSB4025`/`XmlException: An XML comment
+  cannot contain '--'`, the exact same failure mode (a `.slnx`, like a `.csproj`, is parsed as
+  plain XML) the earlier `Directory.Build.props` incident already hit, just not cross-referenced
+  at the time it was written since it hadn't happened in a `.slnx`/`.csproj` yet. Fixed by
+  rewording both comments to avoid `--` entirely, the same fix shape as before. Worth
+  remembering as a general rule now, not just a props-file-specific one: **never use `--` as a
+  prose dash in ANY XML-based project file** (`.csproj`, `.slnx`, `.props`, `.targets`, `.dtsx`).
+- Three new prompt files under `Tools/.github/prompts/`: `ssisx-walkthrough.prompt.md` (runs
+  `svk walkthrough` + `svk sampledata`, both fully deterministic, advisory/never-blocking),
+  `ssisx-test.prompt.md` (the AI half for `TEST-ORACLE`/`LOCAL-DATA` gaps, mirroring
+  `ssisx-fill.prompt.md`'s own shape but for the two gap kinds Phase 3 added), and
+  `ssisx-rewrite.prompt.md` (the orchestrator, sequencing the other five prompts by REFERENCE
+  rather than restating their command lines, per the plan's own anti-duplication discipline).
+  `ssisx-extract.prompt.md`'s bootstrap block gained a `$svk` resolution alongside `$ssisx`/
+  `$dotnet` (one `dotnet build SsisExtractor.slnx` now satisfies both).
+- `Tools/README.md`, `Tools/COPILOT_GUIDE.md`, `Tools/.github/copilot-instructions.md` all
+  updated: the "two things live here" table became three (`SsisValidationKit/` added), a new
+  "Reviewing with `svk`"/"Reviewing before/alongside generation with `svk`" section in each,
+  `--skip-tests` documented in `COPILOT_GUIDE.md` (built in the Phase 3 round but never written
+  up in the client-facing docs until now), the one-command pipeline table, and two new numbered
+  rules in `copilot-instructions.md` (12: `svk` is optional/read-only/never a gate; 13:
+  `/ssisx-rewrite` is DESIGNED to stop at both AI boundaries, do not continue past either on your
+  own judgement even if a fill looks obviously correct).
+
+**A real logic bug was caught and fixed in `ssisx-rewrite.prompt.md`'s own Step 0 (resume
+detection), by actually tracing a real generated state through it rather than just reading it
+back.** The first draft's five checks were written as independent bullets rather than a strict
+decision tree -- concretely, "is `fills-library/<package>/` non-empty?" and "does
+`out/gaps/<package>/` still show unfilled `TEST-ORACLE`/`LOCAL-DATA`?" had no stated ELSE branch,
+so a package that had been generated (gaps exist) but had NOTHING written to `fills-library/` yet
+(the exact, normal state right after Step 3) matched none of the affirmative checks and would
+have fallen through to check 5's "everything is already done" -- exactly backwards. Rewritten as
+an explicit top-to-bottom decision tree with a stated resume point on every branch, verified by
+literally producing that state with a real fixture and confirming the corrected tree resumes at
+Step 4, not "done."
+
+**Verified end to end against a real fixture, not just read back** (`SyntheticScriptComponentSeams.dtsx`,
+chosen over `SyntheticScriptTaskSeams.dtsx` after that one turned out to have SOURCE-STRIPPED
+Script Tasks -- a legitimate, correctly-unfillable gap per its own work packet, "say so; do not
+invent an implementation," but not useful for proving a full round trip to zero gaps):
+1. `ssisx extract` -> `svk walkthrough` + `svk sampledata` (the new Phase 4 command sequence,
+   run for real) -> `ssisx generate --seams` -- all in a scratch `D:\tmp` folder, never
+   `D:\PoC\Tools\out`. Produced 2 `SCRIPT-COLUMN` (Tier 2) + 2 `TEST-ORACLE` (Tier 1) gaps, build
+   failing `CS8795` as expected.
+2. Wrote a real Tier-2 fill porting the Script Component's actual C# source (`FullName`/
+   `IsValid`) into `fills-library/<Package>/<Class>.Fills.cs`. **Caught a real mistake the same
+   way a first-time Copilot session would**: the first attempt omitted `using Etl.Core.Abstractions;`/
+   `using <Package>.Sql;` (the packet's own text warns "the generated part's usings do not carry
+   over to yours" -- easy to read and still forget), producing `CS0246`/`CS0759`. Fixed, re-applied,
+   rebuilt clean (0 warnings/0 errors), `dotnet test --filter Category!=Integration` green (3/3).
+3. Wrote a real `TEST-ORACLE` fill (a new xUnit test file for the `FullName` seam). **Caught a
+   second real mistake**: the packet's own "what to produce" text offers `Fill_<Column>(row, ctx)`
+   as the primary call shape with `.Map(row, ctx)` only as a fallback "if the seam is only
+   reachable through the whole transform" -- but the generated seam is ALWAYS `private`
+   (confirmed by reading the emitted transform directly), so `Fill_FullName` is never callable
+   from a separate `.Tests` project at all; only the `.Map()` fallback ever compiles. Fixed by
+   asserting through `.Map(row, ctx).FullName` instead; applied, rebuilt clean, `dotnet test`
+   green (5/5, the 2 new assertions included). **Worth a possible future fix in
+   `AiPacketEmitter`'s own `TEST-ORACLE` contract text** -- its phrasing reads as though direct
+   `Fill_<Column>` calls sometimes work, when for a Script Component column seam specifically
+   they never do; not changed this round (out of this round's own scope), named here so it isn't
+   silently rediscovered the same way next time.
+4. Re-checked the (now-corrected) Step 0 decision tree against each real state produced above and
+   confirmed it resolves correctly at every point: before any fill (resume at Step 4), after the
+   Tier-2 fill with `fills-library/Tests/`+`TestData/` still empty (resume at Step 6), and after
+   the `TEST-ORACLE` fill with one gap (`IsValid`) still deliberately left open (matches the
+   "has content, re-apply/re-test" branch, not "everything done" -- correctly distinguishes a
+   partially-worked package from a finished one).
+
+**Verified the build/governance side too:** `dotnet build SsisExtractor.slnx -c Debug` produces
+both `ssisx.exe` and `svk.exe` in one shot (0 warnings/0 errors); `SvkCore.csproj`'s own
+`ProjectReference`s grepped afterward and confirmed still exactly the two allowed ones; every
+client-facing doc (`Tools/README.md`, `COPILOT_GUIDE.md`, `COPILOT_TESTING_GUIDE.md`,
+`copilot-instructions.md`, the new prompt files, `SsisValidationKit/README.md`) grepped for
+dev-machine absolute paths (`D:\PoC\SSIS_Rewrite`, `D:\PoC\SSIS_Migration`, `OneDrive`) -- none
+found, same leak class this project has caught and fixed twice before.
+
+**Not built, deliberately out of scope:** an automated/non-interactive test of `/ssisx-rewrite`
+itself as a literal script (it is a Copilot Chat prompt, not something this project's own test
+suite invokes) -- verified instead by manually executing its exact command sequence end to end,
+as described above, which is the strongest verification tier available for a prompt file. A
+non-interactive/CI mode for the pipeline remains out of scope per the plan's own "Out of scope,
+deliberately" list (decision 9's AI-boundary gating is by design).
+
+### Post-Phase-4 review round: closing the one real coverage gap the review found (2026-09-06, same day)
+
+Immediately after Phase 4 shipped, the user asked for a review of the implementation against
+`Docs/Generated-Tests-Plan.md` plus a quality/robustness pass -- done via `EnterPlanMode` with 2
+`Explore` agents gathering the exact facts before any code changed. It found the plan's own
+promise ("`TransformTestEmitter`... extended to every flow path, not just single-destination")
+oversold what shipped: `TransformTestEmitter.Emit` was called from exactly one place (the
+single-destination path), never for a Conditional Split branch's own Derived Column, a Multicast
+branch, a Merge Join flow, or a Lookup flow, even when those DID have one -- reasoned honestly in
+the emitter's own doc comment, but silent at the level a user actually reads (`generate-report.md`
+never said so).
+
+**Closed for Conditional Split + Multicast (identical code shape, one fix covers both), advisory-
+only for Merge Join/Lookup, Aggregate deliberately left alone:**
+- `TransformTestRequest.DerivedColumn` (singular) -> `DerivedColumns` (plural) -- a branch can
+  carry both a shared upstream one and its own (`SyntheticConditionalSplitRemerge.dtsx`'s own
+  real shape).
+- The emitted file/class name now keys off `TransformClassName`, not `EntityName` -- a REAL
+  collision existed: two branches sharing an entity via a Union-All remerge keep DISTINCT,
+  already-disambiguated `TransformClassName`s (`...HighTransform`/`...LowTransform`), so naming by
+  `EntityName` alone would have made both branches try to emit the identical file/type.
+- Wired a real per-branch `TransformTestEmitter.Emit` call into both
+  `GenerateConditionalSplitFlow` and `GenerateMulticastFlow` in `PackageGenerator.cs`, mirroring
+  the single-destination path's own call exactly, buffered/committed with the same
+  all-or-nothing discipline `branchFiles`/`branchTables` already use.
+- Merge Join/Lookup CANNOT safely get real coverage the same way: Lookup's own reference-column
+  mapping and Merge Join's own `TrustAllPassthroughColumns` bypass are both invisible to
+  `TransformTestEmitter`, and a naive call would risk emitting an assignment to a row property
+  that doesn't exist (the same CS0117 class its own doc comment already warns about for a
+  Data-Conversion cross-reference). Each now emits a non-blocking `GapKind.TestOracle` advisory
+  instead -- ONLY when a Derived Column/Data Conversion is actually present, never unconditionally
+  (an always-firing gap is exactly the miscounting shape `PortfolioDigest.IsBlockingGap`'s own
+  design already exists to prevent).
+- **Aggregate deliberately left with no gap at all**, and the reason is real: its own row type has
+  only group/aggregated columns, with no clean analog of "the flow's own Derived Column" to gap on
+  the way there is for the other four shapes (a pre-aggregation Derived Column, if any, belongs to
+  the SOURCE side, a different, already-out-of-scope question). Naming this correctly needs its
+  own design work, not a mechanical one-liner -- left as a named follow-up, not guessed at.
+
+**Verified for real, not just unit-tested**, in a `D:\tmp` scratch dir: regenerated
+`SyntheticConditionalSplitRemerge.dtsx` -- confirmed TWO DISTINCT test files
+(`SyntheticRemergeTargetHighTransformTests.cs`/`...LowTransformTests.cs`, proving the collision
+fix), built against a copy of `Etl.Core` (0 warnings/0 errors), `dotnet test --filter
+Category!=Integration` green (4/4), then **deliberately corrupted one real assertion**
+(`Assert.Equal("High", result.Segment)` -> `"DELIBERATELY-WRONG-VALUE"`) and confirmed it goes red
+-- the same "a real failure is genuinely caught" discipline this project's own testing plan
+requires, applied to the new coverage specifically. `SyntheticMulticast.dtsx` (no Derived Column
+at all) confirmed as the true no-regression case: correctly zero new test files/gaps, build/test
+still green. One pre-existing test needed updating, not just re-passed:
+`Generate_ResolvesADataConversionColumn_ReferencedByAConditionalSplitConditionAndAPostSplitDerivedColumn`
+now correctly expects 5 gaps (was 3) for `SyntheticDataConversionSplit.dtsx` -- its own two
+branches EACH now report the pre-existing "Data-Conversion cross-reference" limitation
+independently (both branches reference `SignupDate_dt`), asserted by count-of-matching-gaps, not
+just a raw total. Full suite green afterward (see the slowness section above for the final,
+correct 355/355 timing).
+
+**Disclosed limitation, not glossed over:** the Merge Join/Lookup advisory's own POSITIVE case
+(does it actually fire when it should) was verified by code review only -- confirmed it correctly
+stays SILENT on the two real fixtures that have nothing to report (the more dangerous case to get
+right, since a false positive would be noise), but no existing fixture combines either shape with
+a downstream Derived Column, and building one from scratch via the object model was judged not
+worth the effort for a purely informational, zero-functional-risk gap this round. Named as a real,
+bounded follow-up rather than silently left unverified.
+
+### Re-running the plan's own Verification items 2/4/5/6 for real (2026-09-06, later the same day)
+
+These four had never been (re-)run after Phase 4 + the review round both landed, and the plan's
+own philosophy ("every prior round shipped a real bug a green suite alone did not catch") means
+that gap doesn't close itself. Each was run for real -- a `git worktree`, a live database, a
+hand-edited generated test harness -- not re-derived from the code. Two genuine, previously
+undocumented findings came out of it; one was fixed and regression-tested the same session, the
+other is disclosed as a real, still-open gap.
+
+**Item 2 (byte-diff proof) -- confirmed, with one real, disclosed finding.** Built `ssisx` from a
+`git worktree` at HEAD (`4c92a52`, i.e. before this whole plan's own uncommitted work) and from the
+current working tree, generated all 9 real packages (this PoC's own 4 plus `SSIS_From_Sandeep`'s 5)
+both ways into separate `D:\tmp` output trees, and diffed them file-for-file. Every file that is
+"only in new" is exactly an expected addition (`README.md`, `appsettings.Development.json`, the
+whole new `.Tests` taxonomy) -- nothing was silently replaced or removed. **But every package's own
+`{Package}.cs` DOES differ**, not byte-identical as the plan's own wording assumed -- traced to one
+single, deliberate, already-tested fix that landed in this session's own uncommitted work
+(`PackageClassEmitter`'s `uowActive` flag went from `if (hasConcurrency)`-conditional to
+unconditional, and a Lookup's own reference-table preload moved INSIDE the `try` block, ahead of
+`BeginAsync`): before this fix, a Lookup preload failure on a non-concurrent package would
+propagate out of `RunAsync` unhandled, skipping rollback/failure-handlers/notifier entirely, since
+`uowActive`/the guard around `RollbackAsync` only existed for concurrent-wave packages. Confirmed
+this is deliberate and tested, not an accidental regression: `RunAsyncFailureTestEmitter`'s own doc
+comment and its `usesLookupPreload`-gated test both exist specifically to exercise this exact
+scenario (a Lookup preload failing before `BeginAsync` ever runs, so there is nothing to roll back).
+Verified the diff is this ONE fix and nothing else, on every one of the 9 packages plus the two
+fixtures the review round's own claim rests on (`SyntheticConditionalSplitRemerge.dtsx`,
+`SyntheticMulticast.dtsx` -- neither's Mapping/Model/Sql production files differ at all, only the
+package-root `.cs`, and only by this one pattern) -- confirming the review round's own claim
+("only NEW test files were added for Conditional Split/Multicast, no production .cs changed
+byte-for-byte") independently, on both the real-portfolio case (`Package_Transforms`'s own
+`DFT_MergeSortedBranches`) and the two dedicated fixtures.
+
+**Item 4 (whole-portfolio combined pass) -- confirmed for the intended scope, plus a genuinely
+useful contrast case.** `ssisx generate --input SSIS --recursive --etl-core Tools/Etl.Core --fills
+fills-library` (a nonexistent `fills-library`, so nothing is filled) into a fresh `D:\tmp` dir,
+`dotnet build Generated.slnx` -> **0 warnings/0 errors**, `dotnet test --filter Category!=Integration`
+-> **27/27 green** (LoadEmployees 7, LoadReferenceData 10, SyntheticParallelShapes 10), with no
+database reachable and nothing filled. One thing worth recording precisely: **`--seams` no longer
+exists as a flag** -- seams are ON BY DEFAULT now (`--unsafe-skip-seams` is the new opt-OUT,
+another real, previously-undocumented change that landed in this session's own uncommitted work,
+alongside the `uowActive` fix above), so the literal `--seams` flag from the plan's own wording
+would now error; omitting it is the correct call. None of this PoC's own 4 packages has a real
+Script Task/Component seam (`ScriptTest.dtsx` degrades to a Tier-3 "no Data Flow Task" gap;
+`SyntheticParallelShapes.dtsx`'s own gap is an unrelated multi-source one), so seams-on-by-default
+introduces no CS8795 risk for this literal scope. **Extended the same run to the full 9-package
+portfolio (adding `SSIS_From_Sandeep`) as a stronger version of the same check**: this correctly
+FAILS to build (8 `CS8795`s, exactly `Package`'s own 8 hand-portable Script seams named throughout
+the AI-assisted-gap-filling sections above) until those are filled -- not a bug, the seam mechanism
+working exactly as designed, and consistent with the taxonomy's own explicit carve-out ("Script
+Task / Script Component seam: none generated... not something `ssisx` can derive").
+
+**Item 5 (Integration tier for real) -- LoadEmployees/LoadReferenceData confirmed end to end; a
+real, previously-unexercised gap found in the `Category=Integration` scaffold itself, closed the
+same session (see the follow-up subsection immediately below).** Reset
+`dbo.Employee`/`Department`/`Designation` to 0/0/0 via `Sql/01_CreateTarget.sql` +
+`Sql/04_CreateLoaderCredential.sql`, ran the built exes for real against `.\SQLFORPOC_2022`
+(`TargetDatabase__Password` env var for `ssis_loader`), and read the rows back directly: **12/8/10,
+exit 0 both**, matching the counts this project has verified every prior time it ran these two
+packages. Then, per the extra ask, ran `dotnet test --filter Category=Integration` against
+`LoadEmployees.Tests`/`LoadReferenceData.Tests` -- **"No test matches the given testcase filter"**
+for both, correctly: neither package has a SQL source, Excel source, or secondary connection, so
+per the taxonomy neither generates any `Integration`-tagged test at all. To actually exercise the
+filter, generated a real SQL-sourced fixture with backing tables already present in `SsisPoC`
+(`SyntheticOleDbSourceTransform.dtsx`), built it, and ran its one `Integration` test. It failed
+against `PackageHarness`'s own documented fake server (`"(fake)"`) as expected; per
+`Tools/COPILOT_TESTING_GUIDE.md`'s own explicit "this is by design, edit that one line for a local
+run" instruction, hand-edited the generated (human-editable) `TestDoubles/PackageHarness.cs` to
+point `DatabaseOptions` at `.\SQLFORPOC_2022`/`SsisPoC` and reran. **It still failed, with a
+different, more specific error: `"Session binding token is invalid"`.** Root-caused, not
+guessed: `SqlRowSource<TRow>`, given a non-null `uow`, unconditionally attempts `sp_bindsession`
+using `uow.GetBindTokenAsync()`'s own result -- and `FakeUnitOfWork.GetBindTokenAsync` always
+returns the literal hardcoded string `"fake-bind-token"`, which the real server correctly rejects,
+regardless of what real server `DatabaseOptions` points at. Confirmed the underlying mechanism
+itself is sound and this is specifically a test-double limitation: a raw `SqlRowSource` constructed
+with `uow: null` (bypassing bind-session, falling back to the documented READ UNCOMMITTED path)
+read real rows from the same real table successfully. A secondary-connection Integration test is
+unaffected -- that taxonomy row is deliberately NOT bind-session-based at all (`PackageHarness`
+wires an unreachable `SecondaryConnections` entry specifically so the connection attempt itself,
+not a bind token, is what proves `uow` was untouched).
+
+**Closed the same session: `PackageHarness.NewRealUnitOfWorkAsync()`.** Rather than the
+`sourceNeedsUow`-shaped alternative (skip binding statically for a single-flow package), which would
+change PRODUCTION behavior for no good reason -- the conservative "always bind" wiring is already
+correct there; a REAL `uow`'s `GetBindTokenAsync()` genuinely returns a valid token from
+`sp_getbindtoken` on the actual open connection, so `sp_bindsession` succeeds fine in production. The
+bug was entirely test-side, so the fix is too: `TestDoublesEmitter`'s own `PackageHarness.cs`
+template now captures its `DatabaseOptions` into a named field (`_databaseOptions`, read by the
+existing fake-DI registration AND the new method, so a human's edit to that one line is the single
+source of truth for both) and gained `NewRealUnitOfWorkAsync(CancellationToken ct = default)`: builds
+a real `{Package}DbContext` from `SqlConnectionStringFactory.Build(_databaseOptions)`, constructs a
+genuine `Etl.Core.Data.UnitOfWork` (`SqlBulkCopyFactory`, `NullLogger<UnitOfWork>.Instance`), and
+calls `BeginAsync(IsolationLevel.ReadCommitted, ct)` before handing it back -- begun here, not left
+to the caller, because production code never calls `GetBindTokenAsync` before `BeginAsync` either
+(see `UnitOfWork`'s own precondition on that method). `ComponentTestEmitter.EmitSqlSourceTest`'s own
+Integration `[Fact]` now does `await using var uow = await harness.NewRealUnitOfWorkAsync();` instead
+of `harness.NewUnitOfWork()` -- the `.Name`-only `[Fact]` is untouched (still the Fake, still needs no
+server at all). Never committed, so the transaction rolls back on disposal; a plain `SELECT` read
+leaves nothing to roll back anyway. `EmitExcelSourceTest` needed no change -- an Excel source never
+takes `uow` at all (confirmed earlier the same session), so it was never affected.
+
+**Verified end to end, the same discipline as every other round in this file:** rebuilt `ssisx`,
+regenerated `SyntheticOleDbSourceTransform.dtsx` fresh (0 warnings/0 errors), edited the freshly
+generated `PackageHarness.cs`'s own `_databaseOptions` line to `.\SQLFORPOC_2022`/`SsisPoC` exactly
+as a human following `COPILOT_TESTING_GUIDE.md` would, and ran `dotnet test --filter
+Category=Integration` -- **it now genuinely PASSES against the real server**, where it used to fail
+with "Session binding token is invalid" even after that same edit. Confirmed the always-green
+baseline is untouched too: a SEPARATE, unedited fresh generation (still pointing at the fake server
+by default) still passes `Category!=Integration` clean (4/4) -- the new method is opt-in, reached only
+by the Integration test itself. Two new unit tests added
+(`TestDoublesEmitterTests.Emit_ProducesAPackageHarness_WithARealUnitOfWorkFactory`, a new file since
+none existed for `TestDoublesEmitter` before; `ComponentTestEmitterTests.EmitSqlSourceTest_...`
+extended with the new assertions) and the two stale `PackageHarness.cs.txt`/`LoadEmployees.cs.txt`/
+`LoadReferenceData.cs.txt`-family goldens regenerated and reviewed by eye (`git diff`) before
+trusting them -- confirmed each diff was exactly the pre-existing, already-verified `uowActive`/
+TestData-wiring changes from earlier in this same session, not anything new. Full suite green after:
+149+156+16+**357**+94+11+7 = **790** (was 789, +1 for the new `TestDoublesEmitterTests` file).
+
+**Item 6 (walkthrough correspondence) -- one real, confirmed, and FIXED emitter gap.** `Package_Advanced`
+doesn't exist as a walkthrough artifact in this environment, so per instruction substituted
+`SyntheticConditionalSplitRemerge.dtsx` (this session's own newest fixture, never checked this way
+before). `ssisx extract` + `svk walkthrough` produced a 6-row component table (Seq 1 OLE DB Source,
+2 DER_LoadedAtUtc, 3 CSPLIT_Amount, 4 DER_TagHigh/DER_TagLow, 5 UNION_Recombine, 6 OLE DB
+Destination) that matches the generated `README.md`'s own "Data flow detail" table row-for-row,
+same Seq numbers, same detail text -- confirming `PipelineFlowOrder`/`ComponentInsight` really do
+back both artifacts with one shared numbering, as designed. Checking each row against an actual
+test method surfaced a real gap: **Seq 1 (the OLE DB Source) had NO test file at all** --
+`CSPLIT_AmountRouterTests.cs` covers Seq 3, the two branch transform test files cover Seq 2/4 (the
+shared and per-branch Derived Columns, folded in as the README's own doc comment says they should
+be), but nothing covered the source. The structurally identical `SyntheticMulticast.dtsx` DOES get
+`OLEDBSourceSourceTests.cs` for the same shape of source -- proving this wasn't "by design" but a
+real asymmetry. **Root-caused and fixed**: `PackageGenerator`'s own "Source -- SQL / Excel"
+starter-test loop built its candidate list (`allWiredSources`) from `wiredFlows`/`wiredMulticasts`/
+`wiredOleDbCommands` only -- `wiredSplits` (a real, separate dictionary `GenerateConditionalSplitFlow`
+already populated, just never read by this loop) was missing from the concat entirely, and
+`GenerateConditionalSplitFlow`'s own signature never even accepted a `csvSampleCandidates` list (so
+a CSV-sourced Conditional Split flow has the identical gap, for the identical reason -- this fixture
+just happens to be SQL-sourced). Fixed both: added `wiredSplits` to the concat, and threaded
+`csvSampleCandidates` from the call site through into `GenerateConditionalSplitFlow`'s own
+`ResolveFlowSource` call, mirroring `GenerateMulticastFlow`'s already-correct wiring exactly. New
+`Generate_EmitsAStarterSourceTest_ForAConditionalSplitFlowsSqlSource` test added to
+`PackageGeneratorTests.cs`, pinning `OLEDBSourceSourceTests.cs`'s presence and its `Integration`
+trait. **Verified end to end, not just re-passed**: regenerated the fixture with the fix, confirmed
+`OLEDBSourceSourceTests.cs` now appears, built (0/0), `dotnet test --filter Category!=Integration`
+green (5/5, was 4/4), then the FULL suite across both repos: 149+156+16+**356**
+(`Ssis.Extract.Codegen.Tests`, was 355, +1 for the new regression test) + 94+11+7 = **789 total**
+(was 788), zero regressions elsewhere.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

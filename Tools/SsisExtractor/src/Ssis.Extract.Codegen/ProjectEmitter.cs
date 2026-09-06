@@ -47,7 +47,7 @@ public sealed record ProjectRequest(
 public static class ProjectEmitter
 {
     public static EmitResult Emit(ProjectRequest request) =>
-        new([EmitCsproj(request), EmitAppSettings(request)], []);
+        new([EmitCsproj(request), EmitAppSettings(request), EmitAppSettingsDevelopment(request)], []);
 
     private static GeneratedFile EmitCsproj(ProjectRequest request)
     {
@@ -84,6 +84,11 @@ public static class ProjectEmitter
         lines.Add("  <ItemGroup>");
         lines.Add("    <None Update=\"appsettings.json;appsettings.*.json\" CopyToOutputDirectory=\"PreserveNewest\" />");
         lines.Add("    <Content Include=\"..\\Shared\\appsettings.Shared.json\" Link=\"appsettings.Shared.json\" CopyToOutputDirectory=\"PreserveNewest\" />");
+        // Tier B sample data (Docs/Generated-Tests-Plan.md): a package-relative TestData folder,
+        // empty until a LOCAL-DATA fill supplies real files -- this glob matches zero items and
+        // is a harmless no-op until then, exactly like every other CopyToOutputDirectory item in
+        // this project that may or may not have anything to copy yet.
+        lines.Add("    <None Include=\"TestData\\**\" CopyToOutputDirectory=\"PreserveNewest\" />");
         lines.Add("  </ItemGroup>");
         lines.Add("");
         lines.Add("  <ItemGroup>");
@@ -182,5 +187,34 @@ public static class ProjectEmitter
         var normalized = json.Replace("\r\n", "\n").TrimEnd('\n') + "\n";
 
         return new GeneratedFile("appsettings.json", normalized);
+    }
+
+    /// <summary>
+    /// Tier B sample data (Docs/Generated-Tests-Plan.md's own "Design" section): overrides every
+    /// <c>FileSource:Files:&lt;Key&gt;:SourceFolder</c> to a package-relative <c>TestData</c>
+    /// folder -- ASP.NET Core's own config layering (<c>Host.CreateApplicationBuilder</c> already
+    /// adds <c>appsettings.{Environment}.json</c> on top of the base file) means only the ONE key
+    /// that actually needs to change is written here; <c>SourceFileName</c> is left to the base
+    /// <c>appsettings.json</c>, unchanged. This is the deterministic WIRING half of Tier B -- the
+    /// DATA itself (real files under <c>TestData/</c>) is not derivable from the .dtsx at all (the
+    /// original connection manager's own path belongs to the original SSIS author's machine), so
+    /// it becomes a <c>LOCAL-DATA</c> gap/fill instead of being guessed here. Written even when
+    /// <see cref="ProjectRequest.FileSourceEntries"/> is empty -- an empty override file is still
+    /// correct (nothing to override), and its mere presence is what fixes the OneDrive-path
+    /// portability problem: running with <c>DOTNET_ENVIRONMENT=Development</c> never touches the
+    /// original author's machine-specific path, with or without real TestData files supplied yet.
+    /// </summary>
+    private static GeneratedFile EmitAppSettingsDevelopment(ProjectRequest request)
+    {
+        var files = new JsonObject();
+        foreach (var entry in request.FileSourceEntries)
+            files[entry.Key] = new JsonObject { ["SourceFolder"] = "TestData" };
+
+        var root = new JsonObject { ["FileSource"] = new JsonObject { ["Files"] = files } };
+
+        var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        var normalized = json.Replace("\r\n", "\n").TrimEnd('\n') + "\n";
+
+        return new GeneratedFile("appsettings.Development.json", normalized);
     }
 }

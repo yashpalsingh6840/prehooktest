@@ -26,19 +26,90 @@ namespace Ssis.Extract.Codegen;
 /// branches) is a later phase -- see that section of the plan for why per-branch transactions are
 /// a real, deliberate atomicity trade-off and not something to add casually here.
 /// </summary>
+/// <summary>One generated <c>internal</c> method PackageClassEmitter emitted for a single SSIS
+/// task/pipeline component -- the exact (name, signature) pair actually written, not a
+/// re-derivation of it. <see cref="PackageReadmeEmitter"/> is the reason this exists: rebuilding
+/// the same name-collision-avoiding (<c>Reserve</c>) pass a second time to describe the README's
+/// own "generated method" column would risk the two silently drifting apart the moment two
+/// components share a default SSIS name (e.g. two untouched "OLE DB Source" components across
+/// different Data Flow Tasks) -- returning what was actually decided, once, is the only way the
+/// README can promise byte-for-byte correspondence with <c>{Package}.cs</c>.</summary>
+/// <param name="RowTypeName">Only ever set for <c>Kind == "Source"</c> -- the exact row type the
+/// method returns an <c>IRowSource&lt;T&gt;</c> of. <see cref="PackageGenerator"/>'s own Tier-A
+/// "Source -- CSV" starter test matches back to its own <see cref="CsvSampleCandidate"/> through
+/// THIS, never <see cref="SsisName"/> (a Flat File Source's own SSIS object name is free text and
+/// routinely left at the schema default across every Data Flow Task in a package, so two different
+/// flows' sources can and do share one -- confirmed the hard way, by a real cross-flow starter test
+/// that compiled a WRONG row type into a RIGHT-looking method call before this field existed). A
+/// row type name is comparably far more likely to be unique, since it's derived from the flow's own
+/// destination entity name.</param>
+public sealed record ComponentMethodEntry(string Kind, string SsisName, string MethodName, string Signature, string? RowTypeName = null);
+
+/// <summary>The three method-signature templates <see cref="PackageClassEmitter"/> emits,
+/// extracted so <see cref="PackageReadmeEmitter"/> renders the identical text in its own
+/// "Generated method" column rather than hand-typing the same three shapes a second time.</summary>
+public static class MethodSignatures
+{
+    public static string ForStepOrContainer(string methodName) =>
+        $"internal async Task {methodName}(IUnitOfWork uow, CancellationToken ct)";
+
+    public static string ForSource(string methodName, string rowTypeName, bool needsUow) =>
+        $"internal IRowSource<{rowTypeName}> {methodName}({(needsUow ? "IUnitOfWork uow" : "")})";
+
+    public static string ForSink(string methodName, string entityName) =>
+        $"internal IBulkSink<{entityName}> {methodName}()";
+}
+
 public static class PackageClassEmitter
 {
     public static string ClassName(string packageName) => $"{packageName}Package";
 
-    public static EmitResult Emit(ProgramRequest request)
+    public static EmitResult Emit(ProgramRequest request, out IReadOnlyList<ComponentMethodEntry> methodInventory) =>
+        Emit(request, out methodInventory, out _, out _);
+
+    /// <param name="supportsFakeHappyPath">Whether a fakes-only, no-real-connectivity RunAsync
+    /// happy-path test (Docs/Generated-Tests-Plan.md's "RunAsync -- happy path" row) is safe to
+    /// generate for this package. False the instant ANY source or step could reach out to
+    /// something FakeUnitOfWork/PackageHarness cannot fake: a direct SQL/ADO NET source (opens a
+    /// real connection to resolve its own metadata), an Excel source (reads a real .xlsx -- no
+    /// Tier-A sample data exists for this shape yet), a Lookup preload (LookupCache.LoadAsync
+    /// takes a raw connection STRING, never IUnitOfWork, so it is never faked regardless of what
+    /// the rest of the flow does), a secondary-connection SQL step (same reason), or a Script
+    /// Task (an arbitrary, hand-ported fill -- e.g. the real Package.dtsx's own
+    /// SCR_NotifyAndLogProgress fill genuinely calls ctx.Uow.Context.Set&lt;T&gt;().CountAsync(),
+    /// which WOULD try to open FakeUnitOfWork's fake connection string for real), or a File System
+    /// Task (FileSystemActionRunner.RunAsync always calls the real System.IO.File.Copy/Move/...,
+    /// no IUnitOfWork/interface indirection at all -- PackageHarness's own FileSourceOptions
+    /// wiring for a File System Task key gives it a real, resolvable path, but not a SOURCE FILE
+    /// WITH CONTENT ALREADY ON DISK, which only the dedicated "File System Task" starter test
+    /// itself writes before calling the step directly; see ComponentTestEmitter.EmitFileSystemTaskTest's
+    /// own doc comment). A CSV/fixed-width source writing to a SQL or Flat File sink is the one
+    /// shape proven safe so far.</param>
+    /// <param name="usesLookupPreload">Whether this package has any Lookup at all -- exposed
+    /// separately from <paramref name="supportsFakeHappyPath"/> (which folds it in among several
+    /// other disqualifiers) because a Lookup-bearing package's RunAsync failure-path starter test
+    /// needs a genuinely different shape: its own reference-table preload now runs inside RunAsync's
+    /// try block (see this method's own emitted bootstrap) and always attempts a real connection
+    /// PackageHarness can never make succeed, so that -- not the ThrowOnGetBindToken fault injection
+    /// every other package's test relies on -- is the failure such a package's test actually
+    /// exercises.</param>
+    public static EmitResult Emit(
+        ProgramRequest request, out IReadOnlyList<ComponentMethodEntry> methodInventory, out bool supportsFakeHappyPath,
+        out bool usesLookupPreload)
     {
+        var inventory = new List<ComponentMethodEntry>();
         var flows = request.Steps.OfType<ProgramFlowStep>().Select(s => s.Flow).ToList();
         var splits = request.Steps.OfType<ProgramConditionalSplitStep>().ToList();
         var multicasts = request.Steps.OfType<ProgramMulticastStep>().ToList();
         var oleDbCommands = request.Steps.OfType<ProgramOleDbCommandStep>().ToList();
         var dataFlowLoops = request.Steps.OfType<ProgramForEachDataFlowLoopStep>().ToList();
         if (flows.Count == 0 && splits.Count == 0 && multicasts.Count == 0 && oleDbCommands.Count == 0 && dataFlowLoops.Count == 0)
+        {
+            methodInventory = inventory;
+            supportsFakeHappyPath = false;
+            usesLookupPreload = false;
             return new EmitResult([], [new GenerationGap(request.PackageName, "no Data Flow Task could be planned for this package")]);
+        }
 
         var allSources = new List<FlowSourceSpec>();
         foreach (var source in flows.Select(f => f.Source).Concat(splits.Select(s => s.Source))
@@ -61,7 +132,7 @@ public static class PackageClassEmitter
         // requires it).
         var usesSqlSink = flows.Any(f => f.Sink is SqlFlowSink) || splits.Count > 0
             || multicasts.Any(m => m.Branches.Any(b => b.Sink is SqlFlowSink)) || dataFlowLoops.Count > 0;
-        var usesLookupPreload = flows.Any(f => f.Lookup is not null);
+        usesLookupPreload = flows.Any(f => f.Lookup is not null);
         var secondaryConnectionNames = request.Steps.OfType<ProgramSecondaryConnectionSqlStep>()
             .Select(s => s.ConnectionManagerName).Distinct().ToList();
         var usesFlatFileSink = flows.Any(f => f.Sink is FlatFileFlowSink) || multicasts.Any(m => m.Branches.Any(b => b.Sink is FlatFileFlowSink));
@@ -72,6 +143,15 @@ public static class PackageClassEmitter
             || request.Steps.OfType<ProgramSqlStep>().Any() || request.Steps.OfType<ProgramSecondaryConnectionSqlStep>().Any()
             || request.Steps.OfType<ProgramForEachFileLoopStep>().Any();
         var usesScriptTasks = request.Steps.Any(s => s is ProgramScriptTaskStep);
+        var usesFileSystemTask = request.Steps.Any(s => s is ProgramFileSystemStep);
+
+        // See this overload's own doc comment for exactly why each of these disqualifies a
+        // no-real-connectivity happy-path test -- allSources is already flattened through Merge
+        // Join/Aggregate/Union's own nested sides, so this single check covers a SqlFlowSource
+        // hiding inside any of them too.
+        supportsFakeHappyPath = !allSources.Any(s => s is SqlFlowSource)
+            && !usesExcel && !usesLookupPreload && secondaryConnectionNames.Count == 0
+            && !usesScriptTasks && !usesFileSystemTask && dataFlowLoops.Count == 0;
 
         var ns = request.RootNamespace;
         var className = ClassName(request.PackageName);
@@ -320,11 +400,13 @@ public static class PackageClassEmitter
             // schema default nobody renames, per PackageGenerator.SanitizeIdentifier's own doc
             // comment) and not necessarily a valid C# identifier.
             var name = Reserve(PackageGenerator.SanitizeIdentifier(source.ComponentName));
-            var uowParam = SourceNeedsUow(source) ? "IUnitOfWork uow" : "";
-            componentMethods.OpenBlock($"internal IRowSource<{rowTypeName}> {name}({uowParam})");
+            var needsUow = SourceNeedsUow(source);
+            var signature = MethodSignatures.ForSource(name, rowTypeName, needsUow);
+            componentMethods.OpenBlock(signature);
             EmitSource(componentMethods, rowTypeName, source, "return ");
             componentMethods.CloseBlock();
             componentMethods.Blank();
+            inventory.Add(new ComponentMethodEntry("Source", source.ComponentName, name, signature, rowTypeName));
             return name;
         }
 
@@ -339,17 +421,23 @@ public static class PackageClassEmitter
         string EmitSinkMethod(string entityName, FlowSinkSpec sink)
         {
             var name = Reserve($"{entityName}Destination");
-            componentMethods.OpenBlock($"internal IBulkSink<{entityName}> {name}()");
+            var signature = MethodSignatures.ForSink(name, entityName);
+            componentMethods.OpenBlock(signature);
             EmitSinkConstruction(componentMethods, entityName, sink, "return ");
             componentMethods.CloseBlock();
             componentMethods.Blank();
+            // No SSIS name is available here -- a destination component's own object name is
+            // never threaded this far into the plan (see this method's own doc comment above);
+            // the entity name is the closest identifying fact PackageReadmeEmitter has to show.
+            inventory.Add(new ComponentMethodEntry("Sink", entityName, name, signature));
             return name;
         }
 
         string EmitStepMethod(ProgramStep step)
         {
             var methodName = Reserve(StepDisplayName(step));
-            methods.OpenBlock($"internal async Task {methodName}(IUnitOfWork uow, CancellationToken ct)");
+            var signature = MethodSignatures.ForStepOrContainer(methodName);
+            methods.OpenBlock(signature);
 
             switch (step)
             {
@@ -496,6 +584,7 @@ public static class PackageClassEmitter
 
             methods.CloseBlock();
             methods.Blank();
+            inventory.Add(new ComponentMethodEntry("Step", StepDisplayName(step), methodName, signature));
             return methodName;
         }
 
@@ -549,10 +638,12 @@ public static class PackageClassEmitter
                         else body.Line($"await {childName}(uow, ct);");
                     }
                     var name = Reserve(cn.Name);
-                    methods.OpenBlock($"internal async Task {name}(IUnitOfWork uow, CancellationToken ct)");
+                    var signature = MethodSignatures.ForStepOrContainer(name);
+                    methods.OpenBlock(signature);
                     foreach (var line in body.Lines) methods.RawLine(line);
                     methods.CloseBlock();
                     methods.Blank();
+                    inventory.Add(new ComponentMethodEntry("Container", cn.Name, name, signature));
                     return name;
                 }
                 default:
@@ -624,13 +715,6 @@ public static class PackageClassEmitter
         run.Line($"var logger = Log<{className}>();");
         run.Blank();
 
-        // Every Lookup's reference table is loaded here, before the transaction even begins --
-        // IRowTransform.Map is synchronous, so a full cache has to be fully materialized before
-        // any row is read regardless.
-        foreach (var lookup in lookups)
-            run.Line($"{lookupFieldNames[lookup.VariableName]} = await {lookup.CacheClassName}.LoadAsync<{lookup.KeyClrType}>(SqlConnectionStringFactory.Build(Db()), r => r.{lookup.ReferenceKeyColumn}, ct);");
-        if (lookups.Count > 0) run.Blank();
-
         foreach (var seed in request.VariableSeeds)
             run.Line($"packageVariables.Set({Str(seed.SsisName)}, {seed.CSharpLiteral}); // design-time default from the .dtsx");
         if (request.VariableSeeds.Count > 0) run.Blank();
@@ -642,16 +726,26 @@ public static class PackageClassEmitter
         run.Blank();
 
         run.Line("logger.LogInformation(\"Starting {Package}...\", PackageName);");
-        run.Line("await uow.BeginAsync(IsolationLevel.ReadCommitted, ct);");
         // Declared OUTSIDE the try block (a `var` scoped to `try` is not visible from a sibling
-        // `catch`) -- a concurrent wave commits the ambient transaction before it runs and only
-        // re-begins it afterward, so the ambient `uow` might have no active transaction at the
-        // moment a failure is caught there; RollbackAsync throws if called then, masking the real
-        // exception. Tracked only when this package actually has a wave; every non-concurrent
-        // package's own ambient transaction is provably always active inside the try block, so
-        // this would be dead, never-false bookkeeping there.
-        if (hasConcurrency) run.Line("var uowActive = true;");
+        // `catch`), and unconditionally -- a Lookup's own reference-table preload runs first
+        // inside the try below, before BeginAsync, so a real connectivity failure there must be
+        // caught the same as any other failure without attempting a RollbackAsync on a
+        // transaction that was never opened (RollbackAsync throws when none is active, which
+        // would mask the real exception). A concurrent wave later commits and re-begins the
+        // ambient transaction mid-run for the identical reason -- both cases share one flag.
+        run.Line("var uowActive = false;");
         run.OpenBlock("try");
+        // Every Lookup's reference table is loaded here, before the transaction even begins --
+        // IRowTransform.Map is synchronous, so a full cache has to be fully materialized before
+        // any row is read regardless. Inside the try (not before it) so a real connectivity
+        // failure here is rolled back/notified/exits cleanly like any other failure, rather than
+        // propagating out of RunAsync unhandled.
+        foreach (var lookup in lookups)
+            run.Line($"{lookupFieldNames[lookup.VariableName]} = await {lookup.CacheClassName}.LoadAsync<{lookup.KeyClrType}>(SqlConnectionStringFactory.Build(Db()), r => r.{lookup.ReferenceKeyColumn}, ct);");
+        if (lookups.Count > 0) run.Blank();
+        run.Line("await uow.BeginAsync(IsolationLevel.ReadCommitted, ct);");
+        run.Line("uowActive = true;");
+        run.Blank();
         run.Line("// Fetched once, here, while this transaction's connection is guaranteed idle -- a lazy fetch");
         run.Line("// from inside a step reproduced a real deadlock (SqlRowSource reading while SqlBulkCopy streams).");
         run.Line("await uow.GetBindTokenAsync(ct);");
@@ -718,13 +812,14 @@ public static class PackageClassEmitter
         run.OpenBlock("catch (Exception ex)");
         // Rollback and every failure handler deliberately use CancellationToken.None, not ct -- a
         // cancelled run still needs its own failure recorded, and still needs a chance to run its
-        // own failure handlers. A concurrent wave commits the ambient transaction before it runs
-        // (see above), so it might not be active at all when a branch's own exception is caught
-        // here -- RollbackAsync throws on an inactive transaction, which would mask the real
-        // failure, so this only rolls back when uowActive says there's something to roll back.
-        if (hasConcurrency) run.OpenBlock("if (uowActive)");
+        // own failure handlers. uowActive is unconditional now (see above): a Lookup preload
+        // failure or a concurrent wave's own commit-before-run both leave it false at the moment
+        // an exception is caught here, and RollbackAsync throws on an inactive transaction --
+        // which would mask the real failure -- so this only rolls back when there's something to
+        // roll back.
+        run.OpenBlock("if (uowActive)");
         run.Line("await uow.RollbackAsync(CancellationToken.None);");
-        if (hasConcurrency) run.CloseBlock();
+        run.CloseBlock();
         run.Line("logger.LogError(ex, \"{Package} failed after {Steps} step(s); transaction rolled back\", PackageName, _results.Count);");
         run.Blank();
         if (request.FailureHandlers.Count == 0)
@@ -867,6 +962,7 @@ public static class PackageClassEmitter
 
         w2.CloseBlock();
 
+        methodInventory = inventory;
         return new EmitResult([new GeneratedFile($"{request.PackageName}.cs", w2.Render())], []);
     }
 

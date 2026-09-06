@@ -35,19 +35,26 @@ if (-not $dotnet) {
 if (-not $dotnet) { throw 'dotnet SDK not found - install it or add it to PATH.' }
 
 $cliBin = 'SsisExtractor/src/Ssis.Extract.Cli/bin'
-$find   = { Get-ChildItem $cliBin -Recurse -Include 'ssisx.exe','ssisx' -ErrorAction SilentlyContinue |
+$svkBin = 'SsisValidationKit/src/SvkCli/bin'
+$findExe = { param($dir, $name) Get-ChildItem $dir -Recurse -Include "$name.exe","$name" -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName }
-$ssisx  = & $find
-if (-not $ssisx) {
+$ssisx = & $findExe $cliBin 'ssisx'
+$svk   = & $findExe $svkBin 'svk'
+if (-not $ssisx -or -not $svk) {
+    # One build produces both -- SvkCore/SvkCli are project entries in SsisExtractor.slnx too
+    # (Tools/README.md), so there is no second solution to build here.
     & $dotnet build 'SsisExtractor/SsisExtractor.slnx' -c Debug --nologo
-    $ssisx = & $find
+    $ssisx = & $findExe $cliBin 'ssisx'
+    $svk   = & $findExe $svkBin 'svk'
 }
 if (-not $ssisx) { throw 'ssisx not found and could not be built.' }
+if (-not $svk)   { throw 'svk not found and could not be built.' }
 "ssisx  = $ssisx"
+"svk    = $svk"
 "dotnet = $dotnet"
 ```
 
-If `ssisx` was already present, **do not rebuild it**.
+If `ssisx`/`svk` were already present, **do not rebuild them**.
 
 ## Step 2 — run exactly these two commands
 

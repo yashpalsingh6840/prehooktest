@@ -1,13 +1,14 @@
 # Tools
 
 Everything a client site needs to extract, assess, and generate C# from its own SSIS
-packages -- self-contained, with no dependency on any other repo. Two things live here, for
-two different reasons:
+packages -- self-contained, with no dependency on any other repo. Three things live here, for
+three different reasons:
 
 | Folder | What it is | Why it's here |
 |---|---|---|
 | [`SsisExtractor/`](SsisExtractor/README.md) | `ssisx` -- the extractor/report/conformance/generator CLI (its own solution, `SsisExtractor.slnx`) | The tool itself: parses raw `.dtsx` XML (no GAC, no SSISDB, no live SSIS install needed) and turns it into inventory, findings, conformance rules, and generated C#. |
 | `Etl.Core/` | The hand-written runtime library every `ssisx generate` output targets (`SqlBulkSink`, `CsvRowSource`, `ExecuteSqlStep`/`DataFlowStep`/every other step type, the notification/hosting plumbing, etc.) | `ssisx generate` deliberately does not produce this -- it's written once, not derived from any `.dtsx` (see `GenerateCommand.WriteFixedFiles`'s own doc comment). A generated package needs a copy of it alongside its own project to build at all. |
+| [`SsisValidationKit/`](SsisValidationKit/README.md) | `svk` -- a **separate, standalone** review/sample-data tool (its own solution, `SsisValidationKit.slnx`) that only ever *reads* `ssisx extract`'s output; it never edits anything under `SsisExtractor/` and never generates C# | Two commands: `svk walkthrough` (a human-readable execution-order review doc + a claims file per package) and `svk sampledata` (deterministic, schema-correct sample CSVs/SQL/DDL). Both optional, both read-only against `ssisx`'s own spec output -- see "Reviewing before/alongside generation with `svk`" below. |
 
 ## Using this on a client's own packages
 
@@ -24,7 +25,14 @@ dotnet build SsisExtractor.slnx -c Debug
 cd ..
 ```
 
-The built CLI is now at `SsisExtractor\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe`, relative
+**This one build produces both tools.** `SvkCore`/`SvkCli` (the `svk` sources under
+`SsisValidationKit\`) are added as project entries inside `SsisExtractor.slnx` too -- a
+`.csproj` can belong to more than one solution file with zero physical move, so
+`SsisValidationKit\` stays exactly where it is and its own `SsisValidationKit.slnx` stays valid
+for anyone iterating on `svk` in isolation. There is no second build step to remember.
+
+The built CLI is now at `SsisExtractor\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe`, and
+`svk` at `SsisValidationKit\src\SvkCli\bin\Debug\net8.0\svk.exe`, both relative
 to this `Tools\` folder. The commands below assume you're running from `Tools\` and use that
 path directly -- adjust it if you `cd` elsewhere. (`dotnet run --project
 SsisExtractor\src\Ssis.Extract.Cli -- <args>` works too, without the separate build step, if you
@@ -153,6 +161,29 @@ corpus this environment doesn't have. Building (`dotnet build`, step 3 above) to
 code compiles is the expected extent of checking; running it against invented sample data is
 not the goal and should not be attempted.
 
+## Reviewing before/alongside generation with `svk`
+
+`svk` (`SsisValidationKit\`) is a **separate, standalone** tool from `ssisx` -- its own
+`SsisValidationKit.slnx`, built by the same one-time setup above. It only ever *reads* what
+`ssisx extract` already wrote; it never edits anything under `SsisExtractor\` and never
+generates C#. Two commands, both deterministic (same input/`--seed` -> byte-identical output,
+nothing here is an AI step):
+
+```powershell
+$svk = "SsisValidationKit\src\SvkCli\bin\Debug\net8.0\svk.exe"
+
+# A human-readable execution-order review doc per package, plus a claims file to record
+# "I checked this component" -- reads ssisx extract's own --out folder, never SSISDB/a live DB.
+& $svk walkthrough --spec out --out out\walkthrough --claims out\walkthrough\claims --package LoadEmployees
+
+# Deterministic sample CSV/SQL/DDL, type/length-correct against the package's own declared
+# schema -- useful before generation for a quick sanity read, and as the seed a human/AI then
+# makes realistic for a LOCAL-DATA gap (see COPILOT_TESTING_GUIDE.md).
+& $svk sampledata --spec out --out out\sampledata --package LoadEmployees --rows 20 --seed 42
+```
+
+Full command reference, output layout, and known limitations: `SsisValidationKit\README.md`.
+
 ## Running this with GitHub Copilot
 
 Three files exist for this -- two under `Tools\` itself, and one written FRESH into every
@@ -210,6 +241,27 @@ Chat and start with:
 From there, [`COPILOT_GUIDE.md`](COPILOT_GUIDE.md)'s own "Prompts you can paste into Copilot
 Chat" section has the rest (generate one package, generate a named batch, work a gap, confirm a
 build) -- copy them as-is, filling in the real client folder path and package name(s).
+
+**Or run the whole thing as one command:** `.github/prompts/ssisx-rewrite.prompt.md` (`/ssisx-
+rewrite` in Copilot Chat) sequences every step below -- extract, an optional `svk` walkthrough,
+generate, apply-fills, build, and test -- for one named package, stopping at each of the two
+places a human decision is actually required (Tier-1/2 gaps, then test-oracle/local-data gaps)
+rather than guessing past them. Each step is still independently runnable via its own prompt if
+you'd rather go one at a time:
+
+| # | Step | Prompt |
+|---|---|---|
+| 1 | Extract + survey | `ssisx-extract.prompt.md` |
+| 2 | Walkthrough (advisory) | `ssisx-walkthrough.prompt.md` |
+| 3 | Generate | `ssisx-generate.prompt.md` |
+| 4 | Tier-1/2 gap fills -- **AI, stops for review** | `ssisx-fill.prompt.md` |
+| 5 | Apply + build | `ssisx-fill.prompt.md` (its own closing step) |
+| 6 | Test-oracle/local-data fills -- **AI, stops for review** | `ssisx-test.prompt.md` |
+| 7 | Apply + build + test | `ssisx-test.prompt.md` (its own closing step) |
+
+Re-running `/ssisx-rewrite` for the same package is always safe -- it detects what already
+exists on disk (an extracted spec, a generated project, filled-in fills) and resumes from
+there rather than redoing finished work.
 
 `Etl.Core/` here is a **portable copy** -- see this project's own internal dev notes for where
 it's actually developed and how to refresh it; that's not this file's concern, since this

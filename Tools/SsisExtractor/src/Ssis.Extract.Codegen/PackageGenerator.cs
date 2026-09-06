@@ -7,6 +7,55 @@ using Ssis.Extract.Model.Shared;
 
 namespace Ssis.Extract.Codegen;
 
+/// <summary>One ordinary single-destination flow's own delimited (never fixed-width) Flat File
+/// Source, captured by <see cref="PackageGenerator.ResolveFlowSource"/> for
+/// <see cref="SampleDataEmitter"/>/the "Source -- CSV" starter test to consume once the source
+/// method's own generated NAME is known (only <c>methodInventory</c>, returned by
+/// <see cref="PackageClassEmitter.Emit"/>, actually has that -- see
+/// <see cref="ComponentMethodEntry"/>'s own doc comment for why this can't be re-derived).</summary>
+public sealed record CsvSampleCandidate(string FileSourceKey, ConnectionManagerSpec ConnectionManager, string RowTypeName, string RowTypeNamespace, string ComponentName);
+
+/// <summary>An OLE DB Command flow's own row type/parameter facts, captured by
+/// <see cref="PackageGenerator.GenerateOleDbCommandFlow"/> once it has already resolved the
+/// flow's real source's row type AND joined every parameter column back to its own CLR type via
+/// <see cref="PipelineResolver"/> -- exactly what <see cref="ComponentTestEmitter.EmitOleDbCommandTest"/>
+/// needs to synthesize rows for the "OLE DB Command" starter test, without re-resolving the
+/// source (or the parameter binding) a second time.</summary>
+public sealed record OleDbCommandTestCandidate(
+    string StepName, string RowTypeName, string RowTypeNamespace, string SqlTemplate,
+    IReadOnlyList<string> ParameterColumnNames, IReadOnlyList<ResolvedColumn> SourceColumns);
+
+/// <summary>A Multicast flow's own row type/branch facts, captured by
+/// <see cref="PackageGenerator.GenerateMulticastFlow"/> once every branch has already resolved
+/// successfully -- exactly what <see cref="ComponentTestEmitter.EmitMulticastTest"/> needs to
+/// construct the same <c>ConditionalSplitBranch&lt;TRow,TEntity&gt;</c> list the generated step
+/// method itself builds, without re-resolving the source or any branch a second time.</summary>
+public sealed record MulticastTestCandidate(
+    string StepName, string RowTypeName, string RowTypeNamespace,
+    IReadOnlyList<ResolvedColumn> SourceColumns, IReadOnlyList<ComponentTestEmitter.MulticastTestBranch> Branches);
+
+/// <summary>An Aggregate flow's own row type/function facts, captured by
+/// <see cref="PackageGenerator.GenerateAggregateFlow"/> once it has already resolved the flow's
+/// real (always-SQL) source and every Count function's own source column to a CLR type --
+/// exactly what <see cref="ComponentTestEmitter.EmitAggregateSourceTest"/> needs to synthesize
+/// rows for the "Aggregate source" starter test, without re-resolving the source a second
+/// time.</summary>
+public sealed record AggregateSourceTestCandidate(
+    string ComponentName, string SourceRowTypeNamespace, string SourceRowTypeName,
+    string AggregateRowTypeNamespace, string AggregateRowTypeName,
+    string GroupByPropertyName, string GroupByKeyClrType,
+    IReadOnlyList<ComponentTestEmitter.AggregateSourceTestFunction> Functions);
+
+/// <summary>One ordinary single-destination flow's own Flat File Destination, captured (again,
+/// pilot-scoped to the ordinary flow path only, not Conditional Split/Multicast) so the "Sink --
+/// flat file" starter test can write real rows through the real sink to a real temp file and read
+/// them back, with no format-duplication risk -- keyed by ENTITY NAME, the same identity
+/// <c>ComponentMethodEntry.SsisName</c> already carries for a "Sink" method (see
+/// <c>PackageClassEmitter</c>'s own <c>inventory.Add(new ComponentMethodEntry("Sink", entityName,
+/// ...))</c> -- a destination component's own free-text SSIS name is never threaded this far, so
+/// entityName is already the join key the SQL sink test uses too).</summary>
+public sealed record FlatFileSinkCandidate(FlatFileFlowSink Sink, string EntityName, PipelineComponentSpec DestinationComponent);
+
 public sealed record PackageGenerateResult(
     string PackageName,
     List<GeneratedFile> Files,
@@ -47,7 +96,12 @@ public static partial class PackageGenerator
     /// Optional so every existing caller and test is unaffected; absent or unconfirmed, the gaps
     /// they would have closed are reported exactly as before.
     /// </param>
-    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix, GapDecisions? decisions = null, bool emitSeams = false)
+    /// <param name="skipTests">Docs/Generated-Tests-Plan.md's own "Opt-out": generates the main
+    /// package project only, with none of the starter `{Package}.Tests` project this method
+    /// otherwise always produces. Defaults to false (tests on) so every existing caller/test is
+    /// unaffected -- named plainly, unlike `--unsafe-skip-seams`, because skipping tests loses
+    /// coverage but can never produce silently WRONG code the way skipping a seam can.</param>
+    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix, GapDecisions? decisions = null, bool emitSeams = false, bool skipTests = false)
     {
         decisions ??= GapDecisions.None;
         var ns = namespacePrefix is null ? package.ObjectName : $"{namespacePrefix}.{package.ObjectName}";
@@ -112,8 +166,42 @@ public static partial class PackageGenerator
         var wiredOleDbCommands = new Dictionary<DataFlowPlan, ProgramOleDbCommandStep>();
         var wiredDataFlowLoops = new Dictionary<ForEachFileDataFlowPlan, ProgramForEachDataFlowLoopStep>();
         var fileSourceEntries = new List<FileSourceEntryRequest>();
+        // "File System Task" taxonomy row (Docs/Generated-Tests-Plan.md): every source/destination
+        // connection-manager key a File System Task step actually resolved, collected here (where
+        // FileSystemStep is still directly in scope) so PackageHarness's own FileSourceOptions can
+        // wire up a real, isolated temp path for each -- see TestDoublesEmitter's own doc comment.
+        var fileSystemTaskKeys = new List<string>();
         var secondaryConnections = new Dictionary<string, SecondaryConnectionRequest>();
         var functionsUsed = new HashSet<string>();
+        // Entity name -> its own SQL destination component, for a single-destination flow's own
+        // ordinary (non-Flat-File) sink -- populated here (where the destination component is
+        // still directly in scope) and consumed AFTER PackageClassEmitter.Emit returns, since only
+        // that call knows the sink method's own generated NAME (see ComponentMethodEntry). Keyed by
+        // entity name because that is the one identifier both sides of this join share.
+        var sqlSinkEntities = new Dictionary<string, PipelineComponentSpec>();
+        // Populated only by the ordinary single-destination flow's own ResolveFlowSource call
+        // (Phase 2 of the generated-tests plan, "Source -- CSV" row) -- a genuinely delimited Flat
+        // File Source, never a fixed-width one (a different physical write format, not attempted
+        // this round), never a Conditional Split/Merge Join side (same "pilot one shape first"
+        // discipline TransformTestEmitter's own doc comment already states).
+        var csvSampleCandidates = new List<CsvSampleCandidate>();
+        // Same "pilot one shape first" scoping as csvSampleCandidates -- only the ordinary
+        // single-destination flow's own Flat File Destination, for the "Sink -- flat file"
+        // starter test.
+        var flatFileSinkCandidates = new List<FlatFileSinkCandidate>();
+        // "OLE DB Command" taxonomy row (Docs/Generated-Tests-Plan.md): populated by
+        // GenerateOleDbCommandFlow itself, once it has already resolved the source row type and
+        // joined every parameter column to its own CLR type -- see OleDbCommandTestCandidate's
+        // own doc comment for why this can't be re-derived a second time after the fact.
+        var oleDbCommandTestCandidates = new List<OleDbCommandTestCandidate>();
+        // "Multicast" taxonomy row (Docs/Generated-Tests-Plan.md): populated by
+        // GenerateMulticastFlow itself, once every branch has already resolved successfully -- see
+        // MulticastTestCandidate's own doc comment for why this can't be re-derived a second time.
+        var multicastTestCandidates = new List<MulticastTestCandidate>();
+        // "Aggregate source" taxonomy row (Docs/Generated-Tests-Plan.md): populated by
+        // GenerateAggregateFlow itself, once the source and every Count function's own column
+        // have already resolved -- see AggregateSourceTestCandidate's own doc comment.
+        var aggregateSourceTestCandidates = new List<AggregateSourceTestCandidate>();
         string? authMode = null;
         string? userId = null;
         string? targetServer = null;
@@ -175,7 +263,8 @@ public static partial class PackageGenerator
             {
                 var aggregateFlow = GenerateAggregateFlow(
                     package, ns, flow, aggregate, fileSourceEntries, files, tables, functionsUsed,
-                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
+                    aggregateSourceTestCandidates);
                 if (aggregateFlow is not null) wiredFlows[flow] = aggregateFlow;
                 continue;
             }
@@ -183,8 +272,9 @@ public static partial class PackageGenerator
             if (flow.ConditionalSplit is { } split)
             {
                 var splitStep = GenerateConditionalSplitFlow(
-                    package, ns, flow, split, fileSourceEntries, files, tables, functionsUsed,
-                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+                    package, ns, flow, split, fileSourceEntries, files, testFiles, tables, functionsUsed,
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
+                    csvSampleCandidates);
                 if (splitStep is not null) wiredSplits[flow] = splitStep;
                 continue;
             }
@@ -192,7 +282,7 @@ public static partial class PackageGenerator
             if (flow.MergeJoin is { } mergeJoin)
             {
                 var mergeJoinFlow = GenerateMergeJoinFlow(
-                    package, ns, flow, mergeJoin, fileSourceEntries, files, tables, functionsUsed,
+                    package, ns, flow, mergeJoin, fileSourceEntries, files, testFiles, tables, functionsUsed,
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
                 if (mergeJoinFlow is not null) wiredFlows[flow] = mergeJoinFlow;
                 continue;
@@ -214,8 +304,9 @@ public static partial class PackageGenerator
             if (flow.Multicast is { } multicast)
             {
                 var multicastStep = GenerateMulticastFlow(
-                    package, ns, flow, multicast, fileSourceEntries, files, tables, functionsUsed,
-                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+                    package, ns, flow, multicast, fileSourceEntries, files, testFiles, tables, functionsUsed,
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
+                    multicastTestCandidates, csvSampleCandidates);
                 if (multicastStep is not null) wiredMulticasts[flow] = multicastStep;
                 continue;
             }
@@ -228,7 +319,8 @@ public static partial class PackageGenerator
             {
                 var oleDbCommandStep = GenerateOleDbCommandFlow(
                     package, ns, flow, oleDbCommandPlan, fileSourceEntries, files, gaps,
-                    ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+                    ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
+                    oleDbCommandTestCandidates);
                 if (oleDbCommandStep is not null) wiredOleDbCommands[flow] = oleDbCommandStep;
                 continue;
             }
@@ -257,7 +349,7 @@ public static partial class PackageGenerator
 
             var nullableColumnNames = ResolveNullableColumnNames(flow);
 
-            var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames);
+            var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
             if (sourceResult is null) continue; // ResolveFlowSource already added the reason
             var (rowTypeName, programSource) = sourceResult.Value;
 
@@ -285,12 +377,14 @@ public static partial class PackageGenerator
                 var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, flow.DestinationComponent, entityName, fileSourceEntries, gaps);
                 if (flatFileSink is null) continue; // ResolveFlatFileSink already added the reason
                 sink = flatFileSink;
+                flatFileSinkCandidates.Add(new FlatFileSinkCandidate(flatFileSink, entityName, flow.DestinationComponent));
             }
             else
             {
                 primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
                 tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
                 sink = new SqlFlowSink();
+                sqlSinkEntities.TryAdd(entityName, flow.DestinationComponent);
             }
 
             var transformResult = TransformEmitter.Emit(new TransformRequest(
@@ -322,10 +416,12 @@ public static partial class PackageGenerator
             // Data-Conversion-produced destination column referenced DIRECTLY (TransformTestEmitter
             // itself detects and gaps the harder case -- a Derived Column expression that
             // CROSS-REFERENCES a Data-Conversion column -- rather than misgenerating a row
-            // initializer for a property that doesn't exist). Still scoped away from a Flat File
-            // Destination: that destination's own row/write shape hasn't been verified against
-            // this emitter yet.
-            if (!isFlatFileDestination)
+            // initializer for a property that doesn't exist). Now ALSO called for a Flat File
+            // Destination flow (Phase 2 of the generated-tests plan) -- TransformTestEmitter's own
+            // row/column resolution goes through PipelineResolver.ResolveDestinationInput, which
+            // already supports Microsoft.FlatFileDestination the same way (the destination's own
+            // input columns, not its physical write format), so no emitter change was needed to
+            // widen this call site; only the gate here.
             {
                 var testResult = TransformTestEmitter.Emit(new TransformTestRequest(
                     TestNamespace: $"{package.ObjectName}.Tests",
@@ -336,7 +432,7 @@ public static partial class PackageGenerator
                     EntityNamespace: $"{ns}.Model",
                     EntityName: entityName,
                     Pipeline: flow.Pipeline,
-                    DerivedColumn: flow.DerivedColumn,
+                    DerivedColumns: flow.DerivedColumn is null ? [] : [flow.DerivedColumn],
                     DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
                     DestinationComponent: flow.DestinationComponent));
                 gaps.AddRange(testResult.Gaps);
@@ -407,7 +503,7 @@ public static partial class PackageGenerator
                     programSteps.Add(programOleDbCommand);
                     break;
                 case SqlStep sqlStep:
-                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, testFiles, $"{ns}.Mapping", gaps));
+                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, testFiles, ns, $"{ns}.Mapping", gaps));
                     break;
                 case ScriptTaskStep { Task: var scriptTask }:
                 {
@@ -424,6 +520,10 @@ public static partial class PackageGenerator
                 case FileSystemStep fileSystemStep:
                     RegisterFileSystemActionPaths(package, fileSystemStep.Action, fileSourceEntries, gaps);
                     programSteps.Add(new ProgramFileSystemStep(fileSystemStep.TaskName, fileSystemStep.Action));
+                    if (fileSystemStep.Action.SourceConnectionName is { } fstSourceKey) fileSystemTaskKeys.Add(fstSourceKey);
+                    if (fileSystemStep.Action.DestinationConnectionName is { } fstDestKey) fileSystemTaskKeys.Add(fstDestKey);
+                    if (ComponentTestEmitter.EmitFileSystemTaskTest($"{package.ObjectName}.Tests", ns, fileSystemStep.TaskName, fileSystemStep.Action) is { } fstTest)
+                        testFiles.Add(fstTest with { RelativePath = $"{package.ObjectName}.Tests/{fstTest.RelativePath}" });
                     break;
                 case ForEachFileLoopStep loopStep:
                 {
@@ -477,7 +577,240 @@ public static partial class PackageGenerator
                 FailureHandlers = plan.FailureHandlers,
             };
             Merge(files, gaps, ProgramEmitter.Emit(programRequest));
-            Merge(files, gaps, PackageClassEmitter.Emit(programRequest));
+            Merge(files, gaps, PackageClassEmitter.Emit(programRequest, out var methodInventory, out var supportsFakeHappyPath, out var usesLookupPreload));
+
+            // Foundation phase of the generated-tests plan (Docs/Generated-Tests-Plan.md):
+            // FakeUnitOfWork/RecordingNotifier/PackageHarness, emitted per package (the same
+            // self-contained, disposable pattern SsisFnEmitter already uses for Ssis/SsisFn.cs),
+            // plus the one starter test that's always emittable regardless of this package's own
+            // shape -- see RunAsyncFailureTestEmitter's own doc comment for why GetBindTokenAsync
+            // specifically is the universal fault-injection point.
+            // Tier A (Docs/Generated-Tests-Plan.md): one deterministic sample CSV per delimited
+            // Flat File Source captured above by ResolveFlowSource, built BEFORE
+            // TestDoublesEmitter.Emit since PackageHarness's own FileSourceOptions wiring needs
+            // the resolved (Key, FileName) list.
+            var sampleDataByKey = new Dictionary<string, SampleDataResult>();
+            foreach (var candidate in csvSampleCandidates)
+            {
+                // A fixed-width/RaggedRight source needs a genuinely different sample-file SHAPE
+                // (padded fixed-position text, not comma-delimited) -- see SampleDataEmitter's own
+                // "Source -- fixed-width" doc comment.
+                var sample = FlatFileRuntimeShape.IsFixedWidthWithoutHeader(candidate.ConnectionManager.FlatFileFormat)
+                    ? SampleDataEmitter.EmitFixedWidth(candidate.FileSourceKey, candidate.ConnectionManager)
+                    : SampleDataEmitter.EmitCsv(candidate.FileSourceKey, candidate.ConnectionManager);
+                if (sample is not null)
+                    sampleDataByKey[candidate.FileSourceKey] = sample;
+
+                // "LocalFileSourceData" taxonomy row (Docs/Generated-Tests-Plan.md's own Tier B):
+                // the Tier-A synthetic sample just emitted (if any) is what already makes the test
+                // suite pass with zero fills -- this is the OPTIONAL richer upgrade, so it is
+                // always reported, non-blocking, regardless of whether Tier-A synthesis succeeded.
+                gaps.Add(new GenerationGap(candidate.FileSourceKey,
+                    $"'{candidate.FileSourceKey}' still reads {(sample is not null ? "a deterministic synthetic sample" : "no sample data at all")} -- a REALISTIC file matching this connection manager's own declared schema would replace it under `TestData/{sample?.FileName ?? candidate.ConnectionManager.ObjectName}` (see the LOCAL-DATA work packet).",
+                    IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: candidate.ConnectionManager.RefId));
+            }
+            foreach (var sample in sampleDataByKey.Values)
+                testFiles.Add(sample.File with { RelativePath = $"{package.ObjectName}.Tests/{sample.File.RelativePath}" });
+
+            var className = PackageClassEmitter.ClassName(package.ObjectName);
+            var dbContextTypeName = $"{package.ObjectName}DbContext";
+            var sampleDataFileEntries = sampleDataByKey.Select(kv => (kv.Key, kv.Value.FileName)).ToList();
+            var sinkFileKeys = flatFileSinkCandidates.Select(c => c.Sink.FileSourceKey).Distinct().ToList();
+            var distinctFileSystemTaskKeys = fileSystemTaskKeys.Distinct().ToList();
+            var forEachLoopKeys = programSteps.OfType<ProgramForEachFileLoopStep>().Select(s => s.FileSourceKey).Distinct().ToList();
+            // An Excel source's own ExcelSourceOptions resolves File(key) EAGERLY at construction
+            // time (unlike Sql/Csv/FixedWidth's own lazily-opened options), so even the ".Name"-only
+            // starter test needs SOME registered entry -- there is no Tier-A sample data for Excel
+            // (no .xlsx writer in this stack), so this is a deliberately-missing placeholder file,
+            // not real sample data -- see EmitPackageHarness's own comment for why.
+            var excelFlowSources = wiredFlows.Values.Select(f => f.Source)
+                .Concat(wiredMulticasts.Values.Select(m => m.Source))
+                .Concat(wiredOleDbCommands.Values.Select(c => c.Source))
+                .OfType<ExcelFlowSource>().DistinctBy(s => s.FileSourceKey).ToList();
+            var excelSourceKeys = excelFlowSources.Select(s => s.FileSourceKey).ToList();
+            // "LocalFileSourceData" taxonomy row -- Excel has no Tier-A synthesizer at all (no
+            // .xlsx writer in this stack), so this is the ONLY way an Excel source's own
+            // Integration-tagged read test ever gets real data to run against, not merely a
+            // richer upgrade over an existing synthetic placeholder.
+            foreach (var excel in excelFlowSources)
+                gaps.Add(new GenerationGap(excel.FileSourceKey,
+                    $"'{excel.FileSourceKey}' (worksheet '{excel.WorksheetName}') has no Tier-A synthetic sample at all -- this tool has no .xlsx writer. A real workbook matching the declared schema under `TestData/{excel.FileSourceKey}.xlsx` is the only way its own Integration-tagged read test can run (see the LOCAL-DATA work packet).",
+                    IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: null));
+            foreach (var f in TestDoublesEmitter.Emit(ns, className, dbContextTypeName, sampleDataFileEntries, sinkFileKeys, distinctFileSystemTaskKeys, forEachLoopKeys, excelSourceKeys, secondaryConnections.Keys.ToList()).Files)
+                testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
+            var runAsyncTest = RunAsyncFailureTestEmitter.Emit(ns, className, plan.FailureHandlers.Count > 0, supportsFakeHappyPath, usesLookupPreload);
+            testFiles.Add(runAsyncTest with { RelativePath = $"{package.ObjectName}.Tests/{runAsyncTest.RelativePath}" });
+
+            // Sink -- SQL (Phase 2 of the generated-tests plan): one starter test per generated
+            // sink method, matched back to its own destination component via sqlSinkEntities
+            // (populated above) and the sink method's own real generated NAME, which only
+            // methodInventory (just returned by PackageClassEmitter.Emit) actually knows -- see
+            // ComponentMethodEntry's own doc comment for why this can't be re-derived a second
+            // time. A Flat File Destination's own entity is never in sqlSinkEntities, so this
+            // naturally skips it -- that destination type's own write-format starter test is a
+            // separate, not-yet-built taxonomy row.
+            foreach (var sinkEntry in methodInventory.Where(m => m.Kind == "Sink"))
+            {
+                if (!sqlSinkEntities.TryGetValue(sinkEntry.SsisName, out var destinationComponent)) continue;
+                var sinkTest = ComponentTestEmitter.EmitSqlSinkTest(
+                    $"{package.ObjectName}.Tests", ns, $"{ns}.Model", sinkEntry.SsisName, sinkEntry.MethodName, destinationComponent);
+                foreach (var f in sinkTest.Files)
+                    testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
+            }
+
+            // Sink -- flat file (Phase 2 of the generated-tests plan): same join-by-entity-name
+            // shape as the SQL sink loop above, over flatFileSinkCandidates instead of
+            // sqlSinkEntities -- the two are mutually exclusive per entity (a destination is
+            // either SQL-sunk or flat-file-sunk, never both), so there is no naming collision
+            // between the two starter tests despite both landing in "{Entity}SinkTests.cs".
+            var flatFileSinkByEntity = flatFileSinkCandidates.ToDictionary(c => c.EntityName);
+            foreach (var sinkEntry in methodInventory.Where(m => m.Kind == "Sink"))
+            {
+                if (!flatFileSinkByEntity.TryGetValue(sinkEntry.SsisName, out var candidate)) continue;
+                var rowTerminator = candidate.Sink.Columns.Count > 0 ? candidate.Sink.Columns[^1].Delimiter : "";
+                var sinkTest = ComponentTestEmitter.EmitFlatFileSinkTest(
+                    $"{package.ObjectName}.Tests", ns, $"{ns}.Model", sinkEntry.SsisName, sinkEntry.MethodName,
+                    candidate.Sink.FileSourceKey, candidate.Sink.HeaderLine is not null, rowTerminator, candidate.DestinationComponent);
+                foreach (var f in sinkTest.Files)
+                    testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
+            }
+
+            // Source -- CSV (Phase 2 of the generated-tests plan): one starter test per generated
+            // CSV source method, matched back to its own row type/sample data via
+            // csvSampleCandidates -- matched by ROW TYPE NAME, never SsisName/ComponentName (a
+            // Flat File Source's own SSIS object name is free text, routinely left at the schema
+            // default across every Data Flow Task in a package, so two different flows' sources
+            // can and do share one -- caught for real generating SyntheticParallelShapes.dtsx,
+            // where this originally compiled a starter test against the WRONG row type). A
+            // genuinely delimited Flat File Source is never in SourceNeedsUow's true set (see
+            // PackageClassEmitter.SourceNeedsUow), so this always calls the source method with no
+            // uow argument.
+            foreach (var sourceEntry in methodInventory.Where(m => m.Kind == "Source"))
+            {
+                var candidate = csvSampleCandidates.FirstOrDefault(c => c.RowTypeName == sourceEntry.RowTypeName);
+                if (candidate is null) continue;
+                if (!sampleDataByKey.TryGetValue(candidate.FileSourceKey, out var sample)) continue;
+                var sourceTest = ComponentTestEmitter.EmitCsvSourceReadTest(
+                    $"{package.ObjectName}.Tests", ns, candidate.RowTypeNamespace, candidate.RowTypeName,
+                    sourceEntry.MethodName, sourceNeedsUow: false, sample.Columns);
+                testFiles.Add(sourceTest with { RelativePath = $"{package.ObjectName}.Tests/{sourceTest.RelativePath}" });
+            }
+
+            // Source -- SQL / Excel (Phase 2 of the generated-tests plan): matched the same way as
+            // "Source -- CSV" above (by ROW TYPE NAME, against every wired flow's own already-
+            // resolved Source, not re-derived) -- neither needs a candidate list of its own the way
+            // csvSampleCandidates does, since there is no Tier-A sample data to thread through for
+            // either: SQL because a real query result is unknowable at generation time, Excel
+            // because this tool has no .xlsx writer at all (see EmitExcelSourceTest's own doc
+            // comment). wiredSplits/wiredMulticasts/wiredOleDbCommands all carry the same
+            // (RowTypeName, Source) shape as wiredFlows' own ProgramFlowSpec -- a real, previously-
+            // latent gap (caught 2026-09-06 verifying the generated-tests plan against
+            // SyntheticConditionalSplitRemerge.dtsx's own walkthrough) had wiredSplits missing from
+            // this concat entirely, so a Conditional Split flow's own source method compiled fine
+            // but got no starter test at all, unlike the structurally identical Multicast case. A
+            // SQL/Excel source nested inside a Merge Join/Union/Aggregate side is still deliberately
+            // NOT covered here -- each of those flows' own Source is an inner side, not the flow's
+            // OUTERMOST one, matching csvSampleCandidates' own "ordinary flow only" scoping.
+            var allWiredSources = wiredFlows.Values.Select(f => (f.RowTypeName, f.Source))
+                .Concat(wiredSplits.Values.Select(s => (s.RowTypeName, s.Source)))
+                .Concat(wiredMulticasts.Values.Select(m => (m.RowTypeName, m.Source)))
+                .Concat(wiredOleDbCommands.Values.Select(c => (c.RowTypeName, c.Source)))
+                .ToList();
+            foreach (var sourceEntry in methodInventory.Where(m => m.Kind == "Source"))
+            {
+                var (rowTypeName, source) = allWiredSources.FirstOrDefault(s => s.RowTypeName == sourceEntry.RowTypeName);
+                if (rowTypeName is null) continue;
+
+                if (source is SqlFlowSource)
+                {
+                    var sqlSourceTest = ComponentTestEmitter.EmitSqlSourceTest(
+                        $"{package.ObjectName}.Tests", ns, $"{ns}.Sql", rowTypeName, sourceEntry.MethodName, source.ComponentName);
+                    testFiles.Add(sqlSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{sqlSourceTest.RelativePath}" });
+                }
+                else if (source is ExcelFlowSource)
+                {
+                    var excelSourceTest = ComponentTestEmitter.EmitExcelSourceTest(
+                        $"{package.ObjectName}.Tests", ns, $"{ns}.Excel", rowTypeName, sourceEntry.MethodName, source.ComponentName);
+                    testFiles.Add(excelSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{excelSourceTest.RelativePath}" });
+                }
+            }
+
+            // Sequence container (Phase 2 of the generated-tests plan): one starter test per
+            // generated container method, its direct children reconstructed from programSteps'
+            // own ContainerPath (PackagePlanner.WalkContainer stamps it; a Sequence Container never
+            // appears as its own PackageStep entry -- only its children do, see that method's own
+            // doc comment) rather than re-walking the .dtsx executable tree a second time. Matched
+            // to the container's own reserved MethodName (never SsisName -- see
+            // ComponentMethodEntry's own doc comment for why a bare name can collide) via
+            // methodInventory's "Container" entries, populated by PackageClassEmitter.Emit just
+            // above.
+            foreach (var containerEntry in methodInventory.Where(m => m.Kind == "Container"))
+            {
+                var hasDeeperNesting = programSteps.Any(s =>
+                    s.ContainerPath.Contains(containerEntry.SsisName) && s.ContainerPath[^1] != containerEntry.SsisName);
+                if (hasDeeperNesting) continue; // a nested sub-container -- out of this pilot's scope, see EmitSequenceContainerTest's own doc comment
+
+                var directChildren = programSteps
+                    .Where(s => s.ContainerPath.Count > 0 && s.ContainerPath[^1] == containerEntry.SsisName)
+                    .ToList();
+                var containerTest = ComponentTestEmitter.EmitSequenceContainerTest(
+                    $"{package.ObjectName}.Tests", ns, containerEntry.MethodName, directChildren);
+                if (containerTest is not null)
+                    testFiles.Add(containerTest with { RelativePath = $"{package.ObjectName}.Tests/{containerTest.RelativePath}" });
+            }
+
+            // OLE DB Command (Phase 2 of the generated-tests plan): one starter test per resolved
+            // flow, using oleDbCommandTestCandidates (populated by GenerateOleDbCommandFlow itself,
+            // above) rather than methodInventory -- this test deliberately bypasses the generated
+            // source method entirely (see EmitOleDbCommandTest's own doc comment for why), so it
+            // never needs the source method's own reserved NAME the way every other component test
+            // in this file does.
+            foreach (var candidate in oleDbCommandTestCandidates)
+            {
+                var cmdTest = ComponentTestEmitter.EmitOleDbCommandTest(
+                    $"{package.ObjectName}.Tests", ns, candidate.RowTypeNamespace, candidate.RowTypeName,
+                    candidate.StepName, candidate.SqlTemplate, candidate.ParameterColumnNames, candidate.SourceColumns);
+                if (cmdTest is not null)
+                    testFiles.Add(cmdTest with { RelativePath = $"{package.ObjectName}.Tests/{cmdTest.RelativePath}" });
+            }
+
+            // ForEach loop (Phase 2 of the generated-tests plan): one starter test per
+            // ProgramForEachFileLoopStep -- everything the test needs (StepName, FileSourceKey,
+            // FileSpec, NameMode, StatementClassName) already lives on that fully-resolved step
+            // record, no separate candidate list needed the way OLE DB Command's own does.
+            foreach (var loopStep in programSteps.OfType<ProgramForEachFileLoopStep>())
+            {
+                var loopTest = ComponentTestEmitter.EmitForEachLoopTest(
+                    $"{package.ObjectName}.Tests", ns, loopStep.StepName, loopStep.FileSourceKey, loopStep.FileSpec, loopStep.NameMode, loopStep.StatementClassName);
+                if (loopTest is not null)
+                    testFiles.Add(loopTest with { RelativePath = $"{package.ObjectName}.Tests/{loopTest.RelativePath}" });
+            }
+
+            // Multicast (Phase 2 of the generated-tests plan): one starter test per resolved flow,
+            // using multicastTestCandidates (populated by GenerateMulticastFlow itself, above) --
+            // same "bypasses the flow's own generated source/sink methods entirely" reasoning
+            // EmitOleDbCommandTest already established.
+            foreach (var candidate in multicastTestCandidates)
+            {
+                var mcastTest = ComponentTestEmitter.EmitMulticastTest(
+                    $"{package.ObjectName}.Tests", ns, candidate.RowTypeNamespace, candidate.RowTypeName,
+                    candidate.StepName, candidate.SourceColumns, candidate.Branches);
+                if (mcastTest is not null)
+                    testFiles.Add(mcastTest with { RelativePath = $"{package.ObjectName}.Tests/{mcastTest.RelativePath}" });
+            }
+
+            // Aggregate source (Phase 2 of the generated-tests plan): one starter test per resolved
+            // Aggregate flow, using aggregateSourceTestCandidates (populated by
+            // GenerateAggregateFlow itself, above).
+            foreach (var candidate in aggregateSourceTestCandidates)
+            {
+                var aggTest = ComponentTestEmitter.EmitAggregateSourceTest(
+                    $"{package.ObjectName}.Tests", ns, candidate.SourceRowTypeNamespace, candidate.SourceRowTypeName,
+                    candidate.AggregateRowTypeNamespace, candidate.AggregateRowTypeName, candidate.ComponentName,
+                    candidate.GroupByPropertyName, candidate.GroupByKeyClrType, candidate.Functions);
+                if (aggTest is not null)
+                    testFiles.Add(aggTest with { RelativePath = $"{package.ObjectName}.Tests/{aggTest.RelativePath}" });
+            }
 
             if (authMode is null)
             {
@@ -494,6 +827,36 @@ public static partial class PackageGenerator
                 SecondaryConnections: secondaryConnections.Values.ToList())));
 
             gaps.Add(new GenerationGap($"{package.ObjectName}.Notification", "a .dtsx carries no notification-recipient information -- OnSuccessRecipients/OnFailureRecipients were generated empty; fill in appsettings.json manually", IsBlocking: false));
+
+            // --skip-tests (Docs/Generated-Tests-Plan.md's own "Opt-out"): discard every starter
+            // test computed above, right before anything downstream (the README, the final
+            // result) would otherwise describe or ship them -- a single clean cut point rather
+            // than guarding dozens of individual testFiles.Add(...) call sites throughout this
+            // method, which would be far more invasive for the same outcome. TestOracle/
+            // LocalFileSourceData gaps are dropped alongside the tests they exist FOR: with no
+            // generated test at all, there is nothing for either to be an oracle/sample-data
+            // answer to. appsettings.Development.json (ProjectEmitter, above) is deliberately
+            // UNCHANGED -- it also serves a real, non-test `dotnet run --environment Development`,
+            // which --skip-tests has no opinion about.
+            if (skipTests)
+            {
+                testFiles.Clear();
+                gaps.RemoveAll(g => g.Kind is GapKind.TestOracle or GapKind.LocalFileSourceData);
+            }
+
+            // README.md -- the primary token-saving artifact (Docs/Generated-Tests-Plan.md): every
+            // generated method's own full signature, which control-flow task produced it, and
+            // where its test/gap (if any) live, so a reader/assistant never has to re-derive that
+            // by reading {Package}.cs top to bottom. Built AFTER every gap for this package (the
+            // Notification one included) so it shows the complete picture.
+            var readmeRequest = new ReadmeRequest(
+                PackageName: package.ObjectName,
+                Steps: programSteps,
+                MethodInventory: methodInventory,
+                Flows: plan.Flows.Select(f => new ReadmeFlowSection(f.TaskName, f.Pipeline)).ToList(),
+                TestFiles: testFiles,
+                Gaps: gaps);
+            files.Add(PackageReadmeEmitter.Emit(readmeRequest));
 
             // The test PROJECT file itself is only worth emitting once at least one starter
             // test class exists to put in it -- an empty xUnit project is not useful output.
@@ -611,7 +974,7 @@ public static partial class PackageGenerator
     private static (string RowTypeName, FlowSourceSpec Source)? ResolveFlowSource(
         PackageSpec package, string ns, string rowTypeBaseName, DataFlowPlan flow, PipelineComponentSpec? destinationForSqlCheck,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GenerationGap> gaps,
-        IReadOnlySet<string>? nullableColumnNames = null)
+        IReadOnlySet<string>? nullableColumnNames = null, List<CsvSampleCandidate>? csvSampleCandidates = null)
     {
         if (flow.FlatFileSource is { } flatFileSource && flatFileSource.FlatFileSource?.ConnectionName is { } csvCmName
             && FindConnectionManager(package, csvCmName) is { } csvConnectionManager)
@@ -626,11 +989,19 @@ public static partial class PackageGenerator
             if (FlatFileRuntimeShape.IsFixedWidthWithoutHeader(format))
             {
                 Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+                // "Source -- fixed-width" taxonomy row (Docs/Generated-Tests-Plan.md): the SAME
+                // CsvSampleCandidate list a delimited source registers below -- SampleDataEmitter's
+                // own EmitCsv-vs-EmitFixedWidth dispatch (at the one place this list is consumed)
+                // is what actually writes the right shape of sample file; ComponentTestEmitter's
+                // own "Source -- CSV" test emitter needs no format-specific knowledge at all, it
+                // only ever reads SampleDataColumn's own PropertyName/ExpectedLiteral.
+                csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", flatFileSource.Name));
                 return (rowTypeName, new FixedWidthFlowSource(flatFileSource.Name, fileSourceKey,
                     FlatFileRuntimeShape.BuildColumnPlans(format!), format!.HeaderRowsToSkip ?? 0));
             }
 
             Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+            csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", flatFileSource.Name));
             return (rowTypeName, new CsvFlowSource(flatFileSource.Name, fileSourceKey, format?.HeaderRowsToSkip ?? 0));
         }
 
@@ -718,7 +1089,7 @@ public static partial class PackageGenerator
     /// </summary>
     private static ProgramFlowSpec? GenerateMergeJoinFlow(
         PackageSpec package, string ns, DataFlowPlan flow, MergeJoinPlan mergeJoin,
-        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GeneratedFile> testFiles,
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination,
         List<GenerationGap> gaps, ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
         bool emitSeams)
@@ -751,6 +1122,20 @@ public static partial class PackageGenerator
         gaps.AddRange(mergeJoinResult.Gaps);
         if (mergeJoinResult.Files.Count == 0) return null; // MergeJoinEmitter already recorded why
 
+        // Merge Join mapper (Phase 2 of the generated-tests plan): a pure static-function test, no
+        // PackageHarness needed -- emitted here, not batched with the other Phase-2 starter tests
+        // further down in Generate, because left/rightRowTypeName/mapperClassName are only in
+        // scope inside this method (same reasoning the Conditional Split router test already
+        // established for its own emission site).
+        if (mergeJoinResult.LeftKeyTest is { } leftKeyTest && mergeJoinResult.RightKeyTest is { } rightKeyTest)
+        {
+            var mapperTest = ComponentTestEmitter.EmitMergeJoinMapperTest(
+                $"{package.ObjectName}.Tests", leftRowTypeNamespace, leftRowTypeName, rightRowTypeNamespace, rightRowTypeName,
+                $"{ns}.Mapping", mapperClassName, leftKeyTest, rightKeyTest, mergeJoinResult.TestColumns ?? []);
+            if (mapperTest is not null)
+                testFiles.Add(mapperTest with { RelativePath = $"{package.ObjectName}.Tests/{mapperTest.RelativePath}" });
+        }
+
         Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, mergeJoinResult.NullableColumnNames));
 
         var transformClassName = entityName + "Transform";
@@ -777,6 +1162,21 @@ public static partial class PackageGenerator
         foreach (var fn in mergeJoinResult.SsisFunctionsUsed) functionsUsed.Add(fn);
 
         if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
+
+        // TransformTestEmitter cannot be called for this flow at all (see the
+        // TrustAllPassthroughColumns comment above -- it has no visibility into MergeJoinEmitter's
+        // own column resolution), distinct from the Merge Join MAPPER test just above, which
+        // already covers LeftKey/RightKey/Map. Report it only when there's actually something
+        // this flow's own downstream Derived Column/Data Conversion would otherwise have gotten
+        // tested -- an unconditional gap here would fire on every Merge Join flow regardless,
+        // exactly the miscounting shape PortfolioDigest.IsBlockingGap's own design already exists
+        // to prevent.
+        if (flow.DerivedColumn is not null || flow.DataConversion is not null)
+        {
+            gaps.Add(new GenerationGap(entityName,
+                $"'{transformClassName}' has a Derived Column/Data Conversion downstream of this Merge Join, but no starter test was generated for it -- TransformTestEmitter does not yet cover a Merge Join's own downstream transform (a materially different row-construction shape from the single-destination case). Add an assertion by hand.",
+                IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: mergeJoin.Component.RefId));
+        }
 
         primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
         tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
@@ -918,11 +1318,11 @@ public static partial class PackageGenerator
     /// </summary>
     private static ProgramConditionalSplitStep? GenerateConditionalSplitFlow(
         PackageSpec package, string ns, DataFlowPlan flow, ConditionalSplitPlan split,
-        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GeneratedFile> testFiles,
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams)
+        bool emitSeams, List<CsvSampleCandidate>? csvSampleCandidates = null)
     {
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
         // Never null here: ConditionalSplitBranchPlan.Discarded is gated to Multicast only in
@@ -939,7 +1339,7 @@ public static partial class PackageGenerator
         // SqlNullValueException on ID=2's NULL SignupDateText, not by a unit test.
         var nullableColumnNames = ResolveNullableColumnNames(flow);
 
-        var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow, defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames);
+        var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow, defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
         if (sourceResult is null) return null;
         var (rowTypeName, programSource) = sourceResult.Value;
         var rowTypeNamespace = programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql";
@@ -1001,6 +1401,7 @@ public static partial class PackageGenerator
         var branchTables = new List<DbContextEmitter.TableSpec>();
         var branchFunctionsUsed = new HashSet<string>();
         var branches = new List<ProgramConditionalSplitBranch>();
+        var branchTestFiles = new List<GeneratedFile>();
         var emittedDestinationRefIds = new HashSet<string>(StringComparer.Ordinal);
         (string AuthMode, string? UserId, string? Server, string? Database)? resolvedAuth = null;
 
@@ -1048,6 +1449,25 @@ public static partial class PackageGenerator
 
             if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
 
+            // A starter unit test for THIS branch's own transform -- same call the
+            // single-destination path already makes, just once per branch here. Buffered like
+            // branchFiles/branchTables above (never added to testFiles directly), since a later
+            // branch in this same loop can still fail the whole flow.
+            var branchTestResult = TransformTestEmitter.Emit(new TransformTestRequest(
+                TestNamespace: $"{package.ObjectName}.Tests",
+                TransformClassName: branchTransformClassName,
+                MappingNamespace: $"{ns}.Mapping",
+                RowTypeNamespace: rowTypeNamespace,
+                RowTypeName: rowTypeName,
+                EntityNamespace: $"{ns}.Model",
+                EntityName: entityName,
+                Pipeline: flow.Pipeline,
+                DerivedColumns: derivedColumns,
+                DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+                DestinationComponent: branchDestination));
+            gaps.AddRange(branchTestResult.Gaps);
+            branchTestFiles.AddRange(branchTestResult.Files);
+
             branches.Add(new ProgramConditionalSplitBranch(branch.OutputName, entityName, branchTransformClassName));
 
             if (resolvedAuth is null && ResolveDatabaseAuth(package, branchDestination) is { } auth)
@@ -1060,6 +1480,18 @@ public static partial class PackageGenerator
         foreach (var fn in branchFunctionsUsed) functionsUsed.Add(fn);
         foreach (var fn in routerResult.SsisFunctionsUsed) functionsUsed.Add(fn);
         files.AddRange(routerResult.Result.Files);
+        foreach (var f in branchTestFiles)
+            testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
+
+        // Router -- Conditional Split (Phase 2 of the generated-tests plan): SelectBranch is a
+        // pure function, no PackageHarness needed at all -- see RouterTestEmitter's own doc
+        // comment. Emitted here, not batched with the other Phase-2 starter tests further down in
+        // Generate, because split/rowTypeName/routerClassName are only in scope inside this
+        // method.
+        var routerTest = RouterTestEmitter.Emit($"{package.ObjectName}.Tests", $"{ns}.Mapping", routerClassName, rowTypeNamespace, rowTypeName, split, flow.DerivedColumn, flow.DataConversion);
+        foreach (var f in routerTest.Files)
+            testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
+        gaps.AddRange(routerTest.Gaps);
 
         if (authMode is null && resolvedAuth is { } resolved)
             (authMode, userId, targetServer, targetDatabase) = resolved;
@@ -1077,11 +1509,11 @@ public static partial class PackageGenerator
     /// assumed uniformly SQL-sunk).</summary>
     private static ProgramMulticastStep? GenerateMulticastFlow(
         PackageSpec package, string ns, DataFlowPlan flow, MulticastPlan multicast,
-        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GeneratedFile> testFiles,
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams)
+        bool emitSeams, List<MulticastTestCandidate>? testCandidates = null, List<CsvSampleCandidate>? csvSampleCandidates = null)
     {
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
 
@@ -1112,7 +1544,7 @@ public static partial class PackageGenerator
         // against, the same reasoning BuildSqlFlowSource's own null-destinationComponent case
         // documents for an OLE DB Command flow.
         var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow,
-            defaultIsFlatFile ? null : defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames);
+            defaultIsFlatFile ? null : defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
         if (sourceResult is null) return null;
         var (rowTypeName, programSource) = sourceResult.Value;
         var rowTypeNamespace = programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql";
@@ -1152,6 +1584,7 @@ public static partial class PackageGenerator
         var branchTables = new List<DbContextEmitter.TableSpec>();
         var branchFunctionsUsed = new HashSet<string>();
         var branches = new List<ProgramMulticastBranch>();
+        var branchTestFiles = new List<GeneratedFile>();
         var emittedDestinationRefIds = new HashSet<string>(StringComparer.Ordinal);
         (string AuthMode, string? UserId, string? Server, string? Database)? resolvedAuth = null;
 
@@ -1207,6 +1640,26 @@ public static partial class PackageGenerator
 
             if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
 
+            // A starter unit test for THIS branch's own transform -- same call
+            // GenerateConditionalSplitFlow's own identical shape already makes, once per branch
+            // (including a converged one, mirroring the unconditional TransformEmitter call
+            // just above -- each branch can still carry its own distinct per-branch Derived
+            // Column even when its destination converges with another branch's).
+            var branchTestResult = TransformTestEmitter.Emit(new TransformTestRequest(
+                TestNamespace: $"{package.ObjectName}.Tests",
+                TransformClassName: branchTransformClassName,
+                MappingNamespace: $"{ns}.Mapping",
+                RowTypeNamespace: rowTypeNamespace,
+                RowTypeName: rowTypeName,
+                EntityNamespace: $"{ns}.Model",
+                EntityName: entityName,
+                Pipeline: flow.Pipeline,
+                DerivedColumns: derivedColumns,
+                DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+                DestinationComponent: branchDestination));
+            gaps.AddRange(branchTestResult.Gaps);
+            branchTestFiles.AddRange(branchTestResult.Files);
+
             // sink is only null when this destination RefId was already emitted by an earlier
             // branch (a convergence) -- that earlier branch shares this one's own entityName (see
             // the naming comment above), so ProgramEmitter's own DistinctBy(EntityName) is what
@@ -1227,9 +1680,33 @@ public static partial class PackageGenerator
         files.AddRange(branchFiles);
         tables.AddRange(branchTables);
         foreach (var fn in branchFunctionsUsed) functionsUsed.Add(fn);
+        foreach (var f in branchTestFiles)
+            testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
 
         if (authMode is null && resolvedAuth is { } resolved)
             (authMode, userId, targetServer, targetDatabase) = resolved;
+
+        // "Multicast" starter test (Phase 2 of the generated-tests plan): resolved from the flow's
+        // own upstream source component (Excel/Flat File/SQL, whichever is present -- the same
+        // fallback order OLE DB Command's own test candidate already uses), independent of
+        // rowTypeNamespace/programSource's own already-resolved SHAPE. A source with no resolvable
+        // non-error output is silently skipped -- ComponentTestEmitter degrades to "no test, no
+        // gap" on an empty column list regardless, and this flow already generated successfully
+        // without one.
+        // A branch whose own destination CONVERGED with an earlier one (see the "sink ??=" placeholder
+        // comment above) carries a bogus stand-in Sink never meant to be read for real -- skip the
+        // test candidate entirely rather than synthesize a second, incorrect sink for it. Distinct
+        // entity names is exactly the same signal ProgramEmitter's own DistinctBy(EntityName) uses.
+        var hasConvergedBranch = branches.Select(b => b.EntityName).Distinct(StringComparer.Ordinal).Count() != branches.Count;
+        var multicastSourceComponent = flow.OleDbSource ?? flow.ExcelSource ?? flow.FlatFileSource;
+        var multicastSourceOutput = multicastSourceComponent?.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+        if (multicastSourceOutput is not null && !hasConvergedBranch)
+        {
+            var resolvedMulticastSource = PipelineResolver.Resolve(multicastSourceOutput);
+            var testBranches = branches.Select(b => new ComponentTestEmitter.MulticastTestBranch(
+                b.OutputName, $"{ns}.Model", b.EntityName, b.TransformClassName, b.Sink)).ToList();
+            testCandidates?.Add(new MulticastTestCandidate(flow.TaskName, rowTypeName, rowTypeNamespace, resolvedMulticastSource.Columns, testBranches));
+        }
 
         return new ProgramMulticastStep(flow.TaskName, programSource, rowTypeName, branches);
     }
@@ -1245,7 +1722,7 @@ public static partial class PackageGenerator
         PackageSpec package, string ns, DataFlowPlan flow, OleDbCommandPlan commandPlan,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams)
+        bool emitSeams, List<OleDbCommandTestCandidate>? testCandidates = null)
     {
         var sourceComponent = flow.OleDbSource ?? flow.ExcelSource ?? flow.FlatFileSource;
         if (sourceComponent is null)
@@ -1281,7 +1758,8 @@ public static partial class PackageGenerator
             gaps.Add(new GenerationGap(flow.TaskName, $"Source '{sourceComponent.Name}' has no non-error output -- not supported"));
             return null;
         }
-        var rowColumnNames = PipelineResolver.Resolve(sourceOutput).Columns.Select(c => c.PipelineColumnName).ToHashSet(StringComparer.Ordinal);
+        var resolvedSource = PipelineResolver.Resolve(sourceOutput);
+        var rowColumnNames = resolvedSource.Columns.Select(c => c.PipelineColumnName).ToHashSet(StringComparer.Ordinal);
         var unresolved = commandPlan.ParameterColumnNames.Where(p => !rowColumnNames.Contains(p)).ToList();
         if (unresolved.Count > 0)
         {
@@ -1298,6 +1776,16 @@ public static partial class PackageGenerator
                 ? ("SqlServer", commandParsed.UserId, commandParsed.Server, commandParsed.Database)
                 : ("Windows", null, commandParsed.Server, commandParsed.Database);
         }
+
+        // Row-type namespace mirrors ResolveFlowSource's own branch precedence exactly
+        // (OleDbSource before ExcelSource before FlatFileSource -- the same order sourceComponent
+        // itself was resolved with, above) rather than re-deriving it from rowTypeName's own
+        // suffix, which is not guaranteed unique across source kinds.
+        var rowTypeNamespace = flow.OleDbSource is not null ? $"{ns}.Sql"
+            : flow.ExcelSource is not null ? $"{ns}.Excel"
+            : $"{ns}.Csv";
+        testCandidates?.Add(new OleDbCommandTestCandidate(
+            flow.TaskName, rowTypeName, rowTypeNamespace, commandPlan.SqlTemplate, commandPlan.ParameterColumnNames, resolvedSource.Columns));
 
         return new ProgramOleDbCommandStep(flow.TaskName, programSource, rowTypeName, commandPlan.SqlTemplate, commandPlan.ParameterColumnNames);
     }
@@ -1582,6 +2070,21 @@ public static partial class PackageGenerator
 
         if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
 
+        // TransformTestEmitter has no knowledge of a Lookup-added reference column at all --
+        // naively calling it here risks emitting an assertion assigning a row property that
+        // doesn't exist (the same CS0117 failure class its own doc comment already warns about
+        // for a Data-Conversion cross-reference). Reported as a visible gap instead of attempted,
+        // and only when there's actually a Derived Column/Data Conversion downstream of this
+        // Lookup for it to be missing a test for -- an unconditional gap here would fire on every
+        // Lookup flow regardless, the same miscounting shape PortfolioDigest.IsBlockingGap's own
+        // design already exists to prevent.
+        if (flow.DerivedColumn is not null || flow.DataConversion is not null)
+        {
+            gaps.Add(new GenerationGap(entityName,
+                $"'{transformClassName}' has a Derived Column/Data Conversion downstream of Lookup '{lookup.Name}', but no starter test was generated for it -- TransformTestEmitter does not yet cover a Lookup flow's own downstream transform (its reference-column mapping is a third computed-column mechanism this pilot has no representative-value strategy for). Add an assertion by hand.",
+                IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: lookup.RefId));
+        }
+
         primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
         tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
 
@@ -1605,7 +2108,7 @@ public static partial class PackageGenerator
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
         HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams)
+        bool emitSeams, List<AggregateSourceTestCandidate>? testCandidates = null)
     {
         if (flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination")
         {
@@ -1658,6 +2161,21 @@ public static partial class PackageGenerator
             groupByType.ClrTypeName, entityName, lookupKey: null, lookupFilter: null, files, tables, functionsUsed,
             primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
         if (emitted is null) return null;
+
+        // "Aggregate source" starter test (Phase 2 of the generated-tests plan): each function's
+        // own source column CLR type resolved from the SAME PipelineResolver.Resolve call already
+        // done above for the GroupBy column -- a function with no resolvable column is simply
+        // skipped, matching EmitAggregateSourceTest's own "no test, no gap" degrade.
+        var resolvedSourceColumns = PipelineResolver.Resolve(sourceOutput!).Columns;
+        var testFunctions = aggregate.Functions
+            .Where(f => f.SourceColumnName is not null)
+            .Select(f => (Function: f, Type: resolvedSourceColumns.FirstOrDefault(c => c.PipelineColumnName == f.SourceColumnName)?.Type))
+            .Where(x => x.Type is not null)
+            .Select(x => new ComponentTestEmitter.AggregateSourceTestFunction(x.Function.OutputColumnName, x.Function.SourceColumnName!, x.Type!.ClrTypeName, x.Function.AggregationTypeRaw))
+            .ToList();
+        testCandidates?.Add(new AggregateSourceTestCandidate(
+            aggregate.Component.Name, $"{ns}.Sql", sourceRowTypeName, $"{ns}.Sql", emitted.Value.RowTypeName,
+            aggregate.GroupByOutputColumnName, groupByType.ClrTypeName, testFunctions));
 
         return new ProgramFlowSpec(flow.TaskName, emitted.Value.Source, emitted.Value.RowTypeName, entityName, emitted.Value.TransformClassName, new SqlFlowSink());
     }
@@ -2246,7 +2764,7 @@ public static partial class PackageGenerator
     private static ProgramStep ResolveSqlStep(
         PackageSpec package, SqlStep sqlStep, string? targetServer, string? targetDatabase,
         Dictionary<string, SecondaryConnectionRequest> secondaryConnections, List<GeneratedFile> files,
-        List<GeneratedFile> testFiles, string mappingNamespace, List<GenerationGap> gaps)
+        List<GeneratedFile> testFiles, string rootNamespace, string mappingNamespace, List<GenerationGap> gaps)
     {
         // Named, testable statement class (SqlStatementBuilderEmitter) rather than an anonymous
         // string literal embedded in Program.cs -- emitted once here regardless of which of the
@@ -2262,6 +2780,13 @@ public static partial class PackageGenerator
             || targetServer is null || targetDatabase is null
             || (server == targetServer && database == targetDatabase))
         {
+            // Step-level test only for an ORDINARY SqlStep, run against the shared transaction --
+            // a ProgramSecondaryConnectionSqlStep opens its own real SqlConnection unconditionally
+            // and cannot be exercised against a fake at all (see SqlStatementTestEmitter.EmitStepTest's
+            // own doc comment); that shape is deliberately left for an Integration-tagged test, a
+            // later phase.
+            var stepTest = SqlStatementTestEmitter.EmitStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName);
+            testFiles.Add(stepTest with { RelativePath = $"{package.ObjectName}.Tests/{stepTest.RelativePath}" });
             return new ProgramSqlStep(sqlStep.TaskName, statementClassName);
         }
 
@@ -2271,6 +2796,13 @@ public static partial class PackageGenerator
                 ? new SecondaryConnectionRequest(cmName, "SqlServer", parsed.UserId, server, database)
                 : new SecondaryConnectionRequest(cmName, "Windows", null, server, database);
         }
+
+        // "Secondary-connection SQL" taxonomy row -- mirrors Etl.Core.Tests' own
+        // SecondaryConnectionSqlStepTests.RunAsync_NeverTouchesTheUnitOfWork exactly (see
+        // TestDoublesEmitter's own unreachableSecondaryServer comment for why this needs no real
+        // server at all, unlike a SQL/Excel SOURCE's own Integration-tagged read).
+        var secondaryTest = SqlStatementTestEmitter.EmitSecondaryConnectionStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName);
+        testFiles.Add(secondaryTest with { RelativePath = $"{package.ObjectName}.Tests/{secondaryTest.RelativePath}" });
 
         return new ProgramSecondaryConnectionSqlStep(sqlStep.TaskName, cmName, statementClassName);
     }

@@ -142,8 +142,8 @@ internal static class Program
 
               ssisx generate --input <dir|file.dtsx|file.dtproj|file.ispac> --out <dir>
                               [--recursive] [--package <name>] [--namespace-prefix <prefix>]
-                              [--unsafe-skip-seams] [--fills <dir>] [--etl-core <path>]
-                              [--framework net8.0|net10.0]
+                              [--unsafe-skip-seams] [--skip-tests] [--fills <dir>]
+                              [--etl-core <path>] [--framework net8.0|net10.0]
 
             generate options: turns a package into a runnable C# ETL project -- entity,
             DbContext, CSV row + ClassMap, Derived Column transform, the oracle-verified
@@ -168,15 +168,28 @@ internal static class Program
             expression) degrades that one piece to a GenerationGap rather than a guess --
             every gap, with its reason, is listed in generate-report.md alongside how many
             files each package produced.
-            A plain SQL-destination flow with a Derived Column (no Data Conversion) also gets a
-            STARTER xUnit test project at <out>/generate/<Package>.Tests/ -- a sibling directory,
-            never nested inside <Package>/, so the main project's own compile glob never picks up
-            a test file. One [Fact] per transform asserts Map(row, ctx) against a representative
-            row; every expected value is computed (not guessed) via the same oracle-verified
-            expression evaluator `ssisx testgen`/gate 2 already uses. This is a starter, not full
-            coverage -- extend it by hand for edge cases; anything outside its own pilot scope
-            (Lookup/Aggregate/Conditional Split/Merge Join/Data Conversion flows, or a
-            non-string-typed computed column) is a named, non-blocking gap, not a silent gap.
+            Every package also gets a STARTER xUnit test project at
+            <out>/generate/<Package>.Tests/ -- a sibling directory, never nested inside
+            <Package>/, so the main project's own compile glob never picks up a test file.
+            Covers every generated method, not just transforms: RunAsync's own failure/happy
+            paths, every Execute SQL/File System Task, every source and sink (CSV, fixed-width,
+            Excel, SQL, both destination kinds), a Conditional Split's router, Merge Join
+            mappers, OLE DB Command, ForEach loops, Multicast, Aggregate. Every expected value
+            is computed (not guessed) -- transform/router assertions go through the same
+            oracle-verified expression evaluator `ssisx testgen`/gate 2 already uses. A test
+            needing something no fake can provide (a real database, a real .xlsx file, a real
+            secondary-connection server) is tagged [Trait("Category", "Integration")] --
+            `dotnet test --filter Category!=Integration` is the always-green baseline, and
+            should pass with ZERO fills applied right after a fresh generate. A component
+            outside this pilot's own scope is a named, non-blocking gap (often a TEST-ORACLE/
+            LOCAL-DATA one, both answered the same way as any other Tier-1 gap -- see "Working
+            a gap" in Tools/.github/copilot-instructions.md), not a silent gap.
+            --skip-tests omits the whole {Package}.Tests project (and its own TEST-ORACLE/
+            LOCAL-DATA gaps, which would otherwise ask for a test/sample file that no longer
+            exists) for this generate call -- named plainly, unlike --unsafe-skip-seams,
+            because skipping tests only loses coverage and can never make this tool produce
+            silently WRONG code. appsettings.Development.json is unaffected either way -- it
+            also serves a real, non-test `dotnet run --environment Development`.
             --framework selects the generated solution's target framework -- net10.0
             (default, unchanged) or net8.0. This is not just a TargetFramework string: Etl.Core's
             EF Core SqlServer provider (10.0.11) targets net10.0 ONLY, so net8.0 pins a

@@ -66,7 +66,32 @@ public static class AiPacketEmitter
             PacketPath = packetPath,
             EvidenceSha256 = evidenceHash,
             EvidenceRefId = gap.EvidenceRefId,
+            ExpectedFileName = gap.Kind == GapKind.LocalFileSourceData ? LocalFileSourceDataExpectedFileName(package, gap) : null,
         };
+
+    /// <summary>The real <c>TestData/</c> file name this gap's fill must use -- see
+    /// <see cref="GapSpec.ExpectedFileName"/>'s own doc comment for why this is NOT the Tier-A
+    /// sample's own name. Mirrors <see cref="LocalFileSourceDataEvidence"/>'s own two-way
+    /// resolution (by connection manager RefId for CSV/fixed-width, by component name for Excel)
+    /// rather than sharing code with it -- each resolution is a few lines and returns a
+    /// differently-shaped result (evidence text vs. a bare file name).</summary>
+    private static string? LocalFileSourceDataExpectedFileName(PackageSpec package, GenerationGap gap)
+    {
+        if (gap.EvidenceRefId is { Length: > 0 } refId)
+        {
+            var cm = package.ConnectionManagers.FirstOrDefault(c => c.RefId == refId);
+            return cm?.Parsed?.FilePath is { Length: > 0 } path ? Path.GetFileName(path) : null;
+        }
+
+        var component = PackageTree.AllExecutables(package)
+            .Select(e => e.DataFlowTask?.Pipeline)
+            .Where(p => p is not null)
+            .SelectMany(p => p!.Components)
+            .FirstOrDefault(c => c.Name == gap.Location && c.ExcelSource is not null);
+        var cmName = component?.ExcelSource?.ConnectionName;
+        var excelCm = cmName is null ? null : package.ConnectionManagers.FirstOrDefault(c => c.ObjectName == cmName);
+        return excelCm?.Parsed?.FilePath is { Length: > 0 } excelPath ? Path.GetFileName(excelPath) : null;
+    }
 
     private static string BuildPacket(PackageSpec package, string gapId, GenerationGap gap, GapTier tier, string evidence)
     {
@@ -106,6 +131,8 @@ public static class AiPacketEmitter
         GapKind.ScriptTask => ScriptTaskContract,
         GapKind.ScriptComponentColumn => ScriptComponentContract,
         GapKind.EncryptedConnectionManagerSecret => EncryptedSecretContract,
+        GapKind.TestOracle => TestOracleContract,
+        GapKind.LocalFileSourceData => LocalFileSourceDataContract,
         _ => "_(no contract defined for this gap kind)_\n",
     };
 
@@ -194,10 +221,49 @@ public static class AiPacketEmitter
 
         """;
 
+    /// <summary>
+    /// The ONE pinned reference block for writing a generated test, defined once here and reused
+    /// VERBATIM by <see cref="TestOracleContract"/>, <c>Tools/.github/prompts/ssisx-test.prompt.md</c>
+    /// (a later phase), and <c>Tools/COPILOT_TESTING_GUIDE.md</c> -- so all three cannot silently
+    /// drift out of agreement with each other or with what <see cref="TestDoublesEmitter"/> actually
+    /// emits. Covers exactly what a TEST-ORACLE packet's own reader needs and nothing else: this is
+    /// not a general testing tutorial.
+    /// </summary>
+    internal const string PinnedTestingApiBlock = """
+        **Known-good testing API -- do not read `TestDoubles/` to confirm any of this:**
+
+        - `using var harness = new PackageHarness();` -- one per test, disposed at the end (a `using`
+          statement is enough). `harness.Package()` returns a fresh instance of the generated package
+          class, wired to fakes (no database, no real file server, no real Script Task connections).
+        - `harness.NewUnitOfWork()` -- a standalone `FakeUnitOfWork` for calling one method directly
+          (`await package.SomeMethod(uow, CancellationToken.None)`), without going through `RunAsync`.
+          Its public surface: `BeginCalled`/`CommitCalled`/`RollbackCalled` (bool), `ExecutedSql`
+          (`List<string>`), `ExecutedParameterizedSql` (`List<ParameterizedSqlCall>`),
+          `ExecutedSqlWithoutTransaction` (`List<string>`), `BulkInserts` (`List<BulkInsertCall>`,
+          each with `DestinationTable`/`ColumnMappings`/`RowsWritten`). Set `ThrowOnGetBindToken`
+          before the call to make the very next `GetBindTokenAsync` throw.
+        - `harness.CreatedUnitsOfWork` -- every `FakeUnitOfWork` actually resolved via DI so far (one
+          per scope), for asserting on a run made through `RunAsync` itself rather than a direct call.
+        - `harness.Notifier.Result` -- the captured `PackageResult` after a `RunAsync` call.
+        - `harness.SinkFilePath(key)` / `FileSystemTaskPath(key)` / `ForEachLoopFolder(key)` -- the
+          real, resolved path a Flat File Destination / File System Task / ForEach Loop method keyed
+          by `key` reads from or writes to, matching `FileSourceOptions` exactly.
+        - A test needing something the harness fakes for free CANNOT provide (a real database, a
+          real `.xlsx` file, a real secondary-connection server) gets
+          `[Trait("Category", "Integration")]` -- the always-green baseline is
+          `dotnet test --filter Category!=Integration`, so this tag is required, not optional, on
+          such a test.
+        - **Get every method's exact signature from `<Package>/README.md`'s own component table,
+          never by reading `<Package>.cs` top to bottom.** It is generated fresh every run
+          specifically so an assistant never has to.
+        """;
+
     private static string ResponseFormat(GenerationGap gap) => gap.Kind switch
     {
         GapKind.LookupJoinKey => LookupResponseFormat,
         GapKind.EncryptedConnectionManagerSecret => EncryptedSecretResponseFormat,
+        GapKind.TestOracle => TestOracleResponseFormat,
+        GapKind.LocalFileSourceData => LocalFileSourceDataResponseFormat,
         _ => CodeResponseFormat,
     };
 
@@ -248,12 +314,92 @@ public static class AiPacketEmitter
 
         """;
 
+    private const string TestOracleContract = """
+        A whole, self-contained xUnit test FILE -- not a seam spliced into existing generated code
+        (there is nothing to splice into here; unlike a Script Task/Component gap, this one has no
+        `partial` method waiting for you). It will be copied verbatim into
+        `<Package>.Tests/Fills/` by `ssisx apply-fills`, alongside the generated starter tests.
+
+        """ + PinnedTestingApiBlock + """
+
+
+        The evidence below tells you WHICH of three shapes this is -- read it before writing anything:
+
+        - **A Conditional Split case** this pilot's own oracle-based evaluator could not resolve to a
+          boolean for a representative row (see the reason above). Construct your OWN representative
+          row (you are not limited to the pilot's single hard-coded row) and assert
+          `new <RouterClass>().SelectBranch(row, ctx)` lands in the branch you expect, with a comment
+          explaining WHY that branch is correct for that input.
+        - **A Script Task seam**, once it is filled. Call the generated task directly through a
+          `PackageHarness`-backed `IUnitOfWork` and assert its real, observable effect (a row it wrote
+          via `uow.ExecutedSql`, a variable it set via `ctx.Variables` if you construct the context
+          yourself, etc.) -- not merely that it does not throw.
+        - **A Script Component column seam**, once it is filled. Construct a representative row,
+          call `new <TransformClass>().Fill_<Column>(row, ctx)` (or `.Map(row, ctx)` if the seam is
+          only reachable through the whole transform), and assert the exact expected value -- state
+          your reasoning for what "correct" means for this column, since nothing here computes it for
+          you the way `TransformTestEmitter`'s own oracle-verified assertions do.
+
+        **If you cannot determine a correct expected value with confidence, say so instead of
+        guessing one** -- a test asserting a wrong value is worse than no test at all, since it looks
+        like proof of something that was never actually checked.
+
+        """;
+
+    /// <summary>
+    /// Docs/Generated-Tests-Plan.md's own Tier B: the wiring (`appsettings.Development.json`'s
+    /// `TestData` override) is ALREADY generated unconditionally -- this packet is asked for only
+    /// the DATA, a realistic file matching the exact declared schema below.
+    /// </summary>
+    private const string LocalFileSourceDataContract = """
+        A realistic sample data file matching the EXACT schema in the evidence below (same columns,
+        same order, same delimiter/fixed-width positions, same header presence) -- not a redesign of
+        the format, just believable VALUES in place of the placeholder shown. If `svk sampledata` is
+        available in this environment, running it first produces a schema-correct starting point (see
+        `Tools/COPILOT_GUIDE.md`); this packet is asking you to make ITS output realistic, not to
+        invent a file from nothing.
+
+        This file will be copied byte-for-byte into `<Package>/TestData/` by `ssisx apply-fills` --
+        there is no provenance comment convention for a data file (unlike a code fill), so it is
+        applied and reported `Applied` on file name alone, with no staleness check against a later
+        schema change. If the connection manager's own schema changes, this file will need replacing
+        directly, and nothing will detect that automatically -- state this limitation is understood.
+
+        """;
+
     private const string EncryptedSecretResponseFormat = """
 
         ## Respond with
 
         Confirmation that steps 1-3 above were done (or an explanation of why they can't be, e.g. the
         credential could not be recovered). Do NOT include the actual secret value in your response.
+        """;
+
+    private const string TestOracleResponseFormat = """
+
+        ## Respond with
+
+        A single fenced `csharp` block containing the WHOLE test file (usings, namespace, class,
+        one or more `[Fact]`s) -- this is a new, self-contained file, not a snippet to splice in.
+
+        As the FIRST line of the file, include:
+
+        ```
+        // ssisx-fill: GapId=<this gap's id, from the heading above> Author=<your name or email> Date=<yyyy-mm-dd> EvidenceSha256=<the Evidence SHA-256 from the heading above>
+        ```
+
+        This is what lets `ssisx apply-fills` tell this file apart from a stale one on a later run.
+        Copy the id and hash verbatim from the heading above; do not compute or guess either.
+        """;
+
+    private const string LocalFileSourceDataResponseFormat = """
+
+        ## Respond with
+
+        A single fenced block containing the exact file content (`csv` for a delimited/fixed-width
+        file; state the file type explicitly if it is anything else, e.g. an `.xlsx` workbook cannot
+        be represented as text at all -- say so and describe what you would need to produce one
+        instead). No provenance comment -- see the contract above for why none is possible here.
         """;
 
     private const string CodeResponseFormat = """
@@ -318,8 +464,110 @@ public static class AiPacketEmitter
         GapKind.ScriptComponentColumn => ScriptComponentEvidence(package, gap),
         GapKind.LookupJoinKey => LookupEvidence(package, gap),
         GapKind.EncryptedConnectionManagerSecret => EncryptedSecretEvidence(package, gap),
+        GapKind.TestOracle => TestOracleEvidence(package, gap),
+        GapKind.LocalFileSourceData => LocalFileSourceDataEvidence(package, gap),
         _ => "_(no evidence builder for this gap kind)_\n",
     };
+
+    /// <summary>
+    /// Dispatches to one of three shapes by trying, in order, what <see cref="GapSpec.EvidenceRefId"/>
+    /// actually resolves to -- a Script Task companion test, a Script Component column companion
+    /// test, or a Conditional Split router test (see <see cref="TestOracleContract"/>'s own three
+    /// bullets, which this must stay in lockstep with).
+    /// </summary>
+    private static string TestOracleEvidence(PackageSpec package, GenerationGap gap)
+    {
+        if (gap.Location.EndsWith(".ScriptTask", StringComparison.Ordinal)
+            && FindExecutable(package, gap.EvidenceRefId) is { ScriptTask: not null })
+        {
+            return "_This is the companion test for the Script Task ported in its own SCRIPT-TASK work packet --" +
+                   " the source below is that SAME script; write a test that exercises the PORTED C# once it" +
+                   " exists, not the original SSIS script itself._\n\n" + ScriptTaskEvidence(package, gap);
+        }
+
+        var found = FindComponent(package, gap.EvidenceRefId);
+        if (found?.Component.ScriptComponent is not null)
+        {
+            return "_This is the companion test for the column ported in its own SCRIPT-COLUMN work packet --" +
+                   " the source below is that SAME Script Component; write a test that exercises the PORTED C#" +
+                   " once it exists, not the original SSIS script itself._\n\n" + ScriptComponentEvidence(package, gap);
+        }
+
+        if (found?.Component.ConditionalSplit is { } split)
+        {
+            var (taskName, component) = found.Value;
+            var sb = new StringBuilder();
+            sb.Append($"- **Data Flow Task:** `{taskName}`\n");
+            sb.Append($"- **Component:** `{component.Name}`\n\n");
+            sb.Append("### Every case, in evaluation order (the failing one is named in the reason above)\n\n");
+            sb.Append("| # | Output | Condition (FriendlyExpression) |\n|---|---|---|\n");
+            for (var i = 0; i < split.Cases.Count; i++)
+                sb.Append($"| {i} | `{split.Cases[i].OutputName}` | `{split.Cases[i].FriendlyExpression ?? "(none)"}` |\n");
+            sb.Append($"| {split.Cases.Count} (default) | `{split.DefaultOutputName}` | _(always matches if nothing above did)_ |\n");
+
+            sb.Append("\n### This case's own input columns\n\n");
+            sb.Append(ColumnTable(component.Inputs.SelectMany(i => i.Columns)
+                .Select(c => (c.CachedName, c.CachedDataType, c.CachedLength))));
+            return sb.ToString();
+        }
+
+        return $"_Could not resolve the source of this test-oracle gap (refId `{gap.EvidenceRefId}`) -- report this, it is a bug in AiPacketEmitter._\n";
+    }
+
+    /// <summary>
+    /// Resolved differently depending on which source kind reported it: a CSV/fixed-width source
+    /// carries its connection manager's own RefId (<see cref="GapSpec.EvidenceRefId"/>), so the
+    /// schema comes straight from <c>FlatFileFormatSpec</c>; an Excel source carries none (there is
+    /// no per-package-generation connection-manager thread for it -- see the call site's own
+    /// comment), so it is instead resolved by NAME: <c>PackageGenerator.BuildExcelFlowSource</c>
+    /// derives a Flow's own FileSourceKey directly from the Excel Source component's <c>Name</c>
+    /// (<c>gap.Location</c>), so searching for a component with that exact name is enough.
+    /// </summary>
+    private static string LocalFileSourceDataEvidence(PackageSpec package, GenerationGap gap)
+    {
+        var expectedFileName = LocalFileSourceDataExpectedFileName(package, gap);
+        var saveAsLine = expectedFileName is null
+            ? "- **Save as:** _(no design-time default path on this connection manager to derive a name from -- name it to match whatever `appsettings.json`'s own SourceFileName ends up being)_\n"
+            : $"- **Save as:** `TestData/{expectedFileName}`\n";
+
+        if (gap.EvidenceRefId is { Length: > 0 } refId)
+        {
+            var cm = package.ConnectionManagers.FirstOrDefault(c => c.RefId == refId);
+            if (cm?.FlatFileFormat is not { } format)
+                return $"_Could not resolve the flat-file connection manager for refId `{refId}` -- report this, it is a bug in AiPacketEmitter._\n";
+
+            var sb = new StringBuilder();
+            sb.Append(saveAsLine);
+            sb.Append($"- **Connection manager:** `{cm.ObjectName}`\n");
+            sb.Append($"- **Format:** `{format.Format ?? "(not set)"}`\n");
+            sb.Append($"- **Column delimiter:** `{format.Columns.FirstOrDefault()?.ColumnDelimiterDisplay ?? "(fixed-width -- see MaximumWidth per column)"}`\n");
+            sb.Append($"- **Row delimiter:** `{(string.IsNullOrEmpty(format.RowDelimiterDisplay) ? "(not set -- see the last column's own delimiter, which usually carries it)" : format.RowDelimiterDisplay)}`\n");
+            sb.Append($"- **Header row present:** `{format.ColumnNamesInFirstDataRow == true}`\n\n");
+            sb.Append("### Columns, in file order\n\n");
+            sb.Append("| Column | SSIS type | Width | Delimiter |\n|---|---|---|---|\n");
+            foreach (var col in format.Columns)
+                sb.Append($"| `{col.ObjectName}` | `{col.DataTypeName}` | {(col.MaximumWidth is > 0 ? col.MaximumWidth.ToString() : "-")} | `{col.ColumnDelimiterDisplay ?? "(row delimiter)"}` |\n");
+            return sb.ToString();
+        }
+
+        var component = PackageTree.AllExecutables(package)
+            .Select(e => e.DataFlowTask?.Pipeline)
+            .Where(p => p is not null)
+            .SelectMany(p => p!.Components)
+            .FirstOrDefault(c => c.Name == gap.Location && c.ExcelSource is not null);
+        if (component?.ExcelSource is not { } excel)
+            return $"_Could not resolve the Excel Source component named '{gap.Location}' -- report this, it is a bug in AiPacketEmitter._\n";
+
+        var esb = new StringBuilder();
+        esb.Append(saveAsLine);
+        esb.Append($"- **Excel Source:** `{component.Name}`\n");
+        esb.Append($"- **Worksheet:** `{(excel.AccessMode is null or 0 ? excel.OpenRowset : "(see SqlCommand)") ?? "(not set)"}`\n");
+        if (excel.AccessMode == 2) esb.Append($"- **SQL command:** `{excel.SqlCommand}`\n");
+        esb.Append("\n### Columns, in order\n\n");
+        esb.Append(ColumnTable(component.Outputs.Where(o => o.IsErrorOut != true).SelectMany(o => o.Columns)
+            .Select(c => (c.Name, c.DataType, c.Length))));
+        return esb.ToString();
+    }
 
     private static string EncryptedSecretEvidence(PackageSpec package, GenerationGap gap)
     {

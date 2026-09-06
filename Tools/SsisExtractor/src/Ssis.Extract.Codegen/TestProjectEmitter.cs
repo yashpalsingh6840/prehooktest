@@ -37,6 +37,24 @@ public static class TestProjectEmitter
             "    <PackageReference Include=\"xunit.runner.visualstudio\" />",
             "  </ItemGroup>",
             "",
+            // Links (never copies) the main project's own TestData/ folder alongside this test
+            // project's own output -- a future richer, Tier-B-driven test (Docs/Generated-Tests-
+            // Plan.md's own Phase 2/3) can read real sample data the same way the main package's
+            // own appsettings.Development.json does, with one physical copy on disk, not two.
+            // Matches zero items (harmless) until a LOCAL-DATA fill supplies real files.
+            "  <ItemGroup>",
+            $"    <None Include=\"..\\{packageName}\\TestData\\**\" Link=\"TestData\\%(RecursiveDir)%(Filename)%(Extension)\" CopyToOutputDirectory=\"PreserveNewest\" />",
+            "  </ItemGroup>",
+            "",
+            // Tier-A (Docs/Generated-Tests-Plan.md): 2-3 deterministic, synthesized rows per
+            // CSV/fixed-width source, physically emitted INSIDE this test project (not linked from
+            // the main one, unlike TestData/ above) -- SampleDataEmitter's own output, zero AI,
+            // zero fills, what makes the starter source-read tests green immediately after a fresh
+            // `ssisx generate`.
+            "  <ItemGroup>",
+            "    <None Include=\"SampleData\\**\" CopyToOutputDirectory=\"PreserveNewest\" />",
+            "  </ItemGroup>",
+            "",
             "</Project>",
         };
 

@@ -43,10 +43,13 @@ written specifically for that situation; this file assumes `Tools\` itself is wh
 4. **Do not attempt to verify generated code against a live database, real input files, or a
    real SSIS run.** This environment has none of those -- no client SQL Server, no client
    source files, no client SSISDB. `ssisx generate`'s job ends at writing buildable C# source.
-   The most you should do is `dotnet build` the generated solution to confirm it compiles.
-   Never invent connection strings, seed data, or "sample" input files to make something
-   "runnable" -- that is out of scope here, and doing so risks shipping code nobody has
-   actually checked against real behavior.
+   The most you should do is `dotnet build` the generated solution to confirm it compiles, and
+   `dotnet test --filter Category!=Integration` (see rule 10 below) to confirm the generated
+   tests pass with no server reachable. Never invent a connection string, or a database, to make
+   something "runnable" -- that is out of scope here. **The one deliberate exception:** a
+   `LocalFileSourceData` work packet is explicitly asking you to supply a realistic SAMPLE FILE
+   under `fills-library\<Package>\TestData\<exact name from the packet>` -- that is not "inventing
+   input to fake a run," it is the one gap kind whose entire job is exactly that; do it when asked.
 5. **A `GenerationGap` is not a bug to silently work around.** Every gap in
    `generate-report.md`/`gaps.json` has a stable `GapId`, a tier, and (for Tier 1/2) a work
    packet under `gaps/<Package>/`. Read the packet. Do not invent a value or logic that the
@@ -99,14 +102,42 @@ written specifically for that situation; this file assumes `Tools\` itself is wh
    point at, ask.
 9. **Budget your own reads.** Do not open `CLAUDE.md`, anything under `Docs\` (e.g.
    `Docs\Emitter-Rewrite-Plan.md`, `Docs\Phase0-Extractor-Plan.md`,
-   `Docs\Migration-Validation-Plan.md`, `Docs\SsisValidationKit-Plan.md`), or
-   `SsisExtractor\docs\report-schema.md` -- they are this project's own multi-hundred-KB
-   development history and internal design plans, not written for you, and reading them will
-   burn your context for no benefit. None of this exists at all in a client-only copy of this
-   `Tools\` folder -- it's only reachable here because this is the full dev repo. Everything you
-   need to operate this tool is in `COPILOT_GUIDE.md` and `ssisx --help`. If a command's own
-   `--help` output and the guide disagree, trust `--help` -- it is generated from the same code
-   that runs.
+   `Docs\Migration-Validation-Plan.md`, `Docs\SsisValidationKit-Plan.md`,
+   `Docs\Generated-Tests-Plan.md`), or `SsisExtractor\docs\report-schema.md` -- they are this
+   project's own multi-hundred-KB development history and internal design plans, not written for
+   you, and reading them will burn your context for no benefit. None of this exists at all in a
+   client-only copy of this `Tools\` folder -- it's only reachable here because this is the full
+   dev repo. Everything you need to operate this tool is in `COPILOT_GUIDE.md` and
+   `ssisx --help`. If a command's own `--help` output and the guide disagree, trust `--help` --
+   it is generated from the same code that runs.
+10. **Before writing or reviewing a generated test, read `<Package>\README.md` first** -- never
+    re-derive the component-to-method map from the `.dtsx` or by reading `<Package>.cs` top to
+    bottom; the README's own component table is generated fresh every run specifically so you
+    never have to. A generated test needing something no fake can provide (a real database, a
+    real `.xlsx` file, a real secondary-connection server) carries
+    `[Trait("Category", "Integration")]` -- the always-green baseline for everything else is
+    `dotnet test --filter Category!=Integration`, which should pass with zero fills applied right
+    after a fresh `ssisx generate`.
+11. **A `TEST-ORACLE` work packet is self-contained -- do not open `TestDoubles\PackageHarness.cs`
+    or `COPILOT_TESTING_GUIDE.md` to confirm its pinned testing-API block.** The packet already
+    embeds everything you need (the same block, copied verbatim). Reading those files anyway
+    burns tokens for no benefit -- they exist for the rarer case the packet's own template
+    doesn't cover.
+12. **`svk` is a separate, standalone, optional tool -- never a gate.** `SsisValidationKit\`
+    ships alongside `ssisx` (built by the same one-time setup, see `COPILOT_GUIDE.md`'s "Invoking
+    ssisx" section) but only has two commands, `svk walkthrough` and `svk sampledata`, both
+    deterministic and read-only against `ssisx extract`'s own output. It never edits anything
+    under `SsisExtractor\`, never generates C#, and its own review docs/claims files are advisory
+    -- a package with no walkthrough/sampledata run against it generates and builds exactly the
+    same as one that does. Do not invent a third `svk` command or assume it participates in
+    `generate`/`apply-fills` in any way.
+13. **`.github/prompts/ssisx-rewrite.prompt.md` (`/ssisx-rewrite`) sequences the whole pipeline
+    for one package, and it is DESIGNED to stop twice for a human** -- once after writing Tier-1/2
+    fills, once after writing test-oracle/local-data fills. Do not "helpfully" continue past
+    either stop on your own judgement, even if every fill you wrote looks obviously correct: an
+    AI's own confidence is never sign-off, and continuing anyway defeats the one property this
+    whole gap taxonomy exists to protect. Re-running it for the same package is always safe -- it
+    detects what already exists on disk and resumes rather than redoing finished work.
 
 ## The one-sentence workflow
 
@@ -149,12 +180,26 @@ expected, not a failure. Read `out\generate-report.md`.
 - **Tier 3 (`MissingToolSupport`)** -- the tool itself doesn't model this SSIS component/shape
   yet. **There is nothing for you to fill in.** Do not attempt a workaround. Report it back to
   the human as "this package needs a tool enhancement," naming the `GapId`.
-- **Tier 1 (`MissingDatum`)** -- a fact is missing from the `.dtsx` (e.g. an unresolvable Lookup
-  join key) that a human must confirm. Read the work packet under `out\gaps\<Package>\`, answer
-  its exact question in `fills-library\<Package>.decisions.json` (NOT `out\fills\...` -- see
-  rule 7a) in the format the packet shows, with a real `ConfirmedBy`. **Do not fabricate a
-  confident-sounding answer yourself** -- if you are not certain, present the packet's question
-  to the human instead of guessing at a value that looks plausible.
+- **Tier 1 (`MissingDatum`)** -- one workflow, but check the `GapId`'s own prefix (or the gap's
+  `Kind` in `gaps.json`) before writing anything: the three sub-shapes below answer to
+  DIFFERENT places and formats, and are not interchangeable.
+  - **`LOOKUP-JOIN-KEY:...` / `ENCRYPTED-SECRET:...`** -- a fact is missing from the `.dtsx`
+    (e.g. an unresolvable Lookup join key) that a human must confirm. Read the work packet under
+    `out\gaps\<Package>\`, answer its exact question in `fills-library\<Package>.decisions.json`
+    (NOT `out\fills\...` -- see rule 7a) in the format the packet shows, with a real
+    `ConfirmedBy`. **Do not fabricate a confident-sounding answer yourself** -- if you are not
+    certain, present the packet's question to the human instead of guessing at a value that
+    looks plausible.
+  - **`TEST-ORACLE:...`** -- the deterministic emitter could not itself derive a test assertion
+    (a Conditional Split case, or a test for a Script Task/Component seam once filled). The
+    packet asks for a WHOLE new xUnit test file (its own pinned testing-API block is embedded in
+    the packet -- see rule 11). Write it under `fills-library\<Package>\Tests\<Name>Tests.cs`,
+    with a `// ssisx-fill: GapId=... Author=... Date=... EvidenceSha256=...` comment as the
+    file's own FIRST line (there is no seam to place it above -- this is a brand-new file).
+  - **`LOCAL-DATA:...`** -- a realistic sample file to replace the synthetic Tier-A placeholder
+    (see rule 4's own exception). The packet names the EXACT file name in its own "Save as" line
+    -- use that name verbatim. Write it under `fills-library\<Package>\TestData\<that exact
+    name>`, with NO comment of any kind (a data file has no provenance convention).
 - **Tier 2 (`MissingLogic`)** -- a Script Task/Script Component's real source IS in the `.dtsx`;
   it just needs porting to C#. Read the work packet (it includes the actual script text), write
   the `.cs` file it describes under `fills-library\<Package>\` (NOT `out\fills\...` -- see rule

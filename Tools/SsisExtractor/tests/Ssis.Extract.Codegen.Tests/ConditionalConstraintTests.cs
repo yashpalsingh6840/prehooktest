@@ -419,7 +419,7 @@ public class ConditionalConstraintTests
             FailureHandlers = resolved.FailureHandlers.Values.ToList(),
         };
 
-        var result = PackageClassEmitter.Emit(request);
+        var result = PackageClassEmitter.Emit(request, out _);
         var file = Assert.Single(result.Files);
 
         Assert.Contains("private bool SQL_HandlerReached;", file.Content);

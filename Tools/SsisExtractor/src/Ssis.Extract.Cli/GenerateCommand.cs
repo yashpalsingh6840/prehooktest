@@ -36,6 +36,11 @@ internal static class GenerateCommand
         // is wrong" failure class this tool otherwise refuses to allow. --seams is kept as an
         // accepted no-op so any script/doc still passing it explicitly keeps working.
         var seams = true;
+        // Docs/Generated-Tests-Plan.md's own "Opt-out": named plainly (not "--no-tests"), since
+        // skipping tests only loses coverage -- unlike --unsafe-skip-seams, it can never make
+        // this tool produce silently WRONG code, so it carries none of that flag's own warning
+        // framing.
+        var skipTests = false;
         string? fillsDir = null;
         string? etlCorePath = null;
         var packageNames = new List<string>();
@@ -75,6 +80,7 @@ internal static class GenerateCommand
                     // "--skip-seams", so the risk is visible at the call site, not just in
                     // --help.
                     case "--unsafe-skip-seams": seams = false; break;
+                    case "--skip-tests": skipTests = true; break;
                     case "--fills": fillsDir = RequireValue(args, ref i, "--fills"); break;
                     // Folds the "copy Etl.Core alongside the generated output" step into this
                     // command instead of leaving it as a separate manual step someone (a human,
@@ -143,7 +149,7 @@ internal static class GenerateCommand
         foreach (var package in loaded.Packages)
         {
             var decisions = LoadDecisions(fillsDir, package.ObjectName);
-            var result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams);
+            var result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests);
             results.Add(result);
             decisionOutcomes.AddRange(decisions.Outcomes.Concat(decisions.Orphans())
                 .Select(o => (package.ObjectName, o)));
@@ -290,13 +296,13 @@ internal static class GenerateCommand
         "    <PackageVersion Include=\"Microsoft.Extensions.Hosting\" Version=\"10.0.11\" />",
         "    <PackageVersion Include=\"Microsoft.Extensions.Configuration.UserSecrets\" Version=\"10.0.11\" />",
         "    <PackageVersion Include=\"System.Text.Encoding.CodePages\" Version=\"10.0.11\" />",
-        // Same versions this tool's own test projects already build with on this machine
-        // (Tools/SsisExtractor/tests/*/*.csproj) -- a real, already-proven-working choice rather
-        // than a guessed "latest" one. Only referenced by a {PackageName}.Tests project
-        // (TestProjectEmitter), never by the main generated project itself.
-        "    <PackageVersion Include=\"Microsoft.NET.Test.Sdk\" Version=\"17.8.0\" />",
-        "    <PackageVersion Include=\"xunit\" Version=\"2.5.3\" />",
-        "    <PackageVersion Include=\"xunit.runner.visualstudio\" Version=\"2.5.3\" />",
+        // Matches D:\PoC\SSIS_Rewrite\Directory.Packages.props exactly -- the one source of truth
+        // for these three versions (see that repo's own Etl.Core.Tests, which builds against them
+        // today). Only referenced by a {PackageName}.Tests project (TestProjectEmitter), never by
+        // the main generated project itself.
+        "    <PackageVersion Include=\"Microsoft.NET.Test.Sdk\" Version=\"17.14.1\" />",
+        "    <PackageVersion Include=\"xunit\" Version=\"2.9.3\" />",
+        "    <PackageVersion Include=\"xunit.runner.visualstudio\" Version=\"3.1.4\" />",
         "  </ItemGroup>",
         "",
         "</Project>",
@@ -632,21 +638,37 @@ internal static class GenerateCommand
         {
             sb.AppendLine($"## {fillable.Count} gap(s) waiting for an answer, right now");
             sb.AppendLine();
-            sb.AppendLine("| Package | Tier | GapId | Work packet |");
-            sb.AppendLine("|---|---|---|---|");
+            sb.AppendLine("| Package | Tier | Kind | GapId | Work packet |");
+            sb.AppendLine("|---|---|---|---|---|");
             foreach (var g in fillable.OrderBy(g => g.Package, StringComparer.Ordinal).ThenBy(g => g.GapId, StringComparer.Ordinal))
             {
                 var packetRef = g.PacketPath is not null ? $"`{g.PacketPath}`" : "_(none)_";
-                sb.AppendLine($"| {g.Package} | {(g.Tier == GapTier.MissingDatum ? "1 -- datum" : "2 -- logic")} | `{g.GapId}` | {packetRef} |");
+                sb.AppendLine($"| {g.Package} | {(g.Tier == GapTier.MissingDatum ? "1 -- datum" : "2 -- logic")} | {g.Kind} | `{g.GapId}` | {packetRef} |");
             }
             sb.AppendLine();
             sb.AppendLine("## What to actually do for each tier");
             sb.AppendLine();
-            sb.AppendLine("**Tier 1 (a missing datum, e.g. an unresolvable Lookup join key):** open the work");
-            sb.AppendLine("packet, read its exact question, do **not** guess a confident-sounding answer -- confirm");
-            sb.AppendLine("it with a human if you're not certain. Write the answer into");
-            sb.AppendLine($"`{fillsDir}\\<Package>.decisions.json`, in the exact JSON shape the packet shows, with a");
-            sb.AppendLine("real `ConfirmedBy`.");
+            sb.AppendLine("**Tier 1 is one workflow with THREE different answer shapes -- check the Kind column above");
+            sb.AppendLine("before writing anything, they are not interchangeable:**");
+            sb.AppendLine();
+            sb.AppendLine("- **`LookupJoinKey` / `EncryptedConnectionManagerSecret`** (a missing FACT, or an");
+            sb.AppendLine("  acknowledgment): open the work packet, read its exact question, do **not** guess a");
+            sb.AppendLine("  confident-sounding answer -- confirm it with a human if you're not certain. Write the");
+            sb.AppendLine($"  answer into `{fillsDir}\\<Package>.decisions.json`, in the exact JSON shape the packet");
+            sb.AppendLine("  shows, with a real `ConfirmedBy`.");
+            sb.AppendLine("- **`TestOracle`** (a starter test the deterministic emitter could not itself derive --");
+            sb.AppendLine("  a Conditional Split case, or a test for a filled Script Task/Component seam): the packet");
+            sb.AppendLine("  asks for a WHOLE new xUnit test file, not a value in a JSON file. Write it under");
+            sb.AppendLine($"  `{fillsDir}\\<Package>\\Tests\\<Name>Tests.cs`, with this comment as the file's own FIRST");
+            sb.AppendLine("  line (not above a seam -- there is no seam here, this is a brand-new file):");
+            sb.AppendLine("  ```");
+            sb.AppendLine("  // ssisx-fill: GapId=<exact GapId> Author=<you> Date=<yyyy-mm-dd> EvidenceSha256=<from the packet>");
+            sb.AppendLine("  ```");
+            sb.AppendLine("- **`LocalFileSourceData`** (a realistic sample file to replace the synthetic Tier-A");
+            sb.AppendLine("  placeholder): the packet names the EXACT file name to use (its own \"Save as\" line --");
+            sb.AppendLine($"  do not guess one). Write it under `{fillsDir}\\<Package>\\TestData\\<that exact name>`,");
+            sb.AppendLine("  with no comment of any kind (a data file has no provenance convention -- see the packet's");
+            sb.AppendLine("  own contract for why).");
             sb.AppendLine();
             sb.AppendLine("**Tier 2 (a Script Task/Component whose real source IS in the packet, just needs");
             sb.AppendLine("porting to C#):** read the packet -- it includes the actual original script text and the");
@@ -673,10 +695,11 @@ internal static class GenerateCommand
         sb.AppendLine();
         sb.AppendLine("## One rule that applies regardless of tier");
         sb.AppendLine();
-        sb.AppendLine("Do not attempt to build/run this project against a real database or real source data to");
-        sb.AppendLine("\"verify\" a fill -- none is available in this environment, and inventing one (a throwaway");
-        sb.AppendLine("connection string, sample files) is out of scope. `dotnet build` succeeding is the expected");
-        sb.AppendLine("extent of checking here.");
+        sb.AppendLine("Do not attempt to build/run this project against a REAL database, or invent a throwaway one,");
+        sb.AppendLine("to \"verify\" a fill -- none is available in this environment. `dotnet build` succeeding is");
+        sb.AppendLine("the expected extent of checking here (this does not apply to a `LocalFileSourceData` fill --");
+        sb.AppendLine("supplying a realistic sample FILE is precisely what that gap kind asks for; it is the");
+        sb.AppendLine("no-server, no-database `dotnet test --filter Category!=Integration` tier this concerns).");
 
         File.WriteAllText(path, sb.ToString());
     }

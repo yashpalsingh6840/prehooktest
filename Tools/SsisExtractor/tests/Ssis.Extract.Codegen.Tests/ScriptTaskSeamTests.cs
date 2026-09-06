@@ -89,10 +89,15 @@ public class ScriptTaskSeamTests
 
         // Still blocking, and still classified Tier 2 so the work packet is still produced -- a
         // seam is outstanding work, not a resolution.
-        var gap = Assert.Single(result.Gaps, g => g.Location == "SCR_Start.ScriptTask");
+        var gap = Assert.Single(result.Gaps, g => g.Location == "SCR_Start.ScriptTask" && g.Kind == GapKind.ScriptTask);
         Assert.True(gap.IsBlocking);
-        Assert.Equal(GapKind.ScriptTask, gap.Kind);
         Assert.Contains("CS8795", gap.Reason);
+
+        // Companion "Script Task / Script Component seam" taxonomy row: a filled seam is human
+        // logic, and a test for it is a separate, non-blocking TEST-ORACLE work item, sharing the
+        // same Location so both land under this task in gaps.json.
+        var testGap = Assert.Single(result.Gaps, g => g.Location == "SCR_Start.ScriptTask" && g.Kind == GapKind.TestOracle);
+        Assert.False(testGap.IsBlocking);
     }
 
     [Fact]

@@ -391,6 +391,15 @@ public static class TransformEmitter
                         $"column '{column.PipelineColumnName}' is produced by Script Component '{producer.Name}' -- emitted as a `private partial {seamType} {methodName}({request.RowTypeName} row, in RowContext ctx)` seam. The project will not compile (CS8795) until a second part of '{request.TransformClassName}' implements it; apply one with `ssisx apply-fills`.",
                         Kind: GapKind.ScriptComponentColumn,
                         EvidenceRefId: producer.RefId));
+
+                    // Companion "Script Task / Script Component seam" taxonomy row
+                    // (Docs/Generated-Tests-Plan.md): a filled seam is human logic, and a test for
+                    // it is a test-oracle packet, not something the deterministic emitter can
+                    // derive -- a separate, non-blocking work item from the port itself, sharing
+                    // its own Location so both land under the same column in `gaps.json`.
+                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                        $"column '{column.ExternalColumnName}' ({methodName}) has no generated test at all (a filled seam is human logic -- see the TEST-ORACLE work packet for this column to write one).",
+                        IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: producer.RefId));
                     continue;
                 }
 

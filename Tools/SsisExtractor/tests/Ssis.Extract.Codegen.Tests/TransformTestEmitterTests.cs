@@ -52,7 +52,7 @@ public class TransformTestEmitterTests
             EntityNamespace: "Test.Model",
             EntityName: "Target",
             Pipeline: pipeline,
-            DerivedColumn: null,
+            DerivedColumns: null,
             DataConversions: [dataConversion],
             DestinationComponent: destination));
 
@@ -121,7 +121,7 @@ public class TransformTestEmitterTests
             EntityNamespace: "Test.Model",
             EntityName: "Target",
             Pipeline: pipeline,
-            DerivedColumn: null,
+            DerivedColumns: null,
             DataConversions: [dataConversion],
             DestinationComponent: destination));
 
@@ -160,7 +160,7 @@ public class TransformTestEmitterTests
             EntityNamespace: "Test.Model",
             EntityName: "Target",
             Pipeline: pipeline,
-            DerivedColumn: derivedColumn,
+            DerivedColumns: [derivedColumn],
             DataConversions: [dataConversion],
             DestinationComponent: destination));
 

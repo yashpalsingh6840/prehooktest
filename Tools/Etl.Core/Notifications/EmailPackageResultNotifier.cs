@@ -73,6 +73,16 @@ public sealed class EmailPackageResultNotifier(
         body.AppendLine($"Elapsed:  {result.Elapsed}");
         body.AppendLine();
 
+        // PackageResult.FailureHandlersRun exists specifically so a notifier can say "it failed
+        // AND the failure was logged" (see that record's own doc comment) -- this body never
+        // read it at all until now, a real gap found auditing NotifyAsync's own coverage: a run
+        // whose failure handler genuinely ran had no way to tell an email reader so.
+        if (result.FailureHandlersRun.Count > 0)
+        {
+            body.AppendLine($"Failure handler(s) run: {string.Join(", ", result.FailureHandlersRun)}");
+            body.AppendLine();
+        }
+
         foreach (var step in result.Steps)
             body.AppendLine($"  {step.Name}: {step.RowsRead:N0} read, {step.RowsWritten:N0} written ({step.Elapsed})");
 

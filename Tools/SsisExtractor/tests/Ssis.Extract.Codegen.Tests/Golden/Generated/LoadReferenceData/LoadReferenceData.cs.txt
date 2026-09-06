@@ -43,9 +43,12 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
         var stopwatch = Stopwatch.StartNew();
 
         logger.LogInformation("Starting {Package}...", PackageName);
-        await uow.BeginAsync(IsolationLevel.ReadCommitted, ct);
+        var uowActive = false;
         try
         {
+            await uow.BeginAsync(IsolationLevel.ReadCommitted, ct);
+            uowActive = true;
+
             // Fetched once, here, while this transaction's connection is guaranteed idle -- a lazy fetch
             // from inside a step reproduced a real deadlock (SqlRowSource reading while SqlBulkCopy streams).
             await uow.GetBindTokenAsync(ct);
@@ -59,7 +62,10 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
         }
         catch (Exception ex)
         {
-            await uow.RollbackAsync(CancellationToken.None);
+            if (uowActive)
+            {
+                await uow.RollbackAsync(CancellationToken.None);
+            }
             logger.LogError(ex, "{Package} failed after {Steps} step(s); transaction rolled back", PackageName, _results.Count);
 
             await notifier.NotifyAsync(new PackageResult(PackageName, false, _results, stopwatch.Elapsed, ex), CancellationToken.None);

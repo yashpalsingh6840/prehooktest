@@ -7,11 +7,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Build-time references only; nothing under Tools/SsisExtractor is ever edited by
-         this project. Ssis.Extract.Model is the plain record/POCO shape spec.json
-         deserializes into; Ssis.Extract.Dtsx supplies pure functions (PackageTree,
+    <!-- GOVERNANCE BOUNDARY, pinned here because it is the real enforcement point, not just
+         a README claim: SvkCore/SvkCli may reference ONLY Ssis.Extract.Model and
+         Ssis.Extract.Dtsx, NEVER Ssis.Extract.Codegen or Ssis.Extract.Cli, regardless of
+         SsisExtractor.slnx also listing SvkCore/SvkCli as project entries (Generated-Tests-Plan
+         Phase 4, so one `dotnet build SsisExtractor.slnx` produces both ssisx.exe and svk.exe).
+         Shared solution membership does not relax this: nothing under Tools/SsisExtractor is
+         ever edited by this project, and its own .slnx is never hand-edited by svk's build,
+         only ADDED TO, once, by this plan. Ssis.Extract.Model is the plain record/POCO shape
+         spec.json deserializes into; Ssis.Extract.Dtsx supplies pure functions (PackageTree,
          PrimaryKeyInference, ConformanceRulesBuilder) that already operate on that parsed
-         shape, not the XML parser itself. -->
+         shape, not the XML parser itself. Adding a ProjectReference to Ssis.Extract.Codegen or
+         Ssis.Extract.Cli here would violate this boundary even if it compiled. -->
     <ProjectReference Include="..\..\..\SsisExtractor\src\Ssis.Extract.Model\Ssis.Extract.Model.csproj" />
     <ProjectReference Include="..\..\..\SsisExtractor\src\Ssis.Extract.Dtsx\Ssis.Extract.Dtsx.csproj" />
   </ItemGroup>

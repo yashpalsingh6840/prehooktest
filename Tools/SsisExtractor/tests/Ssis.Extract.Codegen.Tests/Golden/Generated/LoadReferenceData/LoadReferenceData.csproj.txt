@@ -11,6 +11,7 @@
   <ItemGroup>
     <None Update="appsettings.json;appsettings.*.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\Shared\appsettings.Shared.json" Link="appsettings.Shared.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="TestData\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
