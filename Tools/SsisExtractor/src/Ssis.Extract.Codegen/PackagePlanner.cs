@@ -1938,7 +1938,18 @@ public static class PackagePlanner
             // multicast must also be checked null here now -- a Multicast whose every branch is
             // discarded (no live branch at all) leaves `destination` null without implying no
             // Multicast was found, unlike before discard support existed.
-            if (commandComponents.Count == 1 && conditionalSplit is null && multicast is null)
+            //
+            // aggregate is null was added 2026-09-06 by the same third independent review that
+            // found the Merge Join/Union bug above -- without it, an Aggregate co-present with a
+            // destination-less OLE DB Command produced a DataFlowPlan carrying BOTH Aggregate and
+            // OleDbCommand, and PackageGenerator's dispatch (which checks Aggregate first) would
+            // build an Aggregate flow with a stray flow.OleDbCommand it never reads. This
+            // currently fails SAFELY only by accident (DestinationInfo.IsFastLoadConfigured
+            // happens to always return false for an OLE DB Command component, since it has no
+            // destination side at all) -- confirmed via a disposable fixture reproducing this
+            // exact shape. Explicit now, not relying on that incidental behavior: this shape
+            // falls through to the generic "no destination found" gap below instead.
+            if (commandComponents.Count == 1 && conditionalSplit is null && multicast is null && aggregate is null)
             {
                 var oleDbCommandPlan = ResolveOleDbCommand(taskName, commandComponents[0], gaps);
                 if (oleDbCommandPlan is null) return null; // ResolveOleDbCommand already added the gap

@@ -7575,9 +7575,7 @@ SAFELY rather than silently: `DestinationInfo.IsFastLoadConfigured` happens to a
 'X' is not configured for fast load"). Confirmed by building a disposable fixture reproducing
 this exact shape. The safety here is INCIDENTAL, not a deliberate guard the way the two just-added
 checks are -- if that unrelated fast-load check were ever loosened or bypassed, this composition
-would silently mis-generate the same way the two now-fixed bugs did. Named here rather than
-silently left for someone to rediscover; not fixed this round, since it is not currently a live
-bug and the review's own time was better spent confirming what already breaks.
+would silently mis-generate the same way the two now-fixed bugs did.
 
 **Two other checks came back clean, verified by reading code (not built, but directly):**
 `ConditionalSplit`+`MergeJoin` is safely refused (`ResolveMergeJoinSide` requires each input be
@@ -7591,6 +7589,27 @@ round was independently re-confirmed correct (`PlanMergeJoin` always hardcodes
 
 Full suite green after this fix: 149+156+16+**359**+94+11+7 = **792** (was 791, +1 for the new
 planner test).
+
+**Hardened the same session, immediately after, rather than leave a "safe by accident" gap:**
+`flow.Aggregate`/`flow.OleDbCommand` co-presence now gets the identical treatment as the Merge
+Join/Union fix above, not just a documented note. `PlanDataFlow`'s OLE DB Command carve-out
+(the branch that resolves a destination-less flow whose only sink is an OLE DB Command) gained an
+explicit `aggregate is null` condition, mirroring the `conditionalSplit is null && multicast is
+null` guards already there -- when Aggregate IS present, the flow now falls through to the
+generic "no OLE DB Destination, ADO NET Destination, Flat File Destination, or OLE DB Command
+found" gap instead of ever building a `DataFlowPlan` carrying both fields, so the refusal no
+longer depends on `DestinationInfo.IsFastLoadConfigured` happening to return `false` for an OLE
+DB Command component. New permanent fixture, `SyntheticAggregateThenOleDbCommand.dtsx`
+(`Ssis.Extract.FixtureBuilder`'s new `aggregate-then-oledb-command` mode: OLE DB Source ->
+Aggregate -> OLE DB Command, no destination anywhere) -- verified end to end: the gap text
+changed from the old incidental "destination 'X' is not configured for fast load" (raised deep
+inside `GenerateAggregateFlow`) to the new, deliberate, planner-level "no ... destination found"
+message, confirming the refusal now happens for the right reason, at the right layer, not by
+accident. New regression test,
+`PackagePlannerTests.Plan_ReportsAGap_WhenAnAggregateCoexistsWithADestinationLessOleDbCommand`.
+
+Full suite green after this hardening: 149+156+16+**360**+94+11+7 = **793** (was 792, +1 for the
+new planner test).
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**

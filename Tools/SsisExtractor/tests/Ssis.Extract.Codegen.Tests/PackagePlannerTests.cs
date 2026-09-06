@@ -900,6 +900,27 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ReportsAGap_WhenAnAggregateCoexistsWithADestinationLessOleDbCommand()
+    {
+        // SyntheticAggregateThenOleDbCommand.dtsx (2026-09-06) -- a real, previously-only-
+        // incidentally-safe shape found by the same third independent review as the Union case
+        // above: flow.Aggregate and flow.OleDbCommand used to be able to coexist on one
+        // DataFlowPlan with no explicit guard here, saved only by an unrelated fast-load check
+        // that happens to always fail for an OLE DB Command component (it has no destination
+        // side at all). Now an explicit `aggregate is null` guard in PlanDataFlow's own OLE DB
+        // Command carve-out makes this fall through to the generic "no destination found" gap
+        // instead of ever building a DataFlowPlan carrying both fields.
+        var package = LoadSyntheticFixture("SyntheticAggregateThenOleDbCommand.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Flows);
+        var gap = Assert.Single(plan.Gaps, g => g.Location == "DFT_AggregateThenOleDbCommand");
+        Assert.True(gap.IsBlocking);
+        Assert.Contains("no OLE DB Destination, ADO NET Destination, Flat File Destination, or OLE DB Command found", gap.Reason);
+    }
+
+    [Fact]
     public void Plan_ReportsAGap_WhenAUnionAllCoexistsWithAWhollyUnrelatedExtraSource()
     {
         // SyntheticUnionPlusExtraSource.dtsx (2026-09-06) -- a real, previously-SILENT
