@@ -119,6 +119,35 @@ public class LookupFlowTests
     }
 
     [Fact]
+    public void Generate_ReportsABlockingGap_ForAMulticastAndAggregateWithNoLookup()
+    {
+        // SyntheticMulticastAggregateSibling.dtsx (2026-09-06) -- a real, previously-SILENT
+        // correctness bug found by an independent review, not by this project's own test suite:
+        // flow.Aggregate and flow.Multicast are resolved entirely independently by
+        // PackagePlanner, so a plain Multicast (no Lookup at all) with one branch straight to a
+        // destination and a SECOND branch through an Aggregate to a DIFFERENT destination used
+        // to fall straight into GenerateAggregateFlow -- which never reads flow.Multicast --
+        // silently dropping the straight branch and wiring the Aggregate's own row against
+        // whichever destination happened to resolve first. Confirmed, before this fix existed,
+        // by actually building the resulting project: a real CS1061, reported as a fully-
+        // generatable package (0 blocking gaps). Now gapped explicitly instead, matching the one
+        // real evidenced Aggregate-behind-a-Multicast shape (always through a Lookup with exactly
+        // one live branch, see Generate_WiresALookupThenAggregateFlow_ThroughAMulticast above),
+        // which this fixture deliberately has none of.
+        var package = LoadSyntheticFixture("SyntheticMulticastAggregateSibling.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        // Zero files for this flow -- not a half-wired Program.cs referencing a destination
+        // that never got its own entity/transform.
+        Assert.Empty(result.Files.Where(f => f.RelativePath.EndsWith(".cs") && !f.RelativePath.Contains("Shared")));
+        var gap = Assert.Single(result.Gaps, g => g.Location == "DFT_MulticastAggregateSibling");
+        Assert.True(gap.IsBlocking);
+        Assert.Contains("Aggregate 'AGG_ByRegion' and Multicast 'MCAST_Split'", gap.Reason);
+        Assert.Contains("with no Lookup involved", gap.Reason);
+    }
+
+    [Fact]
     public void Generate_ReportsAGap_ForALookupThatDeclaresNoJoinKey()
     {
         // SyntheticLookupSplit.dtsx is the real reachable case: built through the object model

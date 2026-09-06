@@ -1342,11 +1342,14 @@ public class PackageGeneratorTests
             classFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        // Four unavoidable/unrelated gaps -- a SqlCommand-mode column-naming advisory PER SIDE
+        // Five unavoidable/unrelated gaps -- a SqlCommand-mode column-naming advisory PER SIDE
         // (both sources are SqlCommand-mode), the unresolved-auth-mode fallback (a Flat File
-        // Destination resolves no target server/database of its own), and Notification. None of
-        // them is about the Merge/interleave itself.
-        Assert.Equal(4, result.Gaps.Count);
+        // Destination resolves no target server/database of its own), Notification, and (a real,
+        // previously-silent gap caught 2026-09-06 by an independent review, same as
+        // Generate_WrapsBothSidesInConcatenatingRowSource_ForAGenuinelyMultiSourceUnionAll below)
+        // the no-starter-test-coverage advisory every GenerateUnionFlow-shaped flow now gets.
+        // None of them is about the Merge/interleave logic itself.
+        Assert.Equal(5, result.Gaps.Count);
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticMergeInterleaveProbe.Notification");
     }
 
@@ -1372,7 +1375,16 @@ public class PackageGeneratorTests
             classFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        Assert.Equal(4, result.Gaps.Count);
+        // 5, not 4: a real, previously-silent gap caught 2026-09-06 by an independent review --
+        // this flow used to reach this point with NO starter test coverage AND no acknowledgment
+        // at all (its own UnionFlowSource matches neither the generic SQL/Excel source-test
+        // loop's type checks nor csvSampleCandidates, and ComponentTestEmitter has no
+        // Union-specific test method the way Merge Join gets its own mapper test).
+        Assert.Equal(5, result.Gaps.Count);
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticUnionTwoSources.Notification");
+        var testOracleGap = Assert.Single(result.Gaps, g => g.Kind == GapKind.TestOracle);
+        Assert.False(testOracleGap.IsBlocking);
+        Assert.Contains("no starter test coverage in this pilot", testOracleGap.Reason);
+        Assert.DoesNotContain(result.SiblingFiles, f => f.RelativePath.EndsWith("SourceTests.cs"));
     }
 }

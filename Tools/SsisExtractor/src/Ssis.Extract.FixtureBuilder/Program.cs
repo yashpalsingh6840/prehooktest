@@ -80,7 +80,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources]");
             return 2;
         }
 
@@ -261,6 +261,10 @@ internal static class Program
         {
             return BuildMulticastDiscardFixture(args[0]);
         }
+        if (fixtureName == "multicast-aggregate-sibling")
+        {
+            return BuildMulticastAggregateSiblingFixture(args[0]);
+        }
         if (fixtureName == "execute-package-task")
         {
             return BuildExecutePackageTaskFixture(args[0]);
@@ -283,7 +287,7 @@ internal static class Program
         }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', or 'event-handler-probe'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', or 'event-handler-probe'.");
 
             return 2;
         }
@@ -884,6 +888,113 @@ internal static class Program
         rcInst.AcquireConnections(null);
         rcInst.ReinitializeMetaData();
         rcInst.ReleaseConnections();
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A plain Multicast whose two live branches go to TWO DIFFERENT destinations -- one straight
+    /// (a passthrough), one through an Aggregate -- with NO Lookup anywhere. Built 2026-09-06 to
+    /// reproduce a real, previously-silent correctness bug (not a missing-test gap, unlike every
+    /// other synthetic fixture built for this "gaps not guesses" reason): PackageGenerator's own
+    /// per-flow dispatch checks flow.Aggregate before flow.Multicast and, once Aggregate is set,
+    /// calls GenerateAggregateFlow unconditionally -- which never reads flow.Multicast at all, so
+    /// the OTHER branch (this fixture's own straight-passthrough destination) used to be silently
+    /// dropped (no file, no gap) while the Aggregate's own row got wired against whichever
+    /// destination PackagePlanner picked first, producing a build-breaking CS1061 while
+    /// generate-report.md claimed 0 blocking gaps. The ONE real evidenced Aggregate-behind-a-
+    /// Multicast shape (RBC_Demo_ETL's own DFT_LookupAndAggregate) always goes through a Lookup
+    /// with exactly one live branch -- see BuildLookupThenAggregateFixture -- so this exact
+    /// no-Lookup composition is deliberately unevidenced here too; this fixture exists purely to
+    /// prove the generator now GAPS it instead of silently mis-generating it.
+    ///
+    /// Backing tables: tests/Ssis.Extract.Tests/Fixtures/synthetic-multicast-aggregate-sibling-tables.sql.
+    /// </summary>
+    private static int BuildMulticastAggregateSiblingFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticMulticastAggregateSibling" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_MulticastAggregateSibling";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, Region, CustomerID FROM dbo.SyntheticMulticastAggSiblingSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+
+        var mcMeta = pipe.ComponentMetaDataCollection.New();
+        mcMeta.ComponentClassID = "Microsoft.Multicast";
+        var mcInst = mcMeta.Instantiate();
+        mcInst.ProvideComponentProperties();
+        mcMeta.Name = "MCAST_Split";
+        AttachPath(pipe, srcOutput, mcMeta.InputCollection[0]);
+        mcInst.AcquireConnections(null);
+        mcInst.ReinitializeMetaData();
+        mcInst.ReleaseConnections();
+
+        // --- Output 1 -> straight passthrough to Destination A (the branch that used to be
+        // silently dropped) ---
+        var mcOutput1 = mcMeta.OutputCollection.Cast<IDTSOutput100>().Single();
+
+        var destAMeta = AddOleDbComponent(pipe, "OLE DB Destination A", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticMulticastAggSiblingTargetA]");
+        AttachPath(pipe, mcOutput1, destAMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destAMeta, isDestination: true);
+
+        // --- Output 2 -> Aggregate -> Destination B (the Aggregate's own real target) ---
+        var mcOutput2 = mcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.ID != mcOutput1.ID);
+
+        var aggMeta = pipe.ComponentMetaDataCollection.New();
+        aggMeta.ComponentClassID = "Microsoft.Aggregate";
+        var aggInst = aggMeta.Instantiate();
+        aggInst.ProvideComponentProperties();
+        aggMeta.Name = "AGG_ByRegion";
+
+        AttachPath(pipe, mcOutput2, aggMeta.InputCollection[0]);
+        aggInst.AcquireConnections(null);
+        aggInst.ReinitializeMetaData();
+        aggInst.ReleaseConnections();
+
+        // Same real constraint BuildLookupThenAggregateFixture's own comment already measured:
+        // Aggregate demands every mapped input column actually be used by SOME output, unlike a
+        // plain destination -- only the two columns this Aggregate actually needs are mapped.
+        var aggInput = aggMeta.InputCollection[0];
+        var aggVirtualInput = aggInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in aggVirtualInput.VirtualInputColumnCollection)
+        {
+            if (vcol.Name is "Region" or "CustomerID")
+                aggInst.SetUsageType(aggInput.ID, aggVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var regionInputCol = aggInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "Region");
+        var customerIdInputCol = aggInput.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == "CustomerID");
+
+        var aggOutput = aggMeta.OutputCollection[0];
+
+        var groupByOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, 0, "Region", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, groupByOutCol.ID, "AggregationColumnId", regionInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, groupByOutCol.ID, "AggregationType", 0); // GroupBy
+
+        var countOutCol = aggInst.InsertOutputColumnAt(aggOutput.ID, 1, "CustomerCount", "");
+        aggInst.SetOutputColumnProperty(aggOutput.ID, countOutCol.ID, "AggregationColumnId", customerIdInputCol.LineageID);
+        aggInst.SetOutputColumnProperty(aggOutput.ID, countOutCol.ID, "AggregationType", 1); // Count
+
+        var destBMeta = AddOleDbComponent(pipe, "OLE DB Destination B", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticMulticastAggSiblingTargetB]");
+        AttachPath(pipe, aggOutput, destBMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destBMeta, isDestination: true);
+        // A third Multicast output now exists, unconnected/"dangling" -- left as-is, matching
+        // BuildMulticastFixture's own already-confirmed real behavior.
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));

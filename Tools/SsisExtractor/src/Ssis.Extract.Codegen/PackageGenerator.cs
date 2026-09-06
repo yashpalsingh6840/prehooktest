@@ -260,6 +260,34 @@ public static partial class PackageGenerator
             // output is a structurally different row shape from the flow's raw source (fewer
             // rows, new column set), so it must be resolved on its own dedicated path rather
             // than the ordinary single-destination flow below.
+            //
+            // A real, previously-SILENT correctness bug, found 2026-09-06 by an independent
+            // review, not by this project's own test suite: flow.Multicast and flow.Aggregate are
+            // resolved entirely independently by PackagePlanner (unlike ConditionalSplit/Multicast,
+            // which ARE mutually exclusive there), so a plain Multicast feeding one live branch
+            // straight to a destination and a SECOND live branch into an Aggregate -- with no
+            // Lookup at all, the only shape this generator's own GenerateLookupThenAggregateFlow
+            // was ever built to handle -- used to fall straight into GenerateAggregateFlow here,
+            // which never reads flow.Multicast at all. Every OTHER branch is silently dropped (no
+            // file, no gap), flow.DestinationComponent resolves to whichever branch's destination
+            // PackagePlanner happened to pick FIRST (not necessarily the Aggregate's own real
+            // target), and the Aggregate's own row shape gets wired against THAT destination's
+            // unrelated schema -- reported as a fully-generatable package (0 blocking gaps) while
+            // the generated project fails to even COMPILE (a real CS1061, confirmed against a
+            // disposable fixture built to reproduce this exact shape). Gapped explicitly instead,
+            // the same "don't guess, name it" response every other unsupported flow composition in
+            // this file already gets -- this shape is unevidenced anywhere in the tracked portfolio
+            // (the one real Aggregate-behind-a-Multicast case always goes through a Lookup with
+            // exactly one live branch, which GenerateLookupThenAggregateFlow already handles
+            // correctly), so this generator makes no attempt to support it, only to stop silently
+            // mis-generating it.
+            if (flow.Aggregate is not null && flow.Multicast is not null)
+            {
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"Aggregate '{flow.Aggregate.Component.Name}' and Multicast '{flow.Multicast.Component.Name}' both appear in the same Data Flow Task with no Lookup involved -- an Aggregate downstream of a Multicast is only supported when reached through a Lookup's own live branch (see GenerateLookupThenAggregateFlow); a plain Multicast+Aggregate composition with no Lookup is not evidenced anywhere and not supported yet. Every other Multicast branch would otherwise be silently dropped."));
+                continue;
+            }
+
             if (flow.Aggregate is { } aggregate)
             {
                 var aggregateFlow = GenerateAggregateFlow(
@@ -1295,6 +1323,18 @@ public static partial class PackageGenerator
 
         if (!isFlatFileDestination && authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
             (authMode, userId, targetServer, targetDatabase) = auth;
+
+        // No starter test coverage exists for a multi-source Merge/UnionAll flow at all -- a real,
+        // previously-silent gap (caught 2026-09-06 by an independent review against
+        // Docs/Generated-Tests-Plan.md, the same "wired for shape X, not shape Y" bug class the
+        // Lookup+Aggregate and ForEach-Loop-over-a-Data-Flow-Task gaps above already named): a
+        // UnionFlowSource is its own type, matching neither the generic SQL/Excel source-test
+        // loop's `is SqlFlowSource`/`is ExcelFlowSource` checks nor csvSampleCandidates, and
+        // ComponentTestEmitter has no Union-specific test method the way Merge Join gets its own
+        // mapper test. Gapped honestly instead of guessing at a new test shape under time pressure.
+        gaps.Add(new GenerationGap(flow.TaskName,
+            $"'{transformClassName}' (Merge/UnionAll '{union.Component.Name}') has no starter test coverage in this pilot -- neither its own multi-source read, its transform, nor its sink has a dedicated test shape yet. Verify by hand.",
+            IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: union.Component.RefId));
 
         return new ProgramFlowSpec(flow.TaskName, unionSource, rowTypeName, entityName, transformClassName, sink);
     }

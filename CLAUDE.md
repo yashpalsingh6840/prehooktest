@@ -7453,6 +7453,76 @@ tests" column counts every `testFiles` entry (including non-`[Fact]` infrastruct
 is genuinely stripped (an unfillable `TEST-ORACLE`/`LOCAL-DATA` gap that will never close) -- it
 resumes at the same step forever, which is harmless (idempotent) but not a clean "done" state.
 
+### A second independent review, specifically hunting the two just-shipped fixes (2026-09-06, later the same day)
+
+After committing the two Part-A fixes (`6b9f532`), a SECOND standalone review prompt
+(`Docs/Generated-Tests-Plan-Review-Prompt-2.md`) was written and handed to a fresh agent,
+explicitly told not to trust the commit, `CLAUDE.md`, or a green suite -- this exact area had
+already shipped one real bug earlier the same day that only building the generated output
+caught, not the gap count. The brief: re-derive both fixes from the raw diff, specifically
+stress the untested `lookupKey is null` branch of the Lookup+Aggregate fix, and hunt for a
+FIFTH instance of the "wired for shape X, not shape Y" bug class before accepting there were
+only two.
+
+**Both shipped fixes held up.** The `lookupKey is null` branch (never exercised by the one real
+fixture, which always takes the `is not null` path) was independently built and proven for real:
+a disposable fixture with a plain-passthrough GroupBy column produced the real "Aggregate
+source" test, and the whole solution built 0/0 and the test passed. `GenerateForEachDataFlowLoop`'s
+advisory was confirmed to fire exactly once with a correct `EvidenceRefId`.
+
+**But the hunt for a fifth instance found a SIXTH -- and this one is a production correctness
+bug, not a missing test.** `PackagePlanner.PlanDataFlow` resolves `flow.Aggregate` and
+`flow.Multicast` entirely independently (unlike ConditionalSplit/Multicast, which genuinely are
+mutually exclusive there) -- but `PackageGenerator.Generate`'s per-flow dispatch checked
+`flow.Aggregate` before ever looking at `flow.Multicast`, and called `GenerateAggregateFlow`
+unconditionally once Aggregate was set. `GenerateAggregateFlow` never reads `flow.Multicast` at
+all. So a plain Multicast (NO Lookup anywhere -- the one real evidenced Aggregate-behind-a-
+Multicast shape, `DFT_LookupAndAggregate`, always has exactly one live branch through a Lookup,
+which `GenerateLookupThenAggregateFlow` already handles correctly) with one branch straight to a
+destination and a second branch through an Aggregate to a DIFFERENT destination used to: drop
+the straight branch silently (no file, no gap), wire the Aggregate's own row against whichever
+destination `PackagePlanner` happened to resolve first (not necessarily the Aggregate's own real
+target), and report the package as **fully generatable (0 blocking gaps)** while the generated
+project **fails to even compile** (a real `CS1061`, confirmed against a disposable fixture built
+specifically to reproduce this exact shape). Worse than either of today's earlier two fixes,
+which were silent but not WRONG.
+
+**Fixed the same session.** `PackageGenerator.Generate`'s dispatch now checks
+`flow.Aggregate is not null && flow.Multicast is not null` (by the time this runs, `flow.Lookup`
+is already guaranteed null -- every Lookup branch above it unconditionally `continue`s) and
+reports a named, BLOCKING gap instead of proceeding -- this shape is unevidenced anywhere in the
+tracked portfolio, so this generator makes no attempt to support it, only to stop silently
+mis-generating it. New permanent fixture, `SyntheticMulticastAggregateSibling.dtsx`
+(`Ssis.Extract.FixtureBuilder`'s new `multicast-aggregate-sibling` mode: OLE DB Source ->
+Multicast -> {straight to Destination A, through Aggregate to Destination B}, no Lookup) --
+verified end to end: `ssisx generate` now reports **0 files written, 1 blocking gap** naming
+both component names and the reason, instead of silently succeeding into broken code. New
+regression test, `LookupFlowTests.Generate_ReportsABlockingGap_ForAMulticastAndAggregateWithNoLookup`.
+
+**A second, real gap was also found and closed the same round**: `GenerateUnionFlow` (a
+multi-source Merge/UnionAll flow) reaches its own return with **zero test coverage and zero
+gap** -- its own `UnionFlowSource` matches neither the generic SQL/Excel source-test loop's type
+checks nor `csvSampleCandidates`, and `ComponentTestEmitter` has no Union-specific test method
+the way Merge Join gets its own mapper test. Closed with the same honest `GapKind.TestOracle`
+advisory pattern used for the two earlier gaps this session, rather than inventing a new test
+shape under time pressure. Verified against the real `SyntheticUnionTwoSources.dtsx` fixture:
+the new gap fires exactly once, 0 warnings/0 errors, 1/1 green. Two pre-existing tests needed
+their own gap-count assertions bumped by one (`Generate_WrapsBothSidesInConcatenatingRowSource_
+ForAGenuinelyMultiSourceUnionAll`, `Generate_WrapsBothSidesInMergeInterleaveRowSource_
+ForAGenuinelyMultiSourceMerge` -- `Microsoft.Merge` goes through the identical `GenerateUnionFlow`
+path as `Microsoft.UnionAll`, so both needed the same update).
+
+**One item from the review deliberately left as a minor follow-up, not fixed:**
+`GenerateMergeJoinFlow`'s own downstream-transform gap check (`flow.DerivedColumn is not null ||
+flow.DataConversion is not null`) is dead code -- `PlanMergeJoin` always constructs its
+`DataFlowPlan` with both fields null, and the planner rejects any non-direct-to-destination Merge
+Join earlier anyway, so this branch can never fire. Not a correctness bug (Merge Join itself IS
+correctly tested, via its own dedicated mapper test) and not touched this round -- purely a stale
+comment/dead branch, named here rather than silently left for someone to rediscover.
+
+Full suite green after both fixes: 149+156+16+**358**+94+11+7 = **791** (was 790, +1 for the new
+`Generate_ReportsABlockingGap_ForAMulticastAndAggregateWithNoLookup` test).
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,
