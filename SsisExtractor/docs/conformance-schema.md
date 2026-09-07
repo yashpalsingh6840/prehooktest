@@ -1,6 +1,6 @@
 # `ssisx conformance` — gate 1 output
 
-Gate 1 of [`Migration-Validation-Plan.md`](../../../Migration-Validation-Plan.md) §3:
+Gate 1 of [`Migration-Validation-Plan.md`](../../../Docs/Migration-Validation-Plan.md) §3:
 turn the extracted spec into the list of obligations a replacement must satisfy, and
 report how many are actually accounted for.
 

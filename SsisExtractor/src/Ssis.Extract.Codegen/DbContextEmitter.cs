@@ -56,8 +56,8 @@ public static class DbContextEmitter
             // Destinations, e.g. RBC_Demo_ETL's own Package_Exports.dtsx once its one ADO NET
             // destination hits its own separate, pre-existing "direct-copy" gap) still needs A
             // DbContext -- IUnitOfWork's whole-package transaction (UnitOfWork.cs) is backed by
-            // one regardless of whether anything maps to a table, so PackageRunner/ExecuteSqlStep/
-            // FlatFileBulkSink all still need SOMETHING to resolve. Every table that was PASSED
+            // one regardless of whether anything maps to a table, so the generated Program.cs/
+            // ExecuteSqlStep/FlatFileBulkSink all still need SOMETHING to resolve. Every table that was PASSED
             // IN but individually failed EmitOneTable (a real per-table generation problem) still
             // fails the whole context, unchanged.
             if (tables.Count > 0)

@@ -270,6 +270,10 @@ public static class TransformEmitter
         }
 
         var assignments = new List<string>();
+        // One entry per Derived-Column-computed destination column: a small, named, independently
+        // callable function (see AddComputeMethod's own doc comment for why this is scoped to
+        // Derived Column only, not every non-passthrough branch).
+        var computeMethods = new List<string>();
         // Tier-2 Fill_* declarations (--seams). Empty unless EmitSeams and a Script Component
         // genuinely produces one of this destination's columns.
         var seams = new List<string>();
@@ -289,7 +293,12 @@ public static class TransformEmitter
 
                 var expr = ((TranslatedOk)translated).CSharpExpression;
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                var methodName = $"Compute{column.ExternalColumnName}";
+                var isNullable = request.NullableColumnNames?.Contains(column.PipelineColumnName) ?? false;
+                var returnType = column.Type is null ? "object" : column.Type.ClrTypeName + (isNullable ? "?" : "");
+                AddComputeMethod(computeMethods, methodName, returnType, request.RowTypeName, expr,
+                    derivedColumn.FriendlyExpression ?? derivedColumn.Expression);
+                assignments.Add($"        {column.ExternalColumnName} = {methodName}(row, ctx),");
             }
             else if (convertedByName.TryGetValue(column.PipelineColumnName, out var conversion))
             {
@@ -312,16 +321,14 @@ public static class TransformEmitter
                 // KeyNotFoundException is the faithful translation. A Lookup that redirects
                 // no-match rows is a different, unsupported shape -- PackageGenerator gaps it
                 // rather than reaching here.
-                assignments.Add($"        {column.ExternalColumnName} = {join.CacheParameterName}[row.{join.InputColumnName}].{referenceColumn},");
+                assignments.Add($"        {column.ExternalColumnName} = {LookupJoinExpressionBuilder.Build(join, referenceColumn)},");
             }
             else if (flatFileStringConversionColumns.Contains(column.PipelineColumnName))
             {
                 // A nullable-inferred source column needs a null-conditional ToString() (empty
                 // string for a genuine NULL) rather than a plain one, which would NullReferenceException.
                 var isNullable = request.NullableColumnNames?.Contains(column.PipelineColumnName) == true;
-                var expr = isNullable
-                    ? $"row.{column.PipelineColumnName}?.ToString() ?? \"\""
-                    : $"row.{column.PipelineColumnName}.ToString()";
+                var expr = FlatFileStringConversionExpressionBuilder.Build(column.PipelineColumnName, isNullable);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
             else if (narrowedR8ToI4Columns.Contains(column.PipelineColumnName))
@@ -330,31 +337,31 @@ public static class TransformEmitter
                 // shape works whether or not this column is nullable-inferred, unlike the Flat
                 // File string-conversion case above (which needs the null-conditional `?`
                 // operator itself, not just an overload).
-                var expr = $"SsisFn.NarrowR8ToI4(row.{column.PipelineColumnName})";
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowR8ToI4, column.PipelineColumnName);
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
             else if (narrowedI8ToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = $"SsisFn.NarrowI8ToI4(row.{column.PipelineColumnName})";
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowI8ToI4, column.PipelineColumnName);
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
             else if (narrowedNumericToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = $"SsisFn.NarrowNumericToI4(row.{column.PipelineColumnName})";
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowNumericToI4, column.PipelineColumnName);
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
             else if (narrowedR4ToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = $"SsisFn.NarrowR4ToI4(row.{column.PipelineColumnName})";
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowR4ToI4, column.PipelineColumnName);
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
             else if (parsedWstrToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = $"SsisFn.ParseWstrToI4(row.{column.PipelineColumnName})";
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.ParseWstrToI4, column.PipelineColumnName);
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
@@ -384,6 +391,15 @@ public static class TransformEmitter
                         $"column '{column.PipelineColumnName}' is produced by Script Component '{producer.Name}' -- emitted as a `private partial {seamType} {methodName}({request.RowTypeName} row, in RowContext ctx)` seam. The project will not compile (CS8795) until a second part of '{request.TransformClassName}' implements it; apply one with `ssisx apply-fills`.",
                         Kind: GapKind.ScriptComponentColumn,
                         EvidenceRefId: producer.RefId));
+
+                    // Companion "Script Task / Script Component seam" taxonomy row
+                    // (Docs/Generated-Tests-Plan.md): a filled seam is human logic, and a test for
+                    // it is a test-oracle packet, not something the deterministic emitter can
+                    // derive -- a separate, non-blocking work item from the port itself, sharing
+                    // its own Location so both land under the same column in `gaps.json`.
+                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                        $"column '{column.ExternalColumnName}' ({methodName}) has no generated test at all (a filled seam is human logic -- see the TEST-ORACLE work packet for this column to write one).",
+                        IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: producer.RefId));
                     continue;
                 }
 
@@ -408,14 +424,44 @@ public static class TransformEmitter
             return new TransformEmitResult(new EmitResult([], gaps), functionsUsed);
         }
 
-        var lines = BuildFile(request, assignments, functionsUsed, seams);
+        var lines = BuildFile(request, assignments, functionsUsed, seams, computeMethods);
         var file = new GeneratedFile($"Mapping/{request.TransformClassName}.cs", Rendering.JoinLines(lines));
         return new TransformEmitResult(new EmitResult([file], gaps), functionsUsed);
     }
 
-    private static List<string> BuildFile(TransformRequest request, List<string> assignments, HashSet<string> functionsUsed, List<string> seams)
+    /// <summary>Appends one Derived-Column-computed value as its own named, callable, public
+    /// static function -- called from Map() instead of having its expression inlined into the
+    /// object initializer -- so a developer can call e.g. <c>EmployeeTransform.ComputeEmployeeKey(row, ctx)</c>
+    /// directly in a focused unit test, without building a whole entity via Map() first, and can
+    /// read the originating SSIS expression right above it.
+    ///
+    /// <para>Deliberately scoped to Derived Column outputs only -- NOT every non-passthrough
+    /// branch in <see cref="Emit"/>. A Data Conversion/Lookup-join/numeric-coercion assignment is
+    /// already exactly one call to an already-named, already-independently-unit-tested helper
+    /// (<c>SsisFn.*</c>, <c>LookupJoinExpressionBuilder</c>, <c>NumericCoercionExpressionBuilder</c>,
+    /// <c>FlatFileStringConversionExpressionBuilder</c>) -- wrapping that single call in a second,
+    /// per-column function would add a layer of indirection with nothing new to test, working
+    /// against "as simple as possible". A Derived Column's own expression, by contrast, can be an
+    /// arbitrarily complex nested tree (string concatenation, casts, ternaries, several SsisFn
+    /// calls chained together) unique to this one package -- exactly the shape worth naming and
+    /// isolating.</para>
+    /// </summary>
+    private static void AddComputeMethod(List<string> computeMethods, string methodName, string returnType,
+        string rowTypeName, string expression, string? ssisExpressionComment)
     {
-        var usesWidthGuard = assignments.Any(a => a.Contains("WidthGuard.Wstr("));
+        if (computeMethods.Count > 0) computeMethods.Add("");
+        if (ssisExpressionComment is not null)
+            computeMethods.Add($"    // {ssisExpressionComment}");
+        computeMethods.Add($"    public static {returnType} {methodName}({rowTypeName} row, in RowContext ctx) => {expression};");
+    }
+
+    private static List<string> BuildFile(TransformRequest request, List<string> assignments, HashSet<string> functionsUsed, List<string> seams, List<string> computeMethods)
+    {
+        // WidthGuard.Wstr(...) calls can live in either assignments (a plain, uncomputed
+        // truncation -- not evidenced anywhere today, but not ruled out either) or computeMethods
+        // (the normal case now that a Derived Column's expression moved into its own function) --
+        // scan both, or a Derived-Column-computed truncation silently loses its using line.
+        var usesWidthGuard = assignments.Any(a => a.Contains("WidthGuard.Wstr(")) || computeMethods.Any(a => a.Contains("WidthGuard.Wstr("));
 
         var lines = new List<string>
         {
@@ -452,6 +498,11 @@ public static class TransformEmitter
         lines.Add("    {");
         lines.AddRange(assignments);
         lines.Add("    };");
+        if (computeMethods.Count > 0)
+        {
+            lines.Add("");
+            lines.AddRange(computeMethods);
+        }
         if (seams.Count > 0)
         {
             lines.Add("");
@@ -677,7 +728,11 @@ public static class TransformEmitter
         _ => null,
     };
 
-    private static Dictionary<string, PipelineOutputColumnSpec> BuildColumnTypeLookup(PipelineSpec pipeline)
+    /// <summary>Internal, not private -- TransformTestEmitter reuses this exact producer-column
+    /// lookup (RefId -> its own output column, the same one lineage edges resolve against) so a
+    /// starter test's referenced-column type resolution matches this emitter's own exactly,
+    /// rather than re-deriving it.</summary>
+    internal static Dictionary<string, PipelineOutputColumnSpec> BuildColumnTypeLookup(PipelineSpec pipeline)
     {
         var map = new Dictionary<string, PipelineOutputColumnSpec>();
         foreach (var component in pipeline.Components)

@@ -13,4 +13,15 @@
     <Project Path="tests/Ssis.Extract.Tests/Ssis.Extract.Tests.csproj" />
     <Project Path="tests/Ssis.Runtime.Expressions.Tests/Ssis.Runtime.Expressions.Tests.csproj" />
   </Folder>
+  <!-- SvkCore/SvkCli physically live under Tools/SsisValidationKit/ and keep their own
+       SsisValidationKit.slnx valid for anyone iterating on svk in isolation; added here too
+       so ONE `dotnet build SsisExtractor.slnx` produces both ssisx.exe and svk.exe (see
+       Tools/README.md). This does not relax the governance boundary: SvkCore/SvkCli may
+       reference only Ssis.Extract.Model and Ssis.Extract.Dtsx, never Ssis.Extract.Codegen or
+       Ssis.Extract.Cli, regardless of shared solution membership; see the doc comment on
+       SvkCore.csproj itself, which is the boundary's real enforcement point, not this file. -->
+  <Folder Name="/svk/">
+    <Project Path="../SsisValidationKit/src/SvkCore/SvkCore.csproj" />
+    <Project Path="../SsisValidationKit/src/SvkCli/SvkCli.csproj" />
+  </Folder>
 </Solution>

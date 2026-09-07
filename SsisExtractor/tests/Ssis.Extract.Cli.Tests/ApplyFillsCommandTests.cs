@@ -48,6 +48,15 @@ public class ApplyFillsCommandTests : IDisposable
         return path;
     }
 
+    private string WriteSubFill(string subfolder, string fileName, string content)
+    {
+        var dir = Path.Combine(_root, "fills", Package, subfolder);
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, fileName);
+        File.WriteAllText(path, content);
+        return path;
+    }
+
     private List<FillRecordSpec> ReadManifest() =>
         JsonSerializer.Deserialize<List<FillRecordSpec>>(File.ReadAllText(Path.Combine(_root, "fills-applied.json")))!;
 
@@ -56,6 +65,22 @@ public class ApplyFillsCommandTests : IDisposable
         GapId = GapId, Package = Package, Kind = GapKind.ScriptComponentColumn, Tier = GapTier.MissingLogic,
         Location = "Foo.Bar", Reason = "produced by a Script Component", IsBlocking = true,
         EvidenceSha256 = evidenceHash,
+    };
+
+    private const string TestOracleGapId = "TEST-ORACLE:Pkg:CSPLIT_X";
+    private static GapSpec TestOracleGap(string evidenceHash) => new()
+    {
+        GapId = TestOracleGapId, Package = Package, Kind = GapKind.TestOracle, Tier = GapTier.MissingDatum,
+        Location = "CSPLIT_X", Reason = "no generated test at all", IsBlocking = false,
+        EvidenceSha256 = evidenceHash,
+    };
+
+    private const string LocalDataGapId = "LOCAL-DATA:Pkg:FF_SRC_Foo";
+    private static GapSpec LocalDataGap() => new()
+    {
+        GapId = LocalDataGapId, Package = Package, Kind = GapKind.LocalFileSourceData, Tier = GapTier.MissingDatum,
+        Location = "FF_SRC_Foo", Reason = "still reads a deterministic synthetic sample", IsBlocking = false,
+        ExpectedFileName = "Foo.csv",
     };
 
     private void WriteClaim(string ruleId, string status)
@@ -362,5 +387,178 @@ public class ApplyFillsCommandTests : IDisposable
 
         Assert.Contains(ruleId, output);
         Assert.Contains("no claims file found", output);
+    }
+
+    // Docs/Generated-Tests-Plan.md phase 3: fills/<Package>/Tests/*.cs (TEST-ORACLE) and
+    // fills/<Package>/TestData/* (LOCAL-DATA) -- two new, structurally different routing shapes
+    // from the seam mechanism above (a whole new file, not a partial-method splice).
+
+    [Fact]
+    public void Run_AppliesATestOracleFill_WhenItsLeadingProvenanceHashMatchesTheCurrentGap()
+    {
+        WriteGaps(TestOracleGap(CurrentHash));
+        WriteSubFill("Tests", "CSPLIT_XTests.cs", $$"""
+            // ssisx-fill: GapId={{TestOracleGapId}} Author=tester Date=2026-09-06 EvidenceSha256={{CurrentHash}}
+            using Xunit;
+
+            namespace Pkg.Tests;
+
+            public class CSPLIT_XTests
+            {
+                [Fact]
+                public void Placeholder() => Assert.True(true);
+            }
+            """);
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(0, exitCode);
+        Assert.True(File.Exists(Path.Combine(_root, "generate", $"{Package}.Tests", "Fills", "CSPLIT_XTests.cs")));
+
+        var record = Assert.Single(ReadManifest());
+        Assert.Equal(FillStatus.Applied, record.Status);
+        Assert.Equal(TestOracleGapId, record.GapId);
+        Assert.Equal("tester", record.Author);
+        Assert.Equal(CurrentHash, record.RecordedEvidenceSha256);
+    }
+
+    [Fact]
+    public void Run_RefusesAStaleTestOracleFill_AndDoesNotCopyIt()
+    {
+        WriteGaps(TestOracleGap(CurrentHash));
+        WriteSubFill("Tests", "CSPLIT_XTests.cs", $$"""
+            // ssisx-fill: GapId={{TestOracleGapId}} Author=tester Date=2026-08-01 EvidenceSha256={{OldHash}}
+            using Xunit;
+
+            namespace Pkg.Tests;
+
+            public class CSPLIT_XTests
+            {
+                [Fact]
+                public void Placeholder() => Assert.True(true);
+            }
+            """);
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        // A stale TEST-ORACLE fill still bumps the exit code (same 3 as a stale seam) -- it HAS a
+        // fill, just an out-of-date one, worth flagging just as loudly even though the gap itself
+        // is non-blocking for the BUILD.
+        Assert.Equal(3, exitCode);
+        Assert.False(Directory.Exists(Path.Combine(_root, "generate", $"{Package}.Tests", "Fills")));
+
+        var record = Assert.Single(ReadManifest());
+        Assert.Equal(FillStatus.Stale, record.Status);
+        Assert.Equal(OldHash, record.RecordedEvidenceSha256);
+        Assert.Equal(CurrentHash, record.CurrentEvidenceSha256);
+    }
+
+    [Fact]
+    public void Run_ReportsATestOracleFileAsOrphaned_WhenItCarriesNoProvenanceCommentAtAll()
+    {
+        // Unlike a ScriptComponentColumn/ScriptTask fill, there is no seam NAME to fall back on
+        // here -- a whole new test file with no comment cannot be attributed to any gap at all.
+        WriteGaps(TestOracleGap(CurrentHash));
+        WriteSubFill("Tests", "CSPLIT_XTests.cs", """
+            using Xunit;
+
+            namespace Pkg.Tests;
+
+            public class CSPLIT_XTests
+            {
+                [Fact]
+                public void Placeholder() => Assert.True(true);
+            }
+            """);
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(1, exitCode);
+        Assert.False(Directory.Exists(Path.Combine(_root, "generate", $"{Package}.Tests", "Fills")));
+
+        var record = Assert.Single(ReadManifest());
+        Assert.Equal(FillStatus.Orphaned, record.Status);
+        Assert.Null(record.GapId);
+    }
+
+    [Fact]
+    public void Run_ReportsATestOracleFileAsOrphaned_WhenItsGapIdDoesNotMatchAnyCurrentGap()
+    {
+        WriteGaps(TestOracleGap(CurrentHash));
+        WriteSubFill("Tests", "CSPLIT_XTests.cs", $$"""
+            // ssisx-fill: GapId=TEST-ORACLE:Pkg:SomethingThatNoLongerExists Author=tester Date=2026-09-06 EvidenceSha256={{CurrentHash}}
+            using Xunit;
+
+            namespace Pkg.Tests;
+
+            public class CSPLIT_XTests
+            {
+                [Fact]
+                public void Placeholder() => Assert.True(true);
+            }
+            """);
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(1, exitCode);
+        var record = Assert.Single(ReadManifest());
+        Assert.Equal(FillStatus.Orphaned, record.Status);
+    }
+
+    [Fact]
+    public void Run_AppliesALocalDataFill_WhenItsFileNameMatchesTheExpectedName()
+    {
+        WriteGaps(LocalDataGap());
+        WriteSubFill("TestData", "Foo.csv", "ID,Name\r\n1,Alice\r\n");
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(0, exitCode);
+        var copied = Path.Combine(_root, "generate", Package, "TestData", "Foo.csv");
+        Assert.True(File.Exists(copied));
+        Assert.Equal("ID,Name\r\n1,Alice\r\n", File.ReadAllText(copied));
+
+        var record = Assert.Single(ReadManifest());
+        Assert.Equal(FillStatus.Applied, record.Status);
+        Assert.Equal(LocalDataGapId, record.GapId);
+        // No staleness concept for a raw data file -- see LocalFileSourceDataContract's own doc.
+        Assert.Null(record.RecordedEvidenceSha256);
+    }
+
+    [Fact]
+    public void Run_ReportsALocalDataFileAsOrphaned_WhenItsFileNameDoesNotMatchAnyCurrentGap()
+    {
+        WriteGaps(LocalDataGap());
+        WriteSubFill("TestData", "WrongName.csv", "ID,Name\r\n1,Alice\r\n");
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(1, exitCode);
+        Assert.False(Directory.Exists(Path.Combine(_root, "generate", Package, "TestData")));
+
+        var record = Assert.Single(ReadManifest());
+        Assert.Equal(FillStatus.Orphaned, record.Status);
+        Assert.Null(record.GapId);
+    }
+
+    [Fact]
+    public void Run_ReportsALocalDataGap_WithNoExpectedFileName_AsNeverMatchable()
+    {
+        // A gap with no derivable file name (an expression-driven connection manager) has
+        // nothing to match a fill's own name against -- confirmed by writing a file that would
+        // match the gap's own Location instead, which must NOT be treated as a match.
+        WriteGaps(new GapSpec
+        {
+            GapId = "LOCAL-DATA:Pkg:FF_SRC_NoPath", Package = Package, Kind = GapKind.LocalFileSourceData,
+            Tier = GapTier.MissingDatum, Location = "FF_SRC_NoPath", Reason = "no design-time default path",
+            IsBlocking = false, ExpectedFileName = null,
+        });
+        WriteSubFill("TestData", "FF_SRC_NoPath.csv", "ID,Name\r\n1,Alice\r\n");
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(1, exitCode);
+        var record = Assert.Single(ReadManifest());
+        Assert.Equal(FillStatus.Orphaned, record.Status);
     }
 }

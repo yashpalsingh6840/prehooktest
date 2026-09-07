@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using Ssis.Extract.Dtsx;
+using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Package;
 using Ssis.Extract.Model.Shared;
 
@@ -15,6 +16,44 @@ public class PackageGeneratorTests
         var fixturesDir = Path.GetFullPath(Path.Combine(
             Path.GetDirectoryName(ThisFilePath())!, "..", "Ssis.Extract.Tests", "Fixtures"));
         return DtsxPackageReader.Read(Path.Combine(fixturesDir, dtsxFileName), noRedact: false);
+    }
+
+    // Docs/Generated-Tests-Plan.md's own "Opt-out": --skip-tests omits the whole
+    // {Package}.Tests project, and its own TEST-ORACLE/LocalFileSourceData gaps alongside it --
+    // there is nothing for either to be an oracle/sample-data answer to once no test exists at
+    // all. Uses a package with a real Script Task AND a real CSV source so both companion-gap
+    // removal paths are exercised in one test, not just one.
+    [Fact]
+    public void Generate_OmitsTheWholeTestsProject_AndItsOwnTestOracleAndLocalDataGaps_WhenSkipTestsIsSet()
+    {
+        var package = LoadSyntheticFixture("SyntheticScriptTaskSeams.dtsx");
+
+        var withTests = PackageGenerator.Generate(package, namespacePrefix: null, emitSeams: true, skipTests: false);
+        var withoutTests = PackageGenerator.Generate(package, namespacePrefix: null, emitSeams: true, skipTests: true);
+
+        // Sanity: the fixture genuinely produces test-related gaps when tests are ON, or this
+        // test would pass vacuously.
+        Assert.Contains(withTests.Gaps, g => g.Kind == GapKind.TestOracle);
+        Assert.Contains(withTests.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
+        Assert.NotEmpty(withTests.SiblingFiles);
+
+        Assert.Empty(withoutTests.SiblingFiles);
+        Assert.DoesNotContain(withoutTests.Gaps, g => g.Kind is GapKind.TestOracle or GapKind.LocalFileSourceData);
+        // The unrelated ScriptTask seam gaps (a genuinely different concern from --skip-tests)
+        // are completely unaffected -- skipping tests never silently hides a real seam gap.
+        Assert.Equal(
+            withTests.Gaps.Count(g => g.Kind == GapKind.ScriptTask),
+            withoutTests.Gaps.Count(g => g.Kind == GapKind.ScriptTask));
+
+        // README.md must not describe tests that were never written -- checked directly, not
+        // assumed, since PackageReadmeEmitter reads the same (now-cleared) testFiles list. The
+        // WITH-tests README names this exact file in SQL_Truncate's own "Test" column; confirmed
+        // present there first, then confirmed absent once tests are skipped.
+        var readmeWithTests = Assert.Single(withTests.Files, f => f.RelativePath == "README.md");
+        Assert.Contains("SQL_TruncateStatementTests.cs", readmeWithTests.Content);
+
+        var readmeWithoutTests = Assert.Single(withoutTests.Files, f => f.RelativePath == "README.md");
+        Assert.DoesNotContain("SQL_TruncateStatementTests.cs", readmeWithoutTests.Content);
     }
 
     [Fact]
@@ -67,20 +106,54 @@ public class PackageGeneratorTests
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.Contains("var syntheticPostFlowTargetFlow = new DataFlowStep<", programFile.Content);
+        // Emitter rewrite: one method per SSIS task/component, on the package class
+        // (SyntheticPostFlowSql.cs), not Program.cs -- named after the task itself
+        // (DFT_Load/SQL_PreLoad/SQL_PostLoad), called in order from RunAsync.
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticPostFlowSql.cs");
+        Assert.Contains("internal async Task DFT_Load(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains("var step = new DataFlowStep<", classFile.Content);
+        // The SQL text itself is no longer an inline literal -- it's a named, independently
+        // testable BuildStatement() call (SqlStatementBuilderEmitter).
         Assert.Contains(
-            "var sQL_PostLoadStep = new ExecuteSqlStep(\"SQL_PostLoad\", \"UPDATE dbo.SyntheticPostFlowTarget SET Name = UPPER(Name);\", sp.GetRequiredService<ILogger<ExecuteSqlStep>>());",
-            programFile.Content);
-        Assert.Contains("Steps: [syntheticPostFlowTargetFlow, sQL_PostLoadStep],", programFile.Content);
-        Assert.Contains("PreLoadFileActions: []);", programFile.Content);
-        Assert.Contains("PreLoadStatements: [\"TRUNCATE TABLE dbo.SyntheticPostFlowTarget;\"],", programFile.Content);
+            "internal async Task SQL_PostLoad(IUnitOfWork uow, CancellationToken ct)",
+            classFile.Content);
+        Assert.Contains("var step = new ExecuteSqlStep(\"SQL_PostLoad\", SQL_PostLoadStatement.BuildStatement(), Log<ExecuteSqlStep>());", classFile.Content);
+        Assert.Contains("await DFT_Load(uow, ct);", classFile.Content);
+        Assert.Contains("await SQL_PostLoad(uow, ct);", classFile.Content);
+        // The flow must run BEFORE the post-flow SQL step it follows.
+        Assert.True(classFile.Content.IndexOf("await DFT_Load(uow, ct);", StringComparison.Ordinal)
+                  < classFile.Content.IndexOf("await SQL_PostLoad(uow, ct);", StringComparison.Ordinal));
+        // Emitter rewrite phase 2: the pre-flow statement is no longer a special hard-coded
+        // pre-transaction call -- it's an ordinary method, same treatment as the post-flow one,
+        // and it must run BEFORE the flow it precedes.
+        Assert.Contains(
+            "internal async Task SQL_PreLoad(IUnitOfWork uow, CancellationToken ct)",
+            classFile.Content);
+        Assert.Contains("var step = new ExecuteSqlStep(\"SQL_PreLoad\", SQL_PreLoadStatement.BuildStatement(), Log<ExecuteSqlStep>());", classFile.Content);
+        Assert.True(classFile.Content.IndexOf("await SQL_PreLoad(uow, ct);", StringComparison.Ordinal)
+                  < classFile.Content.IndexOf("await DFT_Load(uow, ct);", StringComparison.Ordinal));
 
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        // The only real gap is the unavoidable, non-blocking Notification one.
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticPostFlowSql.Notification", gap.Location);
+        var statementFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SQL_PostLoadStatement.cs");
+        Assert.Contains("public static class SQL_PostLoadStatement", statementFile.Content);
+        Assert.Contains(
+            "public static string BuildStatement() => \"UPDATE dbo.SyntheticPostFlowTarget SET Name = UPPER(Name);\";",
+            statementFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(statementFile.Content);
+
+        var preLoadStatementFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SQL_PreLoadStatement.cs");
+        Assert.Contains("public static class SQL_PreLoadStatement", preLoadStatementFile.Content);
+        Assert.Contains(
+            "public static string BuildStatement() => \"TRUNCATE TABLE dbo.SyntheticPostFlowTarget;\";",
+            preLoadStatementFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(preLoadStatementFile.Content);
+
+        // The only two real gaps: the unavoidable, non-blocking Notification one, and a
+        // LocalFileSourceData gap for the CSV source (Docs/Generated-Tests-Plan.md phase 3).
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Single(result.Gaps, g => g.Location == "SyntheticPostFlowSql.Notification");
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
     }
 
     [Fact]
@@ -99,20 +172,27 @@ public class PackageGeneratorTests
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticSecondConnectionSql.cs");
+        Assert.Contains("internal async Task SQL_CacheSet_SecondDb(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
         Assert.Contains(
-            "var cM_SqlSecondDbConnectionString = SqlConnectionStringFactory.Build(builder.Configuration.GetSection(\"SecondaryConnections:CM_SqlSecondDb\").Get<DatabaseOptions>()",
-            programFile.Content);
+            "var connectionString = SqlConnectionStringFactory.Build(Config().GetSection(\"SecondaryConnections:CM_SqlSecondDb\").Get<DatabaseOptions>()",
+            classFile.Content);
         Assert.Contains(
-            "var sQL_CacheSet_SecondDbStep = new SecondaryConnectionSqlStep(\"SQL_CacheSet_SecondDb\", \"CM_SqlSecondDb\", cM_SqlSecondDbConnectionString, "
-            + "\"INSERT INTO dbo.SyntheticSecondConnectionLog (LogKey, LogValue) VALUES (N'LegacyImport', N'fixed-width import completed');\", "
-            + "sp.GetRequiredService<ILogger<SecondaryConnectionSqlStep>>());",
-            programFile.Content);
+            "var step = new SecondaryConnectionSqlStep(\"SQL_CacheSet_SecondDb\", \"CM_SqlSecondDb\", connectionString, "
+            + "SQL_CacheSet_SecondDbStatement.BuildStatement(), "
+            + "Log<SecondaryConnectionSqlStep>());",
+            classFile.Content);
         // Never an ordinary ExecuteSqlStep for this task -- that would run it on the wrong connection.
-        Assert.DoesNotContain("new ExecuteSqlStep(\"SQL_CacheSet_SecondDb\"", programFile.Content);
-        Assert.Contains("Steps: [syntheticSecondConnectionTargetFlow, sQL_CacheSet_SecondDbStep],", programFile.Content);
+        Assert.DoesNotContain("new ExecuteSqlStep(\"SQL_CacheSet_SecondDb\"", classFile.Content);
+        Assert.Contains("await DFT_Load(uow, ct);", classFile.Content);
+        Assert.Contains("await SQL_CacheSet_SecondDb(uow, ct);", classFile.Content);
 
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+
+        var statementFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SQL_CacheSet_SecondDbStatement.cs");
+        Assert.Contains(
+            "public static string BuildStatement() => \"INSERT INTO dbo.SyntheticSecondConnectionLog (LogKey, LogValue) VALUES (N'LegacyImport', N'fixed-width import completed');\";",
+            statementFile.Content);
 
         var appSettingsFile = Assert.Single(result.Files, f => f.RelativePath == "appsettings.json");
         Assert.Contains("\"SecondaryConnections\"", appSettingsFile.Content);
@@ -121,9 +201,31 @@ public class PackageGeneratorTests
         // Never the password -- same rule as TargetDatabase.
         Assert.DoesNotContain("Password", appSettingsFile.Content);
 
-        // The only real gap is the unavoidable, non-blocking Notification one.
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticSecondConnectionSql.Notification", gap.Location);
+        // "Secondary-connection SQL" taxonomy row (Docs/Generated-Tests-Plan.md) -- a step-level
+        // starter test asserting SQL_CacheSet_SecondDb never touches the shared uow, needing no
+        // real server (see TestDoublesEmitter's own unreachableSecondaryServer comment). Verified
+        // for real end to end (generated, built, actually run -- both green and deliberately
+        // corrupted-red) against .\SQLFORPOC_2022 -- see CLAUDE.md.
+        var stepTestFile = Assert.Single(result.SiblingFiles, f => f.RelativePath == "SyntheticSecondConnectionSql.Tests/SQL_CacheSet_SecondDbStepTests.cs");
+        Assert.Contains("await Assert.ThrowsAsync<SqlException>(() => package.SQL_CacheSet_SecondDb(uow, CancellationToken.None));", stepTestFile.Content);
+        Assert.Contains("Assert.Empty(uow.ExecutedSql);", stepTestFile.Content);
+        Assert.Contains("Assert.False(uow.BeginCalled);", stepTestFile.Content);
+
+        // PackageHarness must wire a fake, fast-failing SecondaryConnections config entry for
+        // this connection manager, or Config() would throw "not registered" before the step ever
+        // gets a chance to prove it never touches uow.
+        var harnessFile = Assert.Single(result.SiblingFiles, f => f.RelativePath == "SyntheticSecondConnectionSql.Tests/TestDoubles/PackageHarness.cs");
+        Assert.Contains("[\"SecondaryConnections:CM_SqlSecondDb:Server\"] = \"(local)\\\\NonexistentInstance12345\",", harnessFile.Content);
+        Assert.Contains("services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(secondaryConnectionConfig).Build());", harnessFile.Content);
+
+        // The only two real gaps: the unavoidable, non-blocking Notification one, and a
+        // LocalFileSourceData gap for the CSV source (Docs/Generated-Tests-Plan.md phase 3) --
+        // both non-blocking, neither affects generatability.
+        Assert.Equal(2, result.Gaps.Count);
+        var notificationGap = Assert.Single(result.Gaps, g => g.Location == "SyntheticSecondConnectionSql.Notification");
+        Assert.False(notificationGap.IsBlocking);
+        var localDataGap = Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
+        Assert.False(localDataGap.IsBlocking);
     }
 
     [Fact]
@@ -140,15 +242,18 @@ public class PackageGeneratorTests
         Assert.Contains(result.Files, f => f.RelativePath == "Sql/SyntheticOleDbSourceTargetSqlRow.cs");
         Assert.Contains(result.Files, f => f.RelativePath == "Sql/SyntheticOleDbSourceTargetSqlRowReader.cs");
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.Contains("using Etl.Core.Data;", programFile.Content);
-        Assert.Contains("var dbOptions = sp.GetRequiredService<IOptions<DatabaseOptions>>().Value;", programFile.Content);
-        Assert.Contains(
-            "CommandText = \"SELECT ID, Amount FROM dbo.SyntheticOleDbSourceInput\" };",
-            programFile.Content);
-        Assert.Contains("return new SqlRowSource<SyntheticOleDbSourceTargetSqlRow>(\"OLE DB Source\", sqlOptions, SyntheticOleDbSourceTargetSqlRowReader.Read, sp.GetRequiredService<IUnitOfWork>());", programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticOleDbSourceTransform.cs");
+        Assert.Contains("using Etl.Core.Data;", classFile.Content);
+        // Phase 4: constructed in its own method, named after the SSIS component itself
+        // (sanitized to a valid identifier -- "OLE DB Source" has no letters/digits/underscore
+        // stripped, so it becomes "OLEDBSource"), called from the flow's own method rather than
+        // inlined -- uow is passed straight through (no DI resolution), and the connection
+        // string comes from the Db() helper.
+        Assert.Contains("var source = OLEDBSource(uow);", classFile.Content);
+        Assert.Contains("internal IRowSource<SyntheticOleDbSourceTargetSqlRow> OLEDBSource(IUnitOfWork uow)", classFile.Content);
+        Assert.Contains("return new SqlRowSource<SyntheticOleDbSourceTargetSqlRow>(\"OLE DB Source\", new SqlSourceOptions { ConnectionString = SqlConnectionStringFactory.Build(Db()), CommandText = \"SELECT ID, Amount FROM dbo.SyntheticOleDbSourceInput\" }, SyntheticOleDbSourceTargetSqlRowReader.Read, uow);", classFile.Content);
 
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
         // Two expected gaps: the SqlCommand-mode column-name assumption, and the unavoidable
         // Notification one.
@@ -317,13 +422,17 @@ public class PackageGeneratorTests
 
         var validTransformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticDataConversionSplitTargetValidTransform.cs");
         Assert.Contains("SignupDate_dt = SsisFn.ToNullableDate(row.SignupDateText),", validTransformFile.Content);
+        // TenureDays is a genuine Derived Column output, so it's now its own named, callable
+        // function rather than inlined -- unlike SignupDate_dt above (a Data Conversion column,
+        // deliberately left as a single already-named SsisFn.* call, not double-wrapped).
         // The null-forgiving "!" before .Value in the non-null ternary branch -- without it,
         // calling SsisFn.ToNullableDate twice (once for the ISNULL check, once here) is a build
         // ERROR (CS8629) under this project's Nullable+TreatWarningsAsErrors, since Roslyn's
         // flow analysis never narrows a repeated METHOD CALL the way it narrows a plain
         // row-property reference. Caught only by actually building the generated project, not
         // unit tests alone.
-        Assert.Contains("TenureDays = ((SsisFn.ToNullableDate(row.SignupDateText) is null) ? -(1) : SsisFn.DateDiffDays(SsisFn.ToNullableDate(row.SignupDateText)!.Value, ctx.LoadedAtUtc)),", validTransformFile.Content);
+        Assert.Contains("TenureDays = ComputeTenureDays(row, ctx),", validTransformFile.Content);
+        Assert.Contains("public static int ComputeTenureDays(DFT_DataConversionSplitDemoSqlRow row, in RowContext ctx) => ((SsisFn.ToNullableDate(row.SignupDateText) is null) ? -(1) : SsisFn.DateDiffDays(SsisFn.ToNullableDate(row.SignupDateText)!.Value, ctx.LoadedAtUtc));", validTransformFile.Content);
 
         var invalidTransformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticDataConversionSplitTargetInvalidTransform.cs");
         Assert.Contains("SignupDate_dt = SsisFn.ToNullableDate(row.SignupDateText),", invalidTransformFile.Content);
@@ -349,11 +458,22 @@ public class PackageGeneratorTests
         CodeAssertions.AssertNoSyntaxErrors(entityFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(readerFile.Content);
 
-        // Two expected gaps: the SqlCommand-mode column-name assumption, and the unavoidable
-        // Notification one -- same shape as SyntheticDataConversion.dtsx's own test.
-        Assert.Equal(2, result.Gaps.Count);
+        // Five expected gaps: the SqlCommand-mode column-name assumption, the unavoidable
+        // Notification one, a non-blocking one from RouterTestEmitter's own pilot scope (its
+        // representative-row oracle evaluation has no way to resolve CustomerId_i4, a
+        // Data-Conversion-produced value deliberately excluded from the row it builds, so the
+        // condition's own evaluation throws "unresolved reference" and this pilot skips the
+        // whole router starter test rather than guessing), and -- since TransformTestEmitter is
+        // now called once per Conditional Split branch (Docs/Generated-Tests-Plan.md's own
+        // "extended to every flow path" promise, closed for this shape) -- TWO cross-reference
+        // gaps for TenureDays, one per branch (Valid/Invalid), both hitting the identical
+        // "not attempted" pilot-scope limit the single-destination case already states, since
+        // BOTH branches independently reference the same Data-Conversion-produced SignupDate_dt.
+        Assert.Equal(5, result.Gaps.Count);
         Assert.Contains(result.Gaps, g => g.Reason.Contains("assumes each result-set column is named/aliased"));
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticDataConversionSplit.Notification");
+        Assert.Contains(result.Gaps, g => g.Location == "CSPLIT_ValidityRouter" && g.Reason.Contains("unresolved reference"));
+        Assert.Equal(2, result.Gaps.Count(g => g.Location == "SyntheticDataConversionSplitTarget.TenureDays" && g.Reason.Contains("cross-reference", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -462,32 +582,57 @@ public class PackageGeneratorTests
 
         // Each transform combines the flow's shared Derived Column (LoadedAtUtc) with its OWN
         // per-branch one (Segment) -- proving TransformEmitter's merged-DerivedColumns list
-        // resolves columns from both, not just one.
-        Assert.Contains("LoadedAtUtc = ctx.LoadedAtUtc,", highFile.Content);
-        Assert.Contains("Segment = \"High\",", highFile.Content);
-        Assert.Contains("LoadedAtUtc = ctx.LoadedAtUtc,", lowFile.Content);
-        Assert.Contains("Segment = \"Low\",", lowFile.Content);
+        // resolves columns from both, not just one. Both are genuine Derived Column outputs, so
+        // each is now its own named, callable function rather than inlined.
+        Assert.Contains("LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),", highFile.Content);
+        Assert.Contains("Segment = ComputeSegment(row, ctx),", highFile.Content);
+        Assert.Contains("public static string ComputeSegment(DFT_ConditionalSplitRemergeDemoSqlRow row, in RowContext ctx) => \"High\";", highFile.Content);
+        Assert.Contains("LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),", lowFile.Content);
+        Assert.Contains("Segment = ComputeSegment(row, ctx),", lowFile.Content);
+        Assert.Contains("public static string ComputeSegment(DFT_ConditionalSplitRemergeDemoSqlRow row, in RowContext ctx) => \"Low\";", lowFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(highFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(lowFile.Content);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        // ONE AddBulkSink<> call, not two -- PortfolioDigest/ProgramEmitter already dedupe by
-        // entity name (unaffected by this change), reconfirmed here for the converged case.
-        Assert.Single(System.Text.RegularExpressions.Regex.Matches(programFile.Content, "AddBulkSink<SyntheticRemergeTarget>"));
-        // No per-branch IRowTransform<> DI registration -- see ProgramEmitter's own comment on
-        // why (two branches sharing an entity would collide on the same closed generic).
-        Assert.DoesNotContain("AddScoped<IRowTransform<", programFile.Content);
-        Assert.Contains("new SyntheticRemergeTargetHighTransform(),", programFile.Content);
-        Assert.Contains("new SyntheticRemergeTargetLowTransform(),", programFile.Content);
-        // Both branches still share the one bulk sink for the one shared table.
-        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(programFile.Content, "GetRequiredService<IBulkSink<SyntheticRemergeTarget>>\\(\\)").Count);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticConditionalSplitRemerge.cs");
+        // No IRowTransform<> DI registration at all -- see PackageClassEmitter's own comment on
+        // why (two branches sharing an entity would collide on the same closed generic if this
+        // were DI-resolved), and no AddBulkSink<>()/DI resolution for the sink either -- each
+        // branch constructs its own SqlBulkSink<SyntheticRemergeTarget> directly.
+        Assert.DoesNotContain("AddBulkSink", classFile.Content);
+        Assert.DoesNotContain("AddScoped<IRowTransform<", classFile.Content);
+        Assert.Contains("new SyntheticRemergeTargetHighTransform(),", classFile.Content);
+        Assert.Contains("new SyntheticRemergeTargetLowTransform(),", classFile.Content);
+        // Both branches share the one shared table, each constructing its own sink.
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(classFile.Content, "new SqlBulkSink<SyntheticRemergeTarget>\\(Opt<BulkCopyOptions>\\(\\), Log<SqlBulkSink<SyntheticRemergeTarget>>\\(\\)\\)").Count);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
         // Only the two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption
         // and Notification. Confirms PortfolioDigest.IsBlockingGap would count this package as
         // fully generatable (0 blocking gaps), not just "produces some files".
         Assert.Equal(2, result.Gaps.Count);
         Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+    }
+
+    [Fact]
+    public void Generate_EmitsAStarterSourceTest_ForAConditionalSplitFlowsSqlSource()
+    {
+        // Real, previously-latent gap (caught 2026-09-06 verifying the generated-tests plan by
+        // hand against SyntheticConditionalSplitRemerge.dtsx's own walkthrough): its own OLE DB
+        // Source method compiled fine in production code, but PackageGenerator's "Source -- SQL /
+        // Excel" starter-test loop scanned wiredFlows/wiredMulticasts/wiredOleDbCommands only --
+        // never wiredSplits -- so a Conditional Split flow's own source got no test at all, unlike
+        // the structurally identical Multicast case (which DOES get one). Fixed by adding
+        // wiredSplits to that concat and threading csvSampleCandidates into
+        // GenerateConditionalSplitFlow's own ResolveFlowSource call, matching Multicast's already-
+        // correct wiring.
+        var package = LoadSyntheticFixture("SyntheticConditionalSplitRemerge.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var sourceTest = Assert.Single(result.SiblingFiles, f => f.RelativePath == "SyntheticConditionalSplitRemerge.Tests/OLEDBSourceSourceTests.cs");
+        Assert.Contains("Category", sourceTest.Content);
+        Assert.Contains("Integration", sourceTest.Content);
+        CodeAssertions.AssertNoSyntaxErrors(sourceTest.Content);
     }
 
     [Fact]
@@ -501,18 +646,39 @@ public class PackageGeneratorTests
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.Contains("var fST_PostLoadCopyStep = new FileSystemStep(\"FST_PostLoadCopy\", new FileSystemPreLoadAction(FileSystemOperation.Copy,", programFile.Content);
-        Assert.Contains("Steps: [syntheticFileSystemTaskTargetFlow, fST_PostLoadCopyStep],", programFile.Content);
-        Assert.Contains("PreLoadFileActions: [new FileSystemPreLoadAction(FileSystemOperation.Copy,", programFile.Content);
-        Assert.Contains("archived-preload.txt", programFile.Content);
-        Assert.Contains("archived-postflow.txt", programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticFileSystemTask.cs");
+        // Emitter rewrite: both positions are now ordinary FileSystemStep-constructing methods --
+        // neither is a special hard-coded pre-transaction call any more.
+        Assert.Contains("internal async Task FST_PreLoadCopy(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains("var step = new FileSystemStep(\"FST_PreLoadCopy\", new FileSystemPreLoadAction(FileSystemOperation.Copy,", classFile.Content);
+        Assert.Contains("internal async Task FST_PostLoadCopy(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains("var step = new FileSystemStep(\"FST_PostLoadCopy\", new FileSystemPreLoadAction(FileSystemOperation.Copy,", classFile.Content);
+        Assert.Contains("await FST_PreLoadCopy(uow, ct);", classFile.Content);
+        Assert.Contains("await DFT_Load(uow, ct);", classFile.Content);
+        Assert.Contains("await FST_PostLoadCopy(uow, ct);", classFile.Content);
+        // Phase 6: each destination's own path is read from appsettings.json via File(key),
+        // keyed by its own FILE connection manager -- not an embedded, client-machine-specific
+        // absolute literal.
+        Assert.Contains("File(\"CM_FILE_PreLoadArchive\")", classFile.Content);
+        Assert.Contains("File(\"CM_FILE_PostFlowArchive\")", classFile.Content);
+        Assert.DoesNotContain("archived-preload.txt", classFile.Content);
+        Assert.DoesNotContain("archived-postflow.txt", classFile.Content);
+        var appSettingsFile = Assert.Single(result.Files, f => f.RelativePath == "appsettings.json");
+        Assert.Contains("archived-preload.txt", appSettingsFile.Content);
+        Assert.Contains("archived-postflow.txt", appSettingsFile.Content);
+        // Ordering: pre-load copy before the flow, post-load copy after it.
+        Assert.True(classFile.Content.IndexOf("await FST_PreLoadCopy(uow, ct);", StringComparison.Ordinal)
+                  < classFile.Content.IndexOf("await DFT_Load(uow, ct);", StringComparison.Ordinal));
+        Assert.True(classFile.Content.IndexOf("await DFT_Load(uow, ct);", StringComparison.Ordinal)
+                  < classFile.Content.IndexOf("await FST_PostLoadCopy(uow, ct);", StringComparison.Ordinal));
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        // Only the unavoidable, non-blocking Notification gap -- this fixture is fully
+        // Only the unavoidable, non-blocking Notification gap plus a LocalFileSourceData gap for
+        // the CSV source (Docs/Generated-Tests-Plan.md phase 3) -- this fixture is fully
         // generatable.
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticFileSystemTask.Notification", gap.Location);
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Single(result.Gaps, g => g.Location == "SyntheticFileSystemTask.Notification");
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
     }
 
     [Fact]
@@ -533,25 +699,27 @@ public class PackageGeneratorTests
         Assert.Contains(result.Files, f => f.RelativePath == "Mapping/SyntheticLowValueTransform.cs");
         Assert.Contains(result.Files, f => f.RelativePath == "Mapping/ConditionalSplitRouter.cs");
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.Contains("using Etl.Core.Data;", programFile.Content);
-        Assert.Contains("builder.Services.AddBulkSink<SyntheticHighValue>();", programFile.Content);
-        Assert.Contains("builder.Services.AddBulkSink<SyntheticLowValue>();", programFile.Content);
-        Assert.Contains("builder.Services.AddScoped<IRowRouter<DFT_ConditionalSplitDemoSqlRow>, ConditionalSplitRouter>();", programFile.Content);
-        // No per-branch IRowTransform<> DI registration -- each branch's transform is
-        // constructed directly (`new`) below, since two branches can share EntityName (a Union
-        // All remerge) and would otherwise collide on the same closed generic registration.
-        Assert.DoesNotContain("AddScoped<IRowTransform<DFT_ConditionalSplitDemoSqlRow, SyntheticHighValue>", programFile.Content);
-        Assert.DoesNotContain("AddScoped<IRowTransform<DFT_ConditionalSplitDemoSqlRow, SyntheticLowValue>", programFile.Content);
-        Assert.Contains("var dFT_ConditionalSplitDemoSplit = new ConditionalSplitStep<DFT_ConditionalSplitDemoSqlRow>(", programFile.Content);
-        Assert.Contains("new ConditionalSplitBranch<DFT_ConditionalSplitDemoSqlRow, SyntheticHighValue>(", programFile.Content);
-        Assert.Contains("new ConditionalSplitBranch<DFT_ConditionalSplitDemoSqlRow, SyntheticLowValue>(", programFile.Content);
-        Assert.Contains("new SyntheticHighValueTransform(),", programFile.Content);
-        Assert.Contains("new SyntheticLowValueTransform(),", programFile.Content);
-        Assert.Contains("Steps: [dFT_ConditionalSplitDemoSplit],", programFile.Content);
-        Assert.Contains("PreLoadFileActions: []);", programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticConditionalSplit.cs");
+        Assert.Contains("using Etl.Core.Data;", classFile.Content);
+        // Each branch's own sink is constructed directly -- a Conditional Split branch is always
+        // SQL-sunk (no Sink field at all on the branch record), so no AddBulkSink<>()/DI
+        // resolution is needed for either one.
+        Assert.Contains("new SqlBulkSink<SyntheticHighValue>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<SyntheticHighValue>>())", classFile.Content);
+        Assert.Contains("new SqlBulkSink<SyntheticLowValue>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<SyntheticLowValue>>())", classFile.Content);
+        Assert.Contains("new ConditionalSplitRouter()", classFile.Content);
+        // No IRowTransform<> DI registration at all any more -- each branch's transform is
+        // constructed directly (`new`), since two branches can share EntityName (a Union All
+        // remerge) and would otherwise collide on the same closed generic registration.
+        Assert.DoesNotContain("AddScoped<IRowTransform<", classFile.Content);
+        Assert.Contains("internal async Task DFT_ConditionalSplitDemo(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains("var step = new ConditionalSplitStep<DFT_ConditionalSplitDemoSqlRow>(", classFile.Content);
+        Assert.Contains("new ConditionalSplitBranch<DFT_ConditionalSplitDemoSqlRow, SyntheticHighValue>(", classFile.Content);
+        Assert.Contains("new ConditionalSplitBranch<DFT_ConditionalSplitDemoSqlRow, SyntheticLowValue>(", classFile.Content);
+        Assert.Contains("new SyntheticHighValueTransform(),", classFile.Content);
+        Assert.Contains("new SyntheticLowValueTransform(),", classFile.Content);
+        Assert.Contains("await DFT_ConditionalSplitDemo(uow, ct);", classFile.Content);
 
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
         // Two expected gaps: the SqlCommand-mode column-name assumption (same as every
         // AccessMode=2 OLE DB Source, see BuildSqlFlowSource), and the unavoidable Notification
@@ -589,33 +757,45 @@ public class PackageGeneratorTests
         Assert.DoesNotContain("DFT_ExportDelimited", dbContextFile.Content);
         Assert.DoesNotContain("DFT_ExportFixedWidth", dbContextFile.Content);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.Contains("using Etl.Core.Data;", programFile.Content);
-        // Flat file sinks are constructed directly (not via AddBulkSink<T>(), which would
-        // resolve to a SqlBulkSink<T> -- wrong for a file).
-        Assert.DoesNotContain("AddBulkSink<DFT_ExportDelimited>", programFile.Content);
-        Assert.DoesNotContain("AddBulkSink<DFT_ExportFixedWidth>", programFile.Content);
-        Assert.Contains("builder.Services.AddBulkSink<SyntheticFlatFileDestinationLog>();", programFile.Content);
-        Assert.Contains("builder.Services.AddScoped<IBulkSink<DFT_ExportDelimited>>(sp =>", programFile.Content);
-        Assert.Contains("new FlatFileColumnFormat(\"CustomerID\", null, \",\")", programFile.Content);
-        Assert.Contains("new FlatFileColumnFormat(\"CleanEmail\", null, \"\\r\\n\")", programFile.Content);
-        Assert.Contains("\"CustomerID,FullName,CleanEmail\\r\\n\"", programFile.Content); // the header line
-        Assert.Contains("builder.Services.AddScoped<IBulkSink<DFT_ExportFixedWidth>>(sp =>", programFile.Content);
-        Assert.Contains("new FlatFileColumnFormat(\"CustomerID\", 10, \"\")", programFile.Content);
-        Assert.Contains("new FlatFileColumnFormat(\"FullName\", 15, \"\")", programFile.Content);
-        Assert.Contains("new FlatFileColumnFormat(\"RowEnd\", null, \"\\r\\n\")", programFile.Content);
-        Assert.Contains("fileOptions[\"DFT_ExportDelimited\"].ResolvedPath", programFile.Content);
-        Assert.Contains("fileOptions[\"DFT_ExportFixedWidth\"].ResolvedPath", programFile.Content);
-        Assert.Contains("Steps: [dFT_ExportDelimitedFlow, dFT_ExportFixedWidthFlow, syntheticFlatFileDestinationLogFlow],", programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticFlatFileDestination.cs");
+        Assert.Contains("using Etl.Core.Data;", classFile.Content);
+        // Flat file sinks are constructed directly (never SqlBulkSink -- wrong for a file), and
+        // the SQL destination's own sink is likewise constructed directly now, not via
+        // AddBulkSink<T>()/DI.
+        Assert.DoesNotContain("AddBulkSink", classFile.Content);
+        Assert.Contains("new SqlBulkSink<SyntheticFlatFileDestinationLog>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<SyntheticFlatFileDestinationLog>>())", classFile.Content);
+        Assert.Contains("internal async Task DFT_ExportDelimited(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains("new FlatFileColumnFormat(\"CustomerID\", null, \",\")", classFile.Content);
+        Assert.Contains("new FlatFileColumnFormat(\"CleanEmail\", null, \"\\r\\n\")", classFile.Content);
+        Assert.Contains("\"CustomerID,FullName,CleanEmail\\r\\n\"", classFile.Content); // the header line
+        Assert.Contains("internal async Task DFT_ExportFixedWidth(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains("new FlatFileColumnFormat(\"CustomerID\", 10, \"\")", classFile.Content);
+        Assert.Contains("new FlatFileColumnFormat(\"FullName\", 15, \"\")", classFile.Content);
+        Assert.Contains("new FlatFileColumnFormat(\"RowEnd\", null, \"\\r\\n\")", classFile.Content);
+        Assert.Contains("File(\"DFT_ExportDelimited\")", classFile.Content);
+        Assert.Contains("File(\"DFT_ExportFixedWidth\")", classFile.Content);
+        // All three root flows are precedence-independent -- the emitter rewrite's phase 7 now
+        // generates real concurrency for that shape (see PackageStep.Wave): one Task.WhenAll wave
+        // of all three, each in its own RunBranchAsync transaction, rather than three sequential
+        // awaits under separate "// Flow N:" headings.
+        Assert.Contains("// Concurrent (3 executables -- SSIS ran these with no ordering constraint between them):", classFile.Content);
+        Assert.Contains("//   - DFT_ExportDelimited", classFile.Content);
+        Assert.Contains("//   - DFT_ExportFixedWidth", classFile.Content);
+        Assert.Contains("//   - DFT_Log", classFile.Content);
+        Assert.Contains("await Task.WhenAll(", classFile.Content);
+        Assert.Contains("RunBranchAsync(async branchUow =>", classFile.Content);
+        Assert.Contains("await DFT_ExportDelimited(branchUow, ct);", classFile.Content);
+        Assert.Contains("await DFT_ExportFixedWidth(branchUow, ct);", classFile.Content);
+        Assert.Contains("await DFT_Log(branchUow, ct);", classFile.Content);
+        Assert.Contains("private async Task RunBranchAsync(Func<IUnitOfWork, Task> body, CancellationToken ct)", classFile.Content);
 
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(dbContextFile.Content);
 
-        // Five expected gaps: the SqlCommand-mode column-name assumption on all three OLE DB
-        // Sources, the unavoidable Notification one, and the parallelism advisory (all three root
-        // flows are precedence-independent) -- neither flat-file flow reports its own gap.
-        Assert.Equal(5, result.Gaps.Count);
-        Assert.Contains(result.Gaps, g => g.Location == "SyntheticFlatFileDestination.Parallelism");
+        // Four expected gaps: the SqlCommand-mode column-name assumption on all three OLE DB
+        // Sources, and the unavoidable Notification one -- the old parallelism advisory is gone
+        // now that real concurrency is generated, and neither flat-file flow reports its own gap.
+        Assert.Equal(4, result.Gaps.Count);
         Assert.Equal(3, result.Gaps.Count(g => g.Reason.Contains("assumes each result-set column is named/aliased")));
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticFlatFileDestination.Notification");
     }
@@ -645,13 +825,14 @@ public class PackageGeneratorTests
         // Every destination column is a plain passthrough (no Derived Column of its own beyond
         // the shared LoadedAtUtc) -- proving TransformEmitter's existing "row.PipelineColumnName"
         // fallback resolves correctly straight through Sort/Merge, with zero new
-        // value-resolution code needed for this feature.
+        // value-resolution code needed for this feature. LoadedAtUtc IS a genuine Derived Column
+        // (GETUTCDATE()), so it's its own named, callable function, unlike the plain passthroughs.
         Assert.Contains("ID = row.ID,", canadaFile.Content);
         Assert.Contains("Name = row.Name,", canadaFile.Content);
-        Assert.Contains("LoadedAtUtc = ctx.LoadedAtUtc,", canadaFile.Content);
+        Assert.Contains("LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),", canadaFile.Content);
         Assert.Contains("ID = row.ID,", restFile.Content);
         Assert.Contains("Name = row.Name,", restFile.Content);
-        Assert.Contains("LoadedAtUtc = ctx.LoadedAtUtc,", restFile.Content);
+        Assert.Contains("LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),", restFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(canadaFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(restFile.Content);
 
@@ -678,22 +859,35 @@ public class PackageGeneratorTests
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.Contains("var fEL_SampleFilesStep = new ForEachLoopStep(", programFile.Content);
-        Assert.Contains("\"FEL_SampleFiles\",", programFile.Content);
-        Assert.Contains("new ForEachFileLoopAction(", programFile.Content);
-        Assert.Contains("ForEachFileNameMode.NameAndExtension),", programFile.Content);
-        Assert.Contains(
-            "currentFile => \"INSERT INTO dbo.SyntheticForEachFileLoopLog (FileName) VALUES (N'\" + currentFile + \"');\",",
-            programFile.Content);
-        Assert.Contains("sp.GetRequiredService<ILogger<ForEachLoopStep>>());", programFile.Content);
-        Assert.Contains("fEL_SampleFilesStep", programFile.Content); // present in the final Steps: [...] wiring too
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticForEachFileLoop.cs");
+        Assert.Contains("internal async Task FEL_SampleFiles(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains("var step = new ForEachLoopStep(", classFile.Content);
+        Assert.Contains("\"FEL_SampleFiles\",", classFile.Content);
+        Assert.Contains("new ForEachFileLoopAction(", classFile.Content);
+        Assert.Contains("ForEachFileNameMode.NameAndExtension),", classFile.Content);
+        // The per-iteration SQL text is a call to its own named, parameterized statement class
+        // (SqlStatementBuilderEmitter.EmitParameterized) -- never an inline lambda body.
+        Assert.Contains("currentFile => SQL_LogFileNameStatement.BuildStatement(currentFile),", classFile.Content);
+        Assert.Contains("Log<ForEachLoopStep>());", classFile.Content);
+        // DFT_Load and FEL_SampleFiles are precedence-independent siblings -- the emitter
+        // rewrite's phase 7 now runs them concurrently (see PackageStep.Wave), each in its own
+        // RunBranchAsync transaction, rather than two sequential awaits.
+        Assert.Contains("await Task.WhenAll(", classFile.Content);
+        Assert.Contains("await FEL_SampleFiles(branchUow, ct);", classFile.Content);
+        Assert.Contains("await DFT_Load(branchUow, ct);", classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        // Only three unavoidable/non-blocking gaps -- the SqlCommand column-name assumption on
-        // DFT_Load's own source, Notification, and the parallelism advisory (DFT_Load and
-        // FEL_SampleFiles are precedence-independent siblings). No ForEach-Loop-specific gap.
-        Assert.Equal(3, result.Gaps.Count);
+        var statementFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SQL_LogFileNameStatement.cs");
+        Assert.Contains("public static class SQL_LogFileNameStatement", statementFile.Content);
+        Assert.Contains(
+            "public static string BuildStatement(string currentFile) => \"INSERT INTO dbo.SyntheticForEachFileLoopLog (FileName) VALUES (N'\" + currentFile + \"');\";",
+            statementFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(statementFile.Content);
+
+        // Only two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption on
+        // DFT_Load's own source, and Notification. The old parallelism advisory is gone now that
+        // DFT_Load/FEL_SampleFiles run as real concurrency; no ForEach-Loop-specific gap either.
+        Assert.Equal(2, result.Gaps.Count);
         Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
     }
 
@@ -716,28 +910,38 @@ public class PackageGeneratorTests
         Assert.Contains(result.Files, f => f.RelativePath == "Mapping/SyntheticForEachDataFlowLoopTargetTransform.cs");
         Assert.Contains(result.Files, f => f.RelativePath == "Model/SyntheticForEachDataFlowLoopTarget.cs");
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        // No top-level IRowSource<TRow> registration for this step at all -- the source is
-        // constructed fresh, inline, per iteration.
-        Assert.DoesNotContain("AddScoped<IRowSource<SyntheticForEachDataFlowLoopTargetCsvRow>>", programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticForEachDataFlowLoop.cs");
+        // No top-level/shared IRowSource<TRow> at all for this step -- the source is constructed
+        // fresh, inline, per iteration; only its transform is constructed once (directly, not via
+        // DI -- a generated transform class never has constructor dependencies).
+        Assert.DoesNotContain("IRowSource<SyntheticForEachDataFlowLoopTargetCsvRow>>", classFile.Content);
+        Assert.Contains("internal async Task FEL_SampleFiles(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
         Assert.Contains(
-            "builder.Services.AddScoped<IRowTransform<SyntheticForEachDataFlowLoopTargetCsvRow, SyntheticForEachDataFlowLoopTarget>, SyntheticForEachDataFlowLoopTargetTransform>();",
-            programFile.Content);
-        Assert.Contains(
-            "var fEL_SampleFilesStep = new ForEachFileDataFlowStep<SyntheticForEachDataFlowLoopTargetCsvRow, SyntheticForEachDataFlowLoopTarget>(",
-            programFile.Content);
-        Assert.Contains("new ForEachFileLoopAction(", programFile.Content);
+            "var step = new ForEachFileDataFlowStep<SyntheticForEachDataFlowLoopTargetCsvRow, SyntheticForEachDataFlowLoopTarget>(",
+            classFile.Content);
+        Assert.Contains("new ForEachFileLoopAction(", classFile.Content);
         Assert.Contains(
             "currentFile => new CsvRowSource<SyntheticForEachDataFlowLoopTargetCsvRow>(\"Flat File Source\", new CsvSourceOptions { FilePath = currentFile }, new SyntheticForEachDataFlowLoopTargetCsvRowMap()),",
-            programFile.Content);
-        Assert.Contains("sp.GetRequiredService<IBulkSink<SyntheticForEachDataFlowLoopTarget>>(),", programFile.Content);
-        Assert.Contains("sp.GetRequiredService<ILogger<DataFlowStep<SyntheticForEachDataFlowLoopTargetCsvRow, SyntheticForEachDataFlowLoopTarget>>>());", programFile.Content);
-        Assert.Contains("fEL_SampleFilesStep", programFile.Content); // present in the final Steps: [...] wiring too
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+            classFile.Content);
+        Assert.Contains("new SyntheticForEachDataFlowLoopTargetTransform(),", classFile.Content);
+        Assert.Contains("new SqlBulkSink<SyntheticForEachDataFlowLoopTarget>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<SyntheticForEachDataFlowLoopTarget>>()),", classFile.Content);
+        Assert.Contains("Log<DataFlowStep<SyntheticForEachDataFlowLoopTargetCsvRow, SyntheticForEachDataFlowLoopTarget>>());", classFile.Content);
+        Assert.Contains("await FEL_SampleFiles(uow, ct);", classFile.Content); // referenced in RunAsync
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        // Only the unavoidable, non-blocking Notification gap.
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticForEachDataFlowLoop.Notification", gap.Location);
+        // Two non-blocking gaps: the unavoidable Notification one, plus a real, previously-silent
+        // gap caught 2026-09-06 by an independent review -- this loop-body shape used to reach
+        // this point with NO starter test coverage AND no acknowledgment at all (unlike every
+        // other flow shape, which degrades to an honest advisory when it can't test something).
+        // No test files exist beyond RunAsyncTests.cs (asserted separately below).
+        Assert.Equal(2, result.Gaps.Count);
+        var testOracleGap = Assert.Single(result.Gaps, g => g.Kind == GapKind.TestOracle);
+        Assert.False(testOracleGap.IsBlocking);
+        Assert.Contains("no starter test coverage in this pilot", testOracleGap.Reason);
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticForEachDataFlowLoop.Notification");
+
+        Assert.DoesNotContain(result.SiblingFiles, f => f.RelativePath.EndsWith("SourceTests.cs"));
+        Assert.DoesNotContain(result.SiblingFiles, f => f.RelativePath.EndsWith("TransformTests.cs"));
     }
 
     [Fact]
@@ -793,16 +997,15 @@ public class PackageGeneratorTests
         var sourceRow = Assert.Single(result.Files, f => f.RelativePath == "Sql/AGG_ByRegionSourceSqlRow.cs");
         Assert.Contains("public string? CustomerID { get; set; }", sourceRow.Content); // nullable by construction -- Count excludes NULL
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.Contains(
-            "builder.Services.AddScoped<IRowSource<SyntheticAggregateTargetAggregateRow>>(sp =>",
-            programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticAggregate.cs");
+        Assert.Contains("internal async Task DFT_Aggregate(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains("var source = AGG_ByRegion(uow);", classFile.Content);
         Assert.Contains(
             "return new AggregateRowSource<AGG_ByRegionSourceSqlRow, string, SyntheticAggregateTargetAggregateRow>(",
-            programFile.Content);
-        Assert.Contains("row => row.Region,", programFile.Content);
-        Assert.Contains("CustomerCount = rows.Count(r => r.CustomerID != null)", programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+            classFile.Content);
+        Assert.Contains("row => row.Region,", classFile.Content);
+        Assert.Contains("CustomerCount = rows.Count(r => r.CustomerID != null)", classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
         // Only the two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption
         // on the source, and Notification.
@@ -840,14 +1043,14 @@ public class PackageGeneratorTests
         var transform = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticAggregateFunctionsTargetTransform.cs");
         Assert.Contains("SumAmount = row.SumAmount,", transform.Content);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.Contains("TotalRows = rows.Count,", programFile.Content);
-        Assert.Contains("DistinctAmounts = rows.Select(r => r.Amount).Where(v => v != null).Distinct().Count(),", programFile.Content);
-        Assert.Contains("SumAmount = rows.All(r => r.Amount == null) ? null : rows.Sum(r => r.Amount),", programFile.Content);
-        Assert.Contains("AverageAmount = rows.Average(r => r.Amount),", programFile.Content);
-        Assert.Contains("MinAmount = rows.Min(r => r.Amount),", programFile.Content);
-        Assert.Contains("MaxAmount = rows.Max(r => r.Amount)", programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticAggregateFunctions.cs");
+        Assert.Contains("TotalRows = rows.Count,", classFile.Content);
+        Assert.Contains("DistinctAmounts = rows.Select(r => r.Amount).Where(v => v != null).Distinct().Count(),", classFile.Content);
+        Assert.Contains("SumAmount = rows.All(r => r.Amount == null) ? null : rows.Sum(r => r.Amount),", classFile.Content);
+        Assert.Contains("AverageAmount = rows.Average(r => r.Amount),", classFile.Content);
+        Assert.Contains("MinAmount = rows.Min(r => r.Amount),", classFile.Content);
+        Assert.Contains("MaxAmount = rows.Max(r => r.Amount)", classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
         // Only the two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption
         // on the source, and Notification.
@@ -873,23 +1076,27 @@ public class PackageGeneratorTests
         Assert.Contains(result.Files, f => f.RelativePath == "Excel/SyntheticExcelSourceTargetExcelRow.cs");
         Assert.Contains(result.Files, f => f.RelativePath == "Excel/SyntheticExcelSourceTargetExcelRowReader.cs");
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.Contains("using Etl.Core.Excel;", programFile.Content);
-        Assert.Contains("using SyntheticExcelSource.Excel;", programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticExcelSource.cs");
+        Assert.Contains("using Etl.Core.Excel;", classFile.Content);
+        Assert.Contains("using SyntheticExcelSource.Excel;", classFile.Content);
+        // No `uow` parameter/argument -- an Excel source never touches the package's transaction,
+        // unlike a SQL one (see PackageClassEmitter.SourceNeedsUow's own doc comment).
+        Assert.Contains("var source = ExcelSource();", classFile.Content);
+        Assert.Contains("internal IRowSource<SyntheticExcelSourceTargetExcelRow> ExcelSource()", classFile.Content);
         Assert.Contains(
-            "var excelOptions = new ExcelSourceOptions { FilePath = fileOptions[\"Excel Source\"].ResolvedPath, WorksheetName = \"DripEligibility$\", HasHeaderRow = true };",
-            programFile.Content);
-        Assert.Contains(
-            "return new ExcelRowSource<SyntheticExcelSourceTargetExcelRow>(\"Excel Source\", excelOptions, SyntheticExcelSourceTargetExcelRowReader.Read);",
-            programFile.Content);
-        Assert.Contains("var syntheticExcelSourceTargetFlow = new DataFlowStep<SyntheticExcelSourceTargetExcelRow, SyntheticExcelSourceTarget>(", programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+            "return new ExcelRowSource<SyntheticExcelSourceTargetExcelRow>(\"Excel Source\", new ExcelSourceOptions { FilePath = File(\"Excel Source\"), WorksheetName = \"DripEligibility$\", HasHeaderRow = true }, SyntheticExcelSourceTargetExcelRowReader.Read);",
+            classFile.Content);
+        Assert.Contains("var step = new DataFlowStep<SyntheticExcelSourceTargetExcelRow, SyntheticExcelSourceTarget>(", classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        // Only the unavoidable, non-blocking Notification gap -- no Derived Column needed, and
-        // no numeric-type-mismatch gap either, since this fixture's own CustomerID is FLOAT
-        // (matching the worksheet's real r8 type exactly, unlike RBC_Demo_ETL's own INT column).
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticExcelSource.Notification", gap.Location);
+        // The unavoidable, non-blocking Notification gap plus a LocalFileSourceData gap (Excel
+        // has no Tier-A synthesizer at all -- Docs/Generated-Tests-Plan.md phase 3) -- no Derived
+        // Column needed, and no numeric-type-mismatch gap either, since this fixture's own
+        // CustomerID is FLOAT (matching the worksheet's real r8 type exactly, unlike
+        // RBC_Demo_ETL's own INT column).
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Single(result.Gaps, g => g.Location == "SyntheticExcelSource.Notification");
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
     }
 
     [Fact]
@@ -913,14 +1120,15 @@ public class PackageGeneratorTests
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticExcelSourceSqlCommand.cs");
         Assert.Contains(
-            "var excelOptions = new ExcelSourceOptions { FilePath = fileOptions[\"Excel Source\"].ResolvedPath, WorksheetName = \"DripEligibility$\", HasHeaderRow = true };",
-            programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+            "new ExcelSourceOptions { FilePath = File(\"Excel Source\"), WorksheetName = \"DripEligibility$\", HasHeaderRow = true }",
+            classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticExcelSourceSqlCommand.Notification", gap.Location);
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Single(result.Gaps, g => g.Location == "SyntheticExcelSourceSqlCommand.Notification");
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
     }
 
     [Fact]
@@ -965,14 +1173,18 @@ public class PackageGeneratorTests
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticExcelSourceSqlCommandWhere.cs");
+        // No `uow` parameter/argument -- an Excel source (even with a WHERE filter applied
+        // client-side) never touches the package's transaction.
+        Assert.Contains("var source = ExcelSource();", classFile.Content);
         Assert.Contains(
-            "return new FilteringRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", new ExcelRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", excelOptions, SyntheticExcelSourceSqlCommandWhereTargetExcelRowReader.Read), row => row.CustomerID > 5);",
-            programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+            "return new FilteringRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", new ExcelRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", new ExcelSourceOptions { FilePath = File(\"Excel Source\"), WorksheetName = \"DripEligibility$\", HasHeaderRow = true }, SyntheticExcelSourceSqlCommandWhereTargetExcelRowReader.Read), row => row.CustomerID > 5);",
+            classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        var gap = Assert.Single(result.Gaps);
-        Assert.Equal("SyntheticExcelSourceSqlCommandWhere.Notification", gap.Location);
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Single(result.Gaps, g => g.Location == "SyntheticExcelSourceSqlCommandWhere.Notification");
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
     }
 
     // Grammar edge cases (unknown column, OR, mixed operators, type mismatches) are tested
@@ -997,16 +1209,17 @@ public class PackageGeneratorTests
         Assert.DoesNotContain(result.Files, f => f.RelativePath.StartsWith("Model/") && !f.RelativePath.EndsWith("DbContext.cs"));
         Assert.Contains(result.Files, f => f.RelativePath == "Model/SyntheticOleDbCommandDbContext.cs");
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.DoesNotContain("using SyntheticOleDbCommand.Mapping;", programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticOleDbCommand.cs");
+        Assert.DoesNotContain("using SyntheticOleDbCommand.Mapping;", classFile.Content);
+        Assert.Contains("internal async Task DFT_FlagCustomers(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
         Assert.Contains(
-            "var dFT_FlagCustomersStep = new OleDbCommandStep<DFT_FlagCustomersSqlRow>(",
-            programFile.Content);
+            "var step = new OleDbCommandStep<DFT_FlagCustomersSqlRow>(",
+            classFile.Content);
         Assert.Contains(
             "\"UPDATE dbo.SyntheticOleDbCommandTarget SET Flagged = 1 WHERE CustomerID = {0}\",",
-            programFile.Content);
-        Assert.Contains("row => new object?[] { row.CustomerID },", programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+            classFile.Content);
+        Assert.Contains("row => new object?[] { row.CustomerID },", classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
         // Only the unavoidable non-blocking gaps: the SqlCommand-mode advisory and Notification.
         Assert.Equal(2, result.Gaps.Count);
@@ -1029,17 +1242,20 @@ public class PackageGeneratorTests
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null, emitSeams: true);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.Contains("var packageVariables = new PackageVariables();", programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticRowCountVariable.cs");
+        Assert.Contains("private readonly PackageVariables packageVariables = new();", classFile.Content);
         Assert.Contains(
-            "new CountingRowSource<SyntheticRowCountVariableTargetSqlRow>(\"DFT_Load.RowCount\", sp.GetRequiredService<IRowSource<SyntheticRowCountVariableTargetSqlRow>>(), packageVariables, \"User::RowsLoaded\"),",
-            programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+            "source = new CountingRowSource<SyntheticRowCountVariableTargetSqlRow>(\"DFT_Load.RowCount\", source, packageVariables, \"User::RowsLoaded\");",
+            classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
         // Only the unavoidable/expected gaps: the SqlCommand-mode advisory, the Script Task seam
-        // (this fixture's post-flow reader), and Notification -- none about RC_RowsLoaded itself.
-        Assert.Equal(3, result.Gaps.Count);
+        // (this fixture's post-flow reader) plus its own companion TEST-ORACLE gap
+        // (Docs/Generated-Tests-Plan.md phase 3 -- "a filled seam is human logic"), and
+        // Notification -- none about RC_RowsLoaded itself.
+        Assert.Equal(4, result.Gaps.Count);
         Assert.DoesNotContain(result.Gaps, g => g.Location.Contains("RC_RowsLoaded", StringComparison.Ordinal));
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.TestOracle);
     }
 
     [Fact]
@@ -1057,11 +1273,12 @@ public class PackageGeneratorTests
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
-        Assert.Contains("var dFT_FixedWidthImportSplit = new MulticastStep<DFT_FixedWidthImportSqlRow>(", programFile.Content);
-        Assert.Contains("builder.Services.AddBulkSink<SyntheticMulticastTarget>();", programFile.Content);
-        Assert.Contains("builder.Services.AddScoped<IBulkSink<DFT_FixedWidthImportFFDST_AuditTrail_APPEND>>(sp =>", programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticMulticast.cs");
+        Assert.Contains("internal async Task DFT_FixedWidthImport(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains("var step = new MulticastStep<DFT_FixedWidthImportSqlRow>(", classFile.Content);
+        Assert.Contains("new SqlBulkSink<SyntheticMulticastTarget>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<SyntheticMulticastTarget>>())", classFile.Content);
+        Assert.Contains("new FlatFileBulkSink<DFT_FixedWidthImportFFDST_AuditTrail_APPEND>(", classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
         var flatFileTransform = Assert.Single(result.Files, f => f.RelativePath == "Mapping/DFT_FixedWidthImportFFDST_AuditTrail_APPENDTransform.cs");
         // The ToString() widening itself -- an int source column assigned to the flat file
@@ -1089,11 +1306,11 @@ public class PackageGeneratorTests
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticStandaloneSort.cs");
         Assert.Contains(
-            "new SortingRowSource<DFT_SortSqlRow, int>(\"DFT_Sort.Sort\", sp.GetRequiredService<IRowSource<DFT_SortSqlRow>>(), row => row.ID, Comparer<int>.Default),",
-            programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+            "source = new SortingRowSource<DFT_SortSqlRow, int>(\"DFT_Sort.Sort\", source, row => row.ID, Comparer<int>.Default);",
+            classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
         // Three unavoidable/unrelated gaps -- the SqlCommand-mode column-naming advisory (same
         // as every other SqlCommand-sourced flow's own test), the unresolved-auth-mode fallback
@@ -1118,19 +1335,21 @@ public class PackageGeneratorTests
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticMergeInterleaveProbe.cs");
+        Assert.Contains("var source = MRG_Interleave(uow);", classFile.Content);
         Assert.Contains(
-            "return new MergeInterleaveRowSource<MRG_InterleaveRow, int>(\n" +
-            "        \"MRG_Interleave\", BuildSide0(), BuildSide1(),\n" +
-            "        row => row.ID, Comparer<int>.Default);",
-            programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+            "return new MergeInterleaveRowSource<MRG_InterleaveRow, int>(\"MRG_Interleave\", BuildSide0(), BuildSide1(), row => row.ID, Comparer<int>.Default);",
+            classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        // Four unavoidable/unrelated gaps -- a SqlCommand-mode column-naming advisory PER SIDE
+        // Five unavoidable/unrelated gaps -- a SqlCommand-mode column-naming advisory PER SIDE
         // (both sources are SqlCommand-mode), the unresolved-auth-mode fallback (a Flat File
-        // Destination resolves no target server/database of its own), and Notification. None of
-        // them is about the Merge/interleave itself.
-        Assert.Equal(4, result.Gaps.Count);
+        // Destination resolves no target server/database of its own), Notification, and (a real,
+        // previously-silent gap caught 2026-09-06 by an independent review, same as
+        // Generate_WrapsBothSidesInConcatenatingRowSource_ForAGenuinelyMultiSourceUnionAll below)
+        // the no-starter-test-coverage advisory every GenerateUnionFlow-shaped flow now gets.
+        // None of them is about the Merge/interleave logic itself.
+        Assert.Equal(5, result.Gaps.Count);
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticMergeInterleaveProbe.Notification");
     }
 
@@ -1149,13 +1368,23 @@ public class PackageGeneratorTests
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null);
 
-        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticUnionTwoSources.cs");
+        Assert.Contains("var source = UNION_TwoSources(uow);", classFile.Content);
         Assert.Contains(
             "return new ConcatenatingRowSource<UNION_TwoSourcesRow>(\"UNION_TwoSources\", [BuildSide0(), BuildSide1()]);",
-            programFile.Content);
-        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+            classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        Assert.Equal(4, result.Gaps.Count);
+        // 5, not 4: a real, previously-silent gap caught 2026-09-06 by an independent review --
+        // this flow used to reach this point with NO starter test coverage AND no acknowledgment
+        // at all (its own UnionFlowSource matches neither the generic SQL/Excel source-test
+        // loop's type checks nor csvSampleCandidates, and ComponentTestEmitter has no
+        // Union-specific test method the way Merge Join gets its own mapper test).
+        Assert.Equal(5, result.Gaps.Count);
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticUnionTwoSources.Notification");
+        var testOracleGap = Assert.Single(result.Gaps, g => g.Kind == GapKind.TestOracle);
+        Assert.False(testOracleGap.IsBlocking);
+        Assert.Contains("no starter test coverage in this pilot", testOracleGap.Reason);
+        Assert.DoesNotContain(result.SiblingFiles, f => f.RelativePath.EndsWith("SourceTests.cs"));
     }
 }

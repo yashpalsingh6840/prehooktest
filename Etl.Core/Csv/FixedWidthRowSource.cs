@@ -29,6 +29,8 @@ public sealed class FixedWidthRowSource<TRow>(
 
     public async IAsyncEnumerable<TRow> ReadAsync([EnumeratorCancellation] CancellationToken ct)
     {
+        CodePageSupport.EnsureRegistered();
+
         if (!File.Exists(options.FilePath))
             throw new FileNotFoundException($"{Name}: fixed-width source not found: {options.FilePath}", options.FilePath);
 

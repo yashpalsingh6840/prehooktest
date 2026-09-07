@@ -174,6 +174,31 @@ internal static class ApplyFillsCommand
             byClass[ScriptTaskEmitter.ClassName(taskName)] = gap;
         }
 
+        // Expected TEST-ORACLE fills, per package, keyed by GapId -- there is no seam name to
+        // match a whole new test FILE against (unlike ScriptComponentColumn/ScriptTask, this gap
+        // kind has nothing already generated to splice into), so its own `// ssisx-fill:` comment
+        // is the ONLY way to attribute one at all. See <c>Tests/*.cs</c> handling below.
+        var expectedTestOracles = new Dictionary<string, Dictionary<string, GapSpec>>(StringComparer.Ordinal);
+        foreach (var gap in gaps.Where(g => g.Kind == GapKind.TestOracle))
+        {
+            if (!expectedTestOracles.TryGetValue(gap.Package, out var byGapId))
+                expectedTestOracles[gap.Package] = byGapId = new Dictionary<string, GapSpec>(StringComparer.Ordinal);
+            byGapId[gap.GapId] = gap;
+        }
+
+        // Expected LOCAL-DATA fills, per package, keyed by the exact TestData/ file name a fill
+        // must use (GapSpec.ExpectedFileName -- see its own doc comment for why this is NOT the
+        // gap's Location/FileSourceKey). A gap with no derivable file name (an expression-driven
+        // connection manager with no design-time default path) is skipped here -- there is no name
+        // to match a fill against, so it can never be auto-applied by this command at all.
+        var expectedLocalData = new Dictionary<string, Dictionary<string, GapSpec>>(StringComparer.Ordinal);
+        foreach (var gap in gaps.Where(g => g.Kind == GapKind.LocalFileSourceData && g.ExpectedFileName is { Length: > 0 }))
+        {
+            if (!expectedLocalData.TryGetValue(gap.Package, out var byFileName))
+                expectedLocalData[gap.Package] = byFileName = new Dictionary<string, GapSpec>(StringComparer.OrdinalIgnoreCase);
+            byFileName[gap.ExpectedFileName!] = gap;
+        }
+
         fillsDir = Path.GetFullPath(fillsDir ?? Path.Combine(outDir, "fills"));
         // Same default `ssisx conformance` itself uses -- read-only here, and silently absent
         // (never an error) when nobody has run `conformance` for this --out at all.
@@ -188,6 +213,20 @@ internal static class ApplyFillsCommand
         var filledMethods = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var staleMethods = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var fillRecords = new List<FillRecordSpec>();
+
+        // TEST-ORACLE/LOCAL-DATA (Docs/Generated-Tests-Plan.md phase 3) -- tracked separately from
+        // the seam lists above: neither kind is BLOCKING (no CS8795 waits on either), so a gap left
+        // open here is informational, not a build failure, and never affects the exit code the way
+        // stillUnfilled/staleSeams do. An orphan still does, though -- applying a fill that answers
+        // nothing is worth flagging loudly regardless of kind.
+        var testOracleApplied = new List<string>();
+        var testOracleOrphaned = new List<string>();
+        var testOracleStale = new List<string>();
+        var testOracleFilled = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var testOracleStaleGapIds = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var localDataApplied = new List<string>();
+        var localDataOrphaned = new List<string>();
+        var localDataFilled = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
 
         if (Directory.Exists(fillsDir))
         {
@@ -306,6 +345,105 @@ internal static class ApplyFillsCommand
                         filledMethods[packageName] = set = new HashSet<string>(StringComparer.Ordinal);
                     foreach (var method in recognized) set.Add(method);
                 }
+
+                // TEST-ORACLE: a whole test file per gap, attributed ONLY by its own
+                // `// ssisx-fill:` comment -- there is no seam name to fall back on the way
+                // ScriptComponentColumn/ScriptTask fills have, so a file with no comment, or one
+                // naming a GapId this package does not currently have, is Orphaned rather than
+                // Unattributed. That is a real, deliberate asymmetry from the seam mechanism above,
+                // not an oversight -- see TestOracleResponseFormat's own doc comment in AiPacketEmitter.
+                var testsDir = Path.Combine(packageDir, "Tests");
+                var knownOracles = expectedTestOracles.TryGetValue(packageName, out var byGapId) ? byGapId : [];
+                if (Directory.Exists(testsDir))
+                {
+                    foreach (var fillFile in Directory.EnumerateFiles(testsDir, "*.cs").OrderBy(f => f, StringComparer.Ordinal))
+                    {
+                        var fileName = Path.GetFileName(fillFile);
+                        var provenance = ExtractLeadingProvenance(File.ReadAllText(fillFile));
+                        var gap = provenance?.GapId is { Length: > 0 } gapId && knownOracles.TryGetValue(gapId, out var g) ? g : null;
+
+                        if (gap is null)
+                        {
+                            testOracleOrphaned.Add($"{packageName}/Tests/{fileName}");
+                            fillRecords.Add(new FillRecordSpec
+                            {
+                                Package = packageName, FileName = $"Tests/{fileName}", Seam = "(whole file)",
+                                GapId = provenance?.GapId, Status = FillStatus.Orphaned,
+                                Author = provenance?.Author, Date = provenance?.Date,
+                            });
+                            continue;
+                        }
+
+                        if (gap.EvidenceSha256 is { Length: > 0 } current
+                            && provenance!.EvidenceSha256 is { Length: > 0 } recorded
+                            && !string.Equals(recorded, current, StringComparison.OrdinalIgnoreCase))
+                        {
+                            testOracleStale.Add($"{gap.GapId}  ->  Tests/{fileName}  (written against {Short(recorded)}..., package now hashes {Short(current)}...)");
+                            fillRecords.Add(new FillRecordSpec
+                            {
+                                Package = packageName, FileName = $"Tests/{fileName}", Seam = "(whole file)", GapId = gap.GapId,
+                                Status = FillStatus.Stale, Author = provenance.Author, Date = provenance.Date,
+                                RecordedEvidenceSha256 = recorded, CurrentEvidenceSha256 = current,
+                            });
+                            if (!testOracleStaleGapIds.TryGetValue(packageName, out var staleSet))
+                                testOracleStaleGapIds[packageName] = staleSet = new HashSet<string>(StringComparer.Ordinal);
+                            staleSet.Add(gap.GapId);
+                            continue;
+                        }
+
+                        var testsTargetDir = Path.Combine(generateDir, $"{packageName}.Tests", "Fills");
+                        Directory.CreateDirectory(testsTargetDir);
+                        File.Copy(fillFile, Path.Combine(testsTargetDir, fileName), overwrite: true);
+                        testOracleApplied.Add($"{packageName}.Tests/Fills/{fileName} ({gap.GapId})");
+                        fillRecords.Add(new FillRecordSpec
+                        {
+                            Package = packageName, FileName = $"Tests/{fileName}", Seam = "(whole file)", GapId = gap.GapId,
+                            Status = FillStatus.Applied, Author = provenance!.Author, Date = provenance.Date,
+                            RecordedEvidenceSha256 = provenance.EvidenceSha256, CurrentEvidenceSha256 = gap.EvidenceSha256,
+                        });
+                        if (!testOracleFilled.TryGetValue(packageName, out var oracleSet))
+                            testOracleFilled[packageName] = oracleSet = new HashSet<string>(StringComparer.Ordinal);
+                        oracleSet.Add(gap.GapId);
+                    }
+                }
+
+                // LOCAL-DATA: any file type, matched purely by NAME against the exact TestData/
+                // filename its own gap expects (GapSpec.ExpectedFileName) -- a raw data file has no
+                // universal comment syntax to carry provenance in, so there is genuinely no
+                // staleness check possible here, only Applied/Orphaned. Stated plainly in the work
+                // packet's own contract, not silently missing.
+                var testDataDir = Path.Combine(packageDir, "TestData");
+                var knownLocalData = expectedLocalData.TryGetValue(packageName, out var byFileName) ? byFileName : [];
+                if (Directory.Exists(testDataDir))
+                {
+                    foreach (var fillFile in Directory.EnumerateFiles(testDataDir).OrderBy(f => f, StringComparer.Ordinal))
+                    {
+                        var fileName = Path.GetFileName(fillFile);
+                        if (!knownLocalData.TryGetValue(fileName, out var gap))
+                        {
+                            localDataOrphaned.Add($"{packageName}/TestData/{fileName}");
+                            fillRecords.Add(new FillRecordSpec
+                            {
+                                Package = packageName, FileName = $"TestData/{fileName}", Seam = "(data file)",
+                                GapId = null, Status = FillStatus.Orphaned,
+                            });
+                            continue;
+                        }
+
+                        var dataTargetDir = Path.Combine(generateDir, packageName, "TestData");
+                        Directory.CreateDirectory(dataTargetDir);
+                        File.Copy(fillFile, Path.Combine(dataTargetDir, fileName), overwrite: true);
+                        localDataApplied.Add($"{packageName}/TestData/{fileName} ({gap.GapId})");
+                        fillRecords.Add(new FillRecordSpec
+                        {
+                            Package = packageName, FileName = $"TestData/{fileName}", Seam = "(data file)", GapId = gap.GapId,
+                            Status = FillStatus.Applied,
+                        });
+                        if (!localDataFilled.TryGetValue(packageName, out var dataSet))
+                            localDataFilled[packageName] = dataSet = new HashSet<string>(StringComparer.Ordinal);
+                        dataSet.Add(fileName);
+                    }
+                }
             }
         }
 
@@ -335,6 +473,32 @@ internal static class ApplyFillsCommand
                 if (stale?.Contains(seam) == true) continue;
                 stillUnfilled.Add($"{gap.GapId}  ->  {seam}");
             }
+        }
+
+        // TEST-ORACLE/LOCAL-DATA still open -- informational only (see the tracking lists' own
+        // doc comment above for why neither affects the exit code the way stillUnfilled does).
+        var testOracleOpen = new List<string>();
+        foreach (var (packageName, byGapId) in expectedTestOracles.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            testOracleFilled.TryGetValue(packageName, out var filled);
+            testOracleStaleGapIds.TryGetValue(packageName, out var stale);
+            foreach (var gap in byGapId.Values.OrderBy(g => g.GapId, StringComparer.Ordinal))
+            {
+                if (filled?.Contains(gap.GapId) == true) continue;
+                // A stale fill is reported in its own, more informative section above -- it HAS a
+                // fill, just an out-of-date one, which "still open" would misstate (same
+                // discipline as stillUnfilled's own staleMethods exclusion above).
+                if (stale?.Contains(gap.GapId) == true) continue;
+                testOracleOpen.Add(gap.GapId);
+            }
+        }
+
+        var localDataOpen = new List<string>();
+        foreach (var (packageName, byFileName) in expectedLocalData.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            localDataFilled.TryGetValue(packageName, out var filled);
+            foreach (var (fileName, gap) in byFileName.OrderBy(p => p.Key, StringComparer.Ordinal))
+                if (filled?.Contains(fileName) != true) localDataOpen.Add($"{gap.GapId}  ->  TestData/{fileName}");
         }
 
         // Group every EXPECTED seam (not just the ones a fill answered) by the ScriptCode RuleId
@@ -390,10 +554,14 @@ internal static class ApplyFillsCommand
                        .ToList(),
             manifestPath);
 
-        Report(fillsDir, manifestPath, applied, stillUnfilled, staleSeams, orphanedFiles, orphanedMethods, unknownPackages, conformanceLinks);
+        Report(
+            fillsDir, manifestPath, applied, stillUnfilled, staleSeams, orphanedFiles, orphanedMethods, unknownPackages, conformanceLinks,
+            testOracleApplied, testOracleOpen, testOracleStale, testOracleOrphaned,
+            localDataApplied, localDataOpen, localDataOrphaned);
 
-        if (orphanedFiles.Count > 0 || orphanedMethods.Count > 0 || unknownPackages.Count > 0) return 1;
-        return stillUnfilled.Count > 0 || staleSeams.Count > 0 ? 3 : 0;
+        if (orphanedFiles.Count > 0 || orphanedMethods.Count > 0 || unknownPackages.Count > 0
+            || testOracleOrphaned.Count > 0 || localDataOrphaned.Count > 0) return 1;
+        return stillUnfilled.Count > 0 || staleSeams.Count > 0 || testOracleStale.Count > 0 ? 3 : 0;
     }
 
     private static string Short(string hash) => hash.Length > 8 ? hash[..8] : hash;
@@ -440,6 +608,24 @@ internal static class ApplyFillsCommand
         for (var i = declarationLine - 1; i >= 0; i--)
         {
             var line = allLines[i].TrimEnd('\r');
+            if (line.Trim().Length == 0) continue;
+            var m = ProvenanceCommentPattern.Match(line);
+            return m.Success ? ParseProvenance(m.Groups["fields"].Value) : null;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// A TEST-ORACLE fill's own provenance comment, expected as the FIRST non-blank line of the
+    /// whole file (see <c>AiPacketEmitter.TestOracleResponseFormat</c>) -- there is no seam
+    /// declaration to search relative to, since this is a brand-new file, not a splice into one
+    /// that already exists.
+    /// </summary>
+    private static FillProvenance? ExtractLeadingProvenance(string content)
+    {
+        foreach (var rawLine in content.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
             if (line.Trim().Length == 0) continue;
             var m = ProvenanceCommentPattern.Match(line);
             return m.Success ? ParseProvenance(m.Groups["fields"].Value) : null;
@@ -501,7 +687,9 @@ internal static class ApplyFillsCommand
     private static void Report(
         string fillsDir, string manifestPath, List<string> applied, List<string> stillUnfilled,
         List<string> staleSeams, List<string> orphanedFiles, List<string> orphanedMethods,
-        List<string> unknownPackages, List<string> conformanceLinks)
+        List<string> unknownPackages, List<string> conformanceLinks,
+        List<string> testOracleApplied, List<string> testOracleOpen, List<string> testOracleStale, List<string> testOracleOrphaned,
+        List<string> localDataApplied, List<string> localDataOpen, List<string> localDataOrphaned)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"apply-fills: {applied.Count} fill file(s) applied from {fillsDir}");
@@ -546,6 +734,28 @@ internal static class ApplyFillsCommand
             sb.AppendLine("Gate-1 conformance rules now fully answered by these fills (never written here --");
             sb.AppendLine("update the claims file yourself if you agree the port is trustworthy):");
             foreach (var line in conformanceLinks) sb.AppendLine($"  = {line}");
+        }
+
+        // TEST-ORACLE/LOCAL-DATA -- a separate section, deliberately: neither is blocking, so this
+        // never contributes to the "no Tier-2 seams" fallback message below, which is specifically
+        // about the CS8795-producing seam mechanism.
+        if (testOracleApplied.Count > 0 || testOracleOpen.Count > 0 || testOracleStale.Count > 0 || testOracleOrphaned.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"TEST-ORACLE: {testOracleApplied.Count} applied, {testOracleOpen.Count} still open (informational, not a build blocker):");
+            foreach (var line in testOracleApplied) sb.AppendLine($"  + {line}");
+            foreach (var line in testOracleStale) sb.AppendLine($"  ~ {line}");
+            foreach (var line in testOracleOpen) sb.AppendLine($"  . {line}");
+            foreach (var line in testOracleOrphaned) sb.AppendLine($"  ? {line} (its own GapId comment did not match a current gap in this package)");
+        }
+
+        if (localDataApplied.Count > 0 || localDataOpen.Count > 0 || localDataOrphaned.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"LOCAL-DATA: {localDataApplied.Count} applied, {localDataOpen.Count} still open (informational, not a build blocker; no staleness check possible for a raw data file):");
+            foreach (var line in localDataApplied) sb.AppendLine($"  + {line}");
+            foreach (var line in localDataOpen) sb.AppendLine($"  . {line}");
+            foreach (var line in localDataOrphaned) sb.AppendLine($"  ? {line} (file name did not match any current gap's own expected TestData/ name)");
         }
 
         if (applied.Count == 0 && stillUnfilled.Count == 0 && staleSeams.Count == 0

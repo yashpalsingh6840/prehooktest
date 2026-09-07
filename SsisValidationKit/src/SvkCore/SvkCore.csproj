@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- GOVERNANCE BOUNDARY, pinned here because it is the real enforcement point, not just
+         a README claim: SvkCore/SvkCli may reference ONLY Ssis.Extract.Model and
+         Ssis.Extract.Dtsx, NEVER Ssis.Extract.Codegen or Ssis.Extract.Cli, regardless of
+         SsisExtractor.slnx also listing SvkCore/SvkCli as project entries (Generated-Tests-Plan
+         Phase 4, so one `dotnet build SsisExtractor.slnx` produces both ssisx.exe and svk.exe).
+         Shared solution membership does not relax this: nothing under Tools/SsisExtractor is
+         ever edited by this project, and its own .slnx is never hand-edited by svk's build,
+         only ADDED TO, once, by this plan. Ssis.Extract.Model is the plain record/POCO shape
+         spec.json deserializes into; Ssis.Extract.Dtsx supplies pure functions (PackageTree,
+         PrimaryKeyInference, ConformanceRulesBuilder) that already operate on that parsed
+         shape, not the XML parser itself. Adding a ProjectReference to Ssis.Extract.Codegen or
+         Ssis.Extract.Cli here would violate this boundary even if it compiled. -->
+    <ProjectReference Include="..\..\..\SsisExtractor\src\Ssis.Extract.Model\Ssis.Extract.Model.csproj" />
+    <ProjectReference Include="..\..\..\SsisExtractor\src\Ssis.Extract.Dtsx\Ssis.Extract.Dtsx.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SvkCore's first (and, as of this note, only) NuGet dependency, needed for real .xlsx
+         generation (svk sampledata's Excel Source output): this tool has no in-house .xlsx
+         writer anywhere (see CLAUDE.md's own Excel Source section), and a renamed/reformatted
+         CSV cannot stand in for a real workbook the way it can for a delimited flat file or a
+         SQL seed script, since Etl.Core.Excel.ExcelRowSource reads genuine OOXML structure via
+         ExcelDataReader. MIT licensed, pure .NET, no Windows/ACE-OLEDB dependency, so this stays
+         a governance-boundary-scoped project that builds and runs cross-platform. -->
+    <PackageReference Include="ClosedXML" Version="0.105.1" />
+  </ItemGroup>
+
+</Project>

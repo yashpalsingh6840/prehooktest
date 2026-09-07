@@ -62,7 +62,7 @@ public class EventHandlerReportingTests
         // 2026-09-03: a real dtexec probe (SyntheticEventHandlerProbe.dtsx) measured that, under
         // the default MaximumErrorCount=1 everywhere, "some task failed" and "the whole package
         // failed" are the same event -- so this shape is now translated as a failure handler
-        // (PackageRunner.RunFailureHandlersAsync already runs it unconditionally on any
+        // (the generated Program.cs already runs failure handlers unconditionally on any
         // exception), not reported as an untranslatable gap.
         var plan = PackagePlanner.Plan(Package(Handler("OnError", disabled: false, SqlTask("SQL_LogOnError"))));
 

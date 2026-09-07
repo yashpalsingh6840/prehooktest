@@ -1,83 +1,14 @@
-using Etl.Core.Abstractions;
-using Etl.Core.Csv;
 using Etl.Core.Hosting;
 using Etl.Core.Notifications;
-using Etl.Core.Pipeline;
-using LoadReferenceData.Csv;
-using LoadReferenceData.Mapping;
+using LoadReferenceData;
 using LoadReferenceData.Model;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 const string PackageName = "LoadReferenceData";
 
 var builder = EtlHost.Create(args, PackageName);
-
 builder.Services.AddEtlDbContext<LoadReferenceDataDbContext>();
-builder.Services.AddBulkSink<Department>();
-builder.Services.AddBulkSink<Designation>();
 builder.Services.AddEmailNotifications(builder.Configuration);
 
-builder.Services.AddScoped<IRowSource<DepartmentCsvRow>>(sp =>
-{
-    var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;
-    var csvOptions = new CsvSourceOptions { FilePath = fileOptions["Department"].ResolvedPath };
-    return new CsvRowSource<DepartmentCsvRow>("FF_SRC_Department", csvOptions, new DepartmentCsvRowMap());
-});
-
-builder.Services.AddScoped<IRowTransform<DepartmentCsvRow, Department>, DepartmentTransform>();
-
-builder.Services.AddScoped<IRowSource<DesignationCsvRow>>(sp =>
-{
-    var fileOptions = sp.GetRequiredService<IOptions<FileSourceOptions>>().Value;
-    var csvOptions = new CsvSourceOptions { FilePath = fileOptions["Designation"].ResolvedPath };
-    return new CsvRowSource<DesignationCsvRow>("FF_SRC_Designation", csvOptions, new DesignationCsvRowMap());
-});
-
-builder.Services.AddScoped<IRowTransform<DesignationCsvRow, Designation>, DesignationTransform>();
-
-builder.Services.AddScoped<IEtlPackage>(sp =>
-{
-    var departmentFlow = new DataFlowStep<DepartmentCsvRow, Department>(
-        "DFT_LoadDepartment",
-        sp.GetRequiredService<IRowSource<DepartmentCsvRow>>(),
-        sp.GetRequiredService<IRowTransform<DepartmentCsvRow, Department>>(),
-        sp.GetRequiredService<IBulkSink<Department>>(),
-        sp.GetRequiredService<ILogger<DataFlowStep<DepartmentCsvRow, Department>>>());
-
-    var designationFlow = new DataFlowStep<DesignationCsvRow, Designation>(
-        "DFT_LoadDesignation",
-        sp.GetRequiredService<IRowSource<DesignationCsvRow>>(),
-        sp.GetRequiredService<IRowTransform<DesignationCsvRow, Designation>>(),
-        sp.GetRequiredService<IBulkSink<Designation>>(),
-        sp.GetRequiredService<ILogger<DataFlowStep<DesignationCsvRow, Designation>>>());
-
-    return new EtlPackage(
-        Name: PackageName,
-        PreLoadStatements: ["TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;"],
-        Steps: [departmentFlow, designationFlow],
-        PreLoadFileActions: []);
-});
-
 using var host = builder.Build();
-
-await using var scope = host.Services.CreateAsyncScope();
-var runner = scope.ServiceProvider.GetRequiredService<IPackageRunner>();
-var package = scope.ServiceProvider.GetRequiredService<IEtlPackage>();
-var notifier = scope.ServiceProvider.GetRequiredService<IPackageResultNotifier>();
-var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-
-logger.LogInformation("Starting {Package}...", package.Name);
-var result = await runner.RunAsync(package, CancellationToken.None);
-await notifier.NotifyAsync(result, CancellationToken.None);
-
-if (result.Succeeded)
-{
-    foreach (var step in result.Steps)
-        logger.LogInformation("{Step}: {Rows:N0} rows loaded", step.Name, step.RowsWritten);
-    return ExitCode.Success;
-}
-
-logger.LogError(result.Error, "{Package} failed", package.Name);
-return ExitCode.LoadFailed;
+return await new LoadReferenceDataPackage(host.Services).RunAsync(CancellationToken.None);

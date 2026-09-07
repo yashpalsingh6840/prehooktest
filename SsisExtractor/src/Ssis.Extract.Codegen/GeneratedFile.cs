@@ -8,6 +8,21 @@ namespace Ssis.Extract.Codegen;
 /// emitter builds its output text, so this holds without each emitter re-deriving it.</summary>
 public sealed record GeneratedFile(string RelativePath, string Content);
 
+/// <summary>One starter test's own honest self-description -- what it asserts and, implicitly by
+/// what it DOESN'T say, what it doesn't. Never a gap (see `Docs/AI-Test-Enrichment-Plan.md`'s own
+/// Decision 2): this exists purely so `PackageReadmeEmitter` can tell an assistant what's already
+/// covered before it adds another test, without that assistant re-reading every generated `.cs`
+/// test file top to bottom. <see cref="RelativePath"/> is the SAME already-package-prefixed path
+/// used for the matching entry in the package's own test-file list (e.g.
+/// "{Package}.Tests/FooTests.cs") -- the exact, unambiguous join key, since the true generated
+/// method name for the thing under test is not always known yet at the point a test is emitted
+/// (a Transform test, for one, is built before `PackageClassEmitter.Emit` has assigned its sink
+/// method's final, collision-avoided name). <see cref="MethodNameHint"/> is a best-effort label
+/// for display only (an entity/component/class name) -- never used for joining.
+/// <see cref="Kind"/> is a short tag ("NameOnly", "HappyPath", "BoundaryCase", "Integration",
+/// "StatementText", ...); <see cref="Summary"/> is one plain sentence.</summary>
+public sealed record TestCoverageNote(string RelativePath, string MethodNameHint, string Kind, string Summary);
+
 /// <summary>
 /// One column, table, or expression an emitter could not generate for -- or, when
 /// <see cref="IsBlocking"/> is false, an advisory the caller should read before running

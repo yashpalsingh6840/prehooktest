@@ -131,4 +131,105 @@ public class AiPacketEmitterTests
         Assert.Contains("Could not resolve", content);
         Assert.Contains("it is a bug in AiPacketEmitter", content);
     }
+
+    // Docs/Generated-Tests-Plan.md phase 3: GapKind.TestOracle/LocalFileSourceData, both
+    // MissingDatum tier (non-blocking, still get a packet -- see GapIdentityTests for that half).
+
+    [Fact]
+    public void Emit_BuildsATestOracleRouterPacket_FromTheRealConditionalSplitCases()
+    {
+        var package = LoadSyntheticFixture("SyntheticConditionalSplit.dtsx");
+        var split = TestFixtures.FindComponent(package, "Microsoft.ConditionalSplit", "Conditional Split");
+        var gaps = new List<GenerationGap>
+        {
+            new("SyntheticConditionalSplitRouter", "case could not be evaluated", false, GapKind.TestOracle, split.RefId),
+        };
+
+        var result = AiPacketEmitter.Emit(package, gaps);
+        var spec = Assert.Single(result.Gaps);
+        Assert.Equal(GapTier.MissingDatum, spec.Tier);
+        Assert.False(spec.IsBlocking);
+
+        var content = Assert.Single(result.Packets).Content;
+        Assert.Contains("### Every case, in evaluation order", content);
+        Assert.Contains("### This case's own input columns", content);
+        // Tier 1 per the plan's own reuse decision -- no code/semantics appendix noise for this,
+        // even though the actual ANSWER is a whole test file (see TestOracleContract's own doc).
+        Assert.Contains("Do not write code for this.", content);
+        Assert.Contains("self-contained xUnit test FILE", content);
+        Assert.Contains("<Package>.Tests/Fills/", content);
+    }
+
+    /// <summary>
+    /// Added 2026-09-06 after a real gap (Package_Transforms's own RegionSummary, whose GroupBy
+    /// key resolves through a Lookup cache) fell through to the generic "could not resolve" text
+    /// -- TestOracleEvidence only ever checked ScriptComponent/ConditionalSplit, never Aggregate,
+    /// even though FindComponent already resolved the component correctly. Guards against that
+    /// 4th shape regressing back to the fallback message.
+    /// </summary>
+    [Fact]
+    public void Emit_BuildsATestOracleAggregatePacket_FromTheRealGroupByAndCountColumns()
+    {
+        var package = LoadSyntheticFixture("SyntheticAggregate.dtsx");
+        var aggregate = TestFixtures.FindComponent(package, "Microsoft.Aggregate", "AGG_ByRegion");
+        var gaps = new List<GenerationGap>
+        {
+            new("RegionSummary", "GroupBy value only resolves through a Lookup cache", false, GapKind.TestOracle, aggregate.RefId),
+        };
+
+        var result = AiPacketEmitter.Emit(package, gaps);
+        var spec = Assert.Single(result.Gaps);
+        Assert.Equal(GapTier.MissingDatum, spec.Tier);
+        Assert.False(spec.IsBlocking);
+
+        var content = Assert.Single(result.Packets).Content;
+        // Must NOT fall through to the generic unresolved-evidence message.
+        Assert.DoesNotContain("Could not resolve the source of this test-oracle gap", content);
+        Assert.Contains("### Every aggregate column, in declared order", content);
+        Assert.Contains("| `Region` | GroupBy |", content);
+        Assert.Contains("| `CustomerCount` | Count |", content);
+        Assert.Contains("AGG_ByRegion", content);
+    }
+
+    [Fact]
+    public void Emit_BuildsALocalFileSourceDataPacket_FromTheRealFlatFileSchema()
+    {
+        var package = LoadSyntheticFixture("SyntheticPostFlowSql.dtsx");
+        var cm = package.ConnectionManagers.Single(c => c.ObjectName == "CM_PostFlowCsv");
+        var gaps = new List<GenerationGap>
+        {
+            new("SyntheticPostFlowTarget", "still reads a deterministic synthetic sample", false, GapKind.LocalFileSourceData, cm.RefId),
+        };
+
+        var result = AiPacketEmitter.Emit(package, gaps);
+        var spec = Assert.Single(result.Gaps);
+        Assert.Equal(GapTier.MissingDatum, spec.Tier);
+        Assert.NotNull(spec.ExpectedFileName);
+
+        var content = Assert.Single(result.Packets).Content;
+        Assert.Contains($"**Save as:** `TestData/{spec.ExpectedFileName}`", content);
+        Assert.Contains("### Columns, in file order", content);
+        // No provenance mechanism for a raw data file -- stated plainly, not silently absent.
+        Assert.Contains("no provenance comment convention for a data file", content);
+        Assert.DoesNotContain("ssisx-fill:", content);
+    }
+
+    [Fact]
+    public void Emit_ResolvesExpectedFileName_FromTheConnectionManagersOwnConfiguredPath_NotTheTierASampleName()
+    {
+        // GapSpec.ExpectedFileName's own doc comment: appsettings.Development.json overrides only
+        // SourceFolder, never SourceFileName, so a real TestData/ fill must be named exactly what
+        // the connection manager's own design-time path already says -- which is frequently NOT
+        // the Tier-A synthetic sample's own "{FileSourceKey}.csv" name.
+        var package = LoadSyntheticFixture("SyntheticPostFlowSql.dtsx");
+        var cm = package.ConnectionManagers.Single(c => c.ObjectName == "CM_PostFlowCsv");
+        var gaps = new List<GenerationGap>
+        {
+            new("SyntheticPostFlowTarget", "reason", false, GapKind.LocalFileSourceData, cm.RefId),
+        };
+
+        var spec = Assert.Single(AiPacketEmitter.Emit(package, gaps).Gaps);
+
+        Assert.Equal(Path.GetFileName(cm.Parsed!.FilePath), spec.ExpectedFileName);
+    }
 }

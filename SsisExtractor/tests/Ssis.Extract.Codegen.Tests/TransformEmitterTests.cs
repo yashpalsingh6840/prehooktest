@@ -364,17 +364,32 @@ public class TransformEmitterTests
         Assert.Equal("Mapping/EmployeeTransform.cs", file.RelativePath);
         Assert.Contains("public sealed class EmployeeTransform : IRowTransform<EmployeeCsvRow, Employee>", file.Content);
 
-        // Computed columns -- exact same expressions EmployeeTransform.cs was hand-written with.
+        // Computed columns -- each its own named, callable function (not inlined into the object
+        // initializer), so a developer can call e.g. EmployeeTransform.ComputeEmployeeKey(row, ctx)
+        // directly in a focused unit test. Same underlying expressions EmployeeTransform.cs was
+        // hand-written with, just extracted rather than inlined.
+        Assert.Contains("FullName = ComputeFullName(row, ctx),", file.Content);
+        Assert.Contains("Location = ComputeLocation(row, ctx),", file.Content);
+        Assert.Contains("EmployeeKey = ComputeEmployeeKey(row, ctx),", file.Content);
+        Assert.Contains("LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),", file.Content);
+
         Assert.Contains(
-            "FullName = WidthGuard.Wstr($\"{row.FirstName} {row.LastName}\", 101, nameof(Employee.FullName), ctx.RowNumber),",
+            "public static string ComputeFullName(EmployeeCsvRow row, in RowContext ctx) => WidthGuard.Wstr($\"{row.FirstName} {row.LastName}\", 101, nameof(Employee.FullName), ctx.RowNumber);",
             file.Content);
         Assert.Contains(
-            "Location = WidthGuard.Wstr($\"{row.City}, {row.State}\", 60, nameof(Employee.Location), ctx.RowNumber),",
+            "public static string ComputeLocation(EmployeeCsvRow row, in RowContext ctx) => WidthGuard.Wstr($\"{row.City}, {row.State}\", 60, nameof(Employee.Location), ctx.RowNumber);",
             file.Content);
         Assert.Contains(
-            "EmployeeKey = WidthGuard.Wstr($\"{SsisFn.Upper(SsisFn.Substring(row.Department, 1, 3))}-{SsisFn.Str(row.EmployeeID)}\", 20, nameof(Employee.EmployeeKey), ctx.RowNumber),",
+            "public static string ComputeEmployeeKey(EmployeeCsvRow row, in RowContext ctx) => WidthGuard.Wstr($\"{SsisFn.Upper(SsisFn.Substring(row.Department, 1, 3))}-{SsisFn.Str(row.EmployeeID)}\", 20, nameof(Employee.EmployeeKey), ctx.RowNumber);",
             file.Content);
-        Assert.Contains("LoadedAtUtc = ctx.LoadedAtUtc,", file.Content);
+        Assert.Contains("public static DateTime ComputeLoadedAtUtc(EmployeeCsvRow row, in RowContext ctx) => ctx.LoadedAtUtc;", file.Content);
+
+        // Each compute function is preceded by a comment quoting the real SSIS expression it
+        // translates, so a developer can see what drove it without re-deriving it.
+        Assert.Contains("// (DT_WSTR,101)(FirstName + \" \" + LastName)", file.Content);
+        Assert.Contains("// (DT_WSTR,60)(City + \", \" + State)", file.Content);
+        Assert.Contains("// (DT_WSTR,20)(UPPER(SUBSTRING(Department,1,3)) + \"-\" + (DT_WSTR,10)EmployeeID)", file.Content);
+        Assert.Contains("// GETUTCDATE()", file.Content);
 
         // Plain passthrough columns -- never re-derived, straight from the row.
         Assert.Contains("EmployeeID = row.EmployeeID,", file.Content);
@@ -406,8 +421,9 @@ public class TransformEmitterTests
         Assert.Equal(["Str", "Upper"], result.SsisFunctionsUsed.OrderBy(x => x));
 
         var file = Assert.Single(result.Result.Files);
+        Assert.Contains("DepartmentKey = ComputeDepartmentKey(row, ctx),", file.Content);
         Assert.Contains(
-            "DepartmentKey = WidthGuard.Wstr($\"{SsisFn.Upper(row.DepartmentCode)}-{SsisFn.Str(row.DepartmentID)}\", 25, nameof(Department.DepartmentKey), ctx.RowNumber),",
+            "public static string ComputeDepartmentKey(DepartmentCsvRow row, in RowContext ctx) => WidthGuard.Wstr($\"{SsisFn.Upper(row.DepartmentCode)}-{SsisFn.Str(row.DepartmentID)}\", 25, nameof(Department.DepartmentKey), ctx.RowNumber);",
             file.Content);
         Assert.Contains("CostCenter = row.CostCenter,", file.Content);
         Assert.Contains("HeadCount = row.HeadCount,", file.Content);
@@ -438,8 +454,9 @@ public class TransformEmitterTests
         // DER_DesignationKey keys off JobLevel, not DesignationID -- easy to get backwards by
         // pattern-matching DepartmentTransform; this is the same fact
         // LoadReferenceData.Tests\DesignationTransformTests.cs pins on the hand-written side.
+        Assert.Contains("DesignationKey = ComputeDesignationKey(row, ctx),", file.Content);
         Assert.Contains(
-            "DesignationKey = WidthGuard.Wstr($\"{SsisFn.Upper(row.DesignationCode)}-{SsisFn.Str(row.JobLevel)}\", 25, nameof(Designation.DesignationKey), ctx.RowNumber),",
+            "public static string ComputeDesignationKey(DesignationCsvRow row, in RowContext ctx) => WidthGuard.Wstr($\"{SsisFn.Upper(row.DesignationCode)}-{SsisFn.Str(row.JobLevel)}\", 25, nameof(Designation.DesignationKey), ctx.RowNumber);",
             file.Content);
 
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
@@ -475,11 +492,17 @@ public class TransformEmitterTests
 
         // A seam is outstanding work, not a resolution: the gap stays, stays BLOCKING, and keeps
         // its Tier-2 classification so the work packet is still produced.
-        var gap = Assert.Single(result.Result.Gaps);
+        Assert.Equal(2, result.Result.Gaps.Count);
+        var gap = Assert.Single(result.Result.Gaps, g => g.Kind == GapKind.ScriptComponentColumn);
         Assert.Equal("StagingCustomers.FullName", gap.Location);
         Assert.True(gap.IsBlocking);
-        Assert.Equal(GapKind.ScriptComponentColumn, gap.Kind);
         Assert.Contains("CS8795", gap.Reason);
+
+        // Companion "Script Task / Script Component seam" taxonomy row: a filled seam is human
+        // logic, and a test for it is a separate, non-blocking TEST-ORACLE work item.
+        var testGap = Assert.Single(result.Result.Gaps, g => g.Kind == GapKind.TestOracle);
+        Assert.Equal("StagingCustomers.FullName", testGap.Location);
+        Assert.False(testGap.IsBlocking);
     }
 
     [Fact]

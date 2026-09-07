@@ -36,6 +36,11 @@ internal static class GenerateCommand
         // is wrong" failure class this tool otherwise refuses to allow. --seams is kept as an
         // accepted no-op so any script/doc still passing it explicitly keeps working.
         var seams = true;
+        // Docs/Generated-Tests-Plan.md's own "Opt-out": named plainly (not "--no-tests"), since
+        // skipping tests only loses coverage -- unlike --unsafe-skip-seams, it can never make
+        // this tool produce silently WRONG code, so it carries none of that flag's own warning
+        // framing.
+        var skipTests = false;
         string? fillsDir = null;
         string? etlCorePath = null;
         var packageNames = new List<string>();
@@ -75,6 +80,7 @@ internal static class GenerateCommand
                     // "--skip-seams", so the risk is visible at the call site, not just in
                     // --help.
                     case "--unsafe-skip-seams": seams = false; break;
+                    case "--skip-tests": skipTests = true; break;
                     case "--fills": fillsDir = RequireValue(args, ref i, "--fills"); break;
                     // Folds the "copy Etl.Core alongside the generated output" step into this
                     // command instead of leaving it as a separate manual step someone (a human,
@@ -143,7 +149,7 @@ internal static class GenerateCommand
         foreach (var package in loaded.Packages)
         {
             var decisions = LoadDecisions(fillsDir, package.ObjectName);
-            var result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams);
+            var result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests);
             results.Add(result);
             decisionOutcomes.AddRange(decisions.Outcomes.Concat(decisions.Orphans())
                 .Select(o => (package.ObjectName, o)));
@@ -151,6 +157,17 @@ internal static class GenerateCommand
             foreach (var file in result.Files)
             {
                 var path = Path.Combine(generateDir, package.ObjectName, file.RelativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, file.Content);
+            }
+
+            // Unlike result.Files, each RelativePath here is already relative to generateDir
+            // itself (e.g. "LoadEmployees.Tests/LoadEmployees.Tests.csproj") -- see
+            // PackageGenerateResult.SiblingFiles' own doc comment for why a starter test
+            // project must be a SIBLING of the main project, not nested inside it.
+            foreach (var file in result.SiblingFiles)
+            {
+                var path = Path.Combine(generateDir, file.RelativePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 File.WriteAllText(path, file.Content);
             }
@@ -185,7 +202,7 @@ internal static class GenerateCommand
         // Tools/ in view at all, so nothing there was ever going to be picked up automatically.
         WriteAiAssistantGuide(Path.Combine(outDir, "HOW-TO-FILL-GAPS.md"), allGaps, fillsDir, outDir);
 
-        var totalFiles = results.Sum(r => r.Files.Count);
+        var totalFiles = results.Sum(r => r.Files.Count + r.SiblingFiles.Count);
         var totalGaps = results.Sum(r => r.Gaps.Count) + fixedFileGaps.Count;
         var packets = allGaps.Count(g => g.PacketPath is not null);
         Console.WriteLine($"generate: {totalFiles} file(s) written across {results.Count} package(s), {totalGaps} gap(s) -- see {reportPath}");
@@ -279,6 +296,17 @@ internal static class GenerateCommand
         "    <PackageVersion Include=\"Microsoft.Extensions.Hosting\" Version=\"10.0.11\" />",
         "    <PackageVersion Include=\"Microsoft.Extensions.Configuration.UserSecrets\" Version=\"10.0.11\" />",
         "    <PackageVersion Include=\"System.Text.Encoding.CodePages\" Version=\"10.0.11\" />",
+        // Matches D:\PoC\SSIS_Rewrite\Directory.Packages.props exactly -- the one source of truth
+        // for these three versions (see that repo's own Etl.Core.Tests, which builds against them
+        // today). Only referenced by a {PackageName}.Tests project (TestProjectEmitter), never by
+        // the main generated project itself.
+        "    <PackageVersion Include=\"Microsoft.NET.Test.Sdk\" Version=\"17.14.1\" />",
+        "    <PackageVersion Include=\"xunit\" Version=\"2.9.3\" />",
+        "    <PackageVersion Include=\"xunit.runner.visualstudio\" Version=\"3.1.4\" />",
+        // Lets `dotnet test --collect:\"XPlat Code Coverage\"` work out of the box against every
+        // generated {Package}.Tests project -- previously had to be patched in by hand per package
+        // (a real, avoidable manual step) to compute a code-coverage report at all.
+        "    <PackageVersion Include=\"coverlet.collector\" Version=\"6.0.4\" />",
         "  </ItemGroup>",
         "",
         "</Project>",
@@ -360,6 +388,20 @@ internal static class GenerateCommand
         foreach (var r in results.Where(r => r.Files.Any(f => f.RelativePath == "Program.cs")).OrderBy(r => r.PackageName, StringComparer.Ordinal))
             slnLines.Add($"    <Project Path=\"{r.PackageName}/{r.PackageName}.csproj\" />");
         slnLines.Add("  </Folder>");
+
+        var testProjectPackageNames = results
+            .Where(r => r.SiblingFiles.Any(f => f.RelativePath == $"{r.PackageName}.Tests/{r.PackageName}.Tests.csproj"))
+            .Select(r => r.PackageName)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+        if (testProjectPackageNames.Count > 0)
+        {
+            slnLines.Add("  <Folder Name=\"/tests/\">");
+            foreach (var packageName in testProjectPackageNames)
+                slnLines.Add($"    <Project Path=\"{packageName}.Tests/{packageName}.Tests.csproj\" />");
+            slnLines.Add("  </Folder>");
+        }
+
         slnLines.Add("</Solution>");
         File.WriteAllText(Path.Combine(generateDir, "Generated.slnx"), JoinLines(slnLines));
 
@@ -435,15 +477,15 @@ internal static class GenerateCommand
         sb.AppendLine("Phase 3 of the `ssisx generate` plan: one runnable C# project per package, written under `generate/<Package>/`, plus Directory.Build.props/Directory.Packages.props/Shared/appsettings.Shared.json/Generated.slnx written once under `generate/`. Every generated file carries no hand-editing expectation -- regenerate freely; anything a human needs to add belongs in the package's own appsettings.json or a sibling file this tool never writes.");
         sb.AppendLine();
 
-        var totalFiles = results.Sum(r => r.Files.Count);
+        var totalFiles = results.Sum(r => r.Files.Count + r.SiblingFiles.Count);
         var totalGaps = results.Sum(r => r.Gaps.Count) + fixedFileGaps.Count;
         sb.AppendLine($"**{totalFiles} file(s) written across {results.Count} package(s), {totalGaps} gap(s).**");
         sb.AppendLine();
 
-        sb.AppendLine("| Package | Files written | Gaps |");
-        sb.AppendLine("|---|---|---|");
+        sb.AppendLine("| Package | Files written | Starter tests | Gaps |");
+        sb.AppendLine("|---|---|---|---|");
         foreach (var r in results.OrderBy(r => r.PackageName, StringComparer.Ordinal))
-            sb.AppendLine($"| {r.PackageName} | {r.Files.Count} | {r.Gaps.Count} |");
+            sb.AppendLine($"| {r.PackageName} | {r.Files.Count} | {r.SiblingFiles.Count} | {r.Gaps.Count} |");
         sb.AppendLine();
 
         sb.AppendLine("## Gaps -- not silently dropped, each has a reason");
@@ -600,21 +642,37 @@ internal static class GenerateCommand
         {
             sb.AppendLine($"## {fillable.Count} gap(s) waiting for an answer, right now");
             sb.AppendLine();
-            sb.AppendLine("| Package | Tier | GapId | Work packet |");
-            sb.AppendLine("|---|---|---|---|");
+            sb.AppendLine("| Package | Tier | Kind | GapId | Work packet |");
+            sb.AppendLine("|---|---|---|---|---|");
             foreach (var g in fillable.OrderBy(g => g.Package, StringComparer.Ordinal).ThenBy(g => g.GapId, StringComparer.Ordinal))
             {
                 var packetRef = g.PacketPath is not null ? $"`{g.PacketPath}`" : "_(none)_";
-                sb.AppendLine($"| {g.Package} | {(g.Tier == GapTier.MissingDatum ? "1 -- datum" : "2 -- logic")} | `{g.GapId}` | {packetRef} |");
+                sb.AppendLine($"| {g.Package} | {(g.Tier == GapTier.MissingDatum ? "1 -- datum" : "2 -- logic")} | {g.Kind} | `{g.GapId}` | {packetRef} |");
             }
             sb.AppendLine();
             sb.AppendLine("## What to actually do for each tier");
             sb.AppendLine();
-            sb.AppendLine("**Tier 1 (a missing datum, e.g. an unresolvable Lookup join key):** open the work");
-            sb.AppendLine("packet, read its exact question, do **not** guess a confident-sounding answer -- confirm");
-            sb.AppendLine("it with a human if you're not certain. Write the answer into");
-            sb.AppendLine($"`{fillsDir}\\<Package>.decisions.json`, in the exact JSON shape the packet shows, with a");
-            sb.AppendLine("real `ConfirmedBy`.");
+            sb.AppendLine("**Tier 1 is one workflow with THREE different answer shapes -- check the Kind column above");
+            sb.AppendLine("before writing anything, they are not interchangeable:**");
+            sb.AppendLine();
+            sb.AppendLine("- **`LookupJoinKey` / `EncryptedConnectionManagerSecret`** (a missing FACT, or an");
+            sb.AppendLine("  acknowledgment): open the work packet, read its exact question, do **not** guess a");
+            sb.AppendLine("  confident-sounding answer -- confirm it with a human if you're not certain. Write the");
+            sb.AppendLine($"  answer into `{fillsDir}\\<Package>.decisions.json`, in the exact JSON shape the packet");
+            sb.AppendLine("  shows, with a real `ConfirmedBy`.");
+            sb.AppendLine("- **`TestOracle`** (a starter test the deterministic emitter could not itself derive --");
+            sb.AppendLine("  a Conditional Split case, or a test for a filled Script Task/Component seam): the packet");
+            sb.AppendLine("  asks for a WHOLE new xUnit test file, not a value in a JSON file. Write it under");
+            sb.AppendLine($"  `{fillsDir}\\<Package>\\Tests\\<Name>Tests.cs`, with this comment as the file's own FIRST");
+            sb.AppendLine("  line (not above a seam -- there is no seam here, this is a brand-new file):");
+            sb.AppendLine("  ```");
+            sb.AppendLine("  // ssisx-fill: GapId=<exact GapId> Author=<you> Date=<yyyy-mm-dd> EvidenceSha256=<from the packet>");
+            sb.AppendLine("  ```");
+            sb.AppendLine("- **`LocalFileSourceData`** (a realistic sample file to replace the synthetic Tier-A");
+            sb.AppendLine("  placeholder): the packet names the EXACT file name to use (its own \"Save as\" line --");
+            sb.AppendLine($"  do not guess one). Write it under `{fillsDir}\\<Package>\\TestData\\<that exact name>`,");
+            sb.AppendLine("  with no comment of any kind (a data file has no provenance convention -- see the packet's");
+            sb.AppendLine("  own contract for why).");
             sb.AppendLine();
             sb.AppendLine("**Tier 2 (a Script Task/Component whose real source IS in the packet, just needs");
             sb.AppendLine("porting to C#):** read the packet -- it includes the actual original script text and the");
@@ -639,12 +697,24 @@ internal static class GenerateCommand
         }
 
         sb.AppendLine();
+        sb.AppendLine("## Adding more tests -- NOT a gap, do this separately");
+        sb.AppendLine();
+        sb.AppendLine("Once a package builds clean with zero gaps left above, you can still raise coverage past");
+        sb.AppendLine("the deterministic starter tests -- this is voluntary enrichment, never listed in");
+        sb.AppendLine("`gaps.json` and never affecting whether a package counts as generatable. Read");
+        sb.AppendLine("`generate/<Package>/README.md`'s own \"Test coverage notes\" section (not the whole");
+        sb.AppendLine($"`.Tests` project) for what to add, write it under `{fillsDir}\\<Package>\\MoreTests\\`");
+        sb.AppendLine("(a `// ssisx-more-test: Author=... Date=... Targets=...` first-line comment is audit-only,");
+        sb.AppendLine("never required), then apply with `ssisx apply-tests --out <this folder> --fills");
+        sb.AppendLine($"\"{fillsDir}\"`. See `Docs/AI-Test-Enrichment-Plan.md` for the full design.");
+        sb.AppendLine();
         sb.AppendLine("## One rule that applies regardless of tier");
         sb.AppendLine();
-        sb.AppendLine("Do not attempt to build/run this project against a real database or real source data to");
-        sb.AppendLine("\"verify\" a fill -- none is available in this environment, and inventing one (a throwaway");
-        sb.AppendLine("connection string, sample files) is out of scope. `dotnet build` succeeding is the expected");
-        sb.AppendLine("extent of checking here.");
+        sb.AppendLine("Do not attempt to build/run this project against a REAL database, or invent a throwaway one,");
+        sb.AppendLine("to \"verify\" a fill -- none is available in this environment. `dotnet build` succeeding is");
+        sb.AppendLine("the expected extent of checking here (this does not apply to a `LocalFileSourceData` fill --");
+        sb.AppendLine("supplying a realistic sample FILE is precisely what that gap kind asks for; it is the");
+        sb.AppendLine("no-server, no-database `dotnet test --filter Category!=Integration` tier this concerns).");
 
         File.WriteAllText(path, sb.ToString());
     }

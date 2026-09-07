@@ -1,6 +1,6 @@
 # Gate 2 — expression semantics + generated tests
 
-Gate 2 of [`Migration-Validation-Plan.md`](../../../Migration-Validation-Plan.md) §4: turn
+Gate 2 of [`Migration-Validation-Plan.md`](../../../Docs/Migration-Validation-Plan.md) §4: turn
 every Derived Column expression the extractor harvests (plan §5.5) into an executable,
 generated test, so a rewrite's expression logic is measured against real SSIS behaviour
 instead of documentation or memory.

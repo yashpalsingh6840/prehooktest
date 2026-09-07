@@ -18,17 +18,20 @@ namespace Etl.Core.Abstractions;
 /// would be inventing semantics no `.dtsx` evidence asked for.
 ///
 /// One instance per package run, created by generated <c>Program.cs</c> and shared by every
-/// Script Task step. Not thread-safe, matching <see cref="Pipeline.PackageRunner"/>'s own strictly
-/// sequential execution -- if steps ever run concurrently this needs revisiting alongside
-/// <see cref="IUnitOfWork"/>, which has exactly the same constraint.
+/// Script Task step. Backed by a <see cref="System.Collections.Concurrent.ConcurrentDictionary{TKey,TValue}"/>
+/// so concurrent SSIS branches (emitter rewrite phase 7, <c>Docs/Emitter-Rewrite-Plan.md</c>) can
+/// each read/write it without corrupting the bag itself -- this only makes individual Set/Get calls
+/// safe, not a read-modify-write sequence across two concurrent branches (e.g. one branch reading a
+/// counter another branch is simultaneously incrementing). No tracked package does that; if one
+/// ever does, it needs a reported gap, not a lock added here on spec.
 /// </summary>
 public sealed class PackageVariables
 {
-    private readonly Dictionary<string, object?> _values = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, object?> _values = new();
 
     /// <summary>Every variable name currently set, in no particular order. Useful for logging a
     /// run's final variable state; not something a port should branch on.</summary>
-    public IReadOnlyCollection<string> Names => _values.Keys;
+    public IReadOnlyCollection<string> Names => _values.Keys.ToArray();
 
     /// <summary>Sets a variable, using its full SSIS name including namespace -- e.g.
     /// <c>User::BatchStartTime</c>. Overwrites silently, as SSIS does.</summary>

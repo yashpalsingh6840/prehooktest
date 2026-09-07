@@ -91,9 +91,9 @@ public interface IUnitOfWork : IAsyncDisposable
     /// connections, each seeing the writer's current state including writes made after the token
     /// was fetched. The one alternative that would have avoided all this -- running pre-load
     /// statements outside the load transaction, auto-committed, the way SSIS itself runs each
-    /// task -- was rejected: <see cref="Etl.Core.Pipeline.PackageRunner"/>'s own whole-transaction
-    /// design (TRUNCATE included) is a deliberate, already-shipped improvement over SSIS's
-    /// separate auto-commit, not something to undo to work around a self-inflicted deadlock.
+    /// task -- was rejected: a generated <c>Program.cs</c>'s own whole-transaction design
+    /// (TRUNCATE included) is a deliberate, already-shipped improvement over SSIS's separate
+    /// auto-commit, not something to undo to work around a self-inflicted deadlock.
     /// </remarks>
     Task<string> GetBindTokenAsync(CancellationToken ct);
 

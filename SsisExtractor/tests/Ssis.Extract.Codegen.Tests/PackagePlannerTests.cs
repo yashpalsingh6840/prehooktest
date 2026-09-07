@@ -35,9 +35,13 @@ public class PackagePlannerTests
         var plan = PackagePlanner.Plan(package);
 
         Assert.Empty(plan.Gaps);
-        // The Execute SQL Task lives INSIDE the Sequence Container -- proves nested pre-load
-        // SQL is folded into the same flat list a root-level one would be.
-        Assert.Equal(["TRUNCATE TABLE dbo.SyntheticNestedTarget;"], plan.PreLoadStatements);
+        // The Execute SQL Task lives INSIDE the Sequence Container -- proves nested pre-flow SQL
+        // is an ordinary step (emitter rewrite phase 2: nothing is hoisted any more), folded into
+        // the same flat Steps list a root-level one would be, and carries its real container path.
+        var truncateStep = Assert.Single(plan.Steps.OfType<SqlStep>(), s => s.TaskName == "SQL_Truncate");
+        Assert.Equal("TRUNCATE TABLE dbo.SyntheticNestedTarget;", truncateStep.Sql);
+        Assert.Equal(["SEQ_Load"], truncateStep.ContainerPath);
+        Assert.Empty(plan.PreLoadStatements); // always empty as of phase 2, see PreLoadSqlStatementPlan's own doc comment
 
         Assert.Equal(2, plan.Flows.Count);
         // DFT_NestedLoad is nested inside SEQ_Load; DFT_RootLoad is a root-level sibling that
@@ -144,7 +148,12 @@ public class PackagePlannerTests
         var plan = PackagePlanner.Plan(package);
 
         Assert.Empty(plan.Gaps);
-        Assert.Equal(["TRUNCATE TABLE dbo.Employee;"], plan.PreLoadStatements);
+        // Emitter rewrite phase 2: no longer hoisted -- an ordinary SqlStep, first in plan.Steps
+        // since it has no predecessor.
+        var truncateStep = Assert.Single(plan.Steps.OfType<SqlStep>());
+        Assert.Equal("SQL_TruncateTarget", truncateStep.TaskName);
+        Assert.Equal("TRUNCATE TABLE dbo.Employee;", truncateStep.Sql);
+        Assert.Empty(plan.PreLoadStatements);
 
         var flow = Assert.Single(plan.Flows);
         Assert.Equal("DFT_LoadEmployees", flow.TaskName);
@@ -161,7 +170,12 @@ public class PackagePlannerTests
         var plan = PackagePlanner.Plan(package);
 
         Assert.Empty(plan.Gaps);
-        Assert.Equal(["TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;"], plan.PreLoadStatements);
+        // Emitter rewrite phase 2: no longer hoisted -- an ordinary SqlStep, first in plan.Steps
+        // since it has no predecessor.
+        var truncateStep = Assert.Single(plan.Steps.OfType<SqlStep>());
+        Assert.Equal("SQL_TruncateTargets", truncateStep.TaskName);
+        Assert.Equal("TRUNCATE TABLE dbo.Department; TRUNCATE TABLE dbo.Designation;", truncateStep.Sql);
+        Assert.Empty(plan.PreLoadStatements);
 
         Assert.Equal(2, plan.Flows.Count);
         Assert.Equal("DFT_LoadDepartment", plan.Flows[0].TaskName);
@@ -181,15 +195,19 @@ public class PackagePlannerTests
 
         var plan = PackagePlanner.Plan(package);
 
-        Assert.Contains(
-            "IF OBJECT_ID('dbo.SyntheticLoadATemp') IS NULL\nCREATE TABLE dbo.SyntheticLoadATemp (ID INT NOT NULL, Name NVARCHAR(50) NOT NULL, Amount DECIMAL(12,2) NOT NULL, EntryDate DATE NOT NULL);",
-            plan.PreLoadStatements);
-        Assert.DoesNotContain(plan.PreLoadStatements, sql => sql.Contains("UPDATE dbo.SyntheticLoadATemp"));
+        // Emitter rewrite phase 2: no longer hoisted into a separate list -- SQL_CreateLoadATemp
+        // is genuinely pre-flow, so it's the ordinary SqlStep sitting BEFORE the flow in plan.Steps.
+        Assert.Contains(plan.Steps.OfType<SqlStep>(), s => s.TaskName == "SQL_CreateLoadATemp" && s.Sql ==
+            "IF OBJECT_ID('dbo.SyntheticLoadATemp') IS NULL\nCREATE TABLE dbo.SyntheticLoadATemp (ID INT NOT NULL, Name NVARCHAR(50) NOT NULL, Amount DECIMAL(12,2) NOT NULL, EntryDate DATE NOT NULL);");
+        Assert.Empty(plan.PreLoadStatements);
 
+        var createStepIndex = plan.Steps.FindIndex(s => s is SqlStep sql && sql.TaskName == "SQL_CreateLoadATemp");
         var flowStepIndex = plan.Steps.FindIndex(s => s is FlowStep flow && flow.Flow.TaskName == "DFT_LoadA");
         var sqlStepIndex = plan.Steps.FindIndex(s => s is SqlStep sql && sql.TaskName == "SQL_UpdateLoadA");
+        Assert.True(createStepIndex >= 0, "SQL_CreateLoadATemp should be a SqlStep in plan.Steps");
         Assert.True(flowStepIndex >= 0, "DFT_LoadA should be a FlowStep in plan.Steps");
         Assert.True(sqlStepIndex >= 0, "SQL_UpdateLoadA should be a SqlStep in plan.Steps");
+        Assert.True(createStepIndex < flowStepIndex, "SQL_CreateLoadATemp must come before DFT_LoadA");
         Assert.True(sqlStepIndex > flowStepIndex, "SQL_UpdateLoadA must come after DFT_LoadA");
 
         var sqlStep = (SqlStep)plan.Steps[sqlStepIndex];
@@ -304,25 +322,34 @@ public class PackagePlannerTests
         var plan = PackagePlanner.Plan(package);
 
         Assert.Empty(plan.Gaps);
-        Assert.Equal(["TRUNCATE TABLE dbo.SyntheticFileSystemTaskTarget;"], plan.PreLoadStatements);
+        // Emitter rewrite phase 2: no longer hoisted -- SQL_PreLoad is an ordinary SqlStep, first
+        // in plan.Steps since it has no predecessor.
+        var truncateStep = Assert.Single(plan.Steps.OfType<SqlStep>());
+        Assert.Equal("SQL_PreLoad", truncateStep.TaskName);
+        Assert.Equal("TRUNCATE TABLE dbo.SyntheticFileSystemTaskTarget;", truncateStep.Sql);
+        Assert.Empty(plan.PreLoadStatements);
+        Assert.Empty(plan.PreLoadFileActions);
 
-        var preLoadAction = Assert.Single(plan.PreLoadFileActions);
-        Assert.Equal("Copy", preLoadAction.Operation);
-        Assert.EndsWith("source.txt", preLoadAction.SourcePath);
-        Assert.EndsWith("archived-preload.txt", preLoadAction.DestinationPath);
-        Assert.True(preLoadAction.Overwrite);
+        // Both File System Tasks are now ordinary FileSystemSteps, at their true position --
+        // FST_PreLoadCopy before DFT_Load, FST_PostLoadCopy after it.
+        var fsSteps = plan.Steps.OfType<FileSystemStep>().ToList();
+        Assert.Equal(2, fsSteps.Count);
 
-        var postFlowStep = Assert.Single(plan.Steps, s => s is FileSystemStep);
-        var fsStep = (FileSystemStep)postFlowStep;
-        Assert.Equal("FST_PostLoadCopy", fsStep.TaskName);
-        Assert.Equal("Copy", fsStep.Action.Operation);
-        Assert.EndsWith("archived-postflow.txt", fsStep.Action.DestinationPath);
+        var preLoadStep = fsSteps.Single(s => s.TaskName == "FST_PreLoadCopy");
+        Assert.Equal("Copy", preLoadStep.Action.Operation);
+        Assert.EndsWith("source.txt", preLoadStep.Action.SourcePath);
+        Assert.EndsWith("archived-preload.txt", preLoadStep.Action.DestinationPath);
+        Assert.True(preLoadStep.Action.Overwrite);
 
-        // The post-flow File System Task must come after the flow in Steps -- same ordering
-        // guarantee SqlStep already has (Plan_RoutesAnExecuteSqlTaskAfterADataFlow_...).
-        var flowStepIndex = plan.Steps.FindIndex(s => s is FlowStep);
-        var fsStepIndex = plan.Steps.FindIndex(s => s is FileSystemStep);
-        Assert.True(fsStepIndex > flowStepIndex);
+        var postFlowStep = fsSteps.Single(s => s.TaskName == "FST_PostLoadCopy");
+        Assert.Equal("Copy", postFlowStep.Action.Operation);
+        Assert.EndsWith("archived-postflow.txt", postFlowStep.Action.DestinationPath);
+
+        var preLoadIndex = plan.Steps.FindIndex(s => s is FileSystemStep fs && fs.TaskName == "FST_PreLoadCopy");
+        var flowIndex = plan.Steps.FindIndex(s => s is FlowStep);
+        var postFlowIndex = plan.Steps.FindIndex(s => s is FileSystemStep fs && fs.TaskName == "FST_PostLoadCopy");
+        Assert.True(preLoadIndex < flowIndex, "FST_PreLoadCopy must come before the flow");
+        Assert.True(postFlowIndex > flowIndex, "FST_PostLoadCopy must come after the flow");
     }
 
     [Fact]
@@ -338,12 +365,11 @@ public class PackagePlannerTests
 
         var plan = PackagePlanner.Plan(package);
 
-        // The only gap is the new non-blocking parallelism advisory: this fixture's three root
-        // flows carry no precedence constraint between them, so SSIS ran them concurrently while
-        // the generated PackageRunner runs them in sequence. Neither flat-file flow gaps.
-        var parallelism = Assert.Single(plan.Gaps);
-        Assert.False(parallelism.IsBlocking);
-        Assert.EndsWith(".Parallelism", parallelism.Location);
+        // This fixture's three root flows carry no precedence constraint between them, so SSIS
+        // ran them concurrently -- the emitter rewrite's phase 7 now generates real concurrency
+        // for that shape too (see PackageStep.Wave), rather than reporting a "flattened to
+        // sequential" advisory the way it used to. Neither flat-file flow gaps.
+        Assert.Empty(plan.Gaps);
         Assert.Equal(3, plan.Flows.Count);
 
         var delimitedFlow = Assert.Single(plan.Flows, f => f.TaskName == "DFT_ExportDelimited");
@@ -396,13 +422,11 @@ public class PackagePlannerTests
 
         var plan = PackagePlanner.Plan(package);
 
-        // The only gap is the new non-blocking parallelism advisory: this fixture's two root
-        // executables (DFT_Load and FEL_SampleFiles) carry no precedence constraint between
-        // them, so SSIS ran them concurrently while the generated PackageRunner runs them in
-        // sequence. No ForEach-Loop-specific gap.
-        var parallelism = Assert.Single(plan.Gaps);
-        Assert.False(parallelism.IsBlocking);
-        Assert.EndsWith(".Parallelism", parallelism.Location);
+        // This fixture's two root executables (DFT_Load and FEL_SampleFiles) carry no precedence
+        // constraint between them, so SSIS ran them concurrently -- now generated as real
+        // concurrency (see PackageStep.Wave) rather than a "flattened to sequential" advisory.
+        // No ForEach-Loop-specific gap either.
+        Assert.Empty(plan.Gaps);
         var loopStep = Assert.Single(plan.Steps, s => s is ForEachFileLoopStep);
         var loop = ((ForEachFileLoopStep)loopStep).Loop;
 
@@ -873,6 +897,48 @@ public class PackagePlannerTests
             Assert.Null(side.Sort);
             Assert.Null(side.SortKey);
         });
+    }
+
+    [Fact]
+    public void Plan_ReportsAGap_WhenAnAggregateCoexistsWithADestinationLessOleDbCommand()
+    {
+        // SyntheticAggregateThenOleDbCommand.dtsx (2026-09-06) -- a real, previously-only-
+        // incidentally-safe shape found by the same third independent review as the Union case
+        // above: flow.Aggregate and flow.OleDbCommand used to be able to coexist on one
+        // DataFlowPlan with no explicit guard here, saved only by an unrelated fast-load check
+        // that happens to always fail for an OLE DB Command component (it has no destination
+        // side at all). Now an explicit `aggregate is null` guard in PlanDataFlow's own OLE DB
+        // Command carve-out makes this fall through to the generic "no destination found" gap
+        // instead of ever building a DataFlowPlan carrying both fields.
+        var package = LoadSyntheticFixture("SyntheticAggregateThenOleDbCommand.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Flows);
+        var gap = Assert.Single(plan.Gaps, g => g.Location == "DFT_AggregateThenOleDbCommand");
+        Assert.True(gap.IsBlocking);
+        Assert.Contains("no OLE DB Destination, ADO NET Destination, Flat File Destination, or OLE DB Command found", gap.Reason);
+    }
+
+    [Fact]
+    public void Plan_ReportsAGap_WhenAUnionAllCoexistsWithAWhollyUnrelatedExtraSource()
+    {
+        // SyntheticUnionPlusExtraSource.dtsx (2026-09-06) -- a real, previously-SILENT
+        // correctness bug found by a third independent review: PlanDataFlow's own
+        // MergeJoin/Union carve-out used to return PlanUnion's result unconditionally, before
+        // the generic "more than one source component" gate ever ran -- so a genuinely-resolved
+        // 2-source UnionAll (the SAME shape as SyntheticUnionTwoSources.dtsx above) said nothing
+        // at all about a THIRD, completely unrelated OLE DB Source -> OLE DB Destination pair
+        // sitting in the same Data Flow Task, which used to vanish with no file and no gap.
+        var package = LoadSyntheticFixture("SyntheticUnionPlusExtraSource.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Flows);
+        var gap = Assert.Single(plan.Gaps, g => g.Location == "DFT_UnionPlusExtraSource");
+        Assert.True(gap.IsBlocking);
+        Assert.Contains("3 source components", gap.Reason);
+        Assert.Contains("only accounts for 2 of them", gap.Reason);
     }
 
     [Fact]

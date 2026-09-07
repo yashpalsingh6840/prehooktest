@@ -24,9 +24,9 @@ namespace Etl.Core.Pipeline;
 /// instead would be WRONG in the other direction: a distinct database can't join a
 /// <c>SqlTransaction</c> already bound to a different physical connection without a
 /// distributed transaction (MSDTC) -- a design this rewrite has deliberately not taken on
-/// elsewhere (see <see cref="PackageRunner"/>'s own remarks on parallel execution) -- and even
-/// if it could, that would make this task's own success or failure roll back a database SSIS
-/// itself never coordinated with the load at all.</para>
+/// anywhere in a generated package's own run (parallel execution would need this same
+/// escalation) -- and even if it could, that would make this task's own success or failure roll
+/// back a database SSIS itself never coordinated with the load at all.</para>
 ///
 /// <para>Same independent-connection precedent as <see cref="Etl.Core.Data.SqlRowSource{TRow}"/>
 /// already established on the read side; this is that idea applied to a write.</para>

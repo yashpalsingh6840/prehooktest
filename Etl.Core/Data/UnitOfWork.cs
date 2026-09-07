@@ -121,11 +121,27 @@ public sealed class UnitOfWork(
         return context.Database.ExecuteSqlRawAsync(sql, ct);
     }
 
-    public Task CommitAsync(CancellationToken ct) =>
-        _tx?.CommitAsync(ct) ?? throw NoTransaction();
+    public async Task CommitAsync(CancellationToken ct)
+    {
+        var tx = _tx ?? throw NoTransaction();
+        await tx.CommitAsync(ct);
+        // Cleared so the SAME UnitOfWork can BeginAsync a second, later transaction -- the emitter
+        // rewrite's phase 7 (Docs/Emitter-Rewrite-Plan.md §4) commits the ambient transaction before
+        // a concurrent wave and re-begins it afterward, on this one instance. The bind token is tied
+        // to the transaction it was issued under (sp_getbindtoken), so it must be dropped too --
+        // otherwise GetBindTokenAsync would hand a later step a stale token for a transaction that
+        // no longer exists.
+        _tx = null;
+        _bindToken = null;
+    }
 
-    public Task RollbackAsync(CancellationToken ct) =>
-        _tx?.RollbackAsync(ct) ?? throw NoTransaction();
+    public async Task RollbackAsync(CancellationToken ct)
+    {
+        var tx = _tx ?? throw NoTransaction();
+        await tx.RollbackAsync(ct);
+        _tx = null;
+        _bindToken = null;
+    }
 
     public async ValueTask DisposeAsync()
     {

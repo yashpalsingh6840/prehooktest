@@ -29,21 +29,23 @@ public class ScriptTaskSeamTests
     [Fact]
     public void Plan_ProducesAScriptTaskStep_AtItsTruePositionRelativeToTheFlow()
     {
-        // SQL_Truncate -> SCR_Start -> DFT_Load -> SCR_Finish. A Script Task always becomes a step
-        // (never a hoisted pre-load entry, there being no such list for it), so the order it lands
-        // in is the only thing preserving its real position.
+        // SQL_Truncate -> SCR_Start -> DFT_Load -> SCR_Finish. A Script Task always becomes a step,
+        // and (emitter rewrite phase 2) so does SQL_Truncate now -- nothing is hoisted any more --
+        // so the plain Steps order is the only thing preserving everyone's real position.
         var package = LoadSyntheticFixture("SyntheticScriptTaskSeams.dtsx");
 
         var plan = PackagePlanner.Plan(package, emitSeams: true);
 
         Assert.Collection(plan.Steps,
+            step => Assert.Equal("SQL_Truncate", Assert.IsType<SqlStep>(step).TaskName),
             step => Assert.Equal("SCR_Start", Assert.IsType<ScriptTaskStep>(step).Task.ObjectName),
             step => Assert.IsType<FlowStep>(step),
             step => Assert.Equal("SCR_Finish", Assert.IsType<ScriptTaskStep>(step).Task.ObjectName));
 
-        // The Execute SQL Task is genuinely pre-flow and ordered first, so hoisting it is correct
-        // and must not be reported as an inversion.
-        Assert.Contains(plan.PreLoadStatements, s => s.Contains("TRUNCATE"));
+        // The Execute SQL Task is genuinely pre-flow and ordered first -- emitter rewrite phase 2:
+        // it's an ordinary SqlStep like everything else now, nothing is hoisted, so there is no
+        // ordering hazard (and no ".Hoisting" gap kind) left to report at all.
+        Assert.Contains(plan.Steps.OfType<SqlStep>(), s => s.Sql.Contains("TRUNCATE"));
         Assert.DoesNotContain(plan.Gaps, g => g.Location.EndsWith(".Hoisting"));
     }
 
@@ -76,37 +78,47 @@ public class ScriptTaskSeamTests
         Assert.Contains("Declared ReadWriteVariables: User::Marker", start.Content);
         CodeAssertions.AssertNoSyntaxErrors(start.Content);
 
-        // ONE PackageVariables instance, passed to BOTH tasks -- that sharing is the whole reason
-        // the type exists, so it is asserted rather than assumed.
-        var program = Assert.Single(result.Files, f => f.RelativePath.EndsWith("Program.cs"));
-        Assert.Equal(1, program.Content.Split("new PackageVariables()").Length - 1);
-        Assert.Contains("new SCR_StartScriptTask(packageVariables, sp)", program.Content);
-        Assert.Contains("new SCR_FinishScriptTask(packageVariables, sp)", program.Content);
-        Assert.Contains("using SyntheticScriptTaskSeams.ScriptTasks;", program.Content);
+        // ONE PackageVariables instance (a class field), shared by BOTH tasks -- that sharing is
+        // the whole reason the type exists, so it is asserted rather than assumed.
+        var classFile = Assert.Single(result.Files, f => f.RelativePath.EndsWith("SyntheticScriptTaskSeams.cs"));
+        Assert.Contains("private readonly PackageVariables packageVariables = new();", classFile.Content);
+        Assert.Equal(1, classFile.Content.Split("PackageVariables packageVariables").Length - 1);
+        Assert.Contains("new SCR_StartScriptTask(packageVariables, services)", classFile.Content);
+        Assert.Contains("new SCR_FinishScriptTask(packageVariables, services)", classFile.Content);
+        Assert.Contains("using SyntheticScriptTaskSeams.ScriptTasks;", classFile.Content);
 
         // Still blocking, and still classified Tier 2 so the work packet is still produced -- a
         // seam is outstanding work, not a resolution.
-        var gap = Assert.Single(result.Gaps, g => g.Location == "SCR_Start.ScriptTask");
+        var gap = Assert.Single(result.Gaps, g => g.Location == "SCR_Start.ScriptTask" && g.Kind == GapKind.ScriptTask);
         Assert.True(gap.IsBlocking);
-        Assert.Equal(GapKind.ScriptTask, gap.Kind);
         Assert.Contains("CS8795", gap.Reason);
+
+        // Companion "Script Task / Script Component seam" taxonomy row: a filled seam is human
+        // logic, and a test for it is a separate, non-blocking TEST-ORACLE work item, sharing the
+        // same Location so both land under this task in gaps.json.
+        var testGap = Assert.Single(result.Gaps, g => g.Location == "SCR_Start.ScriptTask" && g.Kind == GapKind.TestOracle);
+        Assert.False(testGap.IsBlocking);
     }
 
     [Fact]
-    public void Plan_ReportsAHoistingInversion_WhenAPreLoadStatementIsOrderedAfterAScriptTask()
+    public void Plan_OrdersAPreFlowSqlTaskAfterAPrecedingScriptTask_WithNoHoistingHazard()
     {
-        // SCR_First -> SQL_Truncate -> DFT_Load. PreLoadStatements are hoisted ahead of every step
-        // and a Script Task IS a step, so generating this as-is would silently invert the two.
+        // SCR_First -> SQL_Truncate -> DFT_Load. Before the emitter rewrite (phase 2), SQL_Truncate
+        // being pre-flow meant it was HOISTED ahead of every step -- including SCR_First, silently
+        // inverting the package's own real order, reported as a blocking ".Hoisting" gap. Now
+        // nothing is hoisted: SQL_Truncate is an ordinary SqlStep at its true topological position,
+        // so the hazard (and the gap kind that existed only to catch it) is gone entirely.
         var package = LoadSyntheticFixture("SyntheticScriptTaskHoistInversion.dtsx");
 
         var plan = PackagePlanner.Plan(package, emitSeams: true);
 
-        var gap = Assert.Single(plan.Gaps, g => g.Location.EndsWith(".Hoisting"));
-        Assert.Equal("SQL_Truncate.Hoisting", gap.Location);
-        Assert.Contains("'SCR_First'", gap.Reason);
-        // Blocking, unlike the parallelism/disabled advisories: this one would run real work in the
-        // wrong order, not merely more slowly or not at all.
-        Assert.True(gap.IsBlocking);
+        Assert.DoesNotContain(plan.Gaps, g => g.Location.EndsWith(".Hoisting"));
+        Assert.Empty(plan.PreLoadStatements);
+
+        Assert.Collection(plan.Steps,
+            step => Assert.Equal("SCR_First", Assert.IsType<ScriptTaskStep>(step).Task.ObjectName),
+            step => Assert.Equal("SQL_Truncate", Assert.IsType<SqlStep>(step).TaskName),
+            step => Assert.IsType<FlowStep>(step));
     }
     // Plan_ReportsAConditionalPrecedenceConstraint_... used to live here, because conditional
     // precedence constraints were DISCOVERED while building Script Task seams. They now have their

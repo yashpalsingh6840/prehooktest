@@ -1,0 +1,12 @@
+{
+  "FileSource": {
+    "Files": {
+      "Department": {
+        "SourceFolder": "TestData"
+      },
+      "Designation": {
+        "SourceFolder": "TestData"
+      }
+    }
+  }
+}

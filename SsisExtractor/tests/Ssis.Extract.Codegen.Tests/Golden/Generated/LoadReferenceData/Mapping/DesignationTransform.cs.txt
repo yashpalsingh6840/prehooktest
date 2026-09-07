@@ -15,7 +15,13 @@ public sealed class DesignationTransform : IRowTransform<DesignationCsvRow, Desi
         Title = row.Title,
         JobLevel = row.JobLevel,
         Band = row.Band,
-        DesignationKey = WidthGuard.Wstr($"{SsisFn.Upper(row.DesignationCode)}-{SsisFn.Str(row.JobLevel)}", 25, nameof(Designation.DesignationKey), ctx.RowNumber),
-        LoadedAtUtc = ctx.LoadedAtUtc,
+        DesignationKey = ComputeDesignationKey(row, ctx),
+        LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),
     };
+
+    // (DT_WSTR,25)(UPPER(DesignationCode) + "-" + (DT_WSTR,10)JobLevel)
+    public static string ComputeDesignationKey(DesignationCsvRow row, in RowContext ctx) => WidthGuard.Wstr($"{SsisFn.Upper(row.DesignationCode)}-{SsisFn.Str(row.JobLevel)}", 25, nameof(Designation.DesignationKey), ctx.RowNumber);
+
+    // GETUTCDATE()
+    public static DateTime ComputeLoadedAtUtc(DesignationCsvRow row, in RowContext ctx) => ctx.LoadedAtUtc;
 }

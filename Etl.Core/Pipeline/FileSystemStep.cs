@@ -6,9 +6,9 @@ namespace Etl.Core.Pipeline;
 
 /// <summary>
 /// A File System Task positioned AFTER at least one Data Flow Task -- runs as an ordinary
-/// step, unlike a pre-load one, which <c>PackageRunner</c> runs from
-/// <see cref="IEtlPackage.PreLoadFileActions"/> before any step at all (same pre-load/step
-/// split <see cref="ExecuteSqlStep"/>'s own doc comment already describes for Execute SQL).
+/// step, unlike a pre-load one, which a generated <c>Program.cs</c> runs from its own pre-load
+/// file-action list before any step at all (same pre-load/step split
+/// <see cref="ExecuteSqlStep"/>'s own doc comment already describes for Execute SQL).
 /// Row counts are always reported as zero -- a file operation has no rows.
 /// </summary>
 public sealed class FileSystemStep(string name, FileSystemPreLoadAction action, ILogger<FileSystemStep> logger) : ILoadTask
@@ -27,9 +27,10 @@ public sealed class FileSystemStep(string name, FileSystemPreLoadAction action, 
 
 /// <summary>
 /// The one place a <see cref="FileSystemPreLoadAction"/> is actually executed -- shared by
-/// <see cref="FileSystemStep"/> (post-flow position) and <see cref="PackageRunner"/> (pre-load
-/// position) so the operation-to-System.IO-call mapping exists exactly once. Deliberately
-/// synchronous underneath (.NET has no async File.Copy/Move/Delete) -- matches SSIS's own File
+/// <see cref="FileSystemStep"/> (post-flow position) and a generated <c>Program.cs</c>'s own
+/// inlined pre-load file-action loop (pre-load position) so the operation-to-System.IO-call
+/// mapping exists exactly once. Deliberately synchronous underneath (.NET has no async
+/// File.Copy/Move/Delete) -- matches SSIS's own File
 /// System Task, which blocks the control flow thread for the duration too.
 /// </summary>
 public static class FileSystemActionRunner

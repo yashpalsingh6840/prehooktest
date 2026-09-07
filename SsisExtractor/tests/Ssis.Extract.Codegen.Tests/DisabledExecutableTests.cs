@@ -40,14 +40,15 @@ public class DisabledExecutableTests
 
         // The disabled task's own statement appears nowhere -- neither position it could have
         // taken (pre-load list, or a post-flow SqlStep).
-        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Contains("disabled-ran"));
+        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Sql.Contains("disabled-ran"));
         Assert.DoesNotContain(plan.Steps.OfType<SqlStep>(), s => s.Sql.Contains("disabled-ran"));
 
         // Its successors are unaffected, which is the half that a naive "skip the branch" fix
-        // would have got wrong: the flow still plans, and the Execute SQL Task after the flow is
-        // still correctly a post-flow step rather than a pre-load statement.
+        // would have got wrong: the flow still plans, and both the genuinely pre-flow and
+        // post-flow Execute SQL Tasks are ordinary steps (emitter rewrite phase 2: nothing is
+        // hoisted, so SQL_MarkPre is a SqlStep in plan.Steps too, not a pre-load statement).
         Assert.Single(plan.Flows);
-        Assert.Contains(plan.PreLoadStatements, s => s.Contains("'pre'"));
+        Assert.Contains(plan.Steps.OfType<SqlStep>(), s => s.Sql.Contains("'pre'"));
         Assert.Contains(plan.Steps.OfType<SqlStep>(), s => s.TaskName == "SQL_MarkPost");
     }
 
@@ -61,7 +62,7 @@ public class DisabledExecutableTests
 
         var plan = PackagePlanner.Plan(package);
 
-        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Contains("inside-disabled-seq"));
+        Assert.DoesNotContain(plan.PreLoadStatements, s => s.Sql.Contains("inside-disabled-seq"));
         Assert.DoesNotContain(plan.Steps.OfType<SqlStep>(), s => s.Sql.Contains("inside-disabled-seq"));
         Assert.DoesNotContain(plan.Steps.OfType<SqlStep>(), s => s.TaskName == "SQL_InsideDisabledSeq");
     }
@@ -97,25 +98,29 @@ public class DisabledExecutableTests
     }
 
     [Fact]
-    public void Plan_DoesNotCountADisabledSibling_AsParallelism()
+    public void Plan_DoesNotWaveADisabledSibling_WithItsEnabledSiblings()
     {
-        // A wave of {enabled, disabled} is not concurrency, and calling it concurrency was a live
-        // false positive on a real package: Package_Legacy's SQL_AtomicSwap fans out to
-        // DFT_FixedWidthImport and to SQL_LegacyStep_DISABLED, so SSIS never ran two things at
-        // once there, yet the advisory claimed it did.
+        // A disabled executable never reaches Gated at all (it `continue`s out before that),
+        // so it can never occupy a wave slot alongside its enabled siblings -- unlike the old
+        // "flattened to sequential" advisory (deleted once the emitter rewrite made concurrency
+        // real, see PackageStep.Wave), a disabled sibling was never at risk of being COUNTED as
+        // a live concurrent partner here; this just confirms it is gone from the plan entirely,
+        // not merely uncounted.
         //
         // This fixture is SyntheticFlatFileDestination.dtsx with DTS:Disabled="True" added to one
         // of its three precedence-independent root flows (a byte-preserving derivation -- see
-        // trap 18), so the advisory must drop from 3 to 2 rather than staying at 3.
+        // trap 18).
         var all = PackagePlanner.Plan(LoadSyntheticFixture("SyntheticFlatFileDestination.dtsx"));
         var oneDisabled = PackagePlanner.Plan(LoadSyntheticFixture("SyntheticFlatFileDestinationDisabled.dtsx"));
 
-        Assert.Contains("up to 3 executables",
-            Assert.Single(all.Gaps, g => g.Location.EndsWith(".Parallelism")).Reason);
-        Assert.Contains("up to 2 executables",
-            Assert.Single(oneDisabled.Gaps, g => g.Location.EndsWith(".Parallelism")).Reason);
+        // The base fixture has nothing disabled at all. The derived one reports exactly the
+        // ordinary (non-blocking) "this executable is disabled" advisory for the one flow that
+        // was switched off -- not the old parallelism advisory this round retired.
+        Assert.Empty(all.Gaps);
+        var skip = Assert.Single(oneDisabled.Gaps);
+        Assert.EndsWith(".Disabled", skip.Location);
+        Assert.False(skip.IsBlocking);
 
-        // ...and the disabled flow itself is gone from the plan, not merely uncounted.
         Assert.Equal(3, all.Flows.Count);
         Assert.Equal(2, oneDisabled.Flows.Count);
     }

@@ -38,9 +38,34 @@ public static class MergeJoinEmitter
         string RowTypeName,
         string MapperClassName,
         string KeyClrType,
-        HashSet<string> NullableColumnNames);
+        HashSet<string> NullableColumnNames,
+        // Populated only on a successful Emit (the three early-return failure paths below leave
+        // these at their defaults) -- everything ComponentTestEmitter.EmitMergeJoinMapperTest
+        // needs to synthesize a representative Left/Right row and predict LeftKey/RightKey/Map's
+        // own output, without re-deriving any of this resolution a second time.
+        IReadOnlyList<MergeJoinTestColumn>? TestColumns = null,
+        MergeJoinTestKey? LeftKeyTest = null,
+        MergeJoinTestKey? RightKeyTest = null);
 
-    private sealed record ResolvedValue(string Expression, SsisPipelineType Type, bool IsConversionDerived);
+    /// <summary>One combined-row output column's test-facing facts, captured alongside the
+    /// ordinary resolution in <see cref="Emit"/>. <see cref="RawColumnClrType"/> is only
+    /// meaningful when <see cref="ConversionTargetType"/> is null (a plain passthrough) -- a Data
+    /// Conversion's own raw source column is ALWAYS synthesized as a string by a starter test
+    /// (every <c>SsisFn.ToNullable*</c> helper this tool emits takes a bare <c>string?</c>,
+    /// confirmed from <see cref="TransformEmitter.WrapDataConversion"/>'s own switch), regardless
+    /// of what the raw column's own declared pipeline type says.</summary>
+    public sealed record MergeJoinTestColumn(
+        string Name, bool MayBeAbsent, string RawColumnName, string RawColumnClrType,
+        string? ConversionTargetType, int? ConversionLength);
+
+    /// <summary>One side's own join-key column -- same shape as <see cref="MergeJoinTestColumn"/>
+    /// minus the combined-row column name (a key selector has no output column of its own to
+    /// name).</summary>
+    public sealed record MergeJoinTestKey(string RawColumnName, string RawColumnClrType, string? ConversionTargetType, int? ConversionLength);
+
+    private sealed record ResolvedValue(
+        string Expression, SsisPipelineType Type, bool IsConversionDerived,
+        string RawColumnName, string? ConversionTargetType, int? ConversionLength);
 
     private sealed record ResolvedOutputColumn(string Name, SsisPipelineType Type, bool Nullable, string ValueExpression);
 
@@ -61,6 +86,7 @@ public static class MergeJoinEmitter
         }
 
         var resolvedColumns = new List<ResolvedOutputColumn>();
+        var testColumns = new List<MergeJoinTestColumn>();
         foreach (var outputCol in mainOutput.Columns)
         {
             var mjCol = plan.Component.MergeJoin?.OutputColumns.FirstOrDefault(c => c.OutputColumnName == outputCol.Name);
@@ -92,6 +118,9 @@ public static class MergeJoinEmitter
             // A Data Conversion result is ALWAYS nullable too (IgnoreFailure's own guarantee,
             // same rule TransformEmitter's own Data Conversion handling already establishes).
             resolvedColumns.Add(new ResolvedOutputColumn(outputCol.Name, value.Type, isRightSide || value.IsConversionDerived, value.Expression));
+            testColumns.Add(new MergeJoinTestColumn(
+                outputCol.Name, MayBeAbsent: isRightSide, value.RawColumnName, value.Type.ClrTypeName,
+                value.ConversionTargetType, value.ConversionLength));
         }
 
         if (resolvedColumns.Count == 0)
@@ -120,7 +149,11 @@ public static class MergeJoinEmitter
         // only one side is nullable.
         var nullableColumnNames = resolvedColumns.Where(c => c.Nullable).Select(c => c.Name).ToHashSet();
 
-        return new MergeJoinEmitResult(files, gaps, functionsUsed, rowTypeName, mapperClassName, leftKey.Type.ClrTypeName + "?", nullableColumnNames);
+        var leftKeyTest = new MergeJoinTestKey(leftKey.RawColumnName, leftKey.Type.ClrTypeName, leftKey.ConversionTargetType, leftKey.ConversionLength);
+        var rightKeyTest = new MergeJoinTestKey(rightKey.RawColumnName, rightKey.Type.ClrTypeName, rightKey.ConversionTargetType, rightKey.ConversionLength);
+
+        return new MergeJoinEmitResult(files, gaps, functionsUsed, rowTypeName, mapperClassName, leftKey.Type.ClrTypeName + "?", nullableColumnNames,
+            TestColumns: testColumns, LeftKeyTest: leftKeyTest, RightKeyTest: rightKeyTest);
     }
 
     /// <summary>Resolves a Sort component's OWN output column back to either a plain raw source
@@ -184,7 +217,8 @@ public static class MergeJoinEmitter
 
             var expr = ((TranslatedOk)translated).CSharpExpression;
             TransformEmitter.CollectSsisFunctions(expr, functionsUsed);
-            return new ResolvedValue(mayBeAbsent ? $"({sidePrefix} is not null ? {expr} : null)" : expr, conversionType, IsConversionDerived: true);
+            return new ResolvedValue(mayBeAbsent ? $"({sidePrefix} is not null ? {expr} : null)" : expr, conversionType, IsConversionDerived: true,
+                RawColumnName: rawColumn.Name, ConversionTargetType: conversion.TargetDataType, ConversionLength: conversion.Length);
         }
 
         var rawPassthroughColumn = side.SourceComponent.Outputs.SelectMany(o => o.Columns).FirstOrDefault(c => c.LineageId == upstreamLineageId);
@@ -196,7 +230,8 @@ public static class MergeJoinEmitter
         }
 
         var passthroughExpr = mayBeAbsent ? $"{sidePrefix}?.{rawPassthroughColumn.Name}" : $"{accessPrefix}.{rawPassthroughColumn.Name}";
-        return new ResolvedValue(passthroughExpr, passthroughType, IsConversionDerived: false);
+        return new ResolvedValue(passthroughExpr, passthroughType, IsConversionDerived: false,
+            RawColumnName: rawPassthroughColumn.Name, ConversionTargetType: null, ConversionLength: null);
     }
 
     /// <summary>Resolves one side's own join-key column (NumKeyColumns=1 evidenced -- only the

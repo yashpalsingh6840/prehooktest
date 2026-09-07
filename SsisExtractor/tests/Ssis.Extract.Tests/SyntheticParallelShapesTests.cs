@@ -81,9 +81,10 @@ public class SyntheticParallelShapesTests
     [Fact]
     public void Branch1_ExecuteSqlRunsAfterTheDataFlow_NotOnlyBefore()
     {
-        // PackageRunner (the C# rewrite's control-flow engine) only models PRE-load SQL
-        // today. This is the concrete evidence that a real package can need SQL sequenced
-        // AFTER a data flow too -- SQL_UpdateLoadA has an incoming constraint FROM DFT_LoadA.
+        // The generated C# rewrite's control-flow handling only modeled PRE-load SQL at the
+        // time this fixture was built. This is the concrete evidence that a real package can
+        // need SQL sequenced AFTER a data flow too -- SQL_UpdateLoadA has an incoming
+        // constraint FROM DFT_LoadA.
         var package = Read();
         var constraint = Assert.Single(package.PrecedenceConstraints, c => c.To == "Package\\SQL_UpdateLoadA");
         Assert.Equal("Package\\DFT_LoadA", constraint.From);

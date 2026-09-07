@@ -113,8 +113,20 @@ public static class ScriptTaskEmitter
             Kind: GapKind.ScriptTask,
             EvidenceRefId: task.RefId);
 
+        // Companion "Script Task seam" taxonomy row (Docs/Generated-Tests-Plan.md): a filled seam
+        // is human logic, and a test for it is a test-oracle packet, not something the
+        // deterministic emitter can derive -- a separate work item from the port itself, sharing
+        // its own Location so both land under the same task in `gaps.json` (the different KIND
+        // prefix already makes the two GapIds distinct). Non-blocking: a missing test for a
+        // seam does not stop the package building.
+        var testGap = new GenerationGap($"{taskName}.ScriptTask",
+            $"Script Task '{taskName}' has no generated test at all (a filled seam is human logic -- " +
+            "see the TEST-ORACLE work packet for this task to write one, exercising the ported " +
+            $"RunScriptAsync via a real PackageHarness and ctx.Variables/ctx.Uow).",
+            IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: task.RefId);
+
         return new EmitResult(
             [new GeneratedFile($"ScriptTasks/{className}.cs", Rendering.JoinLines(lines))],
-            [gap]);
+            [gap, testGap]);
     }
 }

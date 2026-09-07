@@ -40,11 +40,11 @@ public class LookupFlowTests
         Assert.Contains("CountryCode = lookup[row.Country].CountryCode,", transform);
         Assert.Contains("Region = lookup[row.Country].Region,", transform);
 
-        var program = result.Files.Single(f => f.RelativePath == "Program.cs").Content;
-        Assert.Contains("await LKP_CountryCache.LoadAsync<string>(", program);
-        Assert.Contains("r => r.CountryName,", program);
-        // Constructed with the preloaded cache, not resolved by type -- the cache is a local.
-        Assert.Contains("AddScoped<IRowTransform<SyntheticLookupSingleTargetSqlRow, SyntheticLookupSingleTarget>>(sp => new SyntheticLookupSingleTargetTransform(lKP_CountryCache));", program);
+        var classFile = result.Files.Single(f => f.RelativePath == "SyntheticLookupSingle.cs").Content;
+        Assert.Contains("private Dictionary<string, LKP_CountryCache.ReferenceRow> lKP_CountryCache = null!;", classFile);
+        Assert.Contains("lKP_CountryCache = await LKP_CountryCache.LoadAsync<string>(SqlConnectionStringFactory.Build(Db()), r => r.CountryName, ct);", classFile);
+        // Constructed with the preloaded cache field directly, not resolved via DI.
+        Assert.Contains("var transform = new SyntheticLookupSingleTargetTransform(lKP_CountryCache);", classFile);
     }
 
     [Fact]
@@ -66,24 +66,31 @@ public class LookupFlowTests
         Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
         Assert.Contains(result.Gaps, g => g.Reason.Contains("Multicast 'MCAST_Matched' output 'Multicast Output 2'") && g.Reason.Contains("User::MatchedRows"));
         Assert.Contains(result.Gaps, g => g.Reason.Contains("Lookup 'LKP_Country' output 'Lookup No Match Output'") && g.Reason.Contains("User::UnmatchedRows"));
+        // A real, previously-silent gap caught 2026-09-06 by an independent review: this composed
+        // flow used to reach this point with NO "Aggregate source" starter test AND no gap either
+        // (unlike every other flow shape). The GroupBy value ("Region") only resolves through the
+        // Lookup cache here, not a plain row property, so it correctly degrades to an honest
+        // advisory rather than a naive reuse of the standalone Aggregate flow's own test template
+        // (which was tried first and caught -- by actually building the generated test, not the
+        // gap count -- emitting a CS0117 referencing a "Region" property that doesn't exist).
+        Assert.Contains(result.Gaps, g => g.Kind == GapKind.TestOracle && g.Reason.Contains("Lookup-copied reference column"));
+        Assert.DoesNotContain(result.SiblingFiles, f => f.RelativePath.EndsWith("AggregateRowSourceTests.cs"));
 
-        var program = result.Files.Single(f => f.RelativePath == "Program.cs").Content;
+        var classFile = result.Files.Single(f => f.RelativePath == "SyntheticLookupThenAggregate.cs").Content;
 
         // The raw source is filtered by the lookup cache BEFORE it ever reaches grouping --
         // a Lookup miss must never be aggregated under a null/sentinel key.
-        Assert.Contains("return new FilteringRowSource<AGG_ByRegionSourceSqlRow>(\"AGG_ByRegion\", BuildRawSource(), row => lKP_CountryCache.ContainsKey(row.Country));", program);
+        Assert.Contains("return new FilteringRowSource<AGG_ByRegionSourceSqlRow>(\"AGG_ByRegion\", BuildRawSource(), row => lKP_CountryCache.ContainsKey(row.Country));", classFile);
         // The GroupBy key itself reads through the SAME cache, not a plain row property --
         // "Region" only exists via the Lookup's own copied reference column.
-        Assert.Contains("row => lKP_CountryCache[row.Country].Region,", program);
+        Assert.Contains("row => lKP_CountryCache[row.Country].Region,", classFile);
         // The Count column is untouched -- CustomerID is a plain raw column, no lookup involved.
-        Assert.Contains("CustomerCount = rows.Count(r => r.CustomerID != null)", program);
+        Assert.Contains("CustomerCount = rows.Count(r => r.CustomerID != null)", classFile);
 
-        // The transform takes NO constructor argument -- unlike the plain single-output Lookup
-        // shape, the cache is already fully consumed upstream by AggregateFlowSource itself, so
-        // registering it by type (not `new ...Transform(cache)`) is what must be emitted; the
-        // opposite would be a build error (no such constructor exists).
-        Assert.Contains("AddScoped<IRowTransform<SyntheticLookupThenAggregateTargetAggregateRow, SyntheticLookupThenAggregateTarget>, SyntheticLookupThenAggregateTargetTransform>();", program);
-        Assert.DoesNotContain("new SyntheticLookupThenAggregateTargetTransform(", program);
+        // The transform is constructed with NO argument -- unlike the plain single-output Lookup
+        // shape, the cache is already fully consumed upstream by AggregateFlowSource itself, so a
+        // constructor argument here would be a build error (no such constructor exists).
+        Assert.Contains("var transform = new SyntheticLookupThenAggregateTargetTransform();", classFile);
 
         var transform = result.Files.Single(f => f.RelativePath == "Mapping/SyntheticLookupThenAggregateTargetTransform.cs").Content;
         Assert.Contains("Region = row.Region,", transform);
@@ -105,10 +112,39 @@ public class LookupFlowTests
         Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
         Assert.Contains(result.Gaps, g => g.Reason.Contains("User::RowsSeen"));
 
-        var program = result.Files.Single(f => f.RelativePath == "Program.cs").Content;
+        var classFile = result.Files.Single(f => f.RelativePath == "SyntheticMulticastDiscard.cs").Content;
         // Exactly one branch wired -- the discarded one contributes no ProgramMulticastBranch,
-        // no entity, no transform, no table (and so no second ConditionalSplitBranch<> local).
-        Assert.Single(System.Text.RegularExpressions.Regex.Matches(program, "new ConditionalSplitBranch<"));
+        // no entity, no transform, no table (and so no second ConditionalSplitBranch<> construction).
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(classFile, "new ConditionalSplitBranch<"));
+    }
+
+    [Fact]
+    public void Generate_ReportsABlockingGap_ForAMulticastAndAggregateWithNoLookup()
+    {
+        // SyntheticMulticastAggregateSibling.dtsx (2026-09-06) -- a real, previously-SILENT
+        // correctness bug found by an independent review, not by this project's own test suite:
+        // flow.Aggregate and flow.Multicast are resolved entirely independently by
+        // PackagePlanner, so a plain Multicast (no Lookup at all) with one branch straight to a
+        // destination and a SECOND branch through an Aggregate to a DIFFERENT destination used
+        // to fall straight into GenerateAggregateFlow -- which never reads flow.Multicast --
+        // silently dropping the straight branch and wiring the Aggregate's own row against
+        // whichever destination happened to resolve first. Confirmed, before this fix existed,
+        // by actually building the resulting project: a real CS1061, reported as a fully-
+        // generatable package (0 blocking gaps). Now gapped explicitly instead, matching the one
+        // real evidenced Aggregate-behind-a-Multicast shape (always through a Lookup with exactly
+        // one live branch, see Generate_WiresALookupThenAggregateFlow_ThroughAMulticast above),
+        // which this fixture deliberately has none of.
+        var package = LoadSyntheticFixture("SyntheticMulticastAggregateSibling.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        // Zero files for this flow -- not a half-wired Program.cs referencing a destination
+        // that never got its own entity/transform.
+        Assert.Empty(result.Files.Where(f => f.RelativePath.EndsWith(".cs") && !f.RelativePath.Contains("Shared")));
+        var gap = Assert.Single(result.Gaps, g => g.Location == "DFT_MulticastAggregateSibling");
+        Assert.True(gap.IsBlocking);
+        Assert.Contains("Aggregate 'AGG_ByRegion' and Multicast 'MCAST_Split'", gap.Reason);
+        Assert.Contains("with no Lookup involved", gap.Reason);
     }
 
     [Fact]

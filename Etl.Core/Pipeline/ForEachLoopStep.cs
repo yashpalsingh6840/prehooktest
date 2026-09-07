@@ -14,7 +14,7 @@ namespace Etl.Core.Pipeline;
 /// Files are enumerated in ordinal-sorted order for determinism -- SSIS's own enumeration order
 /// is filesystem-dependent and not something this step can reproduce exactly, so a stable,
 /// repeatable order was chosen deliberately over an unreproducible one. Every iteration runs
-/// inside the SAME transaction as every other step (<see cref="PackageRunner"/>'s own
+/// inside the SAME transaction as every other step (the package's own shared
 /// <see cref="IUnitOfWork"/>) -- one failing iteration rolls back every prior one, the same
 /// all-or-nothing semantics every other step in a package already has.
 /// </summary>

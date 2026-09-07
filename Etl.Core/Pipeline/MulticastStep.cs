@@ -35,8 +35,8 @@ public sealed class MulticastStep<TRow>(
                 branch.Add(row, in rowCtx);
         }
 
-        // Fails before the package's transaction commits (still inside PackageRunner's try
-        // block) rather than silently succeeding with an empty load -- same rule as
+        // Fails before the package's transaction commits (still inside the generated Program.cs's
+        // own try block) rather than silently succeeding with an empty load -- same rule as
         // DataFlowStep/ConditionalSplitStep.
         if (read == 0)
             throw new InvalidOperationException(

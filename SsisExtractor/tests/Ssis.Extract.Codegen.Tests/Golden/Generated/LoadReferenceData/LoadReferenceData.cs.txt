@@ -1,0 +1,126 @@
+using System.Data;
+using System.Diagnostics;
+using Etl.Core.Abstractions;
+using Etl.Core.Csv;
+using Etl.Core.Data;
+using Etl.Core.Hosting;
+using Etl.Core.Notifications;
+using Etl.Core.Pipeline;
+using LoadReferenceData.Csv;
+using LoadReferenceData.Mapping;
+using LoadReferenceData.Model;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace LoadReferenceData;
+
+/// <summary>Ported from SSIS package 'LoadReferenceData'.</summary>
+internal sealed partial class LoadReferenceDataPackage(IServiceProvider services)
+{
+    private const string PackageName = "LoadReferenceData";
+    private readonly PackageVariables packageVariables = new();
+    private readonly List<StepResult> _results = [];
+    private LoadContext _load = null!;
+
+    internal ILogger<T> Log<T>() => services.GetRequiredService<ILogger<T>>();
+    internal IOptions<T> Opt<T>() where T : class => services.GetRequiredService<IOptions<T>>();
+    private DatabaseOptions Db() => Opt<DatabaseOptions>().Value;
+    private string File(string key) => Opt<FileSourceOptions>().Value[key].ResolvedPath;
+    private async Task Step(ILoadTask task, IUnitOfWork uow, CancellationToken ct) => _results.Add(await task.RunAsync(uow, _load, ct));
+
+    public async Task<int> RunAsync(CancellationToken ct)
+    {
+        await using var scope = services.CreateAsyncScope();
+        var sp = scope.ServiceProvider;
+        var uow = sp.GetRequiredService<IUnitOfWork>();
+        var notifier = sp.GetRequiredService<IPackageResultNotifier>();
+        var logger = Log<LoadReferenceDataPackage>();
+
+        var startedAtUtc = sp.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
+        startedAtUtc = new DateTime(startedAtUtc.Ticks - (startedAtUtc.Ticks % TimeSpan.TicksPerMillisecond), DateTimeKind.Utc);
+        _load = new LoadContext(Guid.NewGuid(), startedAtUtc, PackageName);
+        var stopwatch = Stopwatch.StartNew();
+
+        logger.LogInformation("Starting {Package}...", PackageName);
+        var uowActive = false;
+        try
+        {
+            await uow.BeginAsync(IsolationLevel.ReadCommitted, ct);
+            uowActive = true;
+
+            // Fetched once, here, while this transaction's connection is guaranteed idle -- a lazy fetch
+            // from inside a step reproduced a real deadlock (SqlRowSource reading while SqlBulkCopy streams).
+            await uow.GetBindTokenAsync(ct);
+
+            await SQL_TruncateTargets(uow, ct);
+            await DFT_LoadDepartment(uow, ct);
+            await DFT_LoadDesignation(uow, ct);
+
+            await uow.CommitAsync(ct);
+            logger.LogInformation("{Package}: succeeded in {Ms} ms", PackageName, stopwatch.ElapsedMilliseconds);
+        }
+        catch (Exception ex)
+        {
+            if (uowActive)
+            {
+                await uow.RollbackAsync(CancellationToken.None);
+            }
+            logger.LogError(ex, "{Package} failed after {Steps} step(s); transaction rolled back", PackageName, _results.Count);
+
+            await notifier.NotifyAsync(new PackageResult(PackageName, false, _results, stopwatch.Elapsed, ex), CancellationToken.None);
+            return ExitCode.LoadFailed;
+        }
+
+        await notifier.NotifyAsync(new PackageResult(PackageName, true, _results, stopwatch.Elapsed, null), ct);
+        foreach (var step in _results) logger.LogInformation("{Step}: {Rows:N0} rows loaded", step.Name, step.RowsWritten);
+        return ExitCode.Success;
+    }
+
+    internal async Task SQL_TruncateTargets(IUnitOfWork uow, CancellationToken ct)
+    {
+        var step = new ExecuteSqlStep("SQL_TruncateTargets", SQL_TruncateTargetsStatement.BuildStatement(), Log<ExecuteSqlStep>());
+        await Step(step, uow, ct);
+    }
+
+    internal async Task DFT_LoadDepartment(IUnitOfWork uow, CancellationToken ct)
+    {
+        var source = FF_SRC_Department();
+        var transform = new DepartmentTransform();
+        var sink = DepartmentDestination();
+
+        var step = new DataFlowStep<DepartmentCsvRow, Department>("DFT_LoadDepartment", source, transform, sink, Log<DataFlowStep<DepartmentCsvRow, Department>>());
+        await Step(step, uow, ct);
+    }
+
+    internal async Task DFT_LoadDesignation(IUnitOfWork uow, CancellationToken ct)
+    {
+        var source = FF_SRC_Designation();
+        var transform = new DesignationTransform();
+        var sink = DesignationDestination();
+
+        var step = new DataFlowStep<DesignationCsvRow, Designation>("DFT_LoadDesignation", source, transform, sink, Log<DataFlowStep<DesignationCsvRow, Designation>>());
+        await Step(step, uow, ct);
+    }
+
+    internal IRowSource<DepartmentCsvRow> FF_SRC_Department()
+    {
+        return new CsvRowSource<DepartmentCsvRow>("FF_SRC_Department", new CsvSourceOptions { FilePath = File("Department") }, new DepartmentCsvRowMap());
+    }
+
+    internal IBulkSink<Department> DepartmentDestination()
+    {
+        return new SqlBulkSink<Department>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<Department>>());
+    }
+
+    internal IRowSource<DesignationCsvRow> FF_SRC_Designation()
+    {
+        return new CsvRowSource<DesignationCsvRow>("FF_SRC_Designation", new CsvSourceOptions { FilePath = File("Designation") }, new DesignationCsvRowMap());
+    }
+
+    internal IBulkSink<Designation> DesignationDestination()
+    {
+        return new SqlBulkSink<Designation>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<Designation>>());
+    }
+
+}

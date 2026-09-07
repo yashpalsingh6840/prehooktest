@@ -94,8 +94,10 @@ public class InPlaceColumnModificationTests
 
         Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
         var transform = result.Files.Single(f => f.RelativePath.EndsWith("Transform.cs", StringComparison.Ordinal)).Content;
-        // This is the whole bug in one line: it used to read "Name = row.Name,".
-        Assert.Contains("Name = SsisFn.Upper(row.Name),", transform);
+        // This is the whole bug in one line: it used to read "Name = row.Name,". Now it's its own
+        // named, callable function -- not inlined -- but the underlying computation is the same.
+        Assert.Contains("Name = ComputeName(row, ctx),", transform);
+        Assert.Contains("=> SsisFn.Upper(row.Name);", transform);
         Assert.DoesNotContain("Name = row.Name,", transform);
         // The genuine passthrough beside it must still be a passthrough.
         Assert.Contains("ID = row.ID,", transform);

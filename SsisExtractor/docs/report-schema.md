@@ -1,6 +1,6 @@
 # report contract
 
-Status: **slice 5** (see `../../../Phase0-Extractor-Plan.md` §8). This document covers what
+Status: **slice 5** (see `../../../Docs/Phase0-Extractor-Plan.md` §8). This document covers what
 `ssisx report` and `ssisx diff` write; `docs/spec-schema.md` covers `ssisx extract`'s
 `spec.json` contract separately -- `report` derives everything below from the same parsed
 package model `extract`/`graph` use, but doesn't read `extract`'s own JSON output back in

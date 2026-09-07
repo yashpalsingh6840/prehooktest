@@ -36,8 +36,8 @@ public sealed class ConditionalSplitStep<TRow>(
             branches[router.SelectBranch(row, in rowCtx)].Add(row, in rowCtx);
         }
 
-        // Fails before the package's transaction commits (still inside PackageRunner's try
-        // block) rather than silently succeeding with an empty load -- same rule as DataFlowStep.
+        // Fails before the package's transaction commits (still inside the generated Program.cs's
+        // own try block) rather than silently succeeding with an empty load -- same rule as DataFlowStep.
         if (read == 0)
             throw new InvalidOperationException(
                 $"{name}: source '{source.Name}' produced zero rows -- refusing to commit an empty load.");

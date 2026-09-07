@@ -48,6 +48,31 @@ public enum GapKind
     /// must never be written into a hand-maintained, tracked <c>decisions.json</c> file.
     /// </summary>
     EncryptedConnectionManagerSecret,
+
+    /// <summary>
+    /// The expected value for a generated test's assertion that only judgement -- not the .dtsx
+    /// alone -- can supply: a Conditional Split case whose condition this pilot's oracle-based
+    /// evaluator could not resolve to a boolean against a representative row, or a companion test
+    /// for a Script Task/Script Component seam once it is filled (the seam gap covers PORTING the
+    /// logic; this one covers TESTING it, and a filled seam is human logic no deterministic
+    /// emitter can derive an assertion for). Answered with a whole, self-contained xUnit test file
+    /// under <c>fills/&lt;Package&gt;/Tests/</c> -- not a partial-method seam like
+    /// <see cref="ScriptTask"/>/<see cref="ScriptComponentColumn"/>, since there is no existing
+    /// generated file to splice into.
+    /// </summary>
+    TestOracle,
+
+    /// <summary>
+    /// A CSV/fixed-width/Excel source's own connection manager still points at the ORIGINAL SSIS
+    /// author's machine-specific path (see <c>ProjectEmitter.EmitAppSettingsDevelopment</c>'s own
+    /// doc comment) -- the deterministic Tier-A synthetic sample already makes the generated test
+    /// suite pass with zero fills, but a REALISTIC sample (matching the exact declared schema) is
+    /// what actually fixes the portability problem for a real local run and is closer to what the
+    /// production data looks like. One missing DATUM (the file's own content) -- the wiring
+    /// (<c>appsettings.Development.json</c>'s <c>TestData</c> override) is already generated
+    /// unconditionally, gap or not.
+    /// </summary>
+    LocalFileSourceData,
 }
 
 /// <summary>
@@ -120,4 +145,14 @@ public sealed class GapSpec
     /// with no evidence-bearing single object (e.g. an unclassified gap).
     /// </summary>
     public string? EvidenceRefId { get; init; }
+
+    /// <summary>
+    /// The exact file name a <see cref="GapKind.LocalFileSourceData"/> fill must be saved as under
+    /// <c>TestData/</c> -- the connection manager's own configured <c>SourceFileName</c>
+    /// (<c>appsettings.Development.json</c> overrides only <c>SourceFolder</c>, never the name), NOT
+    /// the Tier-A synthetic sample's own <c>{FileSourceKey}.csv</c> name, which is frequently
+    /// different. Null for every other gap kind, and for a <c>LocalFileSourceData</c> gap whose
+    /// connection manager has no design-time default path to derive one from.
+    /// </summary>
+    public string? ExpectedFileName { get; init; }
 }

@@ -1,0 +1,9 @@
+{
+  "FileSource": {
+    "Files": {
+      "Employee": {
+        "SourceFolder": "TestData"
+      }
+    }
+  }
+}
