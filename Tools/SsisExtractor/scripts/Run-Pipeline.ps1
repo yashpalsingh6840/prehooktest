@@ -20,7 +20,12 @@
     1. ssisx extract   -- packages/<Package>.spec.json for everything downstream to read
     2. svk walkthrough + svk sampledata -- human-readable review + schema-correct reference data
        (advisory only -- never blocks; a failure here is reported and the pipeline continues)
-    3. ssisx generate   -- the C# project + starter tests + TestData/ wiring (seams on by default)
+    3. ssisx generate   -- the C# project + starter tests + TestData/ wiring (seams on by default).
+       Passed -FillsPath too (a real, previously-shipped bug: an earlier version of this script
+       only forwarded -FillsPath to step 4, so a Tier-1 <Package>.decisions.json acknowledgment
+       sitting there was silently never read -- generate has its own --fills flag specifically for
+       this, and defaults to <out>/fills if omitted, which this script's own -FillsPath is
+       deliberately NOT).
     4. ssisx apply-fills -- applies whatever is ALREADY under -FillsPath (this step does not
        write fills itself -- see ssisx-fill.prompt.md/ssisx-test.prompt.md for the AI-assisted
        gap-filling flow that produces them)
@@ -149,7 +154,7 @@ Write-Host ""
 Write-Host "==================================================================="
 Write-Host " Step 3/5 -- generate (framework: $Framework)"
 Write-Host "==================================================================="
-$generateExit = Invoke-Tool $ssisx (@('generate', '--input', $InputPath, '--out', $genOut, '--recursive', '--etl-core', $EtlCorePath, '--framework', $Framework) + $packageArgs)
+$generateExit = Invoke-Tool $ssisx (@('generate', '--input', $InputPath, '--out', $genOut, '--recursive', '--etl-core', $EtlCorePath, '--framework', $Framework, '--fills', $FillsPath) + $packageArgs)
 if ($generateExit -ne 0 -and $generateExit -ne 3) { Write-Error "ssisx generate failed with exit code $generateExit." -ErrorAction Stop }
 if ($generateExit -eq 3) { Write-Warning "generate reported blocking gaps -- see $genOut\generate-report.md. Steps 4/5 still run against whatever DID generate." }
 if (-not (Test-Path $generateDir)) { Write-Error "generate produced no output at $generateDir." -ErrorAction Stop }

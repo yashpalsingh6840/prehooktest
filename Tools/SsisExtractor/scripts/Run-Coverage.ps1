@@ -57,9 +57,17 @@ $testProjects = Get-ChildItem -Path $GeneratedRoot -Filter '*.Tests.csproj' -Rec
     Where-Object { $_.Directory.Parent.FullName -eq $GeneratedRoot }
 
 if ($Package) {
+    # Normalize by splitting every element on ',' too, not just joining -- when this script (or
+    # Run-Pipeline.ps1, which forwards -Package straight through) is invoked via `powershell -File`
+    # with a comma-joined value (e.g. `-Package Package_Advanced,Package_Transforms`), PowerShell's
+    # own argument parser does NOT reliably split that into a multi-element array for a [string[]]
+    # parameter the way it would from an interactive prompt -- it can bind the whole comma-joined
+    # text as ONE array element instead. An exact `-contains` match against that then silently
+    # matches nothing. Splitting defensively here handles both shapes correctly either way.
+    $requestedPackages = $Package | ForEach-Object { $_ -split ',' } | Where-Object { $_ }
     $testProjects = $testProjects | Where-Object {
         $pkgName = $_.BaseName -replace '\.Tests$', ''
-        $Package -contains $pkgName
+        $requestedPackages -contains $pkgName
     }
 }
 
