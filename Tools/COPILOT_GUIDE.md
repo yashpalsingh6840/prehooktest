@@ -226,6 +226,10 @@ ssisx conformance --input <folder> --out out --package LoadEmployees
 # After writing a Tier-2 fill file under fills-library\<Package>\*.cs (NOT out\fills\ --
 # see "What's disposable and what isn't" below):
 ssisx apply-fills --out out --fills fills-library
+
+# After writing a hand-picked extra test under fills-library\<Package>\MoreTests\*.cs --
+# NOT part of the gap-fill workflow above, see "Adding more unit tests" below:
+ssisx apply-tests --out out --fills fills-library
 ```
 
 `ssisx generate` exits:
@@ -302,6 +306,40 @@ by `Etl.Core`'s own infrastructure (SQL bulk-copy, Excel/fixed-width readers, ..
 suite was never meant to fully exercise. Never deletes a prior `TestResults\` folder -- each run
 adds a fresh, GUID-named result folder alongside whatever was already there. `/ssisx-rewrite`
 (further down) calls this as its own Step 8.
+
+## Adding more unit tests to an already-green package: `ssisx apply-tests`
+
+**This is not part of the gap-fill workflow above -- see `Docs/AI-Test-Enrichment-Plan.md` (a
+dev-repo-only doc, do not open it from a client-only copy of this folder) for the full design.**
+Only worth reaching for once a package already builds clean and passes `dotnet test --filter
+Category!=Integration` with zero fills applied -- it raises coverage past the deterministic
+starter baseline, never appears in `gaps.json`, and never affects whether a package counts as
+generatable.
+
+Every generated `README.md` carries its own "Test coverage notes" section -- what each existing
+test already asserts, and (by what it doesn't say) what it doesn't -- so an assistant can pick a
+handful of real gaps in coverage without opening a single generated `.cs` test file. Write one
+`.cs` file per candidate under `fills-library\<Package>\MoreTests\` (**not**
+`fills-library\<Package>\Tests\` -- that folder is `apply-fills`' own `TEST-ORACLE` mechanism and
+is matched against `gaps.json`; a file dropped there for this purpose is reported `Orphaned`), an
+optional `// ssisx-more-test: Author=... Date=... Targets=...` first-line comment for audit only,
+then:
+
+```powershell
+ssisx apply-tests --out out --fills fills-library
+dotnet build out\generate\Generated.slnx --nologo
+dotnet test out\generate\Generated.slnx --filter Category!=Integration --nologo
+```
+
+Every file present is copied unconditionally -- there is no `GapId` to check a "more test"
+against, so unlike a Tier-1/2 fill there is nothing to be `Stale`/`Orphaned` about. If a test
+references a method/column that got renamed since the README was read, the next build simply
+fails with an ordinary compile error naming exactly what's wrong -- that IS the staleness check
+for this feature, not a tool bug to work around. Its own audit trail lands in
+`out\tests-applied.json`, a separate manifest from `fills-applied.json` on purpose. The
+`/ssisx-more-tests` prompt (`.github/prompts/ssisx-more-tests.prompt.md`) walks this end to end,
+including the "stop and report before applying" step every AI-touching workflow in this tool
+follows.
 
 ## What's disposable and what isn't -- fills live OUTSIDE `out\`, permanently
 
@@ -493,6 +531,17 @@ the client's `.dtsx` files, and `<out>` with wherever you want output written (e
 > This gap is Tier 3 (`MissingToolSupport`). Don't try to work around it -- summarize what SSIS
 > feature it is (from the gap's reason text) so I can decide whether it's worth asking for a
 > tool enhancement.
+
+**Add more unit tests to an already-green package (not a gap):**
+> First confirm `<PackageName>` already builds clean and passes `dotnet test --filter
+> Category!=Integration` with zero fills applied -- this is not the gap-fill workflow above. Read
+> `<out>\generate\<PackageName>\README.md`'s own "Test coverage notes" section only (not the whole
+> `.Tests` project), pick 2-3 rows that are genuinely undercovered, and write one small test file
+> per candidate under `fills-library\<PackageName>\MoreTests\<Name>MoreTests.cs` (NOT
+> `fills-library\<PackageName>\Tests\` -- that's a different mechanism). Stop and show me what you
+> wrote before applying. Once I confirm, run `ssisx apply-tests --out <out> --fills
+> fills-library`, then `dotnet build`/`dotnet test --filter Category!=Integration` on
+> `<out>\generate\Generated.slnx`, and tell me what changed.
 
 **Sanity-check before running the generator on everything:**
 > Before running `generate` without `--package`, tell me how many packages are in

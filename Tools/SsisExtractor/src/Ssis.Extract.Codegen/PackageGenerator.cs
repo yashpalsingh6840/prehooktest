@@ -111,6 +111,10 @@ public static partial class PackageGenerator
         // path below), written to a SIBLING directory of the main project, never nested inside
         // it. Empty unless at least one flow's own starter test was actually generated.
         var testFiles = new List<GeneratedFile>();
+        // One honest note per starter test file -- see TestCoverageNote's own doc comment and
+        // Docs/AI-Test-Enrichment-Plan.md. Populated via NoteTest right alongside every
+        // testFiles.Add(...) below; never a gap, never read by PortfolioDigest.
+        var testCoverageNotes = new List<TestCoverageNote>();
 
         // A connection manager whose sensitive property is DPAPI-encrypted (ProtectionLevel
         // EncryptSensitiveWithUserKey/EncryptSensitiveWithPassword) is undecryptable outside the
@@ -301,7 +305,7 @@ public static partial class PackageGenerator
             if (flow.ConditionalSplit is { } split)
             {
                 var splitStep = GenerateConditionalSplitFlow(
-                    package, ns, flow, split, fileSourceEntries, files, testFiles, tables, functionsUsed,
+                    package, ns, flow, split, fileSourceEntries, files, testFiles, testCoverageNotes, tables, functionsUsed,
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
                     csvSampleCandidates);
                 if (splitStep is not null) wiredSplits[flow] = splitStep;
@@ -311,7 +315,7 @@ public static partial class PackageGenerator
             if (flow.MergeJoin is { } mergeJoin)
             {
                 var mergeJoinFlow = GenerateMergeJoinFlow(
-                    package, ns, flow, mergeJoin, fileSourceEntries, files, testFiles, tables, functionsUsed,
+                    package, ns, flow, mergeJoin, fileSourceEntries, files, testFiles, testCoverageNotes, tables, functionsUsed,
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
                     csvSampleCandidates);
                 if (mergeJoinFlow is not null) wiredFlows[flow] = mergeJoinFlow;
@@ -334,7 +338,7 @@ public static partial class PackageGenerator
             if (flow.Multicast is { } multicast)
             {
                 var multicastStep = GenerateMulticastFlow(
-                    package, ns, flow, multicast, fileSourceEntries, files, testFiles, tables, functionsUsed,
+                    package, ns, flow, multicast, fileSourceEntries, files, testFiles, testCoverageNotes, tables, functionsUsed,
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
                     multicastTestCandidates, csvSampleCandidates);
                 if (multicastStep is not null) wiredMulticasts[flow] = multicastStep;
@@ -467,7 +471,12 @@ public static partial class PackageGenerator
                     DestinationComponent: flow.DestinationComponent));
                 gaps.AddRange(testResult.Gaps);
                 foreach (var testFile in testResult.Files)
-                    testFiles.Add(testFile with { RelativePath = $"{package.ObjectName}.Tests/{testFile.RelativePath}" });
+                {
+                    var testFileFinal = testFile with { RelativePath = $"{package.ObjectName}.Tests/{testFile.RelativePath}" };
+                    testFiles.Add(testFileFinal);
+                    NoteTest(testCoverageNotes, testFileFinal, "Transform",
+                        "asserts each output column for one representative row; does not exercise NULL/boundary inputs beyond the chosen representative value.");
+                }
             }
 
             var rowCountVariableNames = flow.RowCounts is { Count: > 0 }
@@ -533,7 +542,7 @@ public static partial class PackageGenerator
                     programSteps.Add(programOleDbCommand);
                     break;
                 case SqlStep sqlStep:
-                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, testFiles, ns, $"{ns}.Mapping", gaps));
+                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, testFiles, testCoverageNotes, ns, $"{ns}.Mapping", gaps));
                     break;
                 case ScriptTaskStep { Task: var scriptTask }:
                 {
@@ -553,7 +562,12 @@ public static partial class PackageGenerator
                     if (fileSystemStep.Action.SourceConnectionName is { } fstSourceKey) fileSystemTaskKeys.Add(fstSourceKey);
                     if (fileSystemStep.Action.DestinationConnectionName is { } fstDestKey) fileSystemTaskKeys.Add(fstDestKey);
                     if (ComponentTestEmitter.EmitFileSystemTaskTest($"{package.ObjectName}.Tests", ns, fileSystemStep.TaskName, fileSystemStep.Action) is { } fstTest)
-                        testFiles.Add(fstTest with { RelativePath = $"{package.ObjectName}.Tests/{fstTest.RelativePath}" });
+                    {
+                        var fstTestFinal = fstTest with { RelativePath = $"{package.ObjectName}.Tests/{fstTest.RelativePath}" };
+                        testFiles.Add(fstTestFinal);
+                        NoteTest(testCoverageNotes, fstTestFinal, "FileSystemTask",
+                            "runs against a real temp directory; asserts the destination file exists and its content.");
+                    }
                     break;
                 case ForEachFileLoopStep loopStep:
                 {
@@ -725,7 +739,10 @@ public static partial class PackageGenerator
             foreach (var f in TestDoublesEmitter.Emit(ns, className, dbContextTypeName, testDataFileEntries, sinkFileKeys, distinctFileSystemTaskKeys, forEachLoopKeys, secondaryConnections.Keys.ToList(), sampleDataFallbackEntries).Files)
                 testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
             var runAsyncTest = RunAsyncFailureTestEmitter.Emit(ns, className, plan.FailureHandlers.Count > 0, supportsFakeHappyPath, usesLookupPreload);
-            testFiles.Add(runAsyncTest with { RelativePath = $"{package.ObjectName}.Tests/{runAsyncTest.RelativePath}" });
+            var runAsyncTestFinal = runAsyncTest with { RelativePath = $"{package.ObjectName}.Tests/{runAsyncTest.RelativePath}" };
+            testFiles.Add(runAsyncTestFinal);
+            NoteTest(testCoverageNotes, runAsyncTestFinal, "RunAsync",
+                "asserts the failure path (a fake throws on a chosen step -> rollback, failure handlers ran, notifier saw failure) and, when every source is file-based, the happy path (step count/order, per-branch transactions); does not vary input data beyond the fixed sample/rows.");
 
             // Sink -- SQL (Phase 2 of the generated-tests plan): one starter test per generated
             // sink method, matched back to its own destination component via sqlSinkEntities
@@ -741,7 +758,12 @@ public static partial class PackageGenerator
                 var sinkTest = ComponentTestEmitter.EmitSqlSinkTest(
                     $"{package.ObjectName}.Tests", ns, $"{ns}.Model", sinkEntry.SsisName, sinkEntry.MethodName, destinationComponent);
                 foreach (var f in sinkTest.Files)
-                    testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
+                {
+                    var sinkTestFinal = f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" };
+                    testFiles.Add(sinkTestFinal);
+                    NoteTest(testCoverageNotes, sinkTestFinal, "Sink-Sql",
+                        "writes 2 synthesized entities through the fake unit of work; asserts DestinationTable + ColumnMappings only, never a real INSERT.");
+                }
             }
 
             // Sink -- flat file (Phase 2 of the generated-tests plan): same join-by-entity-name
@@ -758,7 +780,12 @@ public static partial class PackageGenerator
                     $"{package.ObjectName}.Tests", ns, $"{ns}.Model", sinkEntry.SsisName, sinkEntry.MethodName,
                     candidate.Sink.FileSourceKey, candidate.Sink.HeaderLine is not null, rowTerminator, candidate.DestinationComponent);
                 foreach (var f in sinkTest.Files)
-                    testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
+                {
+                    var sinkTestFinal = f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" };
+                    testFiles.Add(sinkTestFinal);
+                    NoteTest(testCoverageNotes, sinkTestFinal, "Sink-FlatFile",
+                        "writes to a real temp path; asserts real widths/delimiters/padding against the actual file written.");
+                }
             }
 
             // Source -- CSV / fixed-width / SQL / Excel (Phase 2 of the generated-tests plan; unified
@@ -794,19 +821,28 @@ public static partial class PackageGenerator
                     var fileSourceTest = ComponentTestEmitter.EmitFileSourceTest(
                         $"{package.ObjectName}.Tests", ns, $"{ns}.Csv", rowTypeName,
                         sourceEntry.MethodName, sourceNeedsUow: false, source.ComponentName);
-                    testFiles.Add(fileSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{fileSourceTest.RelativePath}" });
+                    var fileSourceTestFinal = fileSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{fileSourceTest.RelativePath}" };
+                    testFiles.Add(fileSourceTestFinal);
+                    NoteTest(testCoverageNotes, fileSourceTestFinal, "Source-File",
+                        "enumerates ReadAsync over the emitted Tier-A sample file; asserts row count and the first row's columns. A real-data Integration read needs its own LOCAL-DATA fill.");
                 }
                 else if (source is SqlFlowSource)
                 {
                     var sqlSourceTest = ComponentTestEmitter.EmitSqlSourceTest(
                         $"{package.ObjectName}.Tests", ns, $"{ns}.Sql", rowTypeName, sourceEntry.MethodName, source.ComponentName);
-                    testFiles.Add(sqlSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{sqlSourceTest.RelativePath}" });
+                    var sqlSourceTestFinal = sqlSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{sqlSourceTest.RelativePath}" };
+                    testFiles.Add(sqlSourceTestFinal);
+                    NoteTest(testCoverageNotes, sqlSourceTestFinal, "Source-Sql",
+                        "asserts `.Name` only by default; the real read is `[Trait(\"Category\",\"Integration\")]`, run only against a reachable server.");
                 }
                 else if (source is ExcelFlowSource)
                 {
                     var excelSourceTest = ComponentTestEmitter.EmitExcelSourceTest(
                         $"{package.ObjectName}.Tests", ns, $"{ns}.Excel", rowTypeName, sourceEntry.MethodName, source.ComponentName);
-                    testFiles.Add(excelSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{excelSourceTest.RelativePath}" });
+                    var excelSourceTestFinal = excelSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{excelSourceTest.RelativePath}" };
+                    testFiles.Add(excelSourceTestFinal);
+                    NoteTest(testCoverageNotes, excelSourceTestFinal, "Source-Excel",
+                        "asserts `.Name` only; the real read is Integration-tagged (no .xlsx writer in this stack, needs a LOCAL-DATA fill).");
                 }
             }
 
@@ -831,7 +867,12 @@ public static partial class PackageGenerator
                 var containerTest = ComponentTestEmitter.EmitSequenceContainerTest(
                     $"{package.ObjectName}.Tests", ns, containerEntry.MethodName, directChildren);
                 if (containerTest is not null)
-                    testFiles.Add(containerTest with { RelativePath = $"{package.ObjectName}.Tests/{containerTest.RelativePath}" });
+                {
+                    var containerTestFinal = containerTest with { RelativePath = $"{package.ObjectName}.Tests/{containerTest.RelativePath}" };
+                    testFiles.Add(containerTestFinal);
+                    NoteTest(testCoverageNotes, containerTestFinal, "Container",
+                        "asserts direct children ran, in order, via the fake's own recorders/file effects.");
+                }
             }
 
             // OLE DB Command (Phase 2 of the generated-tests plan): one starter test per resolved
@@ -846,7 +887,12 @@ public static partial class PackageGenerator
                     $"{package.ObjectName}.Tests", ns, candidate.RowTypeNamespace, candidate.RowTypeName,
                     candidate.StepName, candidate.SqlTemplate, candidate.ParameterColumnNames, candidate.SourceColumns);
                 if (cmdTest is not null)
-                    testFiles.Add(cmdTest with { RelativePath = $"{package.ObjectName}.Tests/{cmdTest.RelativePath}" });
+                {
+                    var cmdTestFinal = cmdTest with { RelativePath = $"{package.ObjectName}.Tests/{cmdTest.RelativePath}" };
+                    testFiles.Add(cmdTestFinal);
+                    NoteTest(testCoverageNotes, cmdTestFinal, "OleDbCommand",
+                        "asserts uow.ExecutedParameterizedSql -- the template text plus one parameter array per source row.");
+                }
             }
 
             // ForEach loop (Phase 2 of the generated-tests plan): one starter test per
@@ -858,7 +904,12 @@ public static partial class PackageGenerator
                 var loopTest = ComponentTestEmitter.EmitForEachLoopTest(
                     $"{package.ObjectName}.Tests", ns, loopStep.StepName, loopStep.FileSourceKey, loopStep.FileSpec, loopStep.NameMode, loopStep.StatementClassName);
                 if (loopTest is not null)
-                    testFiles.Add(loopTest with { RelativePath = $"{package.ObjectName}.Tests/{loopTest.RelativePath}" });
+                {
+                    var loopTestFinal = loopTest with { RelativePath = $"{package.ObjectName}.Tests/{loopTest.RelativePath}" };
+                    testFiles.Add(loopTestFinal);
+                    NoteTest(testCoverageNotes, loopTestFinal, "ForEachLoop",
+                        "runs against a temp directory with 2 files; asserts 2 substituted statements in ExecutedSql, in ordinal file order.");
+                }
             }
 
             // Multicast (Phase 2 of the generated-tests plan): one starter test per resolved flow,
@@ -871,7 +922,12 @@ public static partial class PackageGenerator
                     $"{package.ObjectName}.Tests", ns, candidate.RowTypeNamespace, candidate.RowTypeName,
                     candidate.StepName, candidate.SourceColumns, candidate.Branches);
                 if (mcastTest is not null)
-                    testFiles.Add(mcastTest with { RelativePath = $"{package.ObjectName}.Tests/{mcastTest.RelativePath}" });
+                {
+                    var mcastTestFinal = mcastTest with { RelativePath = $"{package.ObjectName}.Tests/{mcastTest.RelativePath}" };
+                    testFiles.Add(mcastTestFinal);
+                    NoteTest(testCoverageNotes, mcastTestFinal, "Multicast",
+                        "asserts every branch received every source row.");
+                }
             }
 
             // Aggregate source (Phase 2 of the generated-tests plan): one starter test per resolved
@@ -884,7 +940,85 @@ public static partial class PackageGenerator
                     candidate.AggregateRowTypeNamespace, candidate.AggregateRowTypeName, candidate.ComponentName,
                     candidate.GroupByPropertyName, candidate.GroupByKeyClrType, candidate.Functions);
                 if (aggTest is not null)
-                    testFiles.Add(aggTest with { RelativePath = $"{package.ObjectName}.Tests/{aggTest.RelativePath}" });
+                {
+                    var aggTestFinal = aggTest with { RelativePath = $"{package.ObjectName}.Tests/{aggTest.RelativePath}" };
+                    testFiles.Add(aggTestFinal);
+                    NoteTest(testCoverageNotes, aggTestFinal, "Aggregate",
+                        "synthesizes rows and asserts the grouped keys and counts.");
+                }
+            }
+
+            // Data Flow Task -- direct invocation (added 2026-09-07, closing a real gap found
+            // reviewing actual coverage data on two real packages): every OTHER starter test above
+            // exercises one ISOLATED piece of a Data Flow Task -- nothing calls source, transform,
+            // and sink TOGETHER except RunAsyncTests.cs's own happy-path test, which many real
+            // packages never even get (a Lookup or an Excel source excludes the whole package from
+            // PackageClassEmitter.SupportsFakeHappyPath entirely -- confirmed true for BOTH real
+            // packages this was found against). One starter test per resolved single-destination
+            // or Conditional-Split flow, reconstructing a fresh DataFlowStep/ConditionalSplitStep
+            // from the same already-public source/transform/sink pieces every other starter test
+            // in this file already calls -- see EmitDataFlowStepTest's own doc comment for why
+            // this does NOT call the generated DFT_X(uow, ct) method directly (a real bug caught
+            // building this: DFT_X reads a private _load field only RunAsync() populates). A flow
+            // whose spec carries a Lookup preload (the original single-output shape, or the
+            // composed Lookup+Aggregate shape -- both set ProgramFlowSpec.Lookup, see
+            // GenerateLookupFlow/GenerateLookupThenAggregateFlow) is skipped with an honest,
+            // non-blocking advisory instead: its own reference cache is a private field populated
+            // only by RunAsync's own bootstrap, before any step runs, so NO construction reachable
+            // from a test can populate it -- there is no fakes-only way to test this shape at all,
+            // only a real Integration run against a real server exercises it. A Conditional Split
+            // flow is never Lookup-dependent (the Lookup gate in this method's own per-flow
+            // dispatch runs BEFORE ConditionalSplit is ever resolved), so wiredSplits needs no such
+            // check.
+            var sourceMethodByRowType = methodInventory.Where(m => m.Kind == "Source" && m.RowTypeName is not null)
+                .GroupBy(m => m.RowTypeName!).ToDictionary(g => g.Key, g => g.First().MethodName, StringComparer.Ordinal);
+            var sinkMethodByEntity = methodInventory.Where(m => m.Kind == "Sink")
+                .GroupBy(m => m.SsisName).ToDictionary(g => g.Key, g => g.First().MethodName, StringComparer.Ordinal);
+            foreach (var (flow, spec) in wiredFlows)
+            {
+                if (!sourceMethodByRowType.TryGetValue(spec.RowTypeName, out var sourceMethodName)) continue;
+                if (spec.Lookup is not null)
+                {
+                    if (!skipTests)
+                        gaps.Add(new GenerationGap($"{flow.TaskName}.DataFlowTest",
+                            $"no direct-invocation starter test generated for '{flow.TaskName}' -- its own source reads a Lookup reference cache populated only by RunAsync's own bootstrap (before any step runs), which no test-reachable construction can populate; verify manually or via an Integration run against a real, reachable server.",
+                            IsBlocking: false));
+                    continue;
+                }
+                // A Flat File-sunk flow's own sink never populates uow.BulkInserts (it writes a
+                // real file, via IUnitOfWork not at all -- see FlatFileBulkSink's own doc
+                // comment), so this test's own assertion would never be meaningful for one; a
+                // separate, not-yet-built taxonomy shape, not a silent gap.
+                if (spec.Sink is not SqlFlowSink) continue;
+                if (!sinkMethodByEntity.TryGetValue(spec.EntityName, out var sinkMethodName)) continue;
+                var needsIntegration = RequiresIntegrationForDirectInvocation(spec.Source);
+                var dataFlowTest = ComponentTestEmitter.EmitDataFlowStepTest(
+                    $"{package.ObjectName}.Tests", ns, flow.TaskName,
+                    sourceMethodName, FlowSourceNeedsUow(spec.Source), RowTypeNamespaceFor(spec.Source, ns), spec.RowTypeName,
+                    spec.TransformClassName, sinkMethodName, $"{ns}.Model", spec.EntityName,
+                    needsIntegration);
+                var dataFlowTestFinal = dataFlowTest with { RelativePath = $"{package.ObjectName}.Tests/{dataFlowTest.RelativePath}" };
+                testFiles.Add(dataFlowTestFinal);
+                NoteTest(testCoverageNotes, dataFlowTestFinal, "DataFlowTask",
+                    needsIntegration
+                        ? "reconstructs the flow's real source/transform/sink and asserts at least one row was bulk-inserted; needs real connectivity (a SQL/Excel source somewhere in the flow), so this is Integration-tagged."
+                        : "reconstructs the flow's real source/transform/sink (Tier-A sample data) and asserts at least one row was bulk-inserted -- proves the whole pipeline composes correctly, not just its isolated pieces.");
+            }
+            foreach (var (flow, spec) in wiredSplits)
+            {
+                if (!sourceMethodByRowType.TryGetValue(spec.RowTypeName, out var sourceMethodName)) continue;
+                var needsIntegration = RequiresIntegrationForDirectInvocation(spec.Source);
+                var branches = spec.Branches.Select(b => (b.OutputName, b.TransformClassName, b.EntityName)).ToList();
+                var dataFlowTest = ComponentTestEmitter.EmitConditionalSplitDataFlowTest(
+                    $"{package.ObjectName}.Tests", ns, flow.TaskName,
+                    sourceMethodName, FlowSourceNeedsUow(spec.Source), RowTypeNamespaceFor(spec.Source, ns), spec.RowTypeName,
+                    spec.RouterClassName, branches, $"{ns}.Model", needsIntegration);
+                var dataFlowTestFinal = dataFlowTest with { RelativePath = $"{package.ObjectName}.Tests/{dataFlowTest.RelativePath}" };
+                testFiles.Add(dataFlowTestFinal);
+                NoteTest(testCoverageNotes, dataFlowTestFinal, "DataFlowTask",
+                    needsIntegration
+                        ? "reconstructs the flow's real source/router/branches and asserts at least one row was bulk-inserted; needs real connectivity (a SQL/Excel source somewhere in the flow), so this is Integration-tagged."
+                        : "reconstructs the flow's real source/router/branches (Tier-A sample data) and asserts at least one row was bulk-inserted across at least one branch -- proves the whole pipeline composes correctly, not just its isolated pieces.");
             }
 
             if (authMode is null)
@@ -916,6 +1050,7 @@ public static partial class PackageGenerator
             if (skipTests)
             {
                 testFiles.Clear();
+                testCoverageNotes.Clear();
                 gaps.RemoveAll(g => g.Kind is GapKind.TestOracle or GapKind.LocalFileSourceData);
             }
 
@@ -930,6 +1065,7 @@ public static partial class PackageGenerator
                 MethodInventory: methodInventory,
                 Flows: plan.Flows.Select(f => new ReadmeFlowSection(f.TaskName, f.Pipeline)).ToList(),
                 TestFiles: testFiles,
+                TestCoverageNotes: testCoverageNotes,
                 Gaps: gaps);
             files.Add(PackageReadmeEmitter.Emit(readmeRequest));
 
@@ -946,6 +1082,62 @@ public static partial class PackageGenerator
     {
         files.AddRange(result.Files);
         gaps.AddRange(result.Gaps);
+    }
+
+    /// <summary>Records a <see cref="TestCoverageNote"/> for <paramref name="file"/>, keyed by its
+    /// own (already package-prefixed) RelativePath -- the exact join key PackageReadmeEmitter uses,
+    /// see TestCoverageNote's own doc comment for why RelativePath, not a method name, is what's
+    /// reliable at every call site. A no-op for anything that isn't an actual xUnit test class
+    /// (TestDoubles/*.cs support files, SampleData/*.csv, the .csproj itself) -- every one of those
+    /// filenames provably does NOT end in "Tests.cs" (confirmed by reading every GeneratedFile
+    /// construction site in this assembly), so this can be called unconditionally, right alongside
+    /// every existing testFiles.Add(...), with no per-site filtering needed.</summary>
+    /// <summary>True whenever any leaf source reachable from <paramref name="source"/> is
+    /// SQL/Excel-typed -- neither has a synthetic Tier-A fallback, so a "Data Flow Task -- direct
+    /// invocation" starter test built against it needs real connectivity and is tagged
+    /// Integration, mirroring <c>SourceNeedsUow</c>'s own recursive shape immediately below in
+    /// <c>PackageClassEmitter</c>.</summary>
+    private static bool RequiresIntegrationForDirectInvocation(FlowSourceSpec source) => source switch
+    {
+        SqlFlowSource => true,
+        ExcelFlowSource => true,
+        MergeJoinFlowSource mj => RequiresIntegrationForDirectInvocation(mj.LeftSource) || RequiresIntegrationForDirectInvocation(mj.RightSource),
+        UnionFlowSource union => union.Sides.Any(RequiresIntegrationForDirectInvocation),
+        AggregateFlowSource agg => RequiresIntegrationForDirectInvocation(agg.InnerSource),
+        _ => false,
+    };
+
+    /// <summary>Mirrors <c>PackageClassEmitter.SourceNeedsUow</c>'s own recursive shape exactly --
+    /// duplicated here (not shared) since that one is a local function private to
+    /// <c>PackageClassEmitter.Emit</c>. Used by the "Data Flow Task -- direct invocation" starter
+    /// test to decide whether its own reconstructed <c>package.{sourceMethodName}(...)</c> call
+    /// needs a <c>uow</c> argument, exactly like the real generated call site does.</summary>
+    private static bool FlowSourceNeedsUow(FlowSourceSpec source) => source switch
+    {
+        SqlFlowSource => true,
+        MergeJoinFlowSource mj => FlowSourceNeedsUow(mj.LeftSource) || FlowSourceNeedsUow(mj.RightSource),
+        UnionFlowSource union => union.Sides.Any(FlowSourceNeedsUow),
+        AggregateFlowSource agg => FlowSourceNeedsUow(agg.InnerSource),
+        _ => false,
+    };
+
+    /// <summary>The namespace a flow's own combined ROW type lives in -- mirrors the identical
+    /// ternary already used at the single-destination call site in this method
+    /// (`programSource is CsvFlowSource or FixedWidthFlowSource ? ... : ...`), so this never
+    /// disagrees with what the real row-type emitters actually did.</summary>
+    private static string RowTypeNamespaceFor(FlowSourceSpec source, string ns) => source switch
+    {
+        CsvFlowSource or FixedWidthFlowSource => $"{ns}.Csv",
+        ExcelFlowSource => $"{ns}.Excel",
+        _ => $"{ns}.Sql",
+    };
+
+    private static void NoteTest(List<TestCoverageNote> testCoverageNotes, GeneratedFile file, string kind, string summary)
+    {
+        var name = Path.GetFileName(file.RelativePath);
+        if (!name.EndsWith("Tests.cs", StringComparison.Ordinal)) return;
+        var hint = name[..^"Tests.cs".Length];
+        testCoverageNotes.Add(new TestCoverageNote(file.RelativePath, hint, kind, summary));
     }
 
     /// <summary>The destination's own OpenRowset table name is the one identifier in a .dtsx
@@ -1167,6 +1359,7 @@ public static partial class PackageGenerator
     private static ProgramFlowSpec? GenerateMergeJoinFlow(
         PackageSpec package, string ns, DataFlowPlan flow, MergeJoinPlan mergeJoin,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GeneratedFile> testFiles,
+        List<TestCoverageNote> testCoverageNotes,
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination,
         List<GenerationGap> gaps, ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
         bool emitSeams, List<CsvSampleCandidate>? csvSampleCandidates = null)
@@ -1210,7 +1403,12 @@ public static partial class PackageGenerator
                 $"{package.ObjectName}.Tests", leftRowTypeNamespace, leftRowTypeName, rightRowTypeNamespace, rightRowTypeName,
                 $"{ns}.Mapping", mapperClassName, leftKeyTest, rightKeyTest, mergeJoinResult.TestColumns ?? []);
             if (mapperTest is not null)
-                testFiles.Add(mapperTest with { RelativePath = $"{package.ObjectName}.Tests/{mapperTest.RelativePath}" });
+            {
+                var mapperTestFinal = mapperTest with { RelativePath = $"{package.ObjectName}.Tests/{mapperTest.RelativePath}" };
+                testFiles.Add(mapperTestFinal);
+                NoteTest(testCoverageNotes, mapperTestFinal, "MergeJoinMapper",
+                    "asserts LeftKey/RightKey/Map over synthesized rows -- a pure static-function test, no PackageHarness needed.");
+            }
         }
 
         Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, mergeJoinResult.NullableColumnNames));
@@ -1408,6 +1606,7 @@ public static partial class PackageGenerator
     private static ProgramConditionalSplitStep? GenerateConditionalSplitFlow(
         PackageSpec package, string ns, DataFlowPlan flow, ConditionalSplitPlan split,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GeneratedFile> testFiles,
+        List<TestCoverageNote> testCoverageNotes,
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
@@ -1570,7 +1769,12 @@ public static partial class PackageGenerator
         foreach (var fn in routerResult.SsisFunctionsUsed) functionsUsed.Add(fn);
         files.AddRange(routerResult.Result.Files);
         foreach (var f in branchTestFiles)
-            testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
+        {
+            var branchTestFinal = f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" };
+            testFiles.Add(branchTestFinal);
+            NoteTest(testCoverageNotes, branchTestFinal, "Transform",
+                "asserts each output column for one representative row; does not exercise NULL/boundary inputs beyond the chosen representative value.");
+        }
 
         // Router -- Conditional Split (Phase 2 of the generated-tests plan): SelectBranch is a
         // pure function, no PackageHarness needed at all -- see RouterTestEmitter's own doc
@@ -1579,7 +1783,12 @@ public static partial class PackageGenerator
         // method.
         var routerTest = RouterTestEmitter.Emit($"{package.ObjectName}.Tests", $"{ns}.Mapping", routerClassName, rowTypeNamespace, rowTypeName, split, flow.DerivedColumn, flow.DataConversion);
         foreach (var f in routerTest.Files)
-            testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
+        {
+            var routerTestFinal = f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" };
+            testFiles.Add(routerTestFinal);
+            NoteTest(testCoverageNotes, routerTestFinal, "Router",
+                "asserts one case per branch plus the default, using a representative literal per condition; a condition that can't be resolved to a literal degrades to a test-oracle packet instead of a guess.");
+        }
         gaps.AddRange(routerTest.Gaps);
 
         if (authMode is null && resolvedAuth is { } resolved)
@@ -1599,6 +1808,7 @@ public static partial class PackageGenerator
     private static ProgramMulticastStep? GenerateMulticastFlow(
         PackageSpec package, string ns, DataFlowPlan flow, MulticastPlan multicast,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GeneratedFile> testFiles,
+        List<TestCoverageNote> testCoverageNotes,
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
@@ -1770,7 +1980,12 @@ public static partial class PackageGenerator
         tables.AddRange(branchTables);
         foreach (var fn in branchFunctionsUsed) functionsUsed.Add(fn);
         foreach (var f in branchTestFiles)
-            testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
+        {
+            var branchTestFinal = f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" };
+            testFiles.Add(branchTestFinal);
+            NoteTest(testCoverageNotes, branchTestFinal, "Transform",
+                "asserts each output column for one representative row; does not exercise NULL/boundary inputs beyond the chosen representative value.");
+        }
 
         if (authMode is null && resolvedAuth is { } resolved)
             (authMode, userId, targetServer, targetDatabase) = resolved;
@@ -2897,7 +3112,7 @@ public static partial class PackageGenerator
     private static ProgramStep ResolveSqlStep(
         PackageSpec package, SqlStep sqlStep, string? targetServer, string? targetDatabase,
         Dictionary<string, SecondaryConnectionRequest> secondaryConnections, List<GeneratedFile> files,
-        List<GeneratedFile> testFiles, string rootNamespace, string mappingNamespace, List<GenerationGap> gaps)
+        List<GeneratedFile> testFiles, List<TestCoverageNote> testCoverageNotes, string rootNamespace, string mappingNamespace, List<GenerationGap> gaps)
     {
         // Named, testable statement class (SqlStatementBuilderEmitter) rather than an anonymous
         // string literal embedded in Program.cs -- emitted once here regardless of which of the
@@ -2905,7 +3120,10 @@ public static partial class PackageGenerator
         var statementClassName = sqlStep.TaskName + "Statement";
         Merge(files, gaps, SqlStatementBuilderEmitter.Emit(mappingNamespace, sqlStep.TaskName, sqlStep.Sql));
         var statementTest = SqlStatementTestEmitter.Emit($"{package.ObjectName}.Tests", mappingNamespace, sqlStep.TaskName, sqlStep.Sql);
-        testFiles.Add(statementTest with { RelativePath = $"{package.ObjectName}.Tests/{statementTest.RelativePath}" });
+        var statementTestFinal = statementTest with { RelativePath = $"{package.ObjectName}.Tests/{statementTest.RelativePath}" };
+        testFiles.Add(statementTestFinal);
+        NoteTest(testCoverageNotes, statementTestFinal, "StatementText",
+            "asserts the built SQL text only; never executes it.");
 
         if (sqlStep.ConnectionManagerName is not { } cmName
             || FindConnectionManager(package, cmName) is not { } cm
@@ -2919,7 +3137,10 @@ public static partial class PackageGenerator
             // own doc comment); that shape is deliberately left for an Integration-tagged test, a
             // later phase.
             var stepTest = SqlStatementTestEmitter.EmitStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName);
-            testFiles.Add(stepTest with { RelativePath = $"{package.ObjectName}.Tests/{stepTest.RelativePath}" });
+            var stepTestFinal = stepTest with { RelativePath = $"{package.ObjectName}.Tests/{stepTest.RelativePath}" };
+            testFiles.Add(stepTestFinal);
+            NoteTest(testCoverageNotes, stepTestFinal, "ExecuteSqlStep",
+                "asserts SQL_X(fakeUow, ct) records the statement in uow.ExecutedSql; runs against the shared fake transaction, no real database.");
             return new ProgramSqlStep(sqlStep.TaskName, statementClassName);
         }
 
@@ -2935,7 +3156,10 @@ public static partial class PackageGenerator
         // TestDoublesEmitter's own unreachableSecondaryServer comment for why this needs no real
         // server at all, unlike a SQL/Excel SOURCE's own Integration-tagged read).
         var secondaryTest = SqlStatementTestEmitter.EmitSecondaryConnectionStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName);
-        testFiles.Add(secondaryTest with { RelativePath = $"{package.ObjectName}.Tests/{secondaryTest.RelativePath}" });
+        var secondaryTestFinal = secondaryTest with { RelativePath = $"{package.ObjectName}.Tests/{secondaryTest.RelativePath}" };
+        testFiles.Add(secondaryTestFinal);
+        NoteTest(testCoverageNotes, secondaryTestFinal, "SecondaryConnection",
+            "asserts the step never touches the shared IUnitOfWork; PackageHarness wires a deliberately unreachable secondary server so a real SqlException is what proves it.");
 
         return new ProgramSecondaryConnectionSqlStep(sqlStep.TaskName, cmName, statementClassName);
     }

@@ -103,7 +103,8 @@ written specifically for that situation; this file assumes `Tools\` itself is wh
 9. **Budget your own reads.** Do not open `CLAUDE.md`, anything under `Docs\` (e.g.
    `Docs\Emitter-Rewrite-Plan.md`, `Docs\Phase0-Extractor-Plan.md`,
    `Docs\Migration-Validation-Plan.md`, `Docs\SsisValidationKit-Plan.md`,
-   `Docs\Generated-Tests-Plan.md`), or `SsisExtractor\docs\report-schema.md` -- they are this
+   `Docs\Generated-Tests-Plan.md`, `Docs\AI-Test-Enrichment-Plan.md`), or
+   `SsisExtractor\docs\report-schema.md` -- they are this
    project's own multi-hundred-KB development history and internal design plans, not written for
    you, and reading them will burn your context for no benefit. None of this exists at all in a
    client-only copy of this `Tools\` folder -- it's only reachable here because this is the full
@@ -158,6 +159,16 @@ written specifically for that situation; this file assumes `Tools\` itself is wh
     the package's OWN generated code separately from the shared `Etl.Core` library -- see
     `Tools/COPILOT_TESTING_GUIDE.md`'s coverage section for why the blended total reads lower and
     is not the number to quote.
+16. **`ssisx apply-tests` (and `/ssisx-more-tests`) are a separate, optional, NOT-a-gap workflow
+    -- never confuse them with `apply-fills`.** Only run this once a package already builds clean
+    and passes `dotnet test --filter Category!=Integration` with zero fills applied; it raises
+    coverage past the deterministic starter tests, never affects `gaps.json`/the "generatable"
+    count, and reads only `generate\<Package>\README.md`'s own "Test coverage notes" section --
+    never the whole `.Tests` project. Its own file convention
+    (`fills[-library]\<Package>\MoreTests\*.cs`) is deliberately a different folder from
+    `apply-fills`' own `Tests\`/`TestData\` -- do not write a "more test" into either of those, and
+    do not run `apply-tests` as part of `/ssisx-rewrite` (that pipeline's own "done" signal is
+    about closing gaps, not about this).
 
 ## The one-sentence workflow
 

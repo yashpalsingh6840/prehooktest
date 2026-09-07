@@ -23,6 +23,7 @@ internal static class Program
             "diff" => DiffCommand.Run(rest),
             "generate" => GenerateCommand.Run(rest),
             "apply-fills" => ApplyFillsCommand.Run(rest),
+            "apply-tests" => ApplyTestsCommand.Run(rest),
             "pull" or "enrich" =>
                 Fail($"'{command}' needs SSISDB catalog access, which this engagement does not have (Phase0-Extractor-Plan.md §11 decision 4) -- use 'ssisx diff' against a deployed .ispac instead for drift detection."),
             _ => Fail($"unknown command '{command}'. Run 'ssisx --help'."),
@@ -240,6 +241,26 @@ internal static class Program
             names the gate-1 ScriptCode RuleId that translation answers and its current claim
             status -- read-only, never written; only a human updates the claims file.
             Exits 1 on an orphan, 3 while any seam is unfilled or stale.
+
+              ssisx apply-tests --out <dir> [--fills <dir>]
+
+            apply-tests options: NOT part of the gap-fill workflow above -- see
+            Docs/AI-Test-Enrichment-Plan.md. Voluntary enrichment of an already-green, already-
+            fully-generatable package, raising coverage past the deterministic starter tests
+            'generate' already wrote; never appears in gaps.json and never affects whether a
+            package counts as generatable. Copies every
+            <out>/fills[-library]/<Package>/MoreTests/*.cs into
+            <out>/generate/<Package>.Tests/MoreTests/ -- a deliberately separate folder from
+            apply-fills' own Fills/Tests folders, so the two mechanisms never collide. Every
+            file present is copied UNCONDITIONALLY: there is no GapId to check a "more test"
+            against, so unlike a Tier-1/2 fill there is nothing to be Stale/Orphaned about --
+            a test that references a renamed/removed method or column simply fails to compile
+            the next time the package is regenerated, which is the self-check this relies on
+            instead. A file MAY carry a '// ssisx-more-test: Author=... Date=... Targets=...'
+            comment as its first line, purely for audit -- one missing is flagged, not refused.
+            Every file and its outcome is written fresh to <out>/tests-applied.json every run
+            (a separate manifest from fills-applied.json, on purpose). Exits 1 only when a
+            package under fills[-library]/ was never generated into --out at all.
 
             Exit codes: 0 success, 1 diff found (diff) / gate 1 failed (conformance
             --check), 2 usage/extraction error, 3 a package's coverage was below

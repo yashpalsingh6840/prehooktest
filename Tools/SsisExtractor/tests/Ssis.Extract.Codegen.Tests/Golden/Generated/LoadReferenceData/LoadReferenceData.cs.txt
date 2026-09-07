@@ -23,8 +23,8 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
     private readonly List<StepResult> _results = [];
     private LoadContext _load = null!;
 
-    private ILogger<T> Log<T>() => services.GetRequiredService<ILogger<T>>();
-    private IOptions<T> Opt<T>() where T : class => services.GetRequiredService<IOptions<T>>();
+    internal ILogger<T> Log<T>() => services.GetRequiredService<ILogger<T>>();
+    internal IOptions<T> Opt<T>() where T : class => services.GetRequiredService<IOptions<T>>();
     private DatabaseOptions Db() => Opt<DatabaseOptions>().Value;
     private string File(string key) => Opt<FileSourceOptions>().Value[key].ResolvedPath;
     private async Task Step(ILoadTask task, IUnitOfWork uow, CancellationToken ct) => _results.Add(await task.RunAsync(uow, _load, ct));

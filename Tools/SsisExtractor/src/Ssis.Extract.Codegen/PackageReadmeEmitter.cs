@@ -17,6 +17,7 @@ public sealed record ReadmeRequest(
     IReadOnlyList<ComponentMethodEntry> MethodInventory,
     IReadOnlyList<ReadmeFlowSection> Flows,
     IReadOnlyList<GeneratedFile> TestFiles,
+    IReadOnlyList<TestCoverageNote> TestCoverageNotes,
     IReadOnlyList<GenerationGap> Gaps);
 
 /// <summary>
@@ -76,7 +77,7 @@ public static class PackageReadmeEmitter
             var step = request.Steps[i];
             var entry = stepEntries[i];
             var container = step.ContainerPath.Count == 0 ? "_(root)_" : string.Join(" > ", step.ContainerPath.Select(EscapeCell));
-            Line($"| {i + 1} | {EscapeCell(entry.SsisName)} | {container} | {ConcurrencyNote(request.Steps, step)} | `{entry.Signature}` | {FindTest(request.TestFiles, entry.MethodName)} | {FindGap(request.Gaps, entry.SsisName)} |");
+            Line($"| {i + 1} | {EscapeCell(entry.SsisName)} | {container} | {ConcurrencyNote(request.Steps, step)} | `{entry.Signature}` | {FindTest(request.TestFiles, request.TestCoverageNotes, entry.MethodName)} | {FindGap(request.Gaps, entry.SsisName)} |");
         }
         Line();
 
@@ -125,6 +126,41 @@ public static class PackageReadmeEmitter
             Line();
         }
 
+        if (request.TestCoverageNotes.Count > 0)
+        {
+            // Purely additive to the "Control flow" table's own Test column above -- see
+            // Docs/AI-Test-Enrichment-Plan.md's own Decision 2: never a gap, never read by
+            // PortfolioDigest. Seq is resolved the SAME way FindTest resolves a Step's own test
+            // (RelativePath reached via the exact prefix match, not a re-derived name), so a
+            // "—" here genuinely means "not tied to one Step" (a Source/Sink/Container/Router/
+            // etc. test), not a broken join.
+            var seqByRelativePath = new Dictionary<string, int>();
+            for (var i = 0; i < stepEntries.Count; i++)
+            {
+                var methodName = stepEntries[i].MethodName;
+                foreach (var f in request.TestFiles)
+                    if (Path.GetFileName(f.RelativePath).StartsWith(methodName, StringComparison.Ordinal))
+                        seqByRelativePath.TryAdd(f.RelativePath, i + 1);
+            }
+
+            Line("## Test coverage notes");
+            Line();
+            Line("Read this before adding a test -- it says what each existing test already asserts, so a");
+            Line("new test adds real coverage instead of duplicating what's here. Additional tests go under");
+            Line("`fills/<Package>/MoreTests/` and are applied with `ssisx apply-tests` -- see");
+            Line("`HOW-TO-FILL-GAPS.md` at the `--out` root. **This is NOT a gap** -- the package is already");
+            Line("fully generatable without it.");
+            Line();
+            Line("| Seq | Test | Kind | What's already asserted |");
+            Line("|---|---|---|---|");
+            foreach (var note in request.TestCoverageNotes)
+            {
+                var seq = seqByRelativePath.TryGetValue(note.RelativePath, out var s) ? s.ToString() : "—";
+                Line($"| {seq} | `{EscapeCell(Path.GetFileName(note.RelativePath))}` | {EscapeCell(note.Kind)} | {EscapeCell(note.Summary)} |");
+            }
+            Line();
+        }
+
         Line("## Where things live");
         Line();
         Line("- `TestDoubles/` (in `{Package}.Tests/`) -- `FakeUnitOfWork`/`RecordingNotifier`/");
@@ -159,13 +195,20 @@ public static class PackageReadmeEmitter
         return siblings > 1 ? $"wave {step.Wave} (concurrent, {siblings} branches)" : $"wave {step.Wave}";
     }
 
-    private static string FindTest(IReadOnlyList<GeneratedFile> testFiles, string methodName)
+    private static string FindTest(IReadOnlyList<GeneratedFile> testFiles, IReadOnlyList<TestCoverageNote> testCoverageNotes, string methodName)
     {
         var matches = testFiles
             .Where(f => Path.GetFileName(f.RelativePath).StartsWith(methodName, StringComparison.Ordinal))
-            .Select(f => Path.GetFileName(f.RelativePath))
             .ToList();
-        return matches.Count == 0 ? "_none_" : string.Join(", ", matches.Select(m => $"`{m}`"));
+        if (matches.Count == 0) return "_none_";
+        var noteByRelativePath = testCoverageNotes.ToDictionary(n => n.RelativePath);
+        return string.Join(", ", matches.Select(f =>
+        {
+            var name = Path.GetFileName(f.RelativePath);
+            return noteByRelativePath.TryGetValue(f.RelativePath, out var note)
+                ? $"`{name}` -- {EscapeCell(note.Kind)}: {EscapeCell(note.Summary)}"
+                : $"`{name}`";
+        }));
     }
 
     private static string FindGap(IReadOnlyList<GenerationGap> gaps, string ssisName)

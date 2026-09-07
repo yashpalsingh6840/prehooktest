@@ -147,6 +147,13 @@ delete it and regenerate freely, as long as every `generate`/`apply-fills` call 
 (`git add fills-library && git commit`) -- that is what makes it permanent, not just "outside
 `out\`."
 
+**Raising coverage past the starter tests, once a package is already green, is a separate,
+optional, NOT-a-gap workflow** -- `ssisx apply-tests` reads a hand-written test under
+`fills-library\<Package>\MoreTests\*.cs` (never `...\Tests\`, which is `apply-fills`' own
+`TEST-ORACLE` mechanism) and copies it in unconditionally; it never touches `gaps.json` or the
+"generatable" count. See `COPILOT_GUIDE.md`'s "Adding more unit tests to an already-green
+package" section, or `Docs/AI-Test-Enrichment-Plan.md` for the full design.
+
 **Generated code is one class per package, one method per SSIS task/component (not a flat
 script), and real concurrency where SSIS itself ran things concurrently -- each concurrent
 branch gets its own transaction, so rollback there is per-branch, not whole-package.** See

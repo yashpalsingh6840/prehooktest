@@ -919,8 +919,15 @@ public static class PackageClassEmitter
             w2.Line($"private bool {flagName};");
         w2.Blank();
 
-        w2.Line("private ILogger<T> Log<T>() => services.GetRequiredService<ILogger<T>>();");
-        w2.Line("private IOptions<T> Opt<T>() where T : class => services.GetRequiredService<IOptions<T>>();");
+        // internal, not private -- a "Data Flow Task -- direct invocation" starter test
+        // (ComponentTestEmitter.EmitConditionalSplitDataFlowTest) reconstructs a Conditional
+        // Split's own per-branch SqlBulkSink<TEntity> from outside this class (its real
+        // construction, inline inside DFT_X() below, is not independently callable the way a
+        // single-destination flow's own {Entity}Destination() method is), and needs these two
+        // exactly like DFT_X() itself does. Still invisible outside this compiled assembly (and
+        // its InternalsVisibleTo'd .Tests project) -- no change to the package's own public API.
+        w2.Line("internal ILogger<T> Log<T>() => services.GetRequiredService<ILogger<T>>();");
+        w2.Line("internal IOptions<T> Opt<T>() where T : class => services.GetRequiredService<IOptions<T>>();");
         w2.Line("private DatabaseOptions Db() => Opt<DatabaseOptions>().Value;");
         w2.Line("private string File(string key) => Opt<FileSourceOptions>().Value[key].ResolvedPath;");
         if (secondaryConnectionNames.Count > 0)

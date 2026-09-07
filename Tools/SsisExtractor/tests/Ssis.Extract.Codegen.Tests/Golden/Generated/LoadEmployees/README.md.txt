@@ -18,8 +18,8 @@ transaction (see `{Package}.cs`'s own `RunBranchAsync`).
 
 | Seq | SSIS task | Container | Concurrency | Generated method (full signature) | Test | Gap |
 |---|---|---|---|---|---|---|
-| 1 | SQL_TruncateTarget | _(root)_ | wave 0 | `internal async Task SQL_TruncateTarget(IUnitOfWork uow, CancellationToken ct)` | `SQL_TruncateTargetStatementTests.cs`, `SQL_TruncateTargetStepTests.cs` |  |
-| 2 | DFT_LoadEmployees | _(root)_ | wave 1 | `internal async Task DFT_LoadEmployees(IUnitOfWork uow, CancellationToken ct)` | _none_ |  |
+| 1 | SQL_TruncateTarget | _(root)_ | wave 0 | `internal async Task SQL_TruncateTarget(IUnitOfWork uow, CancellationToken ct)` | `SQL_TruncateTargetStatementTests.cs` -- StatementText: asserts the built SQL text only; never executes it., `SQL_TruncateTargetStepTests.cs` -- ExecuteSqlStep: asserts SQL_X(fakeUow, ct) records the statement in uow.ExecutedSql; runs against the shared fake transaction, no real database. |  |
+| 2 | DFT_LoadEmployees | _(root)_ | wave 1 | `internal async Task DFT_LoadEmployees(IUnitOfWork uow, CancellationToken ct)` | `DFT_LoadEmployeesStepDataFlowTests.cs` -- DataFlowTask: reconstructs the flow's real source/transform/sink (Tier-A sample data) and asserts at least one row was bulk-inserted -- proves the whole pipeline composes correctly, not just its isolated pieces. |  |
 
 ## Data flow detail
 
@@ -49,6 +49,24 @@ registered and where it runs.
 |---|---|---|
 | Source | FF_SRC_Employees | `internal IRowSource<EmployeeCsvRow> FF_SRC_Employees()` |
 | Sink | Employee | `internal IBulkSink<Employee> EmployeeDestination()` |
+
+## Test coverage notes
+
+Read this before adding a test -- it says what each existing test already asserts, so a
+new test adds real coverage instead of duplicating what's here. Additional tests go under
+`fills/<Package>/MoreTests/` and are applied with `ssisx apply-tests` -- see
+`HOW-TO-FILL-GAPS.md` at the `--out` root. **This is NOT a gap** -- the package is already
+fully generatable without it.
+
+| Seq | Test | Kind | What's already asserted |
+|---|---|---|---|
+| — | `EmployeeTransformTests.cs` | Transform | asserts each output column for one representative row; does not exercise NULL/boundary inputs beyond the chosen representative value. |
+| 1 | `SQL_TruncateTargetStatementTests.cs` | StatementText | asserts the built SQL text only; never executes it. |
+| 1 | `SQL_TruncateTargetStepTests.cs` | ExecuteSqlStep | asserts SQL_X(fakeUow, ct) records the statement in uow.ExecutedSql; runs against the shared fake transaction, no real database. |
+| — | `RunAsyncTests.cs` | RunAsync | asserts the failure path (a fake throws on a chosen step -> rollback, failure handlers ran, notifier saw failure) and, when every source is file-based, the happy path (step count/order, per-branch transactions); does not vary input data beyond the fixed sample/rows. |
+| — | `EmployeeSinkTests.cs` | Sink-Sql | writes 2 synthesized entities through the fake unit of work; asserts DestinationTable + ColumnMappings only, never a real INSERT. |
+| — | `FF_SRC_EmployeesSourceTests.cs` | Source-File | enumerates ReadAsync over the emitted Tier-A sample file; asserts row count and the first row's columns. A real-data Integration read needs its own LOCAL-DATA fill. |
+| 2 | `DFT_LoadEmployeesStepDataFlowTests.cs` | DataFlowTask | reconstructs the flow's real source/transform/sink (Tier-A sample data) and asserts at least one row was bulk-inserted -- proves the whole pipeline composes correctly, not just its isolated pieces. |
 
 ## Where things live
 

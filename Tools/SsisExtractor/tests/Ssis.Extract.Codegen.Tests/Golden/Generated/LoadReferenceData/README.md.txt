@@ -18,9 +18,9 @@ transaction (see `{Package}.cs`'s own `RunBranchAsync`).
 
 | Seq | SSIS task | Container | Concurrency | Generated method (full signature) | Test | Gap |
 |---|---|---|---|---|---|---|
-| 1 | SQL_TruncateTargets | _(root)_ | wave 0 | `internal async Task SQL_TruncateTargets(IUnitOfWork uow, CancellationToken ct)` | `SQL_TruncateTargetsStatementTests.cs`, `SQL_TruncateTargetsStepTests.cs` |  |
-| 2 | DFT_LoadDepartment | _(root)_ | wave 1 | `internal async Task DFT_LoadDepartment(IUnitOfWork uow, CancellationToken ct)` | _none_ |  |
-| 3 | DFT_LoadDesignation | _(root)_ | wave 2 | `internal async Task DFT_LoadDesignation(IUnitOfWork uow, CancellationToken ct)` | _none_ |  |
+| 1 | SQL_TruncateTargets | _(root)_ | wave 0 | `internal async Task SQL_TruncateTargets(IUnitOfWork uow, CancellationToken ct)` | `SQL_TruncateTargetsStatementTests.cs` -- StatementText: asserts the built SQL text only; never executes it., `SQL_TruncateTargetsStepTests.cs` -- ExecuteSqlStep: asserts SQL_X(fakeUow, ct) records the statement in uow.ExecutedSql; runs against the shared fake transaction, no real database. |  |
+| 2 | DFT_LoadDepartment | _(root)_ | wave 1 | `internal async Task DFT_LoadDepartment(IUnitOfWork uow, CancellationToken ct)` | `DFT_LoadDepartmentStepDataFlowTests.cs` -- DataFlowTask: reconstructs the flow's real source/transform/sink (Tier-A sample data) and asserts at least one row was bulk-inserted -- proves the whole pipeline composes correctly, not just its isolated pieces. |  |
+| 3 | DFT_LoadDesignation | _(root)_ | wave 2 | `internal async Task DFT_LoadDesignation(IUnitOfWork uow, CancellationToken ct)` | `DFT_LoadDesignationStepDataFlowTests.cs` -- DataFlowTask: reconstructs the flow's real source/transform/sink (Tier-A sample data) and asserts at least one row was bulk-inserted -- proves the whole pipeline composes correctly, not just its isolated pieces. |  |
 
 ## Data flow detail
 
@@ -60,6 +60,28 @@ registered and where it runs.
 | Sink | Department | `internal IBulkSink<Department> DepartmentDestination()` |
 | Source | FF_SRC_Designation | `internal IRowSource<DesignationCsvRow> FF_SRC_Designation()` |
 | Sink | Designation | `internal IBulkSink<Designation> DesignationDestination()` |
+
+## Test coverage notes
+
+Read this before adding a test -- it says what each existing test already asserts, so a
+new test adds real coverage instead of duplicating what's here. Additional tests go under
+`fills/<Package>/MoreTests/` and are applied with `ssisx apply-tests` -- see
+`HOW-TO-FILL-GAPS.md` at the `--out` root. **This is NOT a gap** -- the package is already
+fully generatable without it.
+
+| Seq | Test | Kind | What's already asserted |
+|---|---|---|---|
+| — | `DepartmentTransformTests.cs` | Transform | asserts each output column for one representative row; does not exercise NULL/boundary inputs beyond the chosen representative value. |
+| — | `DesignationTransformTests.cs` | Transform | asserts each output column for one representative row; does not exercise NULL/boundary inputs beyond the chosen representative value. |
+| 1 | `SQL_TruncateTargetsStatementTests.cs` | StatementText | asserts the built SQL text only; never executes it. |
+| 1 | `SQL_TruncateTargetsStepTests.cs` | ExecuteSqlStep | asserts SQL_X(fakeUow, ct) records the statement in uow.ExecutedSql; runs against the shared fake transaction, no real database. |
+| — | `RunAsyncTests.cs` | RunAsync | asserts the failure path (a fake throws on a chosen step -> rollback, failure handlers ran, notifier saw failure) and, when every source is file-based, the happy path (step count/order, per-branch transactions); does not vary input data beyond the fixed sample/rows. |
+| — | `DepartmentSinkTests.cs` | Sink-Sql | writes 2 synthesized entities through the fake unit of work; asserts DestinationTable + ColumnMappings only, never a real INSERT. |
+| — | `DesignationSinkTests.cs` | Sink-Sql | writes 2 synthesized entities through the fake unit of work; asserts DestinationTable + ColumnMappings only, never a real INSERT. |
+| — | `FF_SRC_DepartmentSourceTests.cs` | Source-File | enumerates ReadAsync over the emitted Tier-A sample file; asserts row count and the first row's columns. A real-data Integration read needs its own LOCAL-DATA fill. |
+| — | `FF_SRC_DesignationSourceTests.cs` | Source-File | enumerates ReadAsync over the emitted Tier-A sample file; asserts row count and the first row's columns. A real-data Integration read needs its own LOCAL-DATA fill. |
+| 2 | `DFT_LoadDepartmentStepDataFlowTests.cs` | DataFlowTask | reconstructs the flow's real source/transform/sink (Tier-A sample data) and asserts at least one row was bulk-inserted -- proves the whole pipeline composes correctly, not just its isolated pieces. |
+| 3 | `DFT_LoadDesignationStepDataFlowTests.cs` | DataFlowTask | reconstructs the flow's real source/transform/sink (Tier-A sample data) and asserts at least one row was bulk-inserted -- proves the whole pipeline composes correctly, not just its isolated pieces. |
 
 ## Where things live
 

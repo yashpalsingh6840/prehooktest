@@ -697,6 +697,17 @@ internal static class GenerateCommand
         }
 
         sb.AppendLine();
+        sb.AppendLine("## Adding more tests -- NOT a gap, do this separately");
+        sb.AppendLine();
+        sb.AppendLine("Once a package builds clean with zero gaps left above, you can still raise coverage past");
+        sb.AppendLine("the deterministic starter tests -- this is voluntary enrichment, never listed in");
+        sb.AppendLine("`gaps.json` and never affecting whether a package counts as generatable. Read");
+        sb.AppendLine("`generate/<Package>/README.md`'s own \"Test coverage notes\" section (not the whole");
+        sb.AppendLine($"`.Tests` project) for what to add, write it under `{fillsDir}\\<Package>\\MoreTests\\`");
+        sb.AppendLine("(a `// ssisx-more-test: Author=... Date=... Targets=...` first-line comment is audit-only,");
+        sb.AppendLine("never required), then apply with `ssisx apply-tests --out <this folder> --fills");
+        sb.AppendLine($"\"{fillsDir}\"`. See `Docs/AI-Test-Enrichment-Plan.md` for the full design.");
+        sb.AppendLine();
         sb.AppendLine("## One rule that applies regardless of tier");
         sb.AppendLine();
         sb.AppendLine("Do not attempt to build/run this project against a REAL database, or invent a throwaway one,");
