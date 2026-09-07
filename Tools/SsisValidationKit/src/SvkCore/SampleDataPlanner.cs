@@ -2,6 +2,7 @@ using Ssis.Extract.Dtsx;
 using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Package;
 using Ssis.Extract.Model.Pipeline;
+using Ssis.Extract.Model.Shared;
 
 namespace Svk.Core;
 
@@ -22,6 +23,9 @@ public static class SampleDataPlanner
         var primaryKeys = PrimaryKeyInference.Infer(package, allExecutables)
             .GroupBy(k => k.DestinationComponentRefId)
             .ToDictionary(g => g.Key, g => g.First());
+        var connectionManagersByName = package.ConnectionManagers
+            .GroupBy(cm => cm.ObjectName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         var sources = new List<SourceTouchPoint>();
         var destinations = new List<DestinationTouchPoint>();
@@ -32,9 +36,18 @@ public static class SampleDataPlanner
             foreach (var comp in ex.DataFlowTask!.Pipeline.Components)
             {
                 if (comp.FlatFileSource is not null)
-                    sources.Add(BuildSource(comp, TouchPointKind.FlatFileSource, null));
+                {
+                    var format = comp.FlatFileSource.ConnectionName is { } cmName
+                        && connectionManagersByName.TryGetValue(cmName, out var cm)
+                        ? cm.FlatFileFormat
+                        : null;
+                    sources.Add(BuildSource(comp, TouchPointKind.FlatFileSource, null, format));
+                }
                 if (comp.ExcelSource is not null)
-                    sources.Add(BuildSource(comp, TouchPointKind.ExcelSource, comp.ExcelSource.OpenRowset));
+                {
+                    var hasHeaderRow = ResolveExcelHasHeaderRow(comp.ExcelSource.ConnectionName, connectionManagersByName);
+                    sources.Add(BuildSource(comp, TouchPointKind.ExcelSource, comp.ExcelSource.OpenRowset, excelHasHeaderRow: hasHeaderRow));
+                }
                 if (comp.OleDbSource is not null)
                     sources.Add(BuildSource(comp, TouchPointKind.SqlSource, comp.OleDbSource.OpenRowset));
                 if (comp.AdoNetSource is not null)
@@ -61,12 +74,30 @@ public static class SampleDataPlanner
         return new PackagePlan { PackageName = package.ObjectName, Sources = sources, Destinations = destinations, Lookups = lookups };
     }
 
-    private static SourceTouchPoint BuildSource(PipelineComponentSpec comp, TouchPointKind kind, string? target)
+    private static SourceTouchPoint BuildSource(PipelineComponentSpec comp, TouchPointKind kind, string? target, FlatFileFormatSpec? format = null, bool? excelHasHeaderRow = null)
     {
         var output = comp.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
         var fallback = output?.Columns.Select(c => new ColumnSchema(c.Name, c.DataType, c.Length, c.Precision, c.Scale)).ToList();
         var schema = ResolveSchema(output?.ExternalMetadataColumns, fallback);
-        return new SourceTouchPoint(comp.Name, comp.RefId, kind, schema, target);
+        return new SourceTouchPoint(comp.Name, comp.RefId, kind, schema, target, format, excelHasHeaderRow);
+    }
+
+    /// <summary>Mirrors Ssis.Extract.Codegen.PackageGenerator.BuildExcelFlowSource's own HDR
+    /// detection exactly, deliberately DUPLICATED rather than referenced -- SvkCore's own
+    /// governance boundary (see SvkCore.csproj) forbids a ProjectReference to
+    /// Ssis.Extract.Codegen. Keep both in sync by hand if the detection rule ever changes. The
+    /// EXCEL connection manager's own ACE OLEDB connection string embeds "Extended
+    /// Properties=...HDR=YES" -- landed as its own Extras["HDR"] entry (with a trailing stray
+    /// '"') by the generic, quote-unaware ';'-split every OLEDB-shaped connection string already
+    /// gets parsed through. Absent entirely, true is the one evidenced real default (HDR=YES),
+    /// not a guess.</summary>
+    private static bool ResolveExcelHasHeaderRow(string? connectionName, Dictionary<string, ConnectionManagerSpec> connectionManagers)
+    {
+        if (connectionName is null || !connectionManagers.TryGetValue(connectionName, out var cm)) return true;
+        var hdrEntry = cm.Parsed?.Extras.FirstOrDefault(kv => kv.Key.Equals("HDR", StringComparison.OrdinalIgnoreCase));
+        if (hdrEntry is { Value.Length: > 0 } found)
+            return found.Value.TrimEnd('"').Equals("YES", StringComparison.OrdinalIgnoreCase);
+        return true;
     }
 
     private static DestinationTouchPoint BuildDestination(PipelineComponentSpec comp, TouchPointKind kind, string? tableName, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeys)

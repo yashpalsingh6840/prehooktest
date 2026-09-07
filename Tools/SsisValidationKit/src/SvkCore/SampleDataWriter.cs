@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Ssis.Extract.Model.Shared;
 
 namespace Svk.Core;
 
@@ -85,13 +86,35 @@ public static class SampleDataWriter
 
     private static string WriteSource(PackagePlan plan, SourceTouchPoint src, string outDir, int rows, int seed, Dictionary<string, SharedKeyPool> keyPoolsByInputColumn)
     {
+        // The generated Excel Source reader has no null-handling at all (ssisx generate tracks
+        // no nullability for this source type -- CLAUDE.md's own "remaining known gaps" list),
+        // so it calls IExcelDataReader.GetDouble/GetString unconditionally and throws on a blank
+        // cell. A null-injected row would make this "directly usable" sample actively broken more
+        // often than not, so Excel is the one source kind synthesized with allowNull: false.
+        var allowNull = src.Kind is not TouchPointKind.ExcelSource;
         var rowsData = new List<Dictionary<string, object?>>();
         for (var i = 0; i < rows; i++)
         {
-            rowsData.Add(GenerateRow(plan.PackageName, src.ComponentName, src.Columns, seed, i, keyPoolsByInputColumn));
+            rowsData.Add(GenerateRow(plan.PackageName, src.ComponentName, src.Columns, seed, i, keyPoolsByInputColumn, allowNull));
         }
 
-        if (src.Kind is TouchPointKind.FlatFileSource or TouchPointKind.ExcelSource)
+        if (src.Kind is TouchPointKind.FlatFileSource && IsFixedWidthWithoutHeader(src.Format))
+        {
+            var txtPath = Path.Combine(outDir, $"{Naming.SafeFileName(src.ComponentName)}.txt");
+            File.WriteAllText(txtPath, RenderFixedWidth(src.Format!, rowsData));
+            return $"{src.Kind} '{src.ComponentName}' -> {Path.GetFileName(txtPath)} ({rows} rows, fixed-width layout from the connection manager's own column widths)";
+        }
+
+        if (src.Kind is TouchPointKind.ExcelSource)
+        {
+            var worksheetName = (src.TargetTableOrFile ?? src.ComponentName).TrimEnd('$');
+            var hasHeaderRow = src.ExcelHasHeaderRow ?? true;
+            var xlsxPath = Path.Combine(outDir, $"{Naming.SafeFileName(src.ComponentName)}.xlsx");
+            ExcelSampleWriter.Write(xlsxPath, worksheetName, hasHeaderRow, src.Columns, rowsData);
+            return $"{src.Kind} '{src.ComponentName}' -> {Path.GetFileName(xlsxPath)} (worksheet '{worksheetName}', {rows} rows)";
+        }
+
+        if (src.Kind is TouchPointKind.FlatFileSource)
         {
             var csvPath = Path.Combine(outDir, $"{Naming.SafeFileName(src.ComponentName)}.csv");
             File.WriteAllText(csvPath, RenderCsv(src.Columns, rowsData));
@@ -127,7 +150,7 @@ public static class SampleDataWriter
         return schemaLines;
     }
 
-    private static Dictionary<string, object?> GenerateRow(string packageName, string componentName, IReadOnlyList<ColumnSchema> columns, int seed, int rowIndex, Dictionary<string, SharedKeyPool>? keyPoolsByInputColumn)
+    private static Dictionary<string, object?> GenerateRow(string packageName, string componentName, IReadOnlyList<ColumnSchema> columns, int seed, int rowIndex, Dictionary<string, SharedKeyPool>? keyPoolsByInputColumn, bool allowNull = true)
     {
         var row = new Dictionary<string, object?>();
         foreach (var col in columns)
@@ -145,9 +168,55 @@ public static class SampleDataWriter
             }
 
             var rng = ValueSynthesizer.RngFor(packageName, componentName, col.Name, seed, rowIndex);
-            row[col.Name] = ValueSynthesizer.Synthesize(col.PipelineDataType, col.Length, col.Precision, col.Scale, rng, allowNull: true);
+            row[col.Name] = ValueSynthesizer.Synthesize(col.PipelineDataType, col.Length, col.Precision, col.Scale, rng, allowNull);
         }
         return row;
+    }
+
+    /// <summary>Mirrors Ssis.Extract.Codegen.FlatFileRuntimeShape.IsFixedWidthWithoutHeader
+    /// exactly, deliberately DUPLICATED rather than referenced -- SvkCore's own governance
+    /// boundary (see SvkCore.csproj) forbids a ProjectReference to Ssis.Extract.Codegen. Keep
+    /// both in sync by hand if the detection rule ever changes.</summary>
+    private static bool IsFixedWidthWithoutHeader(FlatFileFormatSpec? format) =>
+        format is not null
+        && format.Format is "FixedWidth" or "RaggedRight"
+        && format.ColumnNamesInFirstDataRow != true;
+
+    /// <summary>Writes one line per row, positional (no delimiter), padded/truncated to each
+    /// column's own connection-manager-declared MaximumWidth -- the real, measured SSIS
+    /// convention for a fixed-width column (right-pad a short value with spaces, silently
+    /// TRUNCATE an over-length one, never error; see CLAUDE.md's "Flat File Destination"
+    /// section, and Etl.Core's own FlatFileBulkSink, which applies the identical rule on the
+    /// write side). A column with no declared width (i.e. one still carrying a delimiter -- the
+    /// ragged trailing column, in every evidenced real package) is written unpadded, "whatever
+    /// the synthesized value is". Column widths come from the FLAT FILE CONNECTION MANAGER
+    /// (format.Columns), never from ColumnSchema.Length -- the two are independently populated
+    /// in the source .dtsx and are not guaranteed to agree.</summary>
+    private static string RenderFixedWidth(FlatFileFormatSpec format, List<Dictionary<string, object?>> rows)
+    {
+        var plans = format.Columns
+            .Select(c => (c.ObjectName, Width: c.MaximumWidth is int w && string.IsNullOrEmpty(c.ColumnDelimiterDecoded) ? (int?)w : null))
+            .ToList();
+
+        var sb = new StringBuilder();
+        for (var i = 0; i < (format.HeaderRowsToSkip ?? 0); i++)
+        {
+            // A control/header record SSIS itself skips on read -- a genuine fixed-width source
+            // never has a column-name header (see IsFixedWidthWithoutHeader), only literal
+            // skipped lines. "SKIP" is a placeholder, matching ssisx generate's own
+            // SampleDataEmitter.EmitFixedWidth convention so both tools' output reads the same way.
+            sb.Append("SKIP\r\n");
+        }
+        foreach (var row in rows)
+        {
+            var line = string.Concat(plans.Select(p =>
+            {
+                var raw = row.TryGetValue(p.ObjectName, out var v) ? FormatValue(v) : "";
+                return p.Width is int w ? (raw.Length >= w ? raw[..w] : raw.PadRight(w)) : raw;
+            }));
+            sb.Append(line).Append("\r\n");
+        }
+        return sb.ToString();
     }
 
     private static string RenderCsv(IReadOnlyList<ColumnSchema> columns, List<Dictionary<string, object?>> rows)

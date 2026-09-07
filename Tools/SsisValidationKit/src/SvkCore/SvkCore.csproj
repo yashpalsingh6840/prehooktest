@@ -23,4 +23,15 @@
     <ProjectReference Include="..\..\..\SsisExtractor\src\Ssis.Extract.Dtsx\Ssis.Extract.Dtsx.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- SvkCore's first (and, as of this note, only) NuGet dependency, needed for real .xlsx
+         generation (svk sampledata's Excel Source output): this tool has no in-house .xlsx
+         writer anywhere (see CLAUDE.md's own Excel Source section), and a renamed/reformatted
+         CSV cannot stand in for a real workbook the way it can for a delimited flat file or a
+         SQL seed script, since Etl.Core.Excel.ExcelRowSource reads genuine OOXML structure via
+         ExcelDataReader. MIT licensed, pure .NET, no Windows/ACE-OLEDB dependency, so this stays
+         a governance-boundary-scoped project that builds and runs cross-platform. -->
+    <PackageReference Include="ClosedXML" Version="0.105.1" />
+  </ItemGroup>
+
 </Project>
