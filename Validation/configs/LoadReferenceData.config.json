@@ -1,6 +1,6 @@
 {
   "PackageName": "LoadReferenceData",
-  "SchemaScript": "../../Sql/01_CreateTarget.sql",
+  "SchemaScript": "../../../SSIS_Packages/Sql/01_CreateTarget.sql",
   "TargetTables": [
     {
       "Table": "dbo.Department",

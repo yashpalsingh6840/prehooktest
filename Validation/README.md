@@ -40,10 +40,10 @@ dotnet test  Validation\SsisValidation.slnx
 ## Generate a package config
 
 ```powershell
-ssisx report --input ..\SSIS --out out   # produces nondeterministic.json + primary-keys.json
+ssisx report --input ..\..\SSIS_Packages\SSIS --out out   # produces nondeterministic.json + primary-keys.json
 
 .\Ssis.Validate.Harness\bin\Debug\net8.0\ssis-validate.exe generate-config `
-  --package LoadReferenceData --schema-script ..\Sql\01_CreateTarget.sql `
+  --package LoadReferenceData --schema-script ..\..\SSIS_Packages\Sql\01_CreateTarget.sql `
   --tables "dbo.Department,dbo.Designation" `
   --nondeterministic-json ..\Tools\SsisExtractor\out\nondeterministic.json `
   --primary-keys-json ..\Tools\SsisExtractor\out\primary-keys.json `
@@ -60,11 +60,11 @@ human"). `ExcludedColumns` is real generated data either way; don't hand-edit it
 ```powershell
 .\Ssis.Validate.Harness\bin\Debug\net8.0\ssis-validate.exe capture-corpus `
   --package-key LOAD_REFERENCE_DATA --package-name LoadReferenceData `
-  --runner-exe ..\Scripts\SsisRunner\bin\Release\net8.0\SsisRunner.exe `
+  --runner-exe ..\..\SSIS_Packages\Scripts\SsisRunner\bin\Release\net8.0\SsisRunner.exe `
   --ssispoc-connection "Server=.\SQLFORPOC;Database=SsisPoC;Integrated Security=True;TrustServerCertificate=True;" `
   --ssisdb-connection "Server=.\SQLFORPOC;Database=SSISDB;Integrated Security=True;TrustServerCertificate=True;" `
   --tables "dbo.Department:DepartmentID,dbo.Designation:DesignationID" `
-  --input-files "..\Data\Input\Department\Departments.csv,..\Data\Input\Designation\Designations.csv" `
+  --input-files "..\..\SSIS_Packages\Data\Input\Department\Departments.csv,..\..\SSIS_Packages\Data\Input\Designation\Designations.csv" `
   --logging-level 3 --out corpus
 ```
 

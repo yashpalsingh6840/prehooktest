@@ -1,9 +1,0 @@
-CUVHDR    20260817  CUSTOMER EXTRACT                      HDR 
-1         John Smith                    john.smith@example.com                  CA  
-2         Priya Patel                   priya.patel@example.com                 CA  
-3         Wei Zhang                     wei.zhang@example.com                   CA  
-4         Maria Garcia                  maria.garcia@example.com                MX  
-5         Ahmed Hassan                  ahmed.hassan@example.com                AE  
-6         Sarah O'Neil                  sarah.oneil@example.com                 IE  
-9         Lena Novak                    lena.novak@example.com                  CZ  
-10        Carlos Diaz                   carlos.diaz@example.com                 ES  

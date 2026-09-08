@@ -25,11 +25,11 @@ SSISDB at all; it only needs a SQL Server connection string and a command to run
 
 ```powershell
 ssis-validate capture-corpus --package-key LOAD_REFERENCE_DATA --package-name LoadReferenceData `
-  --runner-exe ..\Scripts\SsisRunner\bin\Release\net8.0\SsisRunner.exe `
+  --runner-exe ..\..\SSIS_Packages\Scripts\SsisRunner\bin\Release\net8.0\SsisRunner.exe `
   --ssispoc-connection "Server=.\SQLFORPOC;Database=SsisPoC;Integrated Security=True;TrustServerCertificate=True;" `
   --ssisdb-connection "Server=.\SQLFORPOC;Database=SSISDB;Integrated Security=True;TrustServerCertificate=True;" `
   --tables "dbo.Department:DepartmentID,dbo.Designation:DesignationID" `
-  --input-files "..\Data\Input\Department\Departments.csv,..\Data\Input\Designation\Designations.csv" `
+  --input-files "..\..\SSIS_Packages\Data\Input\Department\Departments.csv,..\..\SSIS_Packages\Data\Input\Designation\Designations.csv" `
   --logging-level 3 `
   --out corpus
 ```
@@ -66,7 +66,7 @@ serialization — not a different idea.
 
 ```powershell
 ssis-validate generate-config --package LoadReferenceData `
-  --schema-script ..\Sql\01_CreateTarget.sql `
+  --schema-script ..\..\SSIS_Packages\Sql\01_CreateTarget.sql `
   --tables "dbo.Department,dbo.Designation" `
   --nondeterministic-json <ssisx report output>\nondeterministic.json `
   --primary-keys-json <ssisx report output>\primary-keys.json `

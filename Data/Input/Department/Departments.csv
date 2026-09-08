@@ -1,9 +1,0 @@
-DepartmentID,DepartmentCode,DepartmentName,CostCenter,HeadCount
-1,ENG,Engineering,CC-1000,120
-2,FIN,Finance,CC-2000,25
-3,HR,Human Resources,CC-3000,14
-4,MKT,Marketing,CC-4000,32
-5,OPS,Operations,CC-5000,58
-6,LEG,Legal,CC-6000,9
-7,SUP,Customer Support,CC-7000,44
-8,RND,Research and Development,CC-8000,27
