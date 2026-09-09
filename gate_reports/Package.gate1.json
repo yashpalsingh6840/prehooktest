@@ -2,9 +2,8 @@
   "package": "Package",
   "gate": "Gate1_SqlAndSchemaParity",
   "counts": {
-    "LeftOnly": 1,
     "Unverifiable": 2,
-    "Match": 5
+    "Match": 6
   },
   "findings": [
     {
@@ -119,8 +118,8 @@
     },
     {
       "objectName": "OLEDST_StagingErrors",
-      "verdict": "LeftOnly",
-      "detail": "No generated artifact found matching object name 'OLEDST_StagingErrors'.",
+      "verdict": "Match",
+      "detail": "Table identity matches (StagingCustomers_Errors/StagingCustomers_Errors).",
       "left": {
         "package": "Package",
         "executable_path": "Package\\DFT_LoadCustomers\\OLEDST_StagingErrors",
@@ -135,7 +134,17 @@
         "from_property_expression": false,
         "evidence": ""
       },
-      "right": null
+      "right": {
+        "file_path": "Model\\PackageDbContext.cs",
+        "object_name": "StagingCustomersError",
+        "shape": "EfCoreTable",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "literal_segments": null,
+        "table_name": "StagingCustomers_Errors",
+        "schema_name": "dbo",
+        "evidence": ""
+      }
     },
     {
       "objectName": "SCR_CleanseCustomerRow",

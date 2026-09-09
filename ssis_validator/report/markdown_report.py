@@ -7,6 +7,8 @@ from ssis_validator.compare.gate1_sql import Gate1Result
 from ssis_validator.compare.gate1_sql import Verdict as Gate1Verdict
 from ssis_validator.compare.gate2_graph import Gate2Result
 from ssis_validator.compare.gate2_graph import Verdict as Gate2Verdict
+from ssis_validator.compare.gate3_schema import Gate3Result
+from ssis_validator.compare.gate3_schema import Verdict as Gate3Verdict
 
 _GATE1_VERDICT_ORDER = [
     Gate1Verdict.MISMATCH, Gate1Verdict.LEFT_ONLY, Gate1Verdict.RIGHT_ONLY,
@@ -16,6 +18,10 @@ _GATE1_VERDICT_ORDER = [
 _GATE2_VERDICT_ORDER = [
     Gate2Verdict.MISMATCH, Gate2Verdict.LEFT_ONLY, Gate2Verdict.RIGHT_ONLY,
     Gate2Verdict.UNVERIFIABLE, Gate2Verdict.MATCH,
+]
+_GATE3_VERDICT_ORDER = [
+    Gate3Verdict.MISMATCH, Gate3Verdict.LEFT_ONLY, Gate3Verdict.UNVERIFIABLE,
+    Gate3Verdict.NORMALIZED_MATCH, Gate3Verdict.MATCH,
 ]
 
 
@@ -78,9 +84,39 @@ def build_gate2_markdown(package: str, gate2: Gate2Result) -> str:
     return "\n".join(lines)
 
 
+def _format_gate3_finding(f) -> str:
+    return f"### [{f.scope}] `{f.object_name}` — **{f.verdict.value}**\n\n```\n{f.detail}\n```\n"
+
+
+def build_gate3_markdown(package: str, gate3: Gate3Result) -> str:
+    lines = [
+        f"# Gate 3 report — {package}", "",
+        "Per-component input/output schema parity. Declared column name + SSIS-type-to-.NET-type "
+        "shape only — never actual data or execution. Every pipeline component is accounted for: "
+        "a component with no populated externalMetadataColumns on either side (a pure "
+        "pipeline-internal transform) is `Unverifiable`, not a silent pass.", "",
+    ]
+    counts = {v: sum(1 for f in gate3.findings if f.verdict == v) for v in _GATE3_VERDICT_ORDER}
+    lines += ["| Verdict | Count |", "|---|---|"]
+    lines += [f"| {v.value} | {counts[v]} |" for v in _GATE3_VERDICT_ORDER if counts[v]]
+    lines.append("")
+    for v in _GATE3_VERDICT_ORDER:
+        findings = [f for f in gate3.findings if f.verdict == v]
+        if not findings:
+            continue
+        lines.append(f"## {v.value} ({len(findings)})")
+        lines.append("")
+        lines += [_format_gate3_finding(f) for f in findings]
+    return "\n".join(lines)
+
+
 def write_markdown_report(package: str, gate1: Gate1Result, out_path: str | Path) -> None:
     Path(out_path).write_text(build_gate1_markdown(package, gate1), encoding="utf-8")
 
 
 def write_gate2_markdown_report(package: str, gate2: Gate2Result, out_path: str | Path) -> None:
     Path(out_path).write_text(build_gate2_markdown(package, gate2), encoding="utf-8")
+
+
+def write_gate3_markdown_report(package: str, gate3: Gate3Result, out_path: str | Path) -> None:
+    Path(out_path).write_text(build_gate3_markdown(package, gate3), encoding="utf-8")

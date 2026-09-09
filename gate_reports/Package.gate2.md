@@ -27,7 +27,7 @@ Component name found by text presence inside DFT_LoadCustomers's generated metho
 
 ### [DataFlow:DFT_LoadCustomers] `OLEDST_StagingCustomers` — **Unverifiable**
 
-Component name NOT found by text presence inside DFT_LoadCustomers's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
+Component name found by text presence inside DFT_LoadCustomers's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
 ### [DataFlow:DFT_LoadCustomers] `OLEDST_StagingErrors` — **Unverifiable**
 

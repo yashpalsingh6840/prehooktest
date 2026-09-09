@@ -1,0 +1,35 @@
+{
+  "package": "Package_Advanced",
+  "gate": "Gate3_ComponentSchemaParity",
+  "counts": {
+    "Match": 2,
+    "Mismatch": 1,
+    "Unverifiable": 1
+  },
+  "findings": [
+    {
+      "scope": "SourceOutput",
+      "objectName": "EXCEL_SRC_Drip",
+      "verdict": "Match",
+      "detail": "vs. generated class 'DripEligibilityExcelRow' (Excel\\DripEligibilityExcelRow.cs):\n  = CustomerID: SSIS 'r8' -> 'double'.\n  = DripEligible: SSIS 'wstr' -> 'string'.\n  = ReviewedBy: SSIS 'wstr' -> 'string'."
+    },
+    {
+      "scope": "DestinationInput",
+      "objectName": "OLEDST_Drip",
+      "verdict": "Mismatch",
+      "detail": "vs. generated class 'DripEligibility' (Model\\DripEligibility.cs):\n  x CustomerID: SSIS 'r8' expects one of ('Double',), generated type is 'int'.\n  = DripEligible: SSIS 'wstr' -> 'string'.\n  = ReviewedBy: SSIS 'wstr' -> 'string'."
+    },
+    {
+      "scope": "DestinationInput",
+      "objectName": "OLECMD_SetFlag",
+      "verdict": "Unverifiable",
+      "detail": "'OLECMD_SetFlag' (Microsoft.OLEDBCommand) is not a database destination Gate 1 can identify by (schema, table) \u2014 no schema-correlation mechanism covers this destination kind yet (1 declared column(s) not compared)."
+    },
+    {
+      "scope": "SourceOutput",
+      "objectName": "OLESRC_CustomerIds",
+      "verdict": "Match",
+      "detail": "vs. generated class 'DFT_FlagCustomersSqlRow' (Sql\\DFT_FlagCustomersSqlRow.cs):\n  = CustomerID: SSIS 'i4' -> 'int'."
+    }
+  ]
+}

@@ -2,8 +2,8 @@
   "package": "Package_Advanced",
   "gate": "Gate1_SqlAndSchemaParity",
   "counts": {
-    "Match": 4,
-    "NormalizedMatch": 2
+    "NormalizedMatch": 2,
+    "Match": 4
   },
   "findings": [
     {

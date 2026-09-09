@@ -19,6 +19,10 @@ from ssis_validator.dtsx.sql_extraction import extract as extract_left
 DTSX_PATH = Path(
     r"D:\PoC\SSIS_Packages\SSIS_From_Sandeep\RBC_Demo_ETL\RBC_Demo_ETL\Package.dtsx"
 )
+# This directory is regenerated externally by the generation tool (its own README says
+# "Regenerated every run") — its content can drift between test runs. Never assert a specific
+# real-world gap here; only assert confirmed matches, and prove the LeftOnly/Mismatch paths via
+# deliberate mutation of a copy instead (see test_mutated_right_table_identity_is_reported_as_mismatch).
 GENERATED_DIR = Path(r"D:\tmp\Sandeep_Packages\gen\generate\Package")
 
 pytestmark = pytest.mark.skipif(
@@ -42,15 +46,8 @@ def test_real_pair_matches_confirmed_shapes():
     assert by_name["OLESRC_OrdersAndDetails"].verdict == Verdict.MATCH
     assert by_name["OLEDST_SalesSummary"].verdict == Verdict.MATCH
     assert by_name["OLEDST_StagingCustomers"].verdict == Verdict.MATCH
+    assert by_name["OLEDST_StagingErrors"].verdict == Verdict.MATCH
     assert by_name["SQL_LogLoadFailure"].verdict == Verdict.MATCH
-
-
-def test_real_pair_reports_known_gap_as_left_only():
-    """OLEDST_StagingErrors has no generated counterpart anywhere in the project (confirmed by
-    grep) — Gate 1 must report this as LeftOnly, not silently pass it."""
-    result = _run(DTSX_PATH, GENERATED_DIR)
-    by_name = {f.object_name: f for f in result.findings}
-    assert by_name["OLEDST_StagingErrors"].verdict == Verdict.LEFT_ONLY
 
 
 def test_real_pair_reports_script_components_as_unverifiable():

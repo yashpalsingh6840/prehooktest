@@ -4,17 +4,8 @@ SQL statement & schema parity. Every SQL item from both sides is listed below wi
 
 | Verdict | Count |
 |---|---|
-| LeftOnly | 1 |
 | Unverifiable | 2 |
-| Match | 5 |
-
-## LeftOnly (1)
-
-### `OLEDST_StagingErrors` — **LeftOnly**
-
-No generated artifact found matching object name 'OLEDST_StagingErrors'.
-
-- Left: `Package\DFT_LoadCustomers\OLEDST_StagingErrors` (Microsoft.OLEDBDestination, `property:OpenRowset`)
+| Match | 6 |
 
 ## Unverifiable (2)
 
@@ -30,7 +21,7 @@ Script Component may contain SQL embedded in its source/binary blob; not extract
 
 - Left: `Package\DFT_LoadCustomers\SCR_CleanseCustomerRow` (Microsoft.ScriptComponentHost, `ScriptComponentHost:SourceCode/BinaryCode`)
 
-## Match (5)
+## Match (6)
 
 ### `OLEDST_SalesSummary` — **Match**
 
@@ -51,6 +42,13 @@ Exact text match.
 Table identity matches (StagingCustomers/StagingCustomers).
 
 - Left: `Package\DFT_LoadCustomers\OLEDST_StagingCustomers` (Microsoft.OLEDBDestination, `property:OpenRowset`)
+- Right: `Model\PackageDbContext.cs` (EfCoreTable)
+
+### `OLEDST_StagingErrors` — **Match**
+
+Table identity matches (StagingCustomers_Errors/StagingCustomers_Errors).
+
+- Left: `Package\DFT_LoadCustomers\OLEDST_StagingErrors` (Microsoft.OLEDBDestination, `property:OpenRowset`)
 - Right: `Model\PackageDbContext.cs` (EfCoreTable)
 
 ### `SQL_LogLoadFailure` — **Match**

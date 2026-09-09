@@ -1,8 +1,7 @@
 """ssis_validator validate --dtsx <path> --generated <dir> --out <dir>
 
-Runs Gate 1 (SQL statement & schema parity) and Gate 2 (control-flow/data-flow graph parity) for
-one .dtsx + generated-C#-folder pair. Gate 3 is not implemented yet (see
-SSIS-Rewrite-Validation-Plan.md §7 for phase order).
+Runs Gate 1 (SQL statement & schema parity), Gate 2 (control-flow/data-flow graph parity), and
+Gate 3 (per-component input/output schema parity) for one .dtsx + generated-C#-folder pair.
 """
 from __future__ import annotations
 
@@ -12,17 +11,26 @@ from pathlib import Path
 
 from ssis_validator.codegen.csharp_graph import extract as extract_right_graph
 from ssis_validator.codegen.csharp_graph import find_package_cs_file
+from ssis_validator.codegen.csharp_schema import extract as extract_right_schema
 from ssis_validator.codegen.csharp_sql import extract as extract_right_sql
 from ssis_validator.compare.gate1_sql import Verdict as Gate1Verdict
 from ssis_validator.compare.gate1_sql import run_gate1
 from ssis_validator.compare.gate2_graph import Verdict as Gate2Verdict
 from ssis_validator.compare.gate2_graph import run_gate2
+from ssis_validator.compare.gate3_schema import Verdict as Gate3Verdict
+from ssis_validator.compare.gate3_schema import run_gate3
+from ssis_validator.dtsx.component_schema import extract as extract_left_schema
 from ssis_validator.dtsx.control_flow import extract as extract_control_flow
 from ssis_validator.dtsx.data_flow import extract_all as extract_data_flow
 from ssis_validator.dtsx.sql_extraction import extract as extract_left_sql
-from ssis_validator.report.json_report import write_gate2_json_report, write_json_report
+from ssis_validator.report.json_report import (
+    write_gate2_json_report,
+    write_gate3_json_report,
+    write_json_report,
+)
 from ssis_validator.report.markdown_report import (
     write_gate2_markdown_report,
+    write_gate3_markdown_report,
     write_markdown_report,
 )
 
@@ -83,6 +91,21 @@ def run_validate(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
             for f in gate2.findings
         )
 
+    left_schema = extract_left_schema(dtsx_path_obj)
+    right_schema = extract_right_schema(generated_dir)
+    gate3 = run_gate3(left_schema, left_sql.sql_items, right_sql.sql_items, right_schema)
+    write_gate3_json_report(package, gate3, out_dir_obj / f"{package}.gate3.json")
+    write_gate3_markdown_report(package, gate3, out_dir_obj / f"{package}.gate3.md")
+
+    print(f"Gate 3 — {package}: {len(gate3.findings)} component I/O shape(s) accounted for.")
+    for verdict in Gate3Verdict:
+        n = sum(1 for f in gate3.findings if f.verdict == verdict)
+        if n:
+            print(f"  {verdict.value}: {n}")
+    gate3_blocking = any(
+        f.verdict in (Gate3Verdict.MISMATCH, Gate3Verdict.LEFT_ONLY) for f in gate3.findings
+    )
+
     gate1_blocking = any(
         f.verdict in (
             Gate1Verdict.MISMATCH, Gate1Verdict.LEFT_ONLY, Gate1Verdict.RIGHT_ONLY,
@@ -90,7 +113,7 @@ def run_validate(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
         )
         for f in gate1.findings
     )
-    return 1 if (gate1_blocking or gate2_blocking) else 0
+    return 1 if (gate1_blocking or gate2_blocking or gate3_blocking) else 0
 
 
 def main(argv: list[str] | None = None) -> int:

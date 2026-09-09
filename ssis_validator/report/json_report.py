@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ssis_validator.compare.gate1_sql import Gate1Result
 from ssis_validator.compare.gate2_graph import Gate2Result
+from ssis_validator.compare.gate3_schema import Gate3Result
 
 
 def _sql_item_to_dict(item) -> dict | None:
@@ -60,6 +61,26 @@ def build_gate2_report(package: str, gate2: Gate2Result) -> dict:
     }
 
 
+def build_gate3_report(package: str, gate3: Gate3Result) -> dict:
+    return {
+        "package": package,
+        "gate": "Gate3_ComponentSchemaParity",
+        "counts": {
+            v.value: sum(1 for f in gate3.findings if f.verdict.value == v.value)
+            for v in {f.verdict for f in gate3.findings}
+        },
+        "findings": [
+            {
+                "scope": f.scope,
+                "objectName": f.object_name,
+                "verdict": f.verdict.value,
+                "detail": f.detail,
+            }
+            for f in gate3.findings
+        ],
+    }
+
+
 def write_json_report(package: str, gate1: Gate1Result, out_path: str | Path) -> None:
     Path(out_path).write_text(
         json.dumps(build_gate1_report(package, gate1), indent=2, default=str), encoding="utf-8"
@@ -69,4 +90,10 @@ def write_json_report(package: str, gate1: Gate1Result, out_path: str | Path) ->
 def write_gate2_json_report(package: str, gate2: Gate2Result, out_path: str | Path) -> None:
     Path(out_path).write_text(
         json.dumps(build_gate2_report(package, gate2), indent=2, default=str), encoding="utf-8"
+    )
+
+
+def write_gate3_json_report(package: str, gate3: Gate3Result, out_path: str | Path) -> None:
+    Path(out_path).write_text(
+        json.dumps(build_gate3_report(package, gate3), indent=2, default=str), encoding="utf-8"
     )

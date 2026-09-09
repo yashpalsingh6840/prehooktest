@@ -9,11 +9,24 @@ logic is built from.
 
 ## Status
 
-**Gate 1 (SQL statement & schema parity) and Gate 2 (control-flow/data-flow graph parity) are
-implemented and proven** against all 5 sample packages. Gate 2's data-flow-internal (per-
-component, within one Data Flow Task) comparison is intentionally scoped to an `Unverifiable`
-presence-only check — see [docs/dtsx-graph-notes.md](docs/dtsx-graph-notes.md) §6 for why a
-stronger claim isn't safe yet. Gate 3 (per-component schema parity) is not yet built.
+**All three gates are implemented and proven** against all 5 sample packages:
+
+- **Gate 1** (SQL statement & schema parity).
+- **Gate 2** (control-flow/data-flow graph parity). Its data-flow-internal (per-component, within
+  one Data Flow Task) comparison is intentionally scoped to an `Unverifiable` presence-only check
+  — see [docs/dtsx-graph-notes.md](docs/dtsx-graph-notes.md) §6 for why a stronger claim isn't
+  safe yet.
+- **Gate 3** (per-component input/output schema parity). Correlates a destination by (schema,
+  table) identity (reusing Gate 1's proven match) and a source by its
+  `new <Kind>RowSource<RowType>("ComponentName", ...)` construction site; compares column names
+  and SSIS-type-to-.NET-type mapping (verified against Microsoft's published mapping, see
+  `ssis_validator/dtsx/schema_types.py`). A destination's compared shape is its genuinely-*mapped*
+  columns (`inputColumns`), not its full target-table schema — an unmapped column (an identity
+  key, a DB-defaulted audit timestamp) is the database's job to fill in, not the rewrite's, and
+  comparing against the full schema produced confirmed false positives during development. A
+  known, not-yet-handled limitation: a Data Conversion Transformation's default type-suffixed
+  column name (e.g. `CustomerID_i4`) reaching a destination is reported as a name mismatch rather
+  than recognized as a renamed match — see `ssis_validator/compare/gate3_schema.py` docstring.
 
 ## Setup
 
@@ -28,9 +41,9 @@ python -m venv .venv
 .venv\Scripts\python -m ssis_validator.cli validate --dtsx <path-to.dtsx> --generated <generated-project-dir> --out <report-dir>
 ```
 
-Writes `<package>.gate1.{json,md}` and `<package>.gate2.{json,md}` to `--out`. Exit code is
-non-zero if any Gate 1 finding is `Mismatch`/`LeftOnly`/`RightOnly`/`Unrecognized`, or any Gate 2
-finding is `Mismatch`/`LeftOnly`/`RightOnly`.
+Writes `<package>.gate{1,2,3}.{json,md}` to `--out`. Exit code is non-zero if any Gate 1 finding
+is `Mismatch`/`LeftOnly`/`RightOnly`/`Unrecognized`, any Gate 2 finding is
+`Mismatch`/`LeftOnly`/`RightOnly`, or any Gate 3 finding is `Mismatch`/`LeftOnly`.
 
 ## Tests
 
@@ -38,6 +51,7 @@ finding is `Mismatch`/`LeftOnly`/`RightOnly`.
 .venv\Scripts\python -m pytest tests/ -v
 ```
 
-`tests/test_gate1.py` and `tests/test_gate2.py` prove each gate both on real matches and on
-deliberately mutated copies of each side (never the originals) — per the plan's discipline
-(§7.3), a "match" verdict is only trusted once "mismatch" has been proven to work too.
+`tests/test_gate1.py`, `tests/test_gate2.py`, and `tests/test_gate3.py` prove each gate both on
+real matches and on deliberately mutated copies of each side (never the originals) — per the
+plan's discipline (§7.3), a "match" verdict is only trusted once "mismatch" has been proven to
+work too.

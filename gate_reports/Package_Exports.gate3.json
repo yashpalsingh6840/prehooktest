@@ -1,0 +1,47 @@
+{
+  "package": "Package_Exports",
+  "gate": "Gate3_ComponentSchemaParity",
+  "counts": {
+    "Mismatch": 1,
+    "Match": 3,
+    "Unverifiable": 2
+  },
+  "findings": [
+    {
+      "scope": "DestinationInput",
+      "objectName": "ADO_DST_ExportLog",
+      "verdict": "Mismatch",
+      "detail": "vs. generated class 'CustomerExportLog' (Model\\CustomerExportLog.cs):\n  x CustomerID: SSIS 'wstr' expects one of ('String',), generated type is 'int?'.\n  = FullName: SSIS 'wstr' -> 'string'."
+    },
+    {
+      "scope": "SourceOutput",
+      "objectName": "ADO_SRC_Customers",
+      "verdict": "Match",
+      "detail": "vs. generated class 'CustomerExportLogSqlRow' (Sql\\CustomerExportLogSqlRow.cs):\n  = CustomerID: SSIS 'wstr' -> 'string?'.\n  = FullName: SSIS 'wstr' -> 'string'."
+    },
+    {
+      "scope": "DestinationInput",
+      "objectName": "DFT_ExportDelimited_DST",
+      "verdict": "Unverifiable",
+      "detail": "'DFT_ExportDelimited_DST' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table) \u2014 no schema-correlation mechanism covers this destination kind yet (3 declared column(s) not compared)."
+    },
+    {
+      "scope": "SourceOutput",
+      "objectName": "DFT_ExportDelimited_SRC",
+      "verdict": "Match",
+      "detail": "vs. generated class 'DFT_ExportDelimitedSqlRow' (Sql\\DFT_ExportDelimitedSqlRow.cs):\n  = CleanEmail: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'."
+    },
+    {
+      "scope": "DestinationInput",
+      "objectName": "DFT_ExportFixedWidth_DST",
+      "verdict": "Unverifiable",
+      "detail": "'DFT_ExportFixedWidth_DST' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table) \u2014 no schema-correlation mechanism covers this destination kind yet (4 declared column(s) not compared)."
+    },
+    {
+      "scope": "SourceOutput",
+      "objectName": "DFT_ExportFixedWidth_SRC",
+      "verdict": "Match",
+      "detail": "vs. generated class 'DFT_ExportFixedWidthSqlRow' (Sql\\DFT_ExportFixedWidthSqlRow.cs):\n  = CleanEmail: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.\n  = RowEnd: SSIS 'str' -> 'string'."
+    }
+  ]
+}

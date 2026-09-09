@@ -2,8 +2,8 @@
   "package": "Package_Advanced",
   "gate": "Gate2_GraphParity",
   "counts": {
-    "Unverifiable": 4,
-    "Match": 8
+    "Match": 8,
+    "Unverifiable": 4
   },
   "findings": [
     {
