@@ -2,8 +2,8 @@
   "package": "Package",
   "gate": "Gate1_SqlAndSchemaParity",
   "counts": {
-    "Unverifiable": 2,
-    "Match": 6
+    "Match": 6,
+    "Unverifiable": 2
   },
   "findings": [
     {

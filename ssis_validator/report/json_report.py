@@ -10,6 +10,17 @@ from ssis_validator.compare.gate2_graph import Gate2Result
 from ssis_validator.compare.gate3_schema import Gate3Result
 
 
+def _counts_by_verdict(findings) -> dict[str, int]:
+    """Insertion-ordered (deterministic across runs) — a plain `{v.value: ... for v in {set of
+    verdicts}}` comprehension iterates a set of str-Enum members, whose order is affected by
+    Python's per-process hash randomization and produced spurious reordering-only diffs on every
+    re-run."""
+    counts: dict[str, int] = {}
+    for f in findings:
+        counts[f.verdict.value] = counts.get(f.verdict.value, 0) + 1
+    return counts
+
+
 def _sql_item_to_dict(item) -> dict | None:
     if item is None:
         return None
@@ -24,10 +35,7 @@ def build_gate1_report(package: str, gate1: Gate1Result) -> dict:
     return {
         "package": package,
         "gate": "Gate1_SqlAndSchemaParity",
-        "counts": {
-            v.value: sum(1 for f in gate1.findings if f.verdict.value == v.value)
-            for v in {f.verdict for f in gate1.findings}
-        },
+        "counts": _counts_by_verdict(gate1.findings),
         "findings": [
             {
                 "objectName": f.object_name,
@@ -45,10 +53,7 @@ def build_gate2_report(package: str, gate2: Gate2Result) -> dict:
     return {
         "package": package,
         "gate": "Gate2_GraphParity",
-        "counts": {
-            v.value: sum(1 for f in gate2.findings if f.verdict.value == v.value)
-            for v in {f.verdict for f in gate2.findings}
-        },
+        "counts": _counts_by_verdict(gate2.findings),
         "findings": [
             {
                 "scope": f.scope,
@@ -65,10 +70,7 @@ def build_gate3_report(package: str, gate3: Gate3Result) -> dict:
     return {
         "package": package,
         "gate": "Gate3_ComponentSchemaParity",
-        "counts": {
-            v.value: sum(1 for f in gate3.findings if f.verdict.value == v.value)
-            for v in {f.verdict for f in gate3.findings}
-        },
+        "counts": _counts_by_verdict(gate3.findings),
         "findings": [
             {
                 "scope": f.scope,

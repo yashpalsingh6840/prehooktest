@@ -2,9 +2,9 @@
   "package": "Package",
   "gate": "Gate3_ComponentSchemaParity",
   "counts": {
+    "NormalizedMatch": 2,
     "Unverifiable": 2,
-    "Match": 3,
-    "NormalizedMatch": 2
+    "Match": 3
   },
   "findings": [
     {

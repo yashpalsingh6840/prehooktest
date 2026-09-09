@@ -2,8 +2,8 @@
   "package": "Package_Legacy",
   "gate": "Gate3_ComponentSchemaParity",
   "counts": {
-    "Match": 2,
-    "Unverifiable": 2
+    "Unverifiable": 2,
+    "Match": 2
   },
   "findings": [
     {

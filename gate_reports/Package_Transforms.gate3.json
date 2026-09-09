@@ -2,9 +2,9 @@
   "package": "Package_Transforms",
   "gate": "Gate3_ComponentSchemaParity",
   "counts": {
-    "Mismatch": 4,
     "Unverifiable": 21,
-    "Match": 5
+    "Match": 5,
+    "Mismatch": 4
   },
   "findings": [
     {

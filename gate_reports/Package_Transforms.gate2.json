@@ -2,8 +2,8 @@
   "package": "Package_Transforms",
   "gate": "Gate2_GraphParity",
   "counts": {
-    "Unverifiable": 30,
-    "Match": 8
+    "Match": 8,
+    "Unverifiable": 30
   },
   "findings": [
     {
