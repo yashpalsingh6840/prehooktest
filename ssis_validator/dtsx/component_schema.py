@@ -9,10 +9,20 @@ Confirmed by direct inspection of all 5 sample packages:
   never maps from the pipeline (confirmed empirically: OLEDST_StagingErrors declares `ErrorRowID`
   there — an unmapped identity column — and several packages declare an unmapped `*At` audit
   timestamp, both absent from `<inputColumns>`). A destination is only obligated to be able to
-  *write* the columns it actually maps, so its declared shape is built from `<inputColumns>`
-  (`cachedName`/`cachedDataType`) instead — the columns the pipeline genuinely sends. A generated
-  class legitimately declaring extra properties for unmapped columns (e.g. to model a
-  DB-defaulted audit column for EF Core) is not a defect and is not compared here.
+  *write* the columns it actually maps, so its declared shape is scoped to the `<inputColumns>`
+  subset — the columns the pipeline genuinely sends. A generated class legitimately declaring
+  extra properties for unmapped columns (e.g. to model a DB-defaulted audit column for EF Core)
+  is not a defect and is not compared here.
+- For each mapped `<inputColumn>`, the compared name/type come from the `<externalMetadataColumn>`
+  its `externalMetadataColumnId` resolves to — the destination's own declared column identity —
+  never from the `<inputColumn>`'s own `cachedName`/`cachedDataType`, which is the *pipeline
+  buffer's pre-write* view and can legitimately differ from the real target column: confirmed
+  empirically across 3 real cases (an Excel source's `r8` buffer for a real `i4` target column;
+  an Aggregate's `ui8` `Count()` output for a real `i4` target column; a Data Conversion
+  transform's renamed buffer column `CustomerID_i4` for a real target column named `CustomerID`).
+  Using the buffer's cached fields instead of the resolved external identity produced 6 confirmed
+  false-positive Mismatch findings before this was fixed — see
+  docs/Gate-Report-Findings-2026-09-09.md.
 
 Every component also carries an `<externalMetadataColumns>` wrapper even when it's a pure
 pipeline-internal pass-through (e.g. a Lookup's reference input); those are empty placeholders
@@ -71,15 +81,33 @@ def _extract_external_columns(container_elem) -> list[ColumnDecl]:
 
 
 def _extract_mapped_input_columns(input_elem) -> list[ColumnDecl]:
-    """A destination's genuinely-mapped shape: the pipeline buffer columns it actually writes,
-    not its full target-table schema (see module docstring)."""
+    """A destination's genuinely-mapped shape: the columns it actually writes (limited to the
+    `<inputColumns>` subset, not its full target-table schema), each identified by its resolved
+    `<externalMetadataColumn>` (the real destination column), not by its own pipeline-buffer
+    `cachedName`/`cachedDataType` (see module docstring)."""
+    emc = next(iter(_direct_children(input_elem, "externalMetadataColumns")), None)
+    emc_by_ref: dict[str, object] = {}
+    if emc is not None:
+        for col in _direct_children(emc, "externalMetadataColumn"):
+            ref = col.attrib.get("refId")
+            if ref:
+                emc_by_ref[ref] = col
+
     ics = next(iter(_direct_children(input_elem, "inputColumns")), None)
     if ics is None:
         return []
     columns = []
     for col in _direct_children(ics, "inputColumn"):
-        name = col.attrib.get("cachedName")
-        data_type = col.attrib.get("cachedDataType")
+        target = emc_by_ref.get(col.attrib.get("externalMetadataColumnId", ""))
+        if target is not None:
+            name = target.attrib.get("name")
+            data_type = target.attrib.get("dataType")
+        else:
+            # Defensive fallback for an inputColumn with no resolvable external identity (not
+            # observed in any real sample) -- better to compare the pipeline buffer's own view
+            # than to silently drop the column.
+            name = col.attrib.get("cachedName")
+            data_type = col.attrib.get("cachedDataType")
         if name and data_type:
             columns.append(ColumnDecl(name=name, ssis_type_raw=data_type))
     return columns

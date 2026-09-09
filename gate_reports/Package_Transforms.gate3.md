@@ -4,53 +4,9 @@ Per-component input/output schema parity. Declared column name + SSIS-type-to-.N
 
 | Verdict | Count |
 |---|---|
-| Mismatch | 4 |
 | Unverifiable | 21 |
-| Match | 5 |
-
-## Mismatch (4)
-
-### [DestinationInput] `OLEDST_CustomerEnriched` — **Mismatch**
-
-```
-vs. generated class 'CustomerEnriched' (Model\CustomerEnriched.cs):
-  = EmailDomain: SSIS 'wstr' -> 'string'.
-  = FullName: SSIS 'wstr' -> 'string'.
-  = RowSource: SSIS 'wstr' -> 'string'.
-  = TenureDays: SSIS 'i4' -> 'int'.
-  x CustomerID_i4: declared on the left, no matching generated property.
-  x SignupDate_dt: declared on the left, no matching generated property.
-  i CustomerID: generated property has no matching left-side column. Not blocking — a destination may legitimately model an unmapped column.
-  i SignupDate: generated property has no matching left-side column. Not blocking — a destination may legitimately model an unmapped column.
-```
-
-### [DestinationInput] `OLEDST_RegionSummary` — **Mismatch**
-
-```
-vs. generated class 'RegionSummary' (Model\RegionSummary.cs):
-  x CustomerCount: SSIS 'ui8' expects one of ('UInt64',), generated type is 'int'.
-  = Region: SSIS 'wstr' -> 'string'.
-```
-
-### [DestinationInput] `OLEDST_CustomerMerged` — **Mismatch**
-
-```
-vs. generated class 'CustomerMerged' (Model\CustomerMerged.cs):
-  = Email: SSIS 'wstr' -> 'string'.
-  x CustomerID_i4: declared on the left, no matching generated property.
-  i CustomerID: generated property has no matching left-side column. Not blocking — a destination may legitimately model an unmapped column.
-```
-
-### [DestinationInput] `OLEDST_CustomerWithContact` — **Mismatch**
-
-```
-vs. generated class 'CustomerWithContact' (Model\CustomerWithContact.cs):
-  = ContactPhone: SSIS 'wstr' -> 'string?'.
-  = Email: SSIS 'wstr' -> 'string'.
-  = PreferredChannel: SSIS 'wstr' -> 'string?'.
-  x CustomerID_i4: declared on the left, no matching generated property.
-  i CustomerID: generated property has no matching left-side column. Not blocking — a destination may legitimately model an unmapped column.
-```
+| NormalizedMatch | 1 |
+| Match | 8 |
 
 ## Unverifiable (21)
 
@@ -180,7 +136,21 @@ vs. generated class 'CustomerWithContact' (Model\CustomerWithContact.cs):
 'SORT_Customers' (Microsoft.Sort) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
 ```
 
-## Match (5)
+## NormalizedMatch (1)
+
+### [DestinationInput] `OLEDST_CustomerEnriched` — **NormalizedMatch**
+
+```
+vs. generated class 'CustomerEnriched' (Model\CustomerEnriched.cs):
+  = CustomerID: SSIS 'i4' -> 'int?'.
+  = EmailDomain: SSIS 'wstr' -> 'string'.
+  = FullName: SSIS 'wstr' -> 'string'.
+  = RowSource: SSIS 'wstr' -> 'string'.
+  ~ SignupDate: SSIS 'dbDate' -> 'DateOnly?' (accepted modern equivalent of 'DateTime').
+  = TenureDays: SSIS 'i4' -> 'int'.
+```
+
+## Match (8)
 
 ### [SourceOutput] `FF_SRC_Customers` — **Match**
 
@@ -208,6 +178,14 @@ vs. generated class 'AGG_ByRegionSourceCsvRow' (Csv\AGG_ByRegionSourceCsvRow.cs)
   = SignupDate: SSIS 'wstr' -> 'string'.
 ```
 
+### [DestinationInput] `OLEDST_RegionSummary` — **Match**
+
+```
+vs. generated class 'RegionSummary' (Model\RegionSummary.cs):
+  = CustomerCount: SSIS 'i4' -> 'int'.
+  = Region: SSIS 'wstr' -> 'string'.
+```
+
 ### [SourceOutput] `FF_SRC_Customers4` — **Match**
 
 ```
@@ -219,6 +197,14 @@ vs. generated class 'DFT_MergeSortedBranchesCsvRow' (Csv\DFT_MergeSortedBranches
   = LastName: SSIS 'wstr' -> 'string'.
   = Phone: SSIS 'wstr' -> 'string'.
   = SignupDate: SSIS 'wstr' -> 'string'.
+```
+
+### [DestinationInput] `OLEDST_CustomerMerged` — **Match**
+
+```
+vs. generated class 'CustomerMerged' (Model\CustomerMerged.cs):
+  = CustomerID: SSIS 'i4' -> 'int?'.
+  = Email: SSIS 'wstr' -> 'string'.
 ```
 
 ### [SourceOutput] `FF_SRC_Contacts` — **Match**
@@ -241,4 +227,14 @@ vs. generated class 'MRG_CustomerContactsLeftCsvRow' (Csv\MRG_CustomerContactsLe
   = LastName: SSIS 'wstr' -> 'string'.
   = Phone: SSIS 'wstr' -> 'string'.
   = SignupDate: SSIS 'wstr' -> 'string'.
+```
+
+### [DestinationInput] `OLEDST_CustomerWithContact` — **Match**
+
+```
+vs. generated class 'CustomerWithContact' (Model\CustomerWithContact.cs):
+  = ContactPhone: SSIS 'wstr' -> 'string?'.
+  = CustomerID: SSIS 'i4' -> 'int?'.
+  = Email: SSIS 'wstr' -> 'string'.
+  = PreferredChannel: SSIS 'wstr' -> 'string?'.
 ```

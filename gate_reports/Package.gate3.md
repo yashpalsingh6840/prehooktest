@@ -33,7 +33,7 @@ vs. generated class 'SalesSummary' (Model\SalesSummary.cs):
   = Email: SSIS 'wstr' -> 'string'.
   = FullName: SSIS 'wstr' -> 'string'.
   ~ LastOrderDate: SSIS 'dbDate' -> 'DateOnly' (accepted modern equivalent of 'DateTime').
-  = ProcessedDateTime: SSIS 'dbTimeStamp' -> 'DateTime'.
+  = ProcessedDateTime: SSIS 'dbTimeStamp2' -> 'DateTime'.
   = TotalOrders: SSIS 'i4' -> 'int'.
   = TotalRevenue: SSIS 'r8' -> 'double'.
 ```
@@ -77,7 +77,7 @@ vs. generated class 'StagingCustomers' (Model\StagingCustomers.cs):
   = FullName: SSIS 'wstr' -> 'string'.
   = IsValidRow: SSIS 'bool' -> 'bool'.
   = LastName: SSIS 'wstr' -> 'string'.
-  = LoadDateTime: SSIS 'dbTimeStamp' -> 'DateTime'.
+  = LoadDateTime: SSIS 'dbTimeStamp2' -> 'DateTime'.
   = Phone: SSIS 'wstr' -> 'string'.
   = SignupDate: SSIS 'wstr' -> 'string'.
 ```

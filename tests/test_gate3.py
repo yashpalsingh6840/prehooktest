@@ -73,17 +73,24 @@ def test_real_pair_reports_script_components_as_unverifiable():
 def test_mutated_left_column_type_is_reported_as_mismatch(tmp_path: Path):
     """Mutate a *copy* of the .dtsx (never the original): change one mapped destination column's
     declared SSIS type so it no longer maps to the generated property's .NET type. Gate 3 must
-    report a Mismatch for that destination while every other item is untouched."""
+    report a Mismatch for that destination while every other item is untouched.
+
+    The mutation targets the <externalMetadataColumn> (the destination's own declared column),
+    not the <inputColumn>'s cachedDataType (the pipeline buffer's pre-write view) — Gate 3
+    compares the former, resolved via externalMetadataColumnId, not the latter (see
+    component_schema.py's _extract_mapped_input_columns docstring; this distinction is exactly
+    what produced 6 confirmed false-positive Mismatch findings before it was fixed, per
+    docs/Gate-Report-Findings-2026-09-09.md)."""
     mutated_dtsx = tmp_path / "Package_mutated.dtsx"
     original_text = DTSX_PATH.read_text(encoding="utf-8")
     needle = (
         'refId="Package\\DFT_LoadCustomers\\OLEDST_StagingCustomers.Inputs[OLE DB Destination '
-        'Input].Columns[CustomerID]"\n                      cachedDataType="wstr"'
+        'Input].ExternalColumns[CustomerID]"\n                      dataType="wstr"'
     )
     assert needle in original_text, "fixture assumption broke — update the needle"
     mutated_text = original_text.replace(
         needle,
-        needle.replace('cachedDataType="wstr"', 'cachedDataType="i4"'),
+        needle.replace('dataType="wstr"', 'dataType="i4"'),
         1,
     )
     assert mutated_text != original_text
@@ -123,3 +130,59 @@ def test_mutated_right_missing_property_is_reported_as_mismatch(tmp_path: Path):
     assert "CustomerID" in by_name["OLEDST_StagingCustomers"].detail
     assert by_name["FF_SRC_Customers"].verdict == Verdict.MATCH
     assert by_name["OLEDST_StagingErrors"].verdict == Verdict.MATCH
+
+
+PACKAGE_ADVANCED_DTSX = DTSX_PATH.parent / "Package_Advanced.dtsx"
+PACKAGE_ADVANCED_GENERATED = GENERATED_DIR.parent / "Package_Advanced"
+PACKAGE_TRANSFORMS_DTSX = DTSX_PATH.parent / "Package_Transforms.dtsx"
+PACKAGE_TRANSFORMS_GENERATED = GENERATED_DIR.parent / "Package_Transforms"
+
+
+@pytest.mark.skipif(
+    not PACKAGE_ADVANCED_DTSX.exists() or not PACKAGE_ADVANCED_GENERATED.exists(),
+    reason="Package_Advanced sample pair not available on this machine.",
+)
+def test_real_pair_buffer_vs_target_type_coercion_is_match_not_mismatch():
+    """Regression test for a confirmed false positive (docs/Gate-Report-Findings-2026-09-09.md):
+    OLEDST_Drip.CustomerID's mapped <inputColumn> has cachedDataType="r8" (the Excel source's
+    pre-write buffer type), but its externalMetadataColumnId resolves to the destination's real
+    column, dataType="i4" — the generated `int` is correct and must resolve to Match, not
+    Mismatch against the buffer's r8."""
+    result = _run(PACKAGE_ADVANCED_DTSX, PACKAGE_ADVANCED_GENERATED)
+    by_name = {f.object_name: f for f in result.findings}
+    finding = by_name["OLEDST_Drip"]
+    assert finding.verdict == Verdict.MATCH
+    assert "CustomerID" in finding.detail
+
+
+@pytest.mark.skipif(
+    not PACKAGE_TRANSFORMS_DTSX.exists() or not PACKAGE_TRANSFORMS_GENERATED.exists(),
+    reason="Package_Transforms sample pair not available on this machine.",
+)
+def test_real_pair_aggregate_buffer_type_coercion_is_match_not_mismatch():
+    """Regression test for a confirmed false positive: OLEDST_RegionSummary.CustomerCount's
+    mapped <inputColumn> has cachedDataType="ui8" (AGG_ByRegion's Count() output type), but its
+    externalMetadataColumnId resolves to the real column, dataType="i4" — the generated `int` is
+    correct."""
+    result = _run(PACKAGE_TRANSFORMS_DTSX, PACKAGE_TRANSFORMS_GENERATED)
+    by_name = {f.object_name: f for f in result.findings}
+    assert by_name["OLEDST_RegionSummary"].verdict == Verdict.MATCH
+
+
+@pytest.mark.skipif(
+    not PACKAGE_TRANSFORMS_DTSX.exists() or not PACKAGE_TRANSFORMS_GENERATED.exists(),
+    reason="Package_Transforms sample pair not available on this machine.",
+)
+def test_real_pair_data_conversion_renamed_column_is_match_not_mismatch():
+    """Regression test for a confirmed false positive: OLEDST_CustomerEnriched's mapped
+    <inputColumn>s carry DCONV_Types's own renamed buffer names (CustomerID_i4, SignupDate_dt),
+    but their externalMetadataColumnId resolves to the destination's real column names
+    (CustomerID, SignupDate) — matching the generated property names correctly. Verdict is
+    NormalizedMatch (not a plain Match) because SignupDate is dbDate -> DateOnly?, the separately
+    accepted modern-equivalent mapping — not because of the renamed-column fix under test here."""
+    result = _run(PACKAGE_TRANSFORMS_DTSX, PACKAGE_TRANSFORMS_GENERATED)
+    by_name = {f.object_name: f for f in result.findings}
+    finding = by_name["OLEDST_CustomerEnriched"]
+    assert finding.verdict == Verdict.NORMALIZED_MATCH
+    assert "CustomerID_i4" not in finding.detail
+    assert "SignupDate_dt" not in finding.detail

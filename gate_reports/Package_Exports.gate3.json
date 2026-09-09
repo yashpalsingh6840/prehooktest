@@ -2,16 +2,15 @@
   "package": "Package_Exports",
   "gate": "Gate3_ComponentSchemaParity",
   "counts": {
-    "Mismatch": 1,
-    "Match": 3,
+    "Match": 4,
     "Unverifiable": 2
   },
   "findings": [
     {
       "scope": "DestinationInput",
       "objectName": "ADO_DST_ExportLog",
-      "verdict": "Mismatch",
-      "detail": "vs. generated class 'CustomerExportLog' (Model\\CustomerExportLog.cs):\n  x CustomerID: SSIS 'wstr' expects one of ('String',), generated type is 'int?'.\n  = FullName: SSIS 'wstr' -> 'string'."
+      "verdict": "Match",
+      "detail": "vs. generated class 'CustomerExportLog' (Model\\CustomerExportLog.cs):\n  = CustomerID: SSIS 'i4' -> 'int?'.\n  = FullName: SSIS 'wstr' -> 'string'."
     },
     {
       "scope": "SourceOutput",

@@ -16,16 +16,14 @@ Correlation strategy (see codegen/csharp_schema.py for the empirical basis):
   counterpart to compare (it collapses into constructor arguments/local functions of another
   method — docs/dtsx-graph-notes.md §6) and is reported `Unverifiable`, not a silent pass.
 
-Known naming-correlation limitation (confirmed, not yet handled): a Data Conversion
-Transformation upstream of a destination renames a column with SSIS's own default
-type-abbreviation suffix (e.g. `CustomerID` -> `CustomerID_i4`), and that suffixed name is what
-ends up in the destination's mapped `inputColumns` — while a sensible generated rewrite names its
-property after the pre-conversion semantic identity (`CustomerID`). Confirmed via direct
-inspection of Package_Transforms (DCONV_Types -> OLEDST_CustomerEnriched). Column comparison
-currently reports this as a name-mismatch column pair rather than recognizing the stripped
-suffix — an honest (non-silent) but imprecise degradation, not yet worth a heuristic fix from a
-single observed case. Flag for follow-up once the Data Conversion Transformation's documented
-default-naming convention is confirmed against Microsoft's docs.
+Resolved false-positive history: an earlier version compared each mapped `<inputColumn>`'s own
+pipeline-buffer `cachedName`/`cachedDataType` instead of resolving through its
+`externalMetadataColumnId` to the destination's actual declared column — see
+component_schema.py's `_extract_mapped_input_columns` docstring. That produced 6 confirmed false
+Mismatch findings across 3 packages (an Excel/Aggregate/ADO.NET buffer-vs-target type coercion,
+and a Data Conversion Transformation's renamed buffer column, e.g. `CustomerID` ->
+`CustomerID_i4`, reaching a destination) — documented and traced in
+docs/Gate-Report-Findings-2026-09-09.md before the fix.
 """
 from __future__ import annotations
 

@@ -4,20 +4,8 @@ Per-component input/output schema parity. Declared column name + SSIS-type-to-.N
 
 | Verdict | Count |
 |---|---|
-| Mismatch | 1 |
 | Unverifiable | 1 |
-| Match | 2 |
-
-## Mismatch (1)
-
-### [DestinationInput] `OLEDST_Drip` — **Mismatch**
-
-```
-vs. generated class 'DripEligibility' (Model\DripEligibility.cs):
-  x CustomerID: SSIS 'r8' expects one of ('Double',), generated type is 'int'.
-  = DripEligible: SSIS 'wstr' -> 'string'.
-  = ReviewedBy: SSIS 'wstr' -> 'string'.
-```
+| Match | 3 |
 
 ## Unverifiable (1)
 
@@ -27,13 +15,22 @@ vs. generated class 'DripEligibility' (Model\DripEligibility.cs):
 'OLECMD_SetFlag' (Microsoft.OLEDBCommand) is not a database destination Gate 1 can identify by (schema, table) — no schema-correlation mechanism covers this destination kind yet (1 declared column(s) not compared).
 ```
 
-## Match (2)
+## Match (3)
 
 ### [SourceOutput] `EXCEL_SRC_Drip` — **Match**
 
 ```
 vs. generated class 'DripEligibilityExcelRow' (Excel\DripEligibilityExcelRow.cs):
   = CustomerID: SSIS 'r8' -> 'double'.
+  = DripEligible: SSIS 'wstr' -> 'string'.
+  = ReviewedBy: SSIS 'wstr' -> 'string'.
+```
+
+### [DestinationInput] `OLEDST_Drip` — **Match**
+
+```
+vs. generated class 'DripEligibility' (Model\DripEligibility.cs):
+  = CustomerID: SSIS 'i4' -> 'int'.
   = DripEligible: SSIS 'wstr' -> 'string'.
   = ReviewedBy: SSIS 'wstr' -> 'string'.
 ```

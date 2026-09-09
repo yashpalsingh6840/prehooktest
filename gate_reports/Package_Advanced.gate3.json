@@ -2,8 +2,7 @@
   "package": "Package_Advanced",
   "gate": "Gate3_ComponentSchemaParity",
   "counts": {
-    "Match": 2,
-    "Mismatch": 1,
+    "Match": 3,
     "Unverifiable": 1
   },
   "findings": [
@@ -16,8 +15,8 @@
     {
       "scope": "DestinationInput",
       "objectName": "OLEDST_Drip",
-      "verdict": "Mismatch",
-      "detail": "vs. generated class 'DripEligibility' (Model\\DripEligibility.cs):\n  x CustomerID: SSIS 'r8' expects one of ('Double',), generated type is 'int'.\n  = DripEligible: SSIS 'wstr' -> 'string'.\n  = ReviewedBy: SSIS 'wstr' -> 'string'."
+      "verdict": "Match",
+      "detail": "vs. generated class 'DripEligibility' (Model\\DripEligibility.cs):\n  = CustomerID: SSIS 'i4' -> 'int'.\n  = DripEligible: SSIS 'wstr' -> 'string'.\n  = ReviewedBy: SSIS 'wstr' -> 'string'."
     },
     {
       "scope": "DestinationInput",

@@ -3,8 +3,8 @@
   "gate": "Gate3_ComponentSchemaParity",
   "counts": {
     "Unverifiable": 21,
-    "Match": 5,
-    "Mismatch": 4
+    "Match": 8,
+    "NormalizedMatch": 1
   },
   "findings": [
     {
@@ -46,8 +46,8 @@
     {
       "scope": "DestinationInput",
       "objectName": "OLEDST_CustomerEnriched",
-      "verdict": "Mismatch",
-      "detail": "vs. generated class 'CustomerEnriched' (Model\\CustomerEnriched.cs):\n  = EmailDomain: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.\n  = RowSource: SSIS 'wstr' -> 'string'.\n  = TenureDays: SSIS 'i4' -> 'int'.\n  x CustomerID_i4: declared on the left, no matching generated property.\n  x SignupDate_dt: declared on the left, no matching generated property.\n  i CustomerID: generated property has no matching left-side column. Not blocking \u2014 a destination may legitimately model an unmapped column.\n  i SignupDate: generated property has no matching left-side column. Not blocking \u2014 a destination may legitimately model an unmapped column."
+      "verdict": "NormalizedMatch",
+      "detail": "vs. generated class 'CustomerEnriched' (Model\\CustomerEnriched.cs):\n  = CustomerID: SSIS 'i4' -> 'int?'.\n  = EmailDomain: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.\n  = RowSource: SSIS 'wstr' -> 'string'.\n  ~ SignupDate: SSIS 'dbDate' -> 'DateOnly?' (accepted modern equivalent of 'DateTime').\n  = TenureDays: SSIS 'i4' -> 'int'."
     },
     {
       "scope": "InternalTransform",
@@ -82,8 +82,8 @@
     {
       "scope": "DestinationInput",
       "objectName": "OLEDST_RegionSummary",
-      "verdict": "Mismatch",
-      "detail": "vs. generated class 'RegionSummary' (Model\\RegionSummary.cs):\n  x CustomerCount: SSIS 'ui8' expects one of ('UInt64',), generated type is 'int'.\n  = Region: SSIS 'wstr' -> 'string'."
+      "verdict": "Match",
+      "detail": "vs. generated class 'RegionSummary' (Model\\RegionSummary.cs):\n  = CustomerCount: SSIS 'i4' -> 'int'.\n  = Region: SSIS 'wstr' -> 'string'."
     },
     {
       "scope": "InternalTransform",
@@ -124,8 +124,8 @@
     {
       "scope": "DestinationInput",
       "objectName": "OLEDST_CustomerMerged",
-      "verdict": "Mismatch",
-      "detail": "vs. generated class 'CustomerMerged' (Model\\CustomerMerged.cs):\n  = Email: SSIS 'wstr' -> 'string'.\n  x CustomerID_i4: declared on the left, no matching generated property.\n  i CustomerID: generated property has no matching left-side column. Not blocking \u2014 a destination may legitimately model an unmapped column."
+      "verdict": "Match",
+      "detail": "vs. generated class 'CustomerMerged' (Model\\CustomerMerged.cs):\n  = CustomerID: SSIS 'i4' -> 'int?'.\n  = Email: SSIS 'wstr' -> 'string'."
     },
     {
       "scope": "InternalTransform",
@@ -172,8 +172,8 @@
     {
       "scope": "DestinationInput",
       "objectName": "OLEDST_CustomerWithContact",
-      "verdict": "Mismatch",
-      "detail": "vs. generated class 'CustomerWithContact' (Model\\CustomerWithContact.cs):\n  = ContactPhone: SSIS 'wstr' -> 'string?'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = PreferredChannel: SSIS 'wstr' -> 'string?'.\n  x CustomerID_i4: declared on the left, no matching generated property.\n  i CustomerID: generated property has no matching left-side column. Not blocking \u2014 a destination may legitimately model an unmapped column."
+      "verdict": "Match",
+      "detail": "vs. generated class 'CustomerWithContact' (Model\\CustomerWithContact.cs):\n  = ContactPhone: SSIS 'wstr' -> 'string?'.\n  = CustomerID: SSIS 'i4' -> 'int?'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = PreferredChannel: SSIS 'wstr' -> 'string?'."
     },
     {
       "scope": "InternalTransform",

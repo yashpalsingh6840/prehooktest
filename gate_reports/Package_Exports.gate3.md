@@ -4,19 +4,8 @@ Per-component input/output schema parity. Declared column name + SSIS-type-to-.N
 
 | Verdict | Count |
 |---|---|
-| Mismatch | 1 |
 | Unverifiable | 2 |
-| Match | 3 |
-
-## Mismatch (1)
-
-### [DestinationInput] `ADO_DST_ExportLog` — **Mismatch**
-
-```
-vs. generated class 'CustomerExportLog' (Model\CustomerExportLog.cs):
-  x CustomerID: SSIS 'wstr' expects one of ('String',), generated type is 'int?'.
-  = FullName: SSIS 'wstr' -> 'string'.
-```
+| Match | 4 |
 
 ## Unverifiable (2)
 
@@ -32,7 +21,15 @@ vs. generated class 'CustomerExportLog' (Model\CustomerExportLog.cs):
 'DFT_ExportFixedWidth_DST' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table) — no schema-correlation mechanism covers this destination kind yet (4 declared column(s) not compared).
 ```
 
-## Match (3)
+## Match (4)
+
+### [DestinationInput] `ADO_DST_ExportLog` — **Match**
+
+```
+vs. generated class 'CustomerExportLog' (Model\CustomerExportLog.cs):
+  = CustomerID: SSIS 'i4' -> 'int?'.
+  = FullName: SSIS 'wstr' -> 'string'.
+```
 
 ### [SourceOutput] `ADO_SRC_Customers` — **Match**
 
