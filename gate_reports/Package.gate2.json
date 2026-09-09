@@ -1,0 +1,88 @@
+{
+  "package": "Package",
+  "gate": "Gate2_GraphParity",
+  "counts": {
+    "Unverifiable": 7,
+    "Match": 6
+  },
+  "findings": [
+    {
+      "scope": "ControlFlow",
+      "objectName": "SQL_TruncateTargets",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "SCR_ValidateAndLogStart",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "DFT_LoadCustomers",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "SCR_NotifyAndLogProgress",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "DFT_BuildSalesSummary",
+      "verdict": "Match",
+      "detail": "Expression-gated node found as a guarded call (guard: '@[User::RowsLoaded] > 0')."
+    },
+    {
+      "scope": "FailureHandler",
+      "objectName": "SQL_LogLoadFailure",
+      "verdict": "Match",
+      "detail": "Failure-only node found inlined in the generated catch-block handler set."
+    },
+    {
+      "scope": "DataFlow:DFT_BuildSalesSummary",
+      "objectName": "OLEDST_SalesSummary",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_BuildSalesSummary's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_BuildSalesSummary",
+      "objectName": "OLESRC_OrdersAndDetails",
+      "verdict": "Unverifiable",
+      "detail": "Component name found by text presence inside DFT_BuildSalesSummary's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_BuildSalesSummary",
+      "objectName": "SCR_ComputeCustomerTier",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_BuildSalesSummary's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_LoadCustomers",
+      "objectName": "FF_SRC_Customers",
+      "verdict": "Unverifiable",
+      "detail": "Component name found by text presence inside DFT_LoadCustomers's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_LoadCustomers",
+      "objectName": "OLEDST_StagingCustomers",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_LoadCustomers's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_LoadCustomers",
+      "objectName": "OLEDST_StagingErrors",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_LoadCustomers's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_LoadCustomers",
+      "objectName": "SCR_CleanseCustomerRow",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_LoadCustomers's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    }
+  ]
+}

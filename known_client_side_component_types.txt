@@ -1,0 +1,123 @@
+Client SSIS portfolio -- known component/task types
+=====================================================
+Source: `python ssisinventory.py "C:\Projs"` run against the client portfolio (2026-09-02
+scan, documented in this folder's own README.md as `ssis_scan.py` -- same tool/output,
+73 distinct packages after dedupe, 216 .dtsx files on disk, 101 Data Flow Tasks).
+
+Raw console output listed 24 "distinct component types" and 9 "distinct task types". Per
+this folder's own README, four of those are duplicate entries: `ssis_scan.py` does not yet
+fold a CLSID-resolved FRIENDLY NAME ("Flat File Source", "Flat File Destination", "OLE DB
+Source", "OLE DB Destination") back onto its own canonical `Microsoft.*` componentClassID --
+both spellings appear in real, unrevalidated packages (a component never re-saved in a
+newer SSDT designer keeps the older friendly-name spelling). Real distinct count: ~20
+components, ~5-6 tasks. This file lists the DEDUPED, real set, each annotated against
+`ssisx generate`'s actual current support level (Tools/SsisExtractor), verified by reading
+the emitter code directly, not assumed from memory.
+
+Legend: [OK] fully supported today  [PARTIAL] supported for a narrower shape than the
+general SSIS feature  [SEAM] never auto-translated by design, becomes human/AI-portable
+Tier-2 work  [GAP] not supported, would report a blocking generation gap
+
+PIPELINE COMPONENTS (~20 real, from ~24 reported)
+--------------------------------------------------
+Microsoft.OLEDBSource            [OK]      OpenRowset and SqlCommand modes. SqlCommand mode
+                                            gets a non-blocking advisory (assumes result-set
+                                            column names/aliases match the buffer).
+Microsoft.OLEDBDestination       [OK]      Core feature, fast-load aware.
+Microsoft.FlatFileSource         [OK]      Delimited AND fixed-width/RaggedRight.
+Microsoft.FlatFileDestination    [OK]      Delimited and fixed-width write-side.
+Microsoft.ADONETDestination      [PARTIAL] Structurally supported (same SQL bulk-copy path
+                                            as OLE DB), but never verified end-to-end via a
+                                            real object-model fixture in this dev environment
+                                            -- ADO.NET connection-manager creation fails here
+                                            with no diagnostic detail. Unverified, not known
+                                            broken.
+Microsoft.DataReaderSourceAdapter [PARTIAL] = ADO NET Source. Same caveat as above.
+Microsoft.ExcelSource            [PARTIAL] OpenRowset (whole worksheet) fully supported.
+                                            SqlCommand mode ONLY for a bare
+                                            "SELECT * FROM [Sheet$]" -- any WHERE clause or
+                                            column list is a gap (no query engine at all in
+                                            the generated reader).
+Microsoft.DerivedColumn          [OK]      Core feature.
+Microsoft.DataConvert             [PARTIAL] DT_I4, DT_DBDATE, DT_R8, DT_WSTR, DT_BOOL,
+                                            DT_I2, DT_I8, DT_DBTIMESTAMP only. DT_NUMERIC,
+                                            DT_DBTIMESTAMPOFFSET, DT_CY, DT_GUID and others
+                                            are gaps -- not measured against real SSIS yet.
+Microsoft.ConditionalSplit       [OK]      Multi-destination routing; remerge via Sort/
+                                            Merge/UnionAll; nullability-aware conditions.
+Microsoft.Multicast              [OK]      Multi-branch fan-out, including a dead-end
+                                            discarded branch (e.g. feeding only a RowCount).
+Microsoft.Lookup                [PARTIAL] Full-cache only. Needs a real declared join key
+                                            (JoinToReferenceColumn) -- if the .dtsx genuinely
+                                            has none, falls back to a human-confirmed Tier-1
+                                            decision. Exactly ONE routed (non-error) output
+                                            may lead to real downstream processing; a second
+                                            real destination off the No-Match output is a
+                                            gap (a No-Match output feeding only a discarded
+                                            RowCount is fine).
+Microsoft.Aggregate              [PARTIAL] GroupBy + Count only. Sum/Average/Minimum/
+                                            Maximum/CountDistinct/CountAll are gaps.
+Microsoft.Sort                  [OK]      As a pass-through ahead of Merge/MergeJoin, or a
+                                            recognized no-op pass-through elsewhere.
+Microsoft.Merge                 [OK]      Two-source merge with column-name matching.
+Microsoft.MergeJoin              [PARTIAL] Exactly two sources, each optionally through one
+                                            Data Conversion, each through its own Sort,
+                                            straight into one destination. Anything feeding
+                                            a MergeJoin result into a further transform, or
+                                            3+ sources, is a gap.
+Microsoft.UnionAll              [OK]      Two-source union; 3+ sources or a source outside
+                                            the union is correctly gapped (not silently
+                                            mis-generated).
+Microsoft.RowCount               [OK]      Transparent pass-through, or a valid discarded
+                                            branch terminus in a Multicast/Lookup.
+Microsoft.OLEDBCommand           [OK]      Destination-less, per-row parameterized SQL
+                                            (positional "?" params only, no named mapping).
+Microsoft.ScriptComponentHost     [SEAM]    Never auto-translated. Each new column becomes a
+                                            `private partial Fill_<Column>` seam -- the real
+                                            script source is fully extracted and handed to a
+                                            human/AI via a work packet, but the LOGIC is never
+                                            guessed. A "source-stripped" Script Component
+                                            (binary cache only, no text source) cannot be
+                                            recovered at all.
+
+CONTROL-FLOW TASKS (~5-6 real, from 9 reported)
+--------------------------------------------------
+Microsoft.ExecuteSQLTask         [PARTIAL] Pre-load and post-flow position both resolved
+                                            correctly via real precedence-constraint
+                                            reachability. Cross-database routing (a task
+                                            targeting a different connection manager/
+                                            database than the flow) is supported. Of the 7
+                                            measured conditional-precedence-constraint forms,
+                                            only "Success AND expression" and a terminal
+                                            "Failure" handler are generated; Completion,
+                                            Expression-only and Expression-OR-Constraint are
+                                            gaps (each needs the same task active on both the
+                                            success and failure paths -- an unbuilt feature).
+Microsoft.FileSystemTask         [PARTIAL] Copy/Move/Delete/Rename/CreateDirectory only.
+                                            SetAttributes/CopyDirectory/MoveDirectory/
+                                            DeleteDirectory/DeleteDirectoryContent are gaps.
+Microsoft.ScriptTask              [SEAM]    Never auto-translated. Becomes a whole ILoadTask
+                                            with a `partial RunScriptAsync` seam plus a
+                                            shared PackageVariables bag for cross-task state
+                                            -- same "extract fully, never guess the logic"
+                                            discipline as Script Component.
+Microsoft.Package                --        The package root container itself, not a
+                                            translatable unit.
+Microsoft.Pipeline               --        The Data Flow Task container; its own component
+                                            types (above) are what actually matters.
+
+NOT SEEN IN THIS PORTFOLIO AT ALL
+--------------------------------------------------
+Microsoft.ExecutePackageTask (master-package orchestration) -- absent from the reported
+task-type list, so no package in this portfolio calls another package directly.
+
+STILL UNKNOWN -- VERIFY BEFORE SIZING
+--------------------------------------------------
+The console capture was truncated, so Sequence Container, ForEach Loop Container, and
+Execute Package Task are neither confirmed present NOR confirmed absent (Execute Package
+Task's absence above is inferred only from the task-type list, which the scanner itself
+flags may also be under-reporting). ForEach Loop is only supported for two narrow, specific
+body shapes (a single expression-driven Execute SQL Task, or a single expression-driven
+Data Flow Task re-run per file) -- any other ForEach body (nested containers, multiple
+tasks, a Script Task per iteration, an ADO recordset enumerator) is a gap. Check the CSV's
+own `category` column before sizing any control-flow work.

@@ -1,0 +1,221 @@
+{
+  "package": "Package",
+  "gate": "Gate1_SqlAndSchemaParity",
+  "counts": {
+    "LeftOnly": 1,
+    "Unverifiable": 2,
+    "Match": 5
+  },
+  "findings": [
+    {
+      "objectName": "OLEDST_SalesSummary",
+      "verdict": "Match",
+      "detail": "Table identity matches (SalesSummary/SalesSummary).",
+      "left": {
+        "package": "Package",
+        "executable_path": "Package\\DFT_BuildSalesSummary\\OLEDST_SalesSummary",
+        "object_name": "OLEDST_SalesSummary",
+        "component_type": "Microsoft.OLEDBDestination",
+        "source_property": "property:OpenRowset",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "table_name": "SalesSummary",
+        "schema_name": "dbo",
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Model\\PackageDbContext.cs",
+        "object_name": "SalesSummary",
+        "shape": "EfCoreTable",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "literal_segments": null,
+        "table_name": "SalesSummary",
+        "schema_name": "dbo",
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "OLESRC_OrdersAndDetails",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package",
+        "executable_path": "Package\\DFT_BuildSalesSummary\\OLESRC_OrdersAndDetails",
+        "object_name": "OLESRC_OrdersAndDetails",
+        "component_type": "Microsoft.OLEDBSource",
+        "source_property": "property:SqlCommand",
+        "kind": "Statement",
+        "sql_text": "SELECT\n    o.CustomerID,\n    c.FullName,\n    c.CleanEmail AS Email,\n    COUNT(DISTINCT o.OrderID) AS TotalOrders,\n    SUM(od.Quantity * od.UnitPrice) AS TotalRevenue,\n    MAX(o.OrderDate) AS LastOrderDate\nFROM dbo.Orders o\nINNER JOIN dbo.OrderDetails od ON od.OrderID = o.OrderID\nINNER JOIN dbo.StagingCustomers c ON o.CustomerID = TRY_CAST(c.CustomerID AS INT)\nWHERE ISNULL(c.IsValidRow, 1) = 1\nGROUP BY o.CustomerID, c.FullName, c.CleanEmail",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Package.cs",
+        "object_name": "OLESRC_OrdersAndDetails",
+        "shape": "InlineSqlRowSource",
+        "kind": "Statement",
+        "sql_text": "SELECT\n    o.CustomerID,\n    c.FullName,\n    c.CleanEmail AS Email,\n    COUNT(DISTINCT o.OrderID) AS TotalOrders,\n    SUM(od.Quantity * od.UnitPrice) AS TotalRevenue,\n    MAX(o.OrderDate) AS LastOrderDate\nFROM dbo.Orders o\nINNER JOIN dbo.OrderDetails od ON od.OrderID = o.OrderID\nINNER JOIN dbo.StagingCustomers c ON o.CustomerID = TRY_CAST(c.CustomerID AS INT)\nWHERE ISNULL(c.IsValidRow, 1) = 1\nGROUP BY o.CustomerID, c.FullName, c.CleanEmail",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "SCR_ComputeCustomerTier",
+      "verdict": "Unverifiable",
+      "detail": "Script Component may contain SQL embedded in its source/binary blob; not extractable as text from the outer .dtsx XML (see docs/dtsx-xml-notes.md \u00a71.3).",
+      "left": {
+        "package": "Package",
+        "executable_path": "Package\\DFT_BuildSalesSummary\\SCR_ComputeCustomerTier",
+        "object_name": "SCR_ComputeCustomerTier",
+        "component_type": "Microsoft.ScriptComponentHost",
+        "source_property": "ScriptComponentHost:SourceCode/BinaryCode",
+        "kind": "Unverifiable",
+        "sql_text": null,
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": null,
+        "from_property_expression": false,
+        "evidence": "Script Component may contain SQL embedded in its source/binary blob; not extractable as text from the outer .dtsx XML (see docs/dtsx-xml-notes.md \u00a71.3)."
+      },
+      "right": null
+    },
+    {
+      "objectName": "OLEDST_StagingCustomers",
+      "verdict": "Match",
+      "detail": "Table identity matches (StagingCustomers/StagingCustomers).",
+      "left": {
+        "package": "Package",
+        "executable_path": "Package\\DFT_LoadCustomers\\OLEDST_StagingCustomers",
+        "object_name": "OLEDST_StagingCustomers",
+        "component_type": "Microsoft.OLEDBDestination",
+        "source_property": "property:OpenRowset",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "table_name": "StagingCustomers",
+        "schema_name": "dbo",
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Model\\PackageDbContext.cs",
+        "object_name": "StagingCustomers",
+        "shape": "EfCoreTable",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "literal_segments": null,
+        "table_name": "StagingCustomers",
+        "schema_name": "dbo",
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "OLEDST_StagingErrors",
+      "verdict": "LeftOnly",
+      "detail": "No generated artifact found matching object name 'OLEDST_StagingErrors'.",
+      "left": {
+        "package": "Package",
+        "executable_path": "Package\\DFT_LoadCustomers\\OLEDST_StagingErrors",
+        "object_name": "OLEDST_StagingErrors",
+        "component_type": "Microsoft.OLEDBDestination",
+        "source_property": "property:OpenRowset",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "table_name": "StagingCustomers_Errors",
+        "schema_name": "dbo",
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": null
+    },
+    {
+      "objectName": "SCR_CleanseCustomerRow",
+      "verdict": "Unverifiable",
+      "detail": "Script Component may contain SQL embedded in its source/binary blob; not extractable as text from the outer .dtsx XML (see docs/dtsx-xml-notes.md \u00a71.3).",
+      "left": {
+        "package": "Package",
+        "executable_path": "Package\\DFT_LoadCustomers\\SCR_CleanseCustomerRow",
+        "object_name": "SCR_CleanseCustomerRow",
+        "component_type": "Microsoft.ScriptComponentHost",
+        "source_property": "ScriptComponentHost:SourceCode/BinaryCode",
+        "kind": "Unverifiable",
+        "sql_text": null,
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": null,
+        "from_property_expression": false,
+        "evidence": "Script Component may contain SQL embedded in its source/binary blob; not extractable as text from the outer .dtsx XML (see docs/dtsx-xml-notes.md \u00a71.3)."
+      },
+      "right": null
+    },
+    {
+      "objectName": "SQL_LogLoadFailure",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package",
+        "executable_path": "Package\\SQL_LogLoadFailure",
+        "object_name": "SQL_LogLoadFailure",
+        "component_type": "Microsoft.ExecuteSQLTask",
+        "source_property": "SQLTask:SqlStatementSource",
+        "kind": "Statement",
+        "sql_text": "INSERT INTO dbo.EtlRunLog (PackageName, SourceName, EventType, MessageText)\nVALUES (N'RBC_Demo_ETL', N'DFT_LoadCustomers', N'OnFailure',\n        N'Customer load failed - staging may be incomplete.');",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Package.cs",
+        "object_name": "SQL_LogLoadFailure",
+        "shape": "ErrorHandlerSql",
+        "kind": "Statement",
+        "sql_text": "INSERT INTO dbo.EtlRunLog (PackageName, SourceName, EventType, MessageText)\nVALUES (N'RBC_Demo_ETL', N'DFT_LoadCustomers', N'OnFailure',\n        N'Customer load failed - staging may be incomplete.');",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": "Failure-handler Execute SQL Task, inlined as an ExecuteSqlWithoutTransactionAsync call."
+      }
+    },
+    {
+      "objectName": "SQL_TruncateTargets",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package",
+        "executable_path": "Package\\SQL_TruncateTargets",
+        "object_name": "SQL_TruncateTargets",
+        "component_type": "Microsoft.ExecuteSQLTask",
+        "source_property": "SQLTask:SqlStatementSource",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.StagingCustomers;\nTRUNCATE TABLE dbo.SalesSummary;\nTRUNCATE TABLE dbo.StagingCustomers_Errors;\nDELETE FROM dbo.EtlAuditLog;",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Mapping\\SQL_TruncateTargetsStatement.cs",
+        "object_name": "SQL_TruncateTargets",
+        "shape": "ExecuteSqlStatement",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.StagingCustomers;\nTRUNCATE TABLE dbo.SalesSummary;\nTRUNCATE TABLE dbo.StagingCustomers_Errors;\nDELETE FROM dbo.EtlAuditLog;",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": ""
+      }
+    }
+  ]
+}
