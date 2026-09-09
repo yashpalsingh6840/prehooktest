@@ -5,7 +5,49 @@ read that first. This file is operational notes for an agent picking this
 project back up in a fresh session: environment specifics, exact commands
 known to work, and traps already hit once (don't re-discover them).
 
-## READ THIS FIRST â€” corrections from the 2026-09-02/03 gap audit
+**Below this point is a long, deliberately-preserved chronological build log**
+(see the note at the top of the "READ THIS FIRST" section for why it is kept
+rather than rewritten). Treat everything in it as *history*, not as a live
+description of this repo's current file layout — verify a claimed path
+exists before acting on it. In particular:
+
+## Orientation — what actually lives in this repo right now (2026-09-09)
+
+As of commit `2f212bf` ("Move SSIS/Sql/Data/SSIS_From_Sandeep/Scripts/Build
+out of this repo"), **the original PoC packages, SQL scripts, sample data,
+the third-party `SSIS_From_Sandeep` portfolio, and the `.NET` runner/build
+scripts described throughout the rest of this file (`SSIS/`, `Sql/`,
+`Data/`, `Scripts/`, `SSIS.sln`) are no longer in this repository** — they
+were moved to a separate location. `README.md` at the repo root still
+describes that old layout and is now stale for the same reason; don't trust
+its file tree either without checking.
+
+What's actually here today:
+
+| Folder | What it is |
+|---|---|
+| `Tools/SsisExtractor/` | `ssisx` — the portable, GAC-free SSIS extractor/analyzer/C#-code-generator CLI. This is the actively-developed core of the project now. Its own `README.md` and `docs/*-schema.md` are current; see `CLAUDE.md`'s own extensive "Phase 0 extractor" section below for the full build history. |
+| `Tools/SsisValidationKit/` | `svk` — companion CLI producing human-readable walkthroughs/sample data from an extracted spec; ships in the same solution as `ssisx` (`SsisExtractor.slnx`) but must never depend on `Ssis.Extract.Codegen`/`Ssis.Extract.Cli` (see its own `SvkCore.csproj` doc comment). |
+| `Tools/Etl.Core/` | A portable copy of the hand-written `Etl.Core` runtime library that `ssisx generate`'s output targets — see "Tools reorganized for real client portability" below for why this copy exists and how to refresh it. |
+| `Tools/COPILOT_GUIDE.md`, `Tools/COPILOT_TESTING_GUIDE.md`, `Tools/.github/` | Client-facing docs and prompt files for running this tool via GitHub Copilot on a client site with no access to this repo's own history. |
+| `Docs/` | Design/plan documents for major features (`Migration-Validation-Plan.md`, `Phase0-Extractor-Plan.md`, `Emitter-Rewrite-Plan.md`, `Generated-Tests-Plan.md`, review prompts, etc.) — referenced by name throughout the log below. |
+| `Validation/` | The gate-3 golden-corpus comparison harness (`ssis-validate`), dev-only, not shipped to a client — see its own section below for why it's separate from `Tools/`. |
+| `ClientMigration/` | Scanning/checklist tooling for surveying a client's own SSIS portfolio ahead of migration. |
+| `Artifacts/` | Reference screenshots. |
+
+**Practical implications for picking up work here:**
+- Commands referencing `SSIS.sln`, `devenv`, `sqlcmd -i Sql\...`, or paths
+  under `SSIS/`/`Data/`/`Scripts/` in the sections below describe a *former*
+  state of this repo (or a sibling environment) — confirm the target still
+  exists before running them.
+- `Tools/SsisExtractor/scripts/Run-Tests.ps1` (or `dotnet test SsisExtractor.slnx`
+  from `Tools/SsisExtractor/`) is the test entry point that still applies today.
+- The AI-assisted-generation workflow (`ssisx generate` → `svk` → fill gaps →
+  `ssisx apply-fills`/`apply-tests` → build/test) is the current focus; the
+  `/ssisx-rewrite` skill (and its GitHub Copilot equivalent under
+  `Tools/.github/prompts/`) is the standard way to drive it end to end.
+
+## READ THIS FIRST — corrections from the 2026-09-02/03 gap audit
 
 An audit was run deliberately from primary evidence only (source code, the
 real SSIS component set, and behaviour measured via dtexec), specifically

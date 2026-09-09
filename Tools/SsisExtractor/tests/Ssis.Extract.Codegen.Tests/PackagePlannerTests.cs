@@ -15,7 +15,7 @@ public class PackagePlannerTests
     // synthetic fixtures under Ssis.Extract.Tests/Fixtures), same lookup depth
     // SyntheticParallelShapesTests.SsisProjectDir uses from its own sibling test project.
     private static readonly string SsisProjectDir = Path.GetFullPath(Path.Combine(
-        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "SSIS"));
+        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "..", "SSIS_Packages", "SSIS"));
 
     // Tools/SsisExtractor/tests/Ssis.Extract.Codegen.Tests -> tests/Ssis.Extract.Tests/Fixtures --
     // where the synthetic component-coverage fixtures live (unlike TestFixtures.LoadPackage,
@@ -995,6 +995,114 @@ public class PackagePlannerTests
         var gap = Assert.Single(plan.Gaps);
         Assert.Contains("fed by a Data Conversion", gap.Reason);
         Assert.Contains("not supported yet for a multi-independent-source Merge/UnionAll", gap.Reason);
+    }
+
+    [Fact]
+    public void Plan_ResolvesAnErrorRedirectDestination_ForTheSyntheticErrorRedirectFixture()
+    {
+        var package = LoadSyntheticFixture("SyntheticErrorRedirect.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var flow = Assert.Single(plan.Flows);
+        Assert.Equal("OLEDST_Target", flow.DestinationComponent.Name);
+        Assert.NotNull(flow.ErrorRedirect);
+        Assert.Equal("OLEDST_Errors", flow.ErrorRedirect!.ErrorDestinationComponent.Name);
+    }
+
+    [Fact]
+    public void Plan_SelectsThePrimaryDestination_RegardlessOfAlphabeticalComponentOrder()
+    {
+        // OLEDST_Errors sorts BEFORE OLEDST_Target alphabetically -- PipelineSpec.Components'
+        // own deterministic-output ordering -- so a bare FirstOrDefault (what PlanDataFlow used
+        // before SelectPrimaryDestination existed) picks the ERROR table as "the" destination.
+        // Confirmed real, not hypothetical: this is exactly the failure this fixture's own name
+        // was chosen to catch, found running it for the first time.
+        var package = LoadSyntheticFixture("SyntheticErrorRedirect.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        var flow = Assert.Single(plan.Flows);
+        Assert.Equal("OLEDST_Target", flow.DestinationComponent.Name);
+    }
+
+    [Fact]
+    public void Plan_ReportsAGap_WhenAThirdDestinationIsUnaccountedFor()
+    {
+        // The general defensive fix, not the redirect-specific one: a THIRD destination
+        // component sitting in the same pipeline, neither the resolved primary nor its own
+        // error-redirect target, must never silently vanish -- the exact bug class this whole
+        // round exists to close, generalized beyond the one evidenced shape.
+        var package = ErrorRedirectPackageWithExtraDestination();
+
+        var plan = PackagePlanner.Plan(package);
+
+        var gap = Assert.Single(plan.Gaps);
+        Assert.Contains("3 destination components", gap.Reason);
+        Assert.Contains("only 2 are accounted for", gap.Reason);
+        Assert.Contains("ExtraDestination", gap.Reason);
+    }
+
+    /// <summary>Hand-built minimal Source -&gt; Destination(RedirectRow) -&gt; ErrorDestination
+    /// shape, PLUS a completely unconnected third Microsoft.OLEDBDestination -- proves the
+    /// general "unaccounted destination" gap fires even when the redirect pair itself resolves
+    /// cleanly. Same "no dtsx/object-model build needed" reasoning as <see cref="UnionPackage"/>.</summary>
+    private static PackageSpec ErrorRedirectPackageWithExtraDestination()
+    {
+        var components = new List<PipelineComponentSpec>
+        {
+            new()
+            {
+                RefId = "SRC", Name = "Source", ComponentClassId = "Microsoft.OLEDBSource",
+                OleDbSource = new OleDbSourcePayload { AccessMode = 2, SqlCommand = "SELECT ID FROM dbo.Source" },
+                Outputs = [new PipelineOutputSpec { RefId = "SRC.Output", Name = "Output", Columns = [new PipelineOutputColumnSpec { RefId = "SRC.Output.Columns[ID]", Name = "ID", DataType = "i4", LineageId = "LIN_ID" }] }],
+            },
+            new()
+            {
+                RefId = "DST", Name = "Destination", ComponentClassId = "Microsoft.OLEDBDestination",
+                Inputs = [new PipelineInputSpec { RefId = "DST.Input", Name = "Input", ErrorRowDisposition = "RedirectRow", Columns = [new PipelineInputColumnSpec { RefId = "DST.Input.Columns[ID]", CachedName = "ID", LineageId = "LIN_ID" }] }],
+                Outputs = [new PipelineOutputSpec { RefId = "DST.Error", Name = "Error Output", IsErrorOut = true, Columns = [] }],
+            },
+            new()
+            {
+                RefId = "ERR", Name = "ErrorDestination", ComponentClassId = "Microsoft.OLEDBDestination",
+                Inputs = [new PipelineInputSpec { RefId = "ERR.Input", Name = "Input", Columns = [] }],
+            },
+            new()
+            {
+                RefId = "EXTRA", Name = "ExtraDestination", ComponentClassId = "Microsoft.OLEDBDestination",
+                Inputs = [new PipelineInputSpec { RefId = "EXTRA.Input", Name = "Input", Columns = [] }],
+            },
+        };
+        var paths = new List<PipelinePathSpec>
+        {
+            new() { RefId = "P_SRC_DST", StartId = "SRC.Output", EndId = "DST.Input" },
+            new() { RefId = "P_DST_ERR", StartId = "DST.Error", EndId = "ERR.Input" },
+        };
+
+        var pipeline = new PipelineSpec { Components = components, Paths = paths };
+        return new PackageSpec
+        {
+            ObjectName = "P",
+            SourceDtsxPath = "P.dtsx",
+            Sha256 = "",
+            FileSizeBytes = 0,
+            LastWriteTimeUtc = default,
+            ProtectionLevelRaw = 0,
+            ProtectionLevelName = "DontSaveSensitive",
+            Coverage = new CoverageStats { TotalElements = 0, UnmappedElements = 0, ExcludedElements = 0, CoveragePercent = 100 },
+            Executables =
+            [
+                new ExecutableSpec
+                {
+                    RefId = @"Package\DFT_Test",
+                    ExecutableType = "Microsoft.Pipeline",
+                    ObjectName = "DFT_Test",
+                    DataFlowTask = new DataFlowTaskPayload { Pipeline = pipeline, Lineage = LineageBuilder.Build(pipeline) },
+                },
+            ],
+        };
     }
 
     /// <summary>Hand-built minimal N-independent-source -&gt; [Sort] -&gt; Microsoft.Merge/UnionAll

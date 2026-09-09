@@ -622,7 +622,8 @@ internal static class GenerateCommand
         sb.AppendLine("  `fills/` from before this path was made explicit).");
         sb.AppendLine("- `generate/<Package>/` -- the generated C# project. **Never hand-edit files here** --");
         sb.AppendLine("  regenerated/overwritten on every `ssisx generate` run. A Script Task/Component's unfilled");
-        sb.AppendLine("  logic shows up here as an unimplemented `partial` method (`Fill_<Column>` or");
+        sb.AppendLine("  logic shows up here as an unimplemented `partial` method (a Script Component's own");
+        sb.AppendLine("  combined method, named after the component, or a Script Task's");
         sb.AppendLine("  `RunScriptAsync`) that deliberately fails to build (`CS8795`) until you supply the other");
         sb.AppendLine("  half in the fills directory above -- that failure is intentional, not something to patch");
         sb.AppendLine("  around here.");

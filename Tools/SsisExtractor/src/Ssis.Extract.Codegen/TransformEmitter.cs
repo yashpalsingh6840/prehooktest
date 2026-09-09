@@ -274,9 +274,16 @@ public static class TransformEmitter
         // callable function (see AddComputeMethod's own doc comment for why this is scoped to
         // Derived Column only, not every non-passthrough branch).
         var computeMethods = new List<string>();
-        // Tier-2 Fill_* declarations (--seams). Empty unless EmitSeams and a Script Component
-        // genuinely produces one of this destination's columns.
+        // Tier-2 combined-seam declarations (--seams), one per Script Component (not per column
+        // -- see ScriptComponentGroup's own doc comment). Empty unless EmitSeams and a Script
+        // Component genuinely produces one of this destination's columns.
         var seams = new List<string>();
+        // Every column a Script Component produces, grouped by the component's own RefId --
+        // populated during the main loop below, consolidated into one seam/gap per component
+        // AFTER the loop, once every one of that component's columns reaching this destination is
+        // known. Dictionary iteration order matches insertion order here (no removals), matching
+        // this project's own established determinism convention elsewhere.
+        var scriptComponentGroups = new Dictionary<string, ScriptComponentGroup>();
         foreach (var column in resolved.Columns)
         {
             // A replaced column has the SAME name as the upstream column it rewrites, whereas a
@@ -367,6 +374,17 @@ public static class TransformEmitter
             }
             else if (unrecognizedComponentColumns.TryGetValue(column.PipelineColumnName, out var producer))
             {
+                if (producer.ScriptComponent is null)
+                {
+                    // Any OTHER unrecognized producer (not a Script Component) stays Unclassified,
+                    // per-column, unchanged -- that is missing TOOL support, and grouping/hand-
+                    // patching it per package would hide one systemic emitter gap behind N patches.
+                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                        $"column '{column.PipelineColumnName}' is produced by '{producer.Name}' ({producer.ComponentClassId}), a component type this tool does not translate -- cannot safely generate a passthrough reference.",
+                        Kind: GapKind.Unclassified));
+                    continue;
+                }
+
                 // The destination entity's own property type, resolved by EXACTLY the rule
                 // EntityEmitter uses -- a seam whose return type disagreed with the property it
                 // feeds would turn a clear CS8795 ("fill this in") into a confusing CS0029.
@@ -375,46 +393,85 @@ public static class TransformEmitter
                     ? null
                     : seamIsNullable ? column.Type.ClrTypeName + "?" : column.Type.ClrTypeName;
 
-                if (request.EmitSeams && producer.ScriptComponent is not null && seamType is not null)
+                if (seamType is null)
                 {
-                    var methodName = $"Fill_{column.ExternalColumnName}";
-                    if (seams.Count > 0) seams.Add("");
-                    seams.Add($"    /// <summary>Buffer column '{column.PipelineColumnName}', produced by Script Component");
-                    seams.Add($"    /// '{producer.Name}'. Work packet: SCRIPT-COLUMN {request.EntityName}.{column.ExternalColumnName}.</summary>");
-                    seams.Add($"    private partial {seamType} {methodName}({request.RowTypeName} row, in RowContext ctx);");
-                    assignments.Add($"        {column.ExternalColumnName} = {methodName}(row, ctx),");
-
-                    // Still a BLOCKING gap, and still reported: a seam is outstanding work, not a
-                    // resolution. generation-readiness.md must keep saying this package is not
-                    // generatable until the fill exists -- which is literally true, it won't build.
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
-                        $"column '{column.PipelineColumnName}' is produced by Script Component '{producer.Name}' -- emitted as a `private partial {seamType} {methodName}({request.RowTypeName} row, in RowContext ctx)` seam. The project will not compile (CS8795) until a second part of '{request.TransformClassName}' implements it; apply one with `ssisx apply-fills`.",
-                        Kind: GapKind.ScriptComponentColumn,
-                        EvidenceRefId: producer.RefId));
-
-                    // Companion "Script Task / Script Component seam" taxonomy row
-                    // (Docs/Generated-Tests-Plan.md): a filled seam is human logic, and a test for
-                    // it is a test-oracle packet, not something the deterministic emitter can
-                    // derive -- a separate, non-blocking work item from the port itself, sharing
-                    // its own Location so both land under the same column in `gaps.json`.
-                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
-                        $"column '{column.ExternalColumnName}' ({methodName}) has no generated test at all (a filled seam is human logic -- see the TEST-ORACLE work packet for this column to write one).",
-                        IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: producer.RefId));
+                        $"column '{column.PipelineColumnName}' is produced by Script Component '{producer.Name}' but its own destination type could not be resolved -- cannot generate a seam for it.",
+                        Kind: GapKind.ScriptComponentColumn, EvidenceRefId: producer.RefId));
                     continue;
                 }
 
-                gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
-                    $"column '{column.PipelineColumnName}' is produced by '{producer.Name}' ({producer.ComponentClassId}), a component type this tool does not translate -- cannot safely generate a passthrough reference. If this is a Script Component, its transform logic must be ported by hand, the same limitation as a Script Task.",
-                    // Classified only when the producer really IS a Script Component: its source is
-                    // present in the .dtsx, so this is a portable translation job (Tier 2). Any OTHER
-                    // unrecognized producer stays Unclassified -- that is missing tool support, and
-                    // hand-patching it per package would hide one systemic emitter gap behind N patches.
-                    Kind: producer.ScriptComponent is not null ? GapKind.ScriptComponentColumn : GapKind.Unclassified,
-                    EvidenceRefId: producer.ScriptComponent is not null ? producer.RefId : null));
+                // Deferred, not emitted here -- every column this same Script Component produces
+                // (reaching this destination) needs to be known before its ONE combined seam/gap
+                // can be built. See the post-loop consolidation below and ScriptComponentGroup's
+                // own doc comment for why this replaced a per-column Fill_{Column} seam.
+                if (!scriptComponentGroups.TryGetValue(producer.RefId, out var group))
+                    scriptComponentGroups[producer.RefId] = group = new ScriptComponentGroup(producer);
+                group.Columns.Add(new ScriptComponentGroupColumn(column.ExternalColumnName, seamType));
+
+                if (request.EmitSeams)
+                {
+                    var localVar = PackageGenerator.LowerFirst(PackageGenerator.SanitizeIdentifier(producer.Name)) + "Result";
+                    assignments.Add($"        {column.ExternalColumnName} = {localVar}.{column.ExternalColumnName},");
+                }
+                // else: EmitSeams off -- the column is simply omitted from the object initializer,
+                // same as today; the group's own consolidated gap below explains why.
             }
             else if (!mismatchedTypeColumns.Contains(column.PipelineColumnName))
             {
                 assignments.Add($"        {column.ExternalColumnName} = row.{column.PipelineColumnName},");
+            }
+        }
+
+        // Consolidate every deferred Script-Component group into ONE seam/gap per component --
+        // see ScriptComponentGroup's own doc comment. "var x = Method(row, ctx);" lines are
+        // prepended to Map()'s own body (which becomes block-bodied instead of a single
+        // expression the moment any exist) so a component producing several columns is computed
+        // exactly once per row, not once per column.
+        var scriptComponentLocals = new List<string>();
+        var scriptComponentRecords = new List<string>();
+        foreach (var group in scriptComponentGroups.Values)
+        {
+            var sanitizedName = PackageGenerator.SanitizeIdentifier(group.Producer.Name);
+            var resultTypeName = $"{sanitizedName}Result";
+            var columnList = string.Join(", ", group.Columns.Select(c => c.ExternalColumnName));
+
+            if (request.EmitSeams)
+            {
+                var localVar = PackageGenerator.LowerFirst(sanitizedName) + "Result";
+                scriptComponentLocals.Add($"        var {localVar} = {sanitizedName}(row, ctx);");
+
+                var recordProps = string.Join(", ", group.Columns.Select(c => $"{c.SeamType} {c.ExternalColumnName}"));
+                scriptComponentRecords.Add($"internal readonly record struct {resultTypeName}({recordProps});");
+
+                if (seams.Count > 0) seams.Add("");
+                seams.Add($"    /// <summary>Script Component '{group.Producer.Name}', producing {group.Columns.Count} column(s)");
+                seams.Add($"    /// together: {columnList}. Work packet: SCRIPT-COLUMN {request.EntityName}.{sanitizedName}.</summary>");
+                seams.Add($"    private partial {resultTypeName} {sanitizedName}({request.RowTypeName} row, in RowContext ctx);");
+
+                // Still a BLOCKING gap, and still reported: a seam is outstanding work, not a
+                // resolution. generation-readiness.md must keep saying this package is not
+                // generatable until the fill exists -- which is literally true, it won't build.
+                gaps.Add(new GenerationGap($"{request.EntityName}.{sanitizedName}",
+                    $"Script Component '{group.Producer.Name}' produces {group.Columns.Count} column(s) ({columnList}) -- emitted as a single `private partial {resultTypeName} {sanitizedName}({request.RowTypeName} row, in RowContext ctx)` seam. The project will not compile (CS8795) until a second part of '{request.TransformClassName}' implements it; apply one with `ssisx apply-fills`.",
+                    Kind: GapKind.ScriptComponentColumn,
+                    EvidenceRefId: group.Producer.RefId));
+
+                // Companion "Script Task / Script Component seam" taxonomy row
+                // (Docs/Generated-Tests-Plan.md): a filled seam is human logic, and a test for it
+                // is a test-oracle packet, not something the deterministic emitter can derive --
+                // a separate, non-blocking work item from the port itself, sharing its own
+                // Location so both land under the same component in `gaps.json`.
+                gaps.Add(new GenerationGap($"{request.EntityName}.{sanitizedName}",
+                    $"Script Component '{group.Producer.Name}' ({sanitizedName}) has no generated test at all (a filled seam is human logic -- see the TEST-ORACLE work packet to write one).",
+                    IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: group.Producer.RefId));
+            }
+            else
+            {
+                gaps.Add(new GenerationGap($"{request.EntityName}.{sanitizedName}",
+                    $"Script Component '{group.Producer.Name}' produces {group.Columns.Count} column(s) ({columnList}) -- cannot safely generate a passthrough reference; its transform logic must be ported by hand, the same limitation as a Script Task. Re-run with --seams for a fillable partial-method seam instead of this plain gap.",
+                    Kind: GapKind.ScriptComponentColumn,
+                    EvidenceRefId: group.Producer.RefId));
             }
         }
 
@@ -424,7 +481,7 @@ public static class TransformEmitter
             return new TransformEmitResult(new EmitResult([], gaps), functionsUsed);
         }
 
-        var lines = BuildFile(request, assignments, functionsUsed, seams, computeMethods);
+        var lines = BuildFile(request, assignments, functionsUsed, seams, computeMethods, scriptComponentLocals, scriptComponentRecords);
         var file = new GeneratedFile($"Mapping/{request.TransformClassName}.cs", Rendering.JoinLines(lines));
         return new TransformEmitResult(new EmitResult([file], gaps), functionsUsed);
     }
@@ -455,7 +512,8 @@ public static class TransformEmitter
         computeMethods.Add($"    public static {returnType} {methodName}({rowTypeName} row, in RowContext ctx) => {expression};");
     }
 
-    private static List<string> BuildFile(TransformRequest request, List<string> assignments, HashSet<string> functionsUsed, List<string> seams, List<string> computeMethods)
+    private static List<string> BuildFile(TransformRequest request, List<string> assignments, HashSet<string> functionsUsed,
+        List<string> seams, List<string> computeMethods, List<string> scriptComponentLocals, List<string> scriptComponentRecords)
     {
         // WidthGuard.Wstr(...) calls can live in either assignments (a plain, uncomputed
         // truncation -- not evidenced anywhere today, but not ruled out either) or computeMethods
@@ -474,6 +532,14 @@ public static class TransformEmitter
         lines.Add("");
         lines.Add($"namespace {request.MappingNamespace};");
         lines.Add("");
+        // One small record per Script-Component seam, declared ahead of the transform class --
+        // its own combined method returns this. Empty unless EmitSeams and at least one Script
+        // Component genuinely produces a column reaching this destination.
+        if (scriptComponentRecords.Count > 0)
+        {
+            lines.AddRange(scriptComponentRecords);
+            lines.Add("");
+        }
         // A Lookup flow's transform takes its preloaded reference cache as a primary-constructor
         // parameter -- Program.cs awaits the load at top level and constructs this directly (see
         // ProgramEmitter's LookupPreload), so there is nothing for DI to resolve here.
@@ -482,22 +548,43 @@ public static class TransformEmitter
         var partial = seams.Count > 0 ? "partial " : "";
         if (seams.Count > 0)
         {
-            lines.Add($"/// <summary>Has {seams.Count(s => s.Contains("private partial "))} unimplemented Tier-2 seam(s): column(s) produced by a Script");
-            lines.Add("/// Component, whose logic this tool does not translate. Implement each one in a SECOND");
-            lines.Add("/// PART of this partial class -- a class part, not just a method body, so the port can");
-            lines.Add("/// declare its own fields (a compiled Regex, a lookup table). Until then this project");
-            lines.Add("/// deliberately does NOT compile: CS8795, one error per unfilled seam. Put the part in");
-            lines.Add($"/// fills/&lt;Package&gt;/{request.TransformClassName}.Fills.cs and run `ssisx apply-fills`.</summary>");
+            var seamCount = seams.Count(s => s.Contains("private partial "));
+            lines.Add($"/// <summary>Has {seamCount} unimplemented Tier-2 seam(s): each is a Script Component, computing");
+            lines.Add("/// one or more columns together, whose logic this tool does not translate. Implement each");
+            lines.Add("/// one in a SECOND PART of this partial class -- a class part, not just a method body, so");
+            lines.Add("/// the port can declare its own fields (a compiled Regex, a lookup table). Until then this");
+            lines.Add("/// project deliberately does NOT compile: CS8795, one error per unfilled seam. Put the");
+            lines.Add($"/// part in fills/&lt;Package&gt;/{request.TransformClassName}.Fills.cs and run `ssisx apply-fills`.</summary>");
         }
         var declaration = request.LookupJoin is { } join
             ? $"public sealed {partial}class {request.TransformClassName}(Dictionary<{join.KeyClrTypeName}, {join.CacheClassName}.ReferenceRow> {join.CacheParameterName}) : IRowTransform<{request.RowTypeName}, {request.EntityName}>"
             : $"public sealed {partial}class {request.TransformClassName} : IRowTransform<{request.RowTypeName}, {request.EntityName}>";
         lines.Add(declaration);
         lines.Add("{");
-        lines.Add($"    public {request.EntityName} Map({request.RowTypeName} row, in RowContext ctx) => new()");
-        lines.Add("    {");
-        lines.AddRange(assignments);
-        lines.Add("    };");
+        // Block-bodied only when at least one Script-Component seam feeds this Map() -- one local
+        // variable per component, computed exactly once per row, then referenced by every one of
+        // that component's own properties in the object initializer below (indented one level
+        // deeper than the plain expression form, hence the "    " + a). Every transform with no
+        // Script Component seam keeps the original single-expression form, byte-identical to
+        // before this round.
+        if (scriptComponentLocals.Count > 0)
+        {
+            lines.Add($"    public {request.EntityName} Map({request.RowTypeName} row, in RowContext ctx)");
+            lines.Add("    {");
+            lines.AddRange(scriptComponentLocals);
+            lines.Add("        return new()");
+            lines.Add("        {");
+            lines.AddRange(assignments.Select(a => "    " + a));
+            lines.Add("        };");
+            lines.Add("    }");
+        }
+        else
+        {
+            lines.Add($"    public {request.EntityName} Map({request.RowTypeName} row, in RowContext ctx) => new()");
+            lines.Add("    {");
+            lines.AddRange(assignments);
+            lines.Add("    };");
+        }
         if (computeMethods.Count > 0)
         {
             lines.Add("");
@@ -517,6 +604,24 @@ public static class TransformEmitter
     /// INPUT column (a "Replace &lt;column&gt;" in-place rewrite) can share one translation path
     /// instead of the in-place case having none at all.</summary>
     private readonly record struct DerivedExpression(string Name, string RefId, string? Expression, string? FriendlyExpression);
+
+    /// <summary>One destination column a Script Component produces, deferred until every column
+    /// in the same group is known -- see <see cref="ScriptComponentGroup"/>.</summary>
+    private readonly record struct ScriptComponentGroupColumn(string ExternalColumnName, string SeamType);
+
+    /// <summary>Every column ONE Script Component produces, reaching THIS destination -- grouped
+    /// by <see cref="PipelineComponentSpec.RefId"/> so the component gets ONE combined seam method
+    /// (returning one small record with all its columns) instead of an independent
+    /// <c>Fill_{Column}</c> seam per column. Before this grouping existed, a 4-column Script
+    /// Component (RBC_Demo_ETL's own real SCR_CleanseCustomerRow) generated 4 separate seams, 4
+    /// separate blocking gaps, and 4 separate work packets each telling the reader "port only
+    /// this one column, do not fold them together" -- even though all 4 come from one script and
+    /// are naturally ported together. See CLAUDE.md's own account of this round.</summary>
+    private sealed class ScriptComponentGroup(PipelineComponentSpec producer)
+    {
+        public PipelineComponentSpec Producer { get; } = producer;
+        public List<ScriptComponentGroupColumn> Columns { get; } = [];
+    }
 
     private static TranslatedExpression TranslateDerivedColumn(
         DerivedExpression derivedColumn, string entityName, string destinationColumnName,

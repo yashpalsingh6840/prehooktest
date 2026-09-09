@@ -201,23 +201,31 @@ public static class AiPacketEmitter
         """;
 
     private const string ScriptComponentContract = """
-        The body of ONE method computing this column's value for a single row. It will be spliced into
-        the generated transform as a `partial` method, so it must be a pure function of the row:
+        The body of ONE method computing EVERY column this Script Component produces, together, for
+        a single row -- not one method per column. It will be spliced into the generated transform as
+        a `partial` method returning the combined record `ssisx generate --seams` already declared, so
+        it must be a pure function of the row:
 
         ```csharp
         // ssisx-fill: GapId=<this gap's id> Author=<you> Date=<yyyy-mm-dd> EvidenceSha256=<from the heading above>
-        private partial <ClrType> Fill_<ColumnName>(<RowType> row, in RowContext ctx);
+        private partial <Component>Result <Component>(<RowType> row, in RowContext ctx)
+        {
+            // fields/helpers are allowed here -- this is a class part, not a bare method body.
+            return new(<Column1>: ..., <Column2>: ..., ...);
+        }
         ```
 
-        `<ClrType>` is this column's own C# type from the "Columns this component produces" table
-        below; `<RowType>` is the generated row type, whose properties are the "Input columns
-        available on `row`" table. Getting the return type right matters -- the rest of the
-        signature is filled in for you when the fill is applied.
+        `<Component>`/`<Component>Result` and the exact record shape (one property per produced
+        column, with its own C# type) are both already generated -- read them off the seam declaration
+        this gap's own reason text points at, or the "Columns this component produces" table below.
+        `<RowType>` is the generated row type, whose properties are the "Input columns available on
+        `row`" table. Getting every property's type right matters -- the rest of the method signature
+        is filled in for you when the fill is applied.
 
-        The Script Component's full source is below -- port only the part that produces THIS column.
-        Other columns from the same component are separate work packets; do not fold them together.
-        `ctx` carries the run identity (`ctx.LoadedAtUtc` is the run's own UTC timestamp, the correct
-        stand-in for a script that stamped `DateTime.Now`).
+        The Script Component's full source is below -- port the WHOLE component, computing all of its
+        columns from the one method (they came from one script; there is exactly one work packet for
+        it, not one per column). `ctx` carries the run identity (`ctx.LoadedAtUtc` is the run's own
+        UTC timestamp, the correct stand-in for a script that stamped `DateTime.Now`).
 
         """;
 
@@ -334,10 +342,11 @@ public static class AiPacketEmitter
           `PackageHarness`-backed `IUnitOfWork` and assert its real, observable effect (a row it wrote
           via `uow.ExecutedSql`, a variable it set via `ctx.Variables` if you construct the context
           yourself, etc.) -- not merely that it does not throw.
-        - **A Script Component column seam**, once it is filled. Construct a representative row,
-          call `new <TransformClass>().Fill_<Column>(row, ctx)` (or `.Map(row, ctx)` if the seam is
-          only reachable through the whole transform), and assert the exact expected value -- state
-          your reasoning for what "correct" means for this column, since nothing here computes it for
+        - **A Script Component seam**, once it is filled. The seam is `private`, so it is never
+          directly callable from a separate `.Tests` project -- construct a representative row and
+          call `new <TransformClass>().Map(row, ctx)` instead, then assert the exact expected value(s)
+          on the returned entity for however many of the component's own columns you can verify --
+          state your reasoning for what "correct" means for each, since nothing here computes it for
           you the way `TransformTestEmitter`'s own oracle-verified assertions do.
         - **An Aggregate GroupBy/count source**, whose own starter test could not be generated
           because its GroupBy key resolves through a Lookup cache rather than a plain row property.
@@ -710,7 +719,7 @@ public static class AiPacketEmitter
             .Select(c => (c.CachedName, c.CachedDataType, c.CachedLength))));
 
         sb.Append("\n### Columns this component produces\n\n");
-        sb.Append("The gap above is for ONE of these. Port only that one.\n\n");
+        sb.Append("The gap above is for this WHOLE component -- return every one of these columns together from the one combined method.\n\n");
         sb.Append(ColumnTable(component.Outputs.Where(o => o.IsErrorOut != true).SelectMany(o => o.Columns)
             .Select(c => (c.Name, c.DataType, c.Length))));
 

@@ -417,8 +417,19 @@ public static partial class PackageGenerator
             {
                 primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
                 tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
-                sink = new SqlFlowSink();
                 sqlSinkEntities.TryAdd(entityName, flow.DestinationComponent);
+
+                if (flow.ErrorRedirect is { } errorRedirect)
+                {
+                    var redirectSink = ResolveErrorRedirectSink(ns, entityName, flow.DestinationComponent, errorRedirect,
+                        files, tables, primaryKeysByDestination, flow.TaskName, gaps);
+                    if (redirectSink is null) continue; // ResolveErrorRedirectSink already added the reason
+                    sink = redirectSink;
+                }
+                else
+                {
+                    sink = new SqlFlowSink();
+                }
             }
 
             var transformResult = TransformEmitter.Emit(new TransformRequest(
@@ -2405,7 +2416,11 @@ public static partial class PackageGenerator
         return new ProgramFlowSpec(flow.TaskName, programSource, rowTypeName, entityName, transformClassName, new SqlFlowSink(), preload);
     }
 
-    private static string LowerFirst(string value) =>
+    // internal, not private -- reused by TransformEmitter for a Script-Component combined-seam
+    // local variable name (SanitizeIdentifier gives the PascalCase method/type name; this gives
+    // the camelCase local that calls it), same cross-emitter sharing precedent as
+    // CollectSsisFunctions/MapPipelineTypeToSsisType.
+    internal static string LowerFirst(string value) =>
         value.Length == 0 ? value : char.ToLowerInvariant(value[0]) + value[1..];
 
     private static ProgramFlowSpec? GenerateAggregateFlow(
@@ -2995,6 +3010,127 @@ public static partial class PackageGenerator
     /// list's own declaration order, which isn't guaranteed to match the file's layout (though it
     /// does in both real evidenced instances).
     /// </summary>
+    /// <summary>Builds the error-redirect sink for a flow whose primary destination's own input
+    /// is configured <c>ErrorRowDisposition=RedirectRow</c> -- resolves the error entity (reusing
+    /// <see cref="EntityEmitter.Emit"/> unchanged, plus one new <c>extraProperties</c> entry per
+    /// unmapped DateTime-shaped external column, e.g. <c>FailedAt</c>, which has no
+    /// pipeline-derived value at all -- see <see cref="EntityEmitter.Emit"/>'s own doc comment),
+    /// its own <see cref="DbContextEmitter.TableSpec"/>, and a small generated static error-map
+    /// class translating a failed entity + the causing <c>DbException</c> into the error entity.
+    ///
+    /// Business columns are resolved by matching NAME against the PRIMARY entity's own
+    /// already-resolved columns -- deliberately NOT re-derived via lineage through the transform.
+    /// A row that failed to insert was never inserted, so the failed <c>TEntity</c> instance's own
+    /// property values ARE exactly what SSIS's own error-output buffer would have carried for that
+    /// row (same buffer, same point in the pipeline) -- see <c>RedirectingSqlSink</c>'s own doc
+    /// comment in Etl.Core for the full reasoning. A column resolves as ErrorCode/ErrorColumn --
+    /// i.e. genuinely NEW to the error output, not passed through from upstream -- when its own
+    /// raw &lt;inputColumn&gt; lineage id starts with the PRIMARY destination's own error output's
+    /// RefId; those two are set by the sink itself, never copied from <c>failed</c>.
+    /// </summary>
+    private static RedirectingSqlFlowSink? ResolveErrorRedirectSink(
+        string ns, string entityName, PipelineComponentSpec destination, ErrorRedirectPlan errorRedirect,
+        List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
+        Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, string taskName, List<GenerationGap> gaps)
+    {
+        var errorDestination = errorRedirect.ErrorDestinationComponent;
+        var errorInput = errorDestination.Inputs.FirstOrDefault();
+        if (errorInput is null)
+        {
+            gaps.Add(new GenerationGap(taskName, $"'{errorDestination.Name}' has no input -- not supported"));
+            return null;
+        }
+
+        // An external column with no matching <inputColumn> at all needs deciding -- a .dtsx
+        // carries no nullability/identity concept, so nothing can safely be inferred about most of
+        // them (an identity PK like ErrorRowID is correctly, silently left off the entity
+        // entirely, same as EntityEmitter already does for every other destination). The one shape
+        // this generates FOR is a DateTime-shaped unmapped column (e.g. FailedAt) -- populated by
+        // the sink itself at write time via DateTime.UtcNow, never guessed at for any other type.
+        var mappedExternalIds = new HashSet<string>(errorInput.Columns
+            .Where(c => c.ExternalMetadataColumnId is not null)
+            .Select(c => c.ExternalMetadataColumnId!));
+        var extraProperties = new List<(string Name, string ClrType)>();
+        var timestampPropertyNames = new List<string>();
+        foreach (var ext in errorInput.ExternalMetadataColumns)
+        {
+            if (mappedExternalIds.Contains(ext.RefId)) continue;
+            if (SsisPipelineTypeMap.Resolve(ext.DataType)?.ClrTypeName != "DateTime") continue;
+            extraProperties.Add((ext.Name, "DateTime"));
+            timestampPropertyNames.Add(ext.Name);
+        }
+
+        var errorEntityName = entityName + "Error";
+        Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", errorEntityName, errorDestination, extraProperties: extraProperties));
+        primaryKeysByDestination.TryGetValue(errorDestination.RefId, out var errorPrimaryKey);
+        tables.Add(new DbContextEmitter.TableSpec(errorEntityName, errorDestination, errorPrimaryKey));
+
+        var primaryColumns = new HashSet<string>(PipelineResolver.ResolveDestinationInput(destination).Columns.Select(c => c.ExternalColumnName));
+        var errorResolved = PipelineResolver.ResolveDestinationInput(errorDestination);
+        var primaryErrorOutputRefId = destination.Outputs.First(o => o.IsErrorOut == true).RefId;
+
+        var assignments = new List<string>();
+        var anyBusinessColumn = false;
+        foreach (var column in errorResolved.Columns)
+        {
+            if (column.Type is null) continue; // EntityEmitter already reported this gap
+
+            var rawInputColumn = errorInput.Columns.First(c => c.RefId == column.PipelineColumnRefId);
+            var isDiagnosticColumn = rawInputColumn.LineageId.StartsWith(primaryErrorOutputRefId, StringComparison.Ordinal);
+            if (isDiagnosticColumn) continue; // ErrorCode/ErrorColumn -- set by the sink itself below, never copied from `failed`
+
+            anyBusinessColumn = true;
+            if (!primaryColumns.Contains(column.ExternalColumnName))
+            {
+                gaps.Add(new GenerationGap($"{errorEntityName}.{column.ExternalColumnName}",
+                    $"has no matching column on the primary destination entity '{entityName}' -- cannot resolve its value"));
+                continue;
+            }
+
+            assignments.Add($"        {column.ExternalColumnName} = failed.{column.ExternalColumnName},");
+        }
+
+        if (anyBusinessColumn && assignments.Count == 0)
+        {
+            // every business column failed to match -- nothing usable was generated for this
+            // destination; EntityEmitter/the gap just added already explain why.
+            return null;
+        }
+
+        foreach (var name in timestampPropertyNames)
+            assignments.Add($"        {name} = DateTime.UtcNow,");
+        // ErrorCode: a real, meaningful SQL Server error number (DbException.Number when the
+        // failure IS a real SqlException) -- SSIS's own ErrorCode is a native OLE DB HRESULT,
+        // which this rewrite (writing via Microsoft.Data.SqlClient, a different driver stack from
+        // the OLE DB provider dtexec uses) cannot reproduce bit-for-bit. ErrorColumn is left at 0
+        // deliberately -- SSIS resolves it to a pipeline lineage id, which has no equivalent once
+        // redirected through a raw ADO.NET exception; a best-effort ErrorCode is the only
+        // diagnostic this generator attempts, stated here rather than silently guessed further.
+        assignments.Add("        ErrorCode = DbExceptionErrorCode.Resolve(ex),");
+        assignments.Add("        ErrorColumn = 0, // not resolved -- see ex.Message in the log for the real SQL Server error text");
+
+        var errorMapClassName = $"{entityName}ErrorMap";
+        var mapLines = new List<string>
+        {
+            "using System.Data.Common;",
+            "using Etl.Core.Data;",
+            $"using {ns}.Model;",
+            "",
+            $"namespace {ns}.Mapping;",
+            "",
+            $"internal static class {errorMapClassName}",
+            "{",
+            $"    internal static {errorEntityName} Map({entityName} failed, DbException ex) => new()",
+            "    {",
+        };
+        mapLines.AddRange(assignments);
+        mapLines.Add("    };");
+        mapLines.Add("}");
+        files.Add(new GeneratedFile($"Mapping/{errorMapClassName}.cs", Rendering.JoinLines(mapLines)));
+
+        return new RedirectingSqlFlowSink(destination.Name, errorDestination.Name, errorEntityName, errorMapClassName);
+    }
+
     private static FlatFileFlowSink? ResolveFlatFileSink(
         PackageSpec package, string taskName, PipelineComponentSpec destination, string fileSourceKey,
         List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps)

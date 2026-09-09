@@ -203,8 +203,9 @@ internal static class Program
             <out>/generate/ has no hand-editing expectation -- rerun freely.
             Seams are ON BY DEFAULT: the two things whose logic this tool cannot translate,
             but whose source IS in the .dtsx, become `private partial` methods for a human
-            to implement instead of being silently omitted -- a column produced by a Script
-            Component becomes a Fill_<Column> on its transform class, and a Script Task
+            to implement instead of being silently omitted -- a Script Component becomes ONE
+            combined method (named after the component, returning a small record with every
+            column it produces together) on its transform class, and a Script Task
             becomes a whole ILoadTask class with a RunScriptAsync seam (so it keeps its real
             position in the step order, and its port gets the package's shared variables).
             This deliberately makes the generated project FAIL to build (CS8795) until every
@@ -215,13 +216,13 @@ internal static class Program
             silent-omission behavior -- named to make that risk visible at the call site,
             not just here. Fills live outside <out>/generate/ and ARE hand-maintained, the
             same way 'conformance' claims are: --fills points at that directory (default
-            <out>/fills/), which ssisx only ever READS -- both the Fill_* parts applied by
+            <out>/fills/), which ssisx only ever READS -- both the seam parts applied by
             'apply-fills' and <Package>.decisions.json.
 
               ssisx apply-fills --out <dir> [--fills <dir>] [--claims <dir>]
 
             apply-fills options: copies hand-maintained Tier-2 fills -- the second part of a
-            generated partial class, implementing the Fill_<Column> or RunScriptAsync seams
+            generated partial class, implementing the Script-Component or RunScriptAsync seams
             'generate --seams' emitted -- from <out>/fills/<Package>/*.cs into
             <out>/generate/<Package>/Fills/. Reads fills/ and never writes to it. Validation
             is the real point: a fill implementing a seam no gap asked for is reported as

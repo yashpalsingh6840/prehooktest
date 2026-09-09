@@ -10,6 +10,51 @@ three different reasons:
 | `Etl.Core/` | The hand-written runtime library every `ssisx generate` output targets (`SqlBulkSink`, `CsvRowSource`, `ExecuteSqlStep`/`DataFlowStep`/every other step type, the notification/hosting plumbing, etc.) | `ssisx generate` deliberately does not produce this -- it's written once, not derived from any `.dtsx` (see `GenerateCommand.WriteFixedFiles`'s own doc comment). A generated package needs a copy of it alongside its own project to build at all. |
 | [`SsisValidationKit/`](SsisValidationKit/README.md) | `svk` -- a **separate, standalone** review/sample-data tool (its own solution, `SsisValidationKit.slnx`) that only ever *reads* `ssisx extract`'s output; it never edits anything under `SsisExtractor/` and never generates C# | Two commands: `svk walkthrough` (a human-readable execution-order review doc + a claims file per package) and `svk sampledata` (deterministic, schema-correct sample CSVs/SQL/DDL). Both optional, both read-only against `ssisx`'s own spec output -- see "Reviewing before/alongside generation with `svk`" below. |
 
+## Project map -- what each project/file actually does
+
+Full narrative detail lives in each tool's own README
+([`SsisExtractor/README.md`](SsisExtractor/README.md),
+[`SsisValidationKit/README.md`](SsisValidationKit/README.md)) and, for `ssisx`, its `docs/`
+folder (`spec-schema.md`/`report-schema.md`/`conformance-schema.md`/`gate2-schema.md`). This
+section is a quick reference for orienting inside either solution -- what each `.csproj` is for
+and its handful of most important files.
+
+### `ssisx` (`SsisExtractor/`, `SsisExtractor.slnx`)
+
+Reads raw `.dtsx`/`.dtproj`/`.ispac` XML directly (no SSIS install, no GAC, no SSISDB on the
+main path) and turns it into inventory, findings, conformance obligations, generated tests, and
+generated C#. Nine projects, roughly in dependency order:
+
+| Project | Purpose | Key files |
+|---|---|---|
+| `Ssis.Extract.Model` | Plain-POCO data model (the "spec" shape) every other project reads or writes -- no I/O, no logic. | `Package/PackageSpec.cs` (per-package spec root), `Pipeline/PipelineSpec.cs` (a Data Flow Task's full component/path model), `Analysis/ConformanceSpec.cs` (gate-1 obligation shape), `Analysis/GapSpec.cs` (Tier 1/2/3 gap taxonomy), `Serialization/StableJsonWriter.cs` (deterministic, sorted-key JSON), `Shared/SsisPipelineTypeMap.cs` (SSIS buffer-type -> CLR-type lookup). |
+| `Ssis.Extract.Dtsx` | Reads raw XML into `PackageSpec`/`PipelineSpec` and runs every derived/cross-package analysis -- the extraction engine itself. | `DtsxPackageReader.cs` (main entry: one `.dtsx` -> one `PackageSpec`), `PipelineReader.cs` (parses `<pipeline>` into `PipelineSpec`, incl. bespoke payloads for ~20 component types), `LineageBuilder.cs` (column-level lineage via lineageId, not `<path>` walking), `RulesEngine.cs` (23 findings rules), `ConformanceRulesBuilder.cs`/`ConformanceChecker.cs` (gate-1 rule generation + claim reconciliation), `SqlHarvester.cs`, `DependencyGraphBuilder.cs`, `PackageDiffer.cs` (semantic diff), `IspacReader.cs`/`DtprojReader.cs`/`ProjectParamsReader.cs`. |
+| `Ssis.Extract.Sql` | Parses harvested SQL text with Microsoft's real T-SQL parser, kept isolated so the core readers stay dependency-free. | `SqlAnalyzer.cs` (the whole project -- `TSql170Parser`, flags TRUNCATE/DELETE/MERGE/dynamic SQL, read/write disambiguation). |
+| `Ssis.Runtime.Expressions` | Standalone parser + evaluator for the SSIS expression language, implementing MEASURED (not documented) semantics -- gate 2's foundation. | `SsisExpression.cs` (public parse+evaluate entry point), `Lexer.cs`/`Parser.cs` (tokenizer + recursive-descent parser -> `Ast.cs` nodes), `Evaluator.cs` (tree-walking evaluator, no implicit coercion, three-valued NULL logic), `Functions.cs` (built-in functions: `SUBSTRING`/`FINDSTRING`/`TRIM`/`DATEDIFF`/etc.), `SsisValue.cs`/`SsisType.cs`. |
+| `Ssis.Expression.Oracle` (net48, Windows-only) | Ground-truth generator: evaluates a fixed 130+-expression corpus through the REAL SSIS evaluator and writes a TSV fixture `Ssis.Runtime.Expressions.Tests` asserts against. | `Program.cs` (the whole project -- one isolated `Application`/`Package`/`Variable` per expression, `EvaluateAsExpression=true`). |
+| `Ssis.Extract.ObjectModel` (net48, Windows-only) | A second, independent way to gain confidence: loads a package via the real SSIS object model and cross-checks structural counts against the XML-derived spec. | `PackageOracle.cs` (walks executables/connections/variables/pipeline via `Application.LoadPackage`), `PackageOracleFacts.cs` (the comparison DTO). |
+| `Ssis.Extract.Codegen` | The largest project: plans and emits the generated C# rewrite -- package classes, transforms, entities, tests, sample data, and AI work packets. | `PackagePlanner.cs` (resolves each Data Flow Task into a `DataFlowPlan`: source/transform/destination/gaps), `PackageGenerator.cs` (top-level per-package orchestrator, ~2800 lines, unit-testable independent of file I/O), `PackageClassEmitter.cs` (emits `{Package}.cs`, one method per SSIS task/component, real concurrency for parallel SSIS branches), `ExpressionTranslator.cs` (SSIS expression AST -> C# text, or a named `NotTranslatable` gap), `TransformEmitter.cs`/`EntityEmitter.cs`/`RouterEmitter.cs`/`MergeJoinEmitter.cs`/`AggregateRowEmitter.cs`/`LookupCacheEmitter.cs` (per-component-shape emitters), `AiPacketEmitter.cs` (gap -> self-contained markdown work packet), `GapDecisions.cs` (applies only human-confirmed Tier-1 decisions), `ComponentTestEmitter.cs`/`TransformTestEmitter.cs`/`SqlStatementTestEmitter.cs`/`TestProjectEmitter.cs` (starter xUnit tests per component), `SampleDataEmitter.cs`/`SqlRowEmitter.cs`/`CsvRowEmitter.cs`/`ExcelRowEmitter.cs`/`FixedWidthRowReaderEmitter.cs` (per-source-type read/sample code). |
+| `Ssis.Extract.FixtureBuilder` (net48, Windows-only) | Dev-only console tool: builds synthetic `.dtsx` test fixtures via the real SSIS object model (not hand-written XML), for shapes no real tracked package demonstrates. | `Program.cs` (the whole project -- dozens of named fixture modes, e.g. `SyntheticParallelShapes.dtsx`, `SyntheticLookupSplit.dtsx`). |
+| `Ssis.Extract.Cli` | `ssisx.exe` itself -- thin command shells over the libraries above, handling arg parsing, file I/O, and console/markdown/JSON rendering. | `Program.cs` (dispatches `extract`/`graph`/`report`/`conformance`/`testgen`/`diff`/`generate`/`apply-fills`/`apply-tests`), `PackageLoader.cs` (shared `--input`/`--package` resolver for every command), `ExtractCommand.cs`, `GenerateCommand.cs` (thin shell over `PackageGenerator`, plus `--etl-core`/`--fills`/`--framework`/`--skip-tests` wiring), `ApplyFillsCommand.cs` (copies hand-authored fills in, reports what's outstanding), `ConformanceCommand.cs`, `GraphCommand.cs`, `TestGenCommand.cs`, `DiffCommand.cs`, `ReportCommand.cs`, `PortfolioDigest.cs` (the client-transferable, sanitized digest), `Rendering/MermaidRenderer.cs`/`DotRenderer.cs`. |
+
+`tests/` mirrors this layout one-for-one (`Ssis.Extract.Tests`, `Ssis.Runtime.Expressions.Tests`,
+`Ssis.Extract.Cli.Tests`, `Ssis.Extract.Codegen.Tests`, `Ssis.Extract.ObjectModel.Tests`) --
+see `SsisExtractor/README.md`'s own "Test" section for what's golden-file-pinned vs. synthetic.
+
+### `svk` (`SsisValidationKit/`, its own `SsisValidationKit.slnx`, also referenced from `SsisExtractor.slnx`)
+
+A separate, standalone, **read-only** review/sample-data tool -- it only ever reads `ssisx
+extract`'s own spec output, never edits anything under `SsisExtractor/`, and never generates C#.
+Two projects:
+
+| Project | Purpose | Key files |
+|---|---|---|
+| `SvkCore` | Builds human-readable walkthroughs and synthetic sample data from an already-extracted `PackageSpec`. Only allowed to reference `Ssis.Extract.Model`/`Ssis.Extract.Dtsx` -- never `Ssis.Extract.Codegen`/`Ssis.Extract.Cli` (a pinned governance boundary, checked by a doc comment on its own `ProjectReference`). | `WalkthroughBuilder.cs` (renders one package's execution-order review markdown, incl. per-component lineage + linked conformance rule ID), `ExecutionOrderBuilder.cs` (walks the control-flow tree in real SSIS execution order, flagging parallel branches), `SampleDataPlanner.cs` (discovers every source/destination/Lookup by scanning pipeline payloads), `SampleDataWriter.cs` (writes CSV/fixed-width/`.xlsx`/SQL/schema/Lookup-reference sample data), `ValueSynthesizer.cs` (deterministic, seeded, type-correct synthetic values), `SharedKeyPool.cs` (keeps a Lookup's reference table and main-flow rows in the intended ~70/30 match/no-match split), `ControlFlowDiagramBuilder.cs`/`DataFlowDiagramBuilder.cs` (Mermaid diagrams), `SchemaEmitter.cs` (runnable `CREATE TABLE`, PK lines marked `INFERRED`). |
+| `SvkCli` | `svk.exe` -- thin command shell over `SvkCore`. | `Program.cs` (dispatches `sampledata`/`walkthrough`), `WalkthroughCommand.cs`, `SampleDataCommand.cs`, `CliArgs.cs`. |
+
+See `SsisValidationKit/README.md`'s "Known limitations, stated rather than hidden" section
+before relying on `svk`'s output for anything beyond a quick sanity read.
+
 ## Using this on a client's own packages
 
 Two ways to invoke it: `dotnet run --project ...` (rebuilds if needed, slower per call, no

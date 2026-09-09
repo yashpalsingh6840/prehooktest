@@ -37,8 +37,17 @@ publish a single exe the same way `ssisx` itself does if it needs to travel to a
 
 ## `sampledata` output, per package (`<out>/sampledata/<Package>/`)
 
-- `<Component>.csv` -- one per Flat File/Excel source, header + N synthetic rows, type/length-
-  correct against the source's own declared external-metadata schema.
+- `<Component>.csv` -- one per DELIMITED Flat File source, header + N synthetic rows, type/
+  length-correct against the source's own declared external-metadata schema.
+- `<Component>.txt` -- one per FIXED-WIDTH/RaggedRight Flat File source, instead of the `.csv`
+  above: a positional layout (no delimiter), each value padded/truncated to its own connection-
+  manager-declared column width (right-pad with spaces, silently truncate an over-length value --
+  the measured real SSIS write convention), with `HeaderRowsToSkip` control records written as
+  `SKIP` placeholder lines.
+- `<Component>.xlsx` -- one per Excel source: a real, openable workbook (via ClosedXML), with the
+  worksheet name and header-row setting (`HDR=YES/NO`) resolved from the EXCEL connection
+  manager. Columns are written in the exact ordinal order the generated reader expects (an Excel
+  source is read purely by position, never by column name).
 - `<Component>.sql` -- one per SQL-shaped source (OLE DB/ADO NET), `CREATE TABLE` + `INSERT`.
 - `<Component>.expected.sql` -- one per destination, `CREATE TABLE` only (load the generated
   C#'s own output here for comparison).
@@ -62,7 +71,10 @@ and main-flow source genuinely share key values in the intended ~70/30 match/no-
   order), with an explicit callout wherever `ssisx extract`'s own `Dag.ParallelLevels` says SSIS
   ran executables concurrently -- confirm the rewrite's own sequencing there is acceptable, or
   flag it for redesign. Under each Data Flow Task, every component's inputs/outputs/lineage
-  source plus its matching `ssisx conformance` `DATA-FLOW:<RefId>` rule ID.
+  source plus its matching `ssisx conformance` `DATA-FLOW:<RefId>` rule ID. Also embeds a Mermaid
+  control-flow diagram (execution order/parallel branches at the package/container level) and a
+  Mermaid data-flow diagram per Data Flow Task (component-to-component edges) -- both render
+  inline wherever the `.md` is viewed (GitHub, most Markdown-aware editors).
 - `claims/<Package>.claims.json` -- **human-owned, never overwritten** once it exists (same
   lifecycle as `ssisx conformance`'s own claim files): `Status` (`NotValidated`/`Validated`/
   `Blocked`), `Reviewer`, `ReviewedDate`, `Note`, keyed by the linked rule ID. Re-running
@@ -84,5 +96,8 @@ and main-flow source genuinely share key values in the intended ~70/30 match/no-
   column's own name, not a full lineage trace -- correct for the common case (a Lookup fed
   directly or through a passthrough), not guaranteed when a same-named column exists
   legitimately elsewhere with unrelated meaning.
-- No `.xlsx` writer -- an Excel source gets a `.csv` (same columns) rather than a real
-  workbook, since no `.xlsx`-writing dependency exists anywhere in this codebase.
+- Synthetic values are NEVER null for an Excel source specifically (unlike every other source
+  kind, which injects a null in ~10% of rows) -- the generated Excel reader has no null-handling
+  at all (`IExcelDataReader.GetDouble`/`.GetString` unconditionally), so a blank cell would crash
+  it. A directly-usable sample was judged more valuable than exercising a null path this reader
+  can't tolerate yet.

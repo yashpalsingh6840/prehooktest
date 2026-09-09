@@ -130,7 +130,7 @@ public static class PackageClassEmitter
         // Sink field at all on ProgramConditionalSplitBranch -- see its own doc comment), and a
         // ForEach-Data-Flow-Loop is likewise always SQL-sunk (PlanForEachDataFlowLoop's own gate
         // requires it).
-        var usesSqlSink = flows.Any(f => f.Sink is SqlFlowSink) || splits.Count > 0
+        var usesSqlSink = flows.Any(f => f.Sink is SqlFlowSink or RedirectingSqlFlowSink) || splits.Count > 0
             || multicasts.Any(m => m.Branches.Any(b => b.Sink is SqlFlowSink)) || dataFlowLoops.Count > 0;
         usesLookupPreload = flows.Any(f => f.Lookup is not null);
         var secondaryConnectionNames = request.Steps.OfType<ProgramSecondaryConnectionSqlStep>()
@@ -414,12 +414,42 @@ public static class PackageClassEmitter
         // no `uow` parameter must be called with no argument either, or it won't compile.
         string SourceCallArgs(FlowSourceSpec source) => SourceNeedsUow(source) ? "uow" : "";
 
-        // A destination component carries no name of its own anywhere in the plan (unlike a
-        // source, an OLE DB/Flat File Destination's own .dtsx object name was never threaded this
-        // far) -- named after the entity it lands instead, which is just as deterministic and
-        // still gives every destination its own independently-constructible method.
+        // A destination component carries no name of its own anywhere in the plan for the plain,
+        // single-destination case (unlike a source, an OLE DB/Flat File Destination's own .dtsx
+        // object name was never threaded this far) -- named after the entity it lands instead,
+        // which is just as deterministic and still gives every destination its own
+        // independently-constructible method. This stops being true the moment a flow has MORE
+        // than one destination (RedirectingSqlFlowSink, below) -- "{Entity}Destination" is
+        // ambiguous once there's more than one, which is exactly the shape whose own destination
+        // identity was silently dropped before this round existed (see CLAUDE.md's own account of
+        // the real OLEDST_StagingErrors bug). RedirectingSqlFlowSink is the one FlowSinkSpec that
+        // DOES carry component identity for this reason -- see its own doc comment.
         string EmitSinkMethod(string entityName, FlowSinkSpec sink)
         {
+            if (sink is RedirectingSqlFlowSink redirect)
+            {
+                var primaryName = Reserve(PackageGenerator.SanitizeIdentifier(redirect.PrimaryComponentName));
+                var primarySignature = MethodSignatures.ForSink(primaryName, entityName);
+                componentMethods.OpenBlock(primarySignature);
+                componentMethods.Line($"return new RedirectingSqlSink<{entityName}, {redirect.ErrorEntityName}>(");
+                componentMethods.Indent();
+                var errorName = Reserve(PackageGenerator.SanitizeIdentifier(redirect.ErrorComponentName));
+                componentMethods.Line($"{errorName}(), {redirect.ErrorMapClassName}.Map, Log<RedirectingSqlSink<{entityName}, {redirect.ErrorEntityName}>>());");
+                componentMethods.Dedent();
+                componentMethods.CloseBlock();
+                componentMethods.Blank();
+                inventory.Add(new ComponentMethodEntry("Sink", redirect.PrimaryComponentName, primaryName, primarySignature));
+
+                var errorSignature = MethodSignatures.ForSink(errorName, redirect.ErrorEntityName);
+                componentMethods.OpenBlock(errorSignature);
+                componentMethods.Line($"return new SqlBulkSink<{redirect.ErrorEntityName}>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<{redirect.ErrorEntityName}>>());");
+                componentMethods.CloseBlock();
+                componentMethods.Blank();
+                inventory.Add(new ComponentMethodEntry("Sink", redirect.ErrorComponentName, errorName, errorSignature));
+
+                return primaryName;
+            }
+
             var name = Reserve($"{entityName}Destination");
             var signature = MethodSignatures.ForSink(name, entityName);
             componentMethods.OpenBlock(signature);

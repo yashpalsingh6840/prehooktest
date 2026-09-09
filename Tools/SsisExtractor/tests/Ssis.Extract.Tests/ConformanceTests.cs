@@ -23,7 +23,7 @@ public class ConformanceTests
 
     // tests/Ssis.Extract.Tests -> Tools/SsisExtractor -> repo root -> SSIS/
     private static readonly string PoCPackagesDir = Path.GetFullPath(Path.Combine(
-        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "SSIS"));
+        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "..", "SSIS_Packages", "SSIS"));
 
     private static readonly string FixturesDir = Path.Combine(Path.GetDirectoryName(ThisFilePath())!, "Fixtures");
 

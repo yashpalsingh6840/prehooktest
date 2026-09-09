@@ -229,6 +229,73 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WiresAnErrorRedirectDestination_WithBothSinksNamedAfterTheirOwnComponent()
+    {
+        // SyntheticErrorRedirect.dtsx: OLE DB Source -> OLEDST_Target (ErrorRowDisposition=
+        // RedirectRow) -> (error output) -> OLEDST_Errors. Closes the real silent-drop bug found
+        // reviewing RBC_Demo_ETL's own real Package.dtsx (DFT_LoadCustomers's own
+        // OLEDST_StagingErrors) -- see Tools/SsisExtractor/CLAUDE.md's own account. Confirmed
+        // beyond this test by a real dtexec probe against .\SQLFORPOC_2022 (measuring real SSIS's
+        // own row-by-row-under-FastLoadMaxInsertCommitSize=1 redirect behavior) AND by actually
+        // running the generated exe against the same database -- exact row-for-row match,
+        // ErrorCode carrying the real SQL Server error number (2627, a unique-constraint
+        // violation), not a guess.
+        var package = LoadSyntheticFixture("SyntheticErrorRedirect.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticErrorRedirect.cs");
+        // Both destinations named after their own SSIS component -- unlike a plain single-
+        // destination flow, which is still named after the entity ({Entity}Destination).
+        Assert.Contains("internal IBulkSink<SyntheticErrorRedirectTarget> OLEDST_Target()", classFile.Content);
+        Assert.Contains("internal IBulkSink<SyntheticErrorRedirectTargetError> OLEDST_Errors()", classFile.Content);
+        Assert.Contains("var sink = OLEDST_Target();", classFile.Content);
+        Assert.Contains(
+            "return new RedirectingSqlSink<SyntheticErrorRedirectTarget, SyntheticErrorRedirectTargetError>(",
+            classFile.Content);
+        Assert.Contains("OLEDST_Errors(), SyntheticErrorRedirectTargetErrorMap.Map,", classFile.Content);
+        Assert.Contains(
+            "return new SqlBulkSink<SyntheticErrorRedirectTargetError>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<SyntheticErrorRedirectTargetError>>());",
+            classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+
+        // The error entity: business columns (Code/Name) plus ErrorCode/ErrorColumn (genuine
+        // mapped <inputColumn>s, lineage-traced to the primary's own error output) plus FailedAt
+        // (EntityEmitter's new extraProperties path -- no <inputColumn> for it at all, a DB-side
+        // default in the real schema). No ErrorRowID -- the identity PK, never mapped, correctly
+        // invisible.
+        var errorEntityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticErrorRedirectTargetError.cs");
+        Assert.Contains("public string Code { get; set; }", errorEntityFile.Content);
+        Assert.Contains("public string Name { get; set; }", errorEntityFile.Content);
+        Assert.Contains("public int ErrorCode { get; set; }", errorEntityFile.Content);
+        Assert.Contains("public int ErrorColumn { get; set; }", errorEntityFile.Content);
+        Assert.Contains("public DateTime FailedAt { get; set; }", errorEntityFile.Content);
+        Assert.DoesNotContain("ErrorRowID", errorEntityFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(errorEntityFile.Content);
+
+        // The error map: business columns copied from the FAILED primary entity (never
+        // re-derived via lineage through the transform), diagnostic columns set by the sink
+        // itself. ErrorColumn deliberately left at 0 -- SSIS's own lineage-id semantics have no
+        // equivalent once redirected through a raw ADO.NET exception.
+        var mapFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticErrorRedirectTargetErrorMap.cs");
+        Assert.Contains("internal static SyntheticErrorRedirectTargetError Map(SyntheticErrorRedirectTarget failed, DbException ex) => new()", mapFile.Content);
+        Assert.Contains("Code = failed.Code,", mapFile.Content);
+        Assert.Contains("Name = failed.Name,", mapFile.Content);
+        Assert.Contains("FailedAt = DateTime.UtcNow,", mapFile.Content);
+        Assert.Contains("ErrorCode = DbExceptionErrorCode.Resolve(ex),", mapFile.Content);
+        Assert.Contains("ErrorColumn = 0,", mapFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(mapFile.Content);
+
+        // Both destinations get their own DbContext table registration.
+        var dbContextFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticErrorRedirectDbContext.cs");
+        Assert.Contains("modelBuilder.Entity<SyntheticErrorRedirectTarget>", dbContextFile.Content);
+        Assert.Contains("modelBuilder.Entity<SyntheticErrorRedirectTargetError>", dbContextFile.Content);
+
+        // Only the two unavoidable/non-blocking advisories -- no blocking gap at all.
+        Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+    }
+
+    [Fact]
     public void Generate_WiresAnOleDbSourcedFlow_IntoProgramCsViaSqlRowSource()
     {
         // SyntheticOleDbSourceTransform.dtsx: OLE DB Source (SqlCommand, AccessMode=2) ->

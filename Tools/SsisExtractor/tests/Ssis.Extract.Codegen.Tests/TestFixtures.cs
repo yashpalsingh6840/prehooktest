@@ -19,7 +19,7 @@ internal static class TestFixtures
 
     // Tools/SsisExtractor/tests/Ssis.Extract.Codegen.Tests -> repo root -> SSIS/ (the PoC project)
     private static readonly string FixturesDir =
-        Path.GetFullPath(Path.Combine(TestsProjectDir, "..", "..", "..", "..", "SSIS"));
+        Path.GetFullPath(Path.Combine(TestsProjectDir, "..", "..", "..", "..", "..", "SSIS_Packages", "SSIS"));
 
     public static PackageSpec LoadPackage(string dtsxFileName) =>
         DtsxPackageReader.Read(Path.Combine(FixturesDir, dtsxFileName), noRedact: false);

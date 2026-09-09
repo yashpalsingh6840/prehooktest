@@ -16,7 +16,18 @@ namespace Ssis.Extract.Codegen;
 /// </summary>
 public static class EntityEmitter
 {
-    public static EmitResult Emit(string ns, string entityName, PipelineComponentSpec destinationComponent, IReadOnlySet<string>? nullableColumnNames = null)
+    /// <summary><paramref name="extraProperties"/> -- added closing a real gap found reviewing
+    /// RBC_Demo_ETL's own real Package.dtsx: an error-redirect destination's own target table
+    /// (dbo.StagingCustomers_Errors) has a FailedAt column with no corresponding
+    /// &lt;inputColumn&gt; at all (a DB-side default, never mapped from the pipeline) -- invisible
+    /// to <see cref="PipelineResolver.ResolveDestinationInput"/> by construction, since that walks
+    /// only <c>destinationComponent</c>'s own mapped input columns. A property named here is
+    /// appended verbatim, with NO pipeline/nullability resolution at all (the caller supplies the
+    /// exact CLR type name) -- this is for a column the SINK itself populates at write time, not
+    /// one derivable from any upstream row.</summary>
+    public static EmitResult Emit(string ns, string entityName, PipelineComponentSpec destinationComponent,
+        IReadOnlySet<string>? nullableColumnNames = null,
+        IReadOnlyList<(string Name, string ClrType)>? extraProperties = null)
     {
         var resolved = PipelineResolver.ResolveDestinationInput(destinationComponent);
         var gaps = resolved.Unresolved
@@ -46,6 +57,12 @@ public static class EntityEmitter
             var typeName = isNullable ? column.Type.ClrTypeName + "?" : column.Type.ClrTypeName;
             var initializer = !isNullable && column.Type.ClrTypeName == "string" ? " = \"\";" : "";
             propertyLines.Add($"    public {typeName} {column.ExternalColumnName} {{ get; set; }}{initializer}");
+        }
+
+        foreach (var (name, clrType) in extraProperties ?? [])
+        {
+            if (propertyLines.Count > 0) propertyLines.Add("");
+            propertyLines.Add($"    public {clrType} {name} {{ get; set; }}");
         }
 
         if (propertyLines.Count == 0)

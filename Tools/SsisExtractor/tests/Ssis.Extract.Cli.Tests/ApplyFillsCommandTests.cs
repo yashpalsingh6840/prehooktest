@@ -25,7 +25,11 @@ public class ApplyFillsCommandTests : IDisposable
     }
 
     private const string Package = "Pkg";
-    private const string GapId = "SCRIPT-COLUMN:Pkg:Foo.Bar";
+    // "SCR_Bar" is the seam name -- since the combined-seam round, a GapId's own Location is
+    // "{Entity}.{SanitizedComponentName}" and TransformEmitter names the seam method IDENTICALLY
+    // to that tail (no more synthesized "Fill_" + column). One gap per COMPONENT now, not per
+    // column -- see TransformEmitter.ScriptComponentGroup's own doc comment.
+    private const string GapId = "SCRIPT-COLUMN:Pkg:Foo.SCR_Bar";
     private const string CurrentHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string OldHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -60,11 +64,11 @@ public class ApplyFillsCommandTests : IDisposable
     private List<FillRecordSpec> ReadManifest() =>
         JsonSerializer.Deserialize<List<FillRecordSpec>>(File.ReadAllText(Path.Combine(_root, "fills-applied.json")))!;
 
-    private static GapSpec ScriptComponentColumnGap(string evidenceHash) => new()
+    private static GapSpec ScriptComponentColumnGap(string evidenceHash, string? evidenceRefId = null) => new()
     {
         GapId = GapId, Package = Package, Kind = GapKind.ScriptComponentColumn, Tier = GapTier.MissingLogic,
-        Location = "Foo.Bar", Reason = "produced by a Script Component", IsBlocking = true,
-        EvidenceSha256 = evidenceHash,
+        Location = "Foo.SCR_Bar", Reason = "produced by a Script Component", IsBlocking = true,
+        EvidenceSha256 = evidenceHash, EvidenceRefId = evidenceRefId,
     };
 
     private const string TestOracleGapId = "TEST-ORACLE:Pkg:CSPLIT_X";
@@ -111,7 +115,7 @@ public class ApplyFillsCommandTests : IDisposable
             public sealed partial class FooTransform
             {
                 // ssisx-fill: GapId={{GapId}} Author=tester Date=2026-09-03 EvidenceSha256={{CurrentHash}}
-                private partial string Fill_Bar(FooRow row, in RowContext ctx) => "x";
+                private partial SCR_BarResult SCR_Bar(FooRow row, in RowContext ctx) => new("x");
             }
             """);
 
@@ -123,6 +127,7 @@ public class ApplyFillsCommandTests : IDisposable
         var record = Assert.Single(ReadManifest());
         Assert.Equal(FillStatus.Applied, record.Status);
         Assert.Equal(GapId, record.GapId);
+        Assert.Equal("SCR_Bar", record.Seam);
         Assert.Equal("tester", record.Author);
         Assert.Equal("2026-09-03", record.Date);
         Assert.Equal(CurrentHash, record.RecordedEvidenceSha256);
@@ -139,7 +144,7 @@ public class ApplyFillsCommandTests : IDisposable
             public sealed partial class FooTransform
             {
                 // ssisx-fill: GapId={{GapId}} Author=tester Date=2026-08-01 EvidenceSha256={{OldHash}}
-                private partial string Fill_Bar(FooRow row, in RowContext ctx) => "x";
+                private partial SCR_BarResult SCR_Bar(FooRow row, in RowContext ctx) => new("x");
             }
             """);
 
@@ -166,7 +171,7 @@ public class ApplyFillsCommandTests : IDisposable
 
             public sealed partial class FooTransform
             {
-                private partial string Fill_Bar(FooRow row, in RowContext ctx) => "x";
+                private partial SCR_BarResult SCR_Bar(FooRow row, in RowContext ctx) => new("x");
             }
             """);
 
@@ -210,12 +215,15 @@ public class ApplyFillsCommandTests : IDisposable
     [Fact]
     public void Run_BlocksTheWholeFile_WhenOnlyOneOfItsSeamsIsStale()
     {
+        // Two DISTINCT Script Components' seams landing in the same fill file -- a component's own
+        // seam is now singular (one method, not one per column), so "two seams, one stale" needs
+        // two separate components rather than two columns of the same one.
         WriteGaps(
             ScriptComponentColumnGap(CurrentHash),
             new GapSpec
             {
-                GapId = "SCRIPT-COLUMN:Pkg:Foo.Baz", Package = Package, Kind = GapKind.ScriptComponentColumn,
-                Tier = GapTier.MissingLogic, Location = "Foo.Baz", Reason = "produced by a Script Component",
+                GapId = "SCRIPT-COLUMN:Pkg:Foo.SCR_Baz", Package = Package, Kind = GapKind.ScriptComponentColumn,
+                Tier = GapTier.MissingLogic, Location = "Foo.SCR_Baz", Reason = "produced by a Script Component",
                 IsBlocking = true, EvidenceSha256 = CurrentHash,
             });
         WriteFill("FooTransform.Fills.cs", $$"""
@@ -224,25 +232,25 @@ public class ApplyFillsCommandTests : IDisposable
             public sealed partial class FooTransform
             {
                 // ssisx-fill: GapId={{GapId}} Author=tester Date=2026-09-03 EvidenceSha256={{CurrentHash}}
-                private partial string Fill_Bar(FooRow row, in RowContext ctx) => "x";
+                private partial SCR_BarResult SCR_Bar(FooRow row, in RowContext ctx) => new("x");
 
-                // ssisx-fill: GapId=SCRIPT-COLUMN:Pkg:Foo.Baz Author=tester Date=2026-09-03 EvidenceSha256={{OldHash}}
-                private partial string Fill_Baz(FooRow row, in RowContext ctx) => "y";
+                // ssisx-fill: GapId=SCRIPT-COLUMN:Pkg:Foo.SCR_Baz Author=tester Date=2026-09-03 EvidenceSha256={{OldHash}}
+                private partial SCR_BazResult SCR_Baz(FooRow row, in RowContext ctx) => new("y");
             }
             """);
 
         var exitCode = ApplyFillsCommand.Run(["--out", _root]);
 
-        // Bar applies; Baz is stale -- so the seam is genuinely still outstanding.
+        // SCR_Bar applies; SCR_Baz is stale -- so the seam is genuinely still outstanding.
         Assert.Equal(3, exitCode);
 
-        // Fill_Bar's OWN evidence is current -- its manifest record still says so -- but Fill_Baz
+        // SCR_Bar's OWN evidence is current -- its manifest record still says so -- but SCR_Baz
         // sharing the same file is stale, and there is no safe way to copy one method without the
         // other, so NEITHER seam actually lands in the generated project.
         var records = ReadManifest().OrderBy(r => r.Seam, StringComparer.Ordinal).ToList();
         Assert.Equal(2, records.Count);
-        Assert.Equal(FillStatus.Applied, Assert.Single(records, r => r.Seam == "Fill_Bar").Status);
-        Assert.Equal(FillStatus.Stale, Assert.Single(records, r => r.Seam == "Fill_Baz").Status);
+        Assert.Equal(FillStatus.Applied, Assert.Single(records, r => r.Seam == "SCR_Bar").Status);
+        Assert.Equal(FillStatus.Stale, Assert.Single(records, r => r.Seam == "SCR_Baz").Status);
 
         Assert.False(Directory.Exists(Path.Combine(_root, "generate", Package, "Fills")));
     }
@@ -282,81 +290,46 @@ public class ApplyFillsCommandTests : IDisposable
         Assert.Equal(taskGapId, record.GapId);
     }
 
+    // These two tests used to model "one Script Component, two columns, one filled one not" --
+    // that shape became structurally impossible once a component has exactly ONE combined seam
+    // (see TransformEmitter.ScriptComponentGroup). Retired and replaced with the scenario that's
+    // still real: two DISTINCT components, each with its own single seam, one filled and one not --
+    // proving partial PACKAGE-level completion still works correctly even though partial
+    // COMPONENT-level completion no longer exists as a concept.
     [Fact]
-    public void Run_NamesTheConformanceRuleId_WhenEveryColumnOfAScriptComponentIsFilled()
+    public void Run_NamesTheConformanceRuleId_OnlyForTheComponentWhoseSeamIsActuallyFilled()
     {
-        const string refId = "Package\\DFT_Load\\SCR_Cleanse";
-        const string ruleId = "SCRIPT-CODE:Package\\DFT_Load\\SCR_Cleanse";
+        const string refIdBar = "Package\\DFT_Load\\SCR_Bar";
+        const string ruleIdBar = "SCRIPT-CODE:Package\\DFT_Load\\SCR_Bar";
+        const string refIdBaz = "Package\\DFT_Load\\SCR_Baz";
+        const string ruleIdBaz = "SCRIPT-CODE:Package\\DFT_Load\\SCR_Baz";
         WriteGaps(
+            ScriptComponentColumnGap(CurrentHash, refIdBar),
             new GapSpec
             {
-                GapId = "SCRIPT-COLUMN:Pkg:Foo.Bar", Package = Package, Kind = GapKind.ScriptComponentColumn,
-                Tier = GapTier.MissingLogic, Location = "Foo.Bar", Reason = "produced by a Script Component",
-                IsBlocking = true, EvidenceSha256 = CurrentHash, EvidenceRefId = refId,
-            },
-            new GapSpec
-            {
-                GapId = "SCRIPT-COLUMN:Pkg:Foo.Baz", Package = Package, Kind = GapKind.ScriptComponentColumn,
-                Tier = GapTier.MissingLogic, Location = "Foo.Baz", Reason = "produced by a Script Component",
-                IsBlocking = true, EvidenceSha256 = CurrentHash, EvidenceRefId = refId,
+                GapId = "SCRIPT-COLUMN:Pkg:Foo.SCR_Baz", Package = Package, Kind = GapKind.ScriptComponentColumn,
+                Tier = GapTier.MissingLogic, Location = "Foo.SCR_Baz", Reason = "produced by a Script Component",
+                IsBlocking = true, EvidenceSha256 = CurrentHash, EvidenceRefId = refIdBaz,
             });
-        WriteClaim(ruleId, "Pending");
+        WriteClaim(ruleIdBar, "Pending");
+        // Only SCR_Bar has a fill -- SCR_Baz's own component is genuinely not ported yet.
         WriteFill("FooTransform.Fills.cs", """
             namespace Pkg.Mapping;
 
             public sealed partial class FooTransform
             {
-                private partial string Fill_Bar(FooRow row, in RowContext ctx) => "x";
-                private partial string Fill_Baz(FooRow row, in RowContext ctx) => "y";
+                private partial SCR_BarResult SCR_Bar(FooRow row, in RowContext ctx) => new("x");
             }
             """);
 
         var output = CaptureConsole(() => ApplyFillsCommand.Run(["--out", _root]));
 
-        Assert.Contains(ruleId, output);
+        Assert.Contains(ruleIdBar, output);
         Assert.Contains("Pending", output);
+        Assert.DoesNotContain(ruleIdBaz, output);
 
-        var records = ReadManifest();
-        Assert.All(records, r => Assert.Equal(ruleId, r.ConformanceRuleId));
-    }
-
-    [Fact]
-    public void Run_DoesNotNameTheRule_WhenOnlySomeOfItsColumnsAreFilled()
-    {
-        const string refId = "Package\\DFT_Load\\SCR_Cleanse";
-        const string ruleId = "SCRIPT-CODE:Package\\DFT_Load\\SCR_Cleanse";
-        WriteGaps(
-            new GapSpec
-            {
-                GapId = "SCRIPT-COLUMN:Pkg:Foo.Bar", Package = Package, Kind = GapKind.ScriptComponentColumn,
-                Tier = GapTier.MissingLogic, Location = "Foo.Bar", Reason = "produced by a Script Component",
-                IsBlocking = true, EvidenceSha256 = CurrentHash, EvidenceRefId = refId,
-            },
-            new GapSpec
-            {
-                GapId = "SCRIPT-COLUMN:Pkg:Foo.Baz", Package = Package, Kind = GapKind.ScriptComponentColumn,
-                Tier = GapTier.MissingLogic, Location = "Foo.Baz", Reason = "produced by a Script Component",
-                IsBlocking = true, EvidenceSha256 = CurrentHash, EvidenceRefId = refId,
-            });
-        // Only Fill_Bar exists -- Fill_Baz has no fill at all, so the component's own obligation
-        // (port the WHOLE thing) is genuinely not finished yet.
-        WriteFill("FooTransform.Fills.cs", """
-            namespace Pkg.Mapping;
-
-            public sealed partial class FooTransform
-            {
-                private partial string Fill_Bar(FooRow row, in RowContext ctx) => "x";
-            }
-            """);
-
-        var output = CaptureConsole(() => ApplyFillsCommand.Run(["--out", _root]));
-
-        Assert.DoesNotContain(ruleId, output);
-
-        // The single filled seam still carries its own RuleId in the manifest -- that fact is true
-        // regardless of whether the group as a whole is done.
-        var record = ReadManifest().Single(r => r.Seam == "Fill_Bar");
-        Assert.Equal(ruleId, record.ConformanceRuleId);
+        var record = ReadManifest().Single(r => r.Seam == "SCR_Bar");
+        Assert.Equal(ruleIdBar, record.ConformanceRuleId);
     }
 
     [Fact]

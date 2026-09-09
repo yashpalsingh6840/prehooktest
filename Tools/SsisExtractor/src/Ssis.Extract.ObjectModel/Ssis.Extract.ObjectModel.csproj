@@ -20,6 +20,8 @@
     version rather than pinning one - see that file's header for why, and for how to pin a
     version deliberately.
   -->
-  <Import Project="..\..\..\..\Build\Ssis.Gac.props" />
+  <!-- Build/ was moved out of this repo (2f212bf) to D:\PoC\SSIS_Packages\Build; this project's
+       own relative import was missed by that commit until now. -->
+  <Import Project="..\..\..\..\..\SSIS_Packages\Build\Ssis.Gac.props" />
 
 </Project>

@@ -293,9 +293,13 @@ internal static class Program
         {
             return BuildEventHandlerProbeFixture(args[0]);
         }
+        if (fixtureName == "error-redirect")
+        {
+            return BuildErrorRedirectFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', 'union-plus-extra-source', 'aggregate-then-oledb-command', or 'event-handler-probe'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', 'union-plus-extra-source', 'aggregate-then-oledb-command', 'event-handler-probe', or 'error-redirect'.");
 
             return 2;
         }
@@ -673,6 +677,128 @@ internal static class Program
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         Console.WriteLine($"wrote {outputPath}");
         return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source -> OLE DB Destination (ErrorRowDisposition=RedirectRow, fast load) -> (error
+    /// output) -> a SECOND OLE DB Destination, reproducing RBC_Demo_ETL's own real
+    /// DFT_LoadCustomers shape (OLEDST_StagingCustomers -> OLEDST_StagingErrors), which
+    /// ssisx generate silently dropped -- see CLAUDE.md's own account. Two real object-model facts
+    /// nailed down building this, neither guessed: <c>IDTSInput100.ErrorRowDisposition</c>/
+    /// <c>.TruncationRowDisposition</c>/<c>.ErrorOrTruncationOperation</c> are ordinary settable
+    /// properties on the INPUT itself (a WHOLE-ROW disposition, distinct from
+    /// <c>IDTSOutputColumn100.ErrorRowDisposition</c>'s own per-COLUMN disposition already used
+    /// elsewhere in this file for Data Conversion) -- confirmed via reflection before use, same
+    /// discipline as every other property in this file; and the error output is SYNCHRONOUS
+    /// (<c>synchronousInputId</c> points back at the primary destination's own input), so every
+    /// column already in the buffer at that point (Code/Name) is visible downstream through it via
+    /// its OWN original lineage id, with only ErrorCode/ErrorColumn genuinely new to this output --
+    /// exactly the same "synchronous transform never re-emits an untouched column" shape this
+    /// project's own LineageBuilder note already established for Derived Column.
+    ///
+    /// The second destination's own real target table (SyntheticErrorRedirectErrors) deliberately
+    /// leaves ErrorRowID (identity PK) and FailedAt (DB-side default) UNMAPPED -- matching the real
+    /// OLEDST_StagingErrors shape exactly, and specifically exercising EntityEmitter's new
+    /// extraProperties parameter (FailedAt has no pipeline-derived value at all). The generic
+    /// ResolveOleDbMetadata helper can't be reused as-is for it: it throws if ANY external column
+    /// has no matching upstream column, so this fixture resolves the error destination manually.
+    ///
+    /// The target table carries a UNIQUE constraint on Code, and the seed data
+    /// (synthetic-error-redirect-tables.sql) deliberately has two rows sharing the same Code --
+    /// the second one fails to insert with a genuine duplicate-key violation (errorOrTruncationOperation
+    /// ="Insert", not a truncation), the cleanest, most unambiguous way to exercise
+    /// ErrorRowDisposition=RedirectRow for real via dtexec.
+    /// </summary>
+    private static int BuildErrorRedirectFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticErrorRedirect" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_LoadWithErrorRedirect";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, Code, Name FROM dbo.SyntheticErrorRedirectSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        // --- primary destination, ErrorRowDisposition=RedirectRow ---
+        var primaryMeta = AddOleDbComponent(pipe, "OLEDST_Target", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticErrorRedirectTarget]");
+        AttachPath(pipe, srcOutput, primaryMeta.InputCollection[0]);
+        ResolveOleDbMetadata(primaryMeta, isDestination: true);
+
+        // FastLoadMaxInsertCommitSize=1 -- measured, not assumed, to matter: the real
+        // OLEDST_StagingCustomers leaves this at its schema default (2147483647, one commit for
+        // the whole load), and a first dtexec run against THAT default redirected ALL FOUR seeded
+        // rows (the target table ended up empty) the moment ONE of them violated the unique
+        // constraint -- documented SSIS fast-load behavior: a commit-sized batch fails and
+        // redirects as one atomic unit, so any bad row takes every good row in its own batch down
+        // with it. The only way real SSIS gets precise per-row isolation is exactly this setting
+        // (forcing a commit, and therefore a redirect decision, after every single row) -- which is
+        // what this fixture measures as its own real ground truth, since RedirectingSqlSink's own
+        // row-by-row design gives that same precision UNCONDITIONALLY (a deliberate improvement
+        // over the batch-wide default, not an approximation of it).
+        var primaryInst = primaryMeta.Instantiate();
+        primaryInst.SetComponentProperty("FastLoadMaxInsertCommitSize", 1);
+
+        var primaryInput = primaryMeta.InputCollection[0];
+        primaryInput.ErrorOrTruncationOperation = "Insert";
+        primaryInput.ErrorRowDisposition = DTSRowDisposition.RD_RedirectRow;
+
+        var errorOutput = primaryMeta.OutputCollection.Cast<IDTSOutput100>().First(o => o.IsErrorOut);
+
+        // --- error destination, mapped by hand (ErrorRowID/FailedAt deliberately left unmapped) ---
+        var errorMeta = AddOleDbComponent(pipe, "OLEDST_Errors", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticErrorRedirectErrors]");
+        AttachPath(pipe, errorOutput, errorMeta.InputCollection[0]);
+        ResolveErrorRedirectDestination(errorMeta, unmappedExternalColumns: ["ErrorRowID", "FailedAt"]);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>Same shape as ResolveOleDbMetadata's own destination branch, except an external
+    /// column named in <paramref name="unmappedExternalColumns"/> is deliberately left unmapped
+    /// (no matching upstream column exists for it -- it's populated some other way: an identity PK,
+    /// a DB-side default) instead of throwing.</summary>
+    private static void ResolveErrorRedirectDestination(IDTSComponentMetaData100 meta, HashSet<string> unmappedExternalColumns)
+    {
+        var inst = meta.Instantiate();
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        var externalNames = new HashSet<string>(
+            input.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>().Select(e => e.Name));
+
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            if (!externalNames.Contains(vcol.Name) || unmappedExternalColumns.Contains(vcol.Name)) continue;
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        foreach (IDTSExternalMetadataColumn100 ext in input.ExternalMetadataColumnCollection)
+        {
+            if (unmappedExternalColumns.Contains(ext.Name)) continue;
+
+            var match = input.InputColumnCollection.Cast<IDTSInputColumn100>().FirstOrDefault(c => c.Name == ext.Name);
+            if (match is null)
+            {
+                throw new InvalidOperationException($"fixture build error: no upstream column named '{ext.Name}' to map onto destination '{meta.Name}' -- source and destination column names must match exactly for this builder's simple by-name mapping.");
+            }
+            inst.MapInputColumn(input.ID, match.ID, ext.ID);
+        }
     }
 
     /// <summary>

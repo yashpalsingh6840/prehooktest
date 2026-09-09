@@ -25,7 +25,7 @@ public class ObjectModelOracleTests
 
     // tests/Ssis.Extract.ObjectModel.Tests -> Tools/SsisExtractor -> repo root -> SSIS/
     private static readonly string PoCPackagesDir =
-        Path.GetFullPath(Path.Combine(TestsDir, "..", "..", "..", "..", "SSIS"));
+        Path.GetFullPath(Path.Combine(TestsDir, "..", "..", "..", "..", "..", "SSIS_Packages", "SSIS"));
 
     private static readonly string GoldenDir =
         Path.GetFullPath(Path.Combine(TestsDir, "..", "Ssis.Extract.Tests", "Golden"));

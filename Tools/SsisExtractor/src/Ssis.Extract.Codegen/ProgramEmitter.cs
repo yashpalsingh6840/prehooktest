@@ -129,6 +129,19 @@ public abstract record FlowSinkSpec;
 public sealed record SqlFlowSink : FlowSinkSpec;
 public sealed record FlatFileFlowSink(string FileSourceKey, bool Overwrite, string? HeaderLine, IReadOnlyList<FlatFileColumnFormatSpec> Columns) : FlowSinkSpec;
 
+/// <summary>A destination whose own input is configured ErrorRowDisposition=RedirectRow -- a row
+/// that fails to insert is redirected to a second, named destination (ErrorEntityName/table)
+/// instead of aborting the load. <see cref="PrimaryComponentName"/>/<see cref="ErrorComponentName"/>
+/// are each destination's own SSIS component name (e.g. OLEDST_StagingCustomers/
+/// OLEDST_StagingErrors) -- unlike every other FlowSinkSpec, this one carries component identity
+/// at all, because naming BOTH sink methods after their own component is the only way two
+/// destinations in one flow stay distinguishable (see PackageClassEmitter.EmitSinkMethod's own
+/// doc comment for why a plain single-destination flow still names its sink after the entity, not
+/// the component). <see cref="ErrorMapClassName"/> is the generated static class translating a
+/// failed TEntity + the causing DbException into the error entity -- see
+/// PackageGenerator.ResolveErrorRedirectSink.</summary>
+public sealed record RedirectingSqlFlowSink(string PrimaryComponentName, string ErrorComponentName, string ErrorEntityName, string ErrorMapClassName) : FlowSinkSpec;
+
 /// <summary>One Data Flow Task's already-decided naming, combining PackagePlanner's
 /// DataFlowPlan facts (StepName, Source) with the naming choices the caller makes for the
 /// generated types (matching EntityEmitter/CsvRowEmitter|SqlRowEmitter/TransformEmitter's own

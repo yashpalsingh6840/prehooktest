@@ -13,7 +13,7 @@ public class PackageDifferTests
 {
     private static string ThisFilePath([CallerFilePath] string path = "") => path;
     private static readonly string FixturesDir =
-        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "SSIS"));
+        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "..", "SSIS_Packages", "SSIS"));
 
     private static string LoadEmployeesPath => Path.Combine(FixturesDir, "LoadEmployees.dtsx");
 

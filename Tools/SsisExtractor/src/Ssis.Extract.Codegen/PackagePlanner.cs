@@ -94,7 +94,22 @@ public sealed record DataFlowPlan(
     /// <see cref="FlatFileSource"/>/<see cref="OleDbSource"/>/<see cref="DerivedColumn"/> are all
     /// null -- the flow's own row source is built entirely from <see cref="UnionSideSource"/>
     /// instead, mirroring <see cref="MergeJoin"/>'s own convention.</summary>
-    UnionPlan? Union = null);
+    UnionPlan? Union = null,
+    /// <summary>Added closing a real silent-drop bug found reviewing RBC_Demo_ETL's own real
+    /// Package.dtsx: <see cref="DestinationComponent"/>'s own input configured
+    /// <c>ErrorRowDisposition=RedirectRow</c>, resolved to the second destination its error output
+    /// leads to (<see cref="ResolveErrorRedirect"/>). Before this field existed, that second
+    /// destination was invisible to <see cref="PackagePlanner"/> entirely -- not gapped, not
+    /// generated, just absent -- because <see cref="DestinationComponent"/>'s own resolution
+    /// (a bare <c>FirstOrDefault</c>) never counted how many destination components existed in the
+    /// pipeline. Scoped to the plain single-source/single-destination shape only (Conditional
+    /// Split/Multicast branch + error-redirect combined is unevidenced and stays a named gap if
+    /// ever encountered, not guessed at).</summary>
+    ErrorRedirectPlan? ErrorRedirect = null);
+
+/// <summary>Resolved once <see cref="PackagePlanner.ResolveErrorRedirect"/> confirms
+/// <see cref="DataFlowPlan.DestinationComponent"/>'s own error output leads somewhere real.</summary>
+public sealed record ErrorRedirectPlan(PipelineComponentSpec ErrorDestinationComponent);
 
 /// <summary>One <c>Microsoft.RowCount</c> resolved for <see cref="DataFlowPlan.RowCounts"/> --
 /// see <see cref="Ssis.Extract.Model.Pipeline.RowCountPayload"/>'s own doc comment for what's
@@ -1923,9 +1938,9 @@ public static class PackagePlanner
                 // NON-null destination is behaviorally identical to [^1] for every flow that
                 // predates discard support (every branch there already had a real destination).
                 ? multicast.Branches.Select(b => b.Destination).FirstOrDefault(d => d is not null)
-                : pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.OLEDBDestination")
-                    ?? pipeline.Components.FirstOrDefault(c => c.AdoNetDestination is not null)
-                    ?? pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.FlatFileDestination");
+                : SelectPrimaryDestination(pipeline, pipeline.Components.Where(c => c.ComponentClassId == "Microsoft.OLEDBDestination").ToList())
+                    ?? SelectPrimaryDestination(pipeline, pipeline.Components.Where(c => c.AdoNetDestination is not null).ToList())
+                    ?? SelectPrimaryDestination(pipeline, pipeline.Components.Where(c => c.ComponentClassId == "Microsoft.FlatFileDestination").ToList());
 
         if (destination is null)
         {
@@ -1978,7 +1993,127 @@ public static class PackagePlanner
             sortKey = resolvedSort;
         }
 
-        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, ExcelSource: excelSource, Multicast: multicast, Aggregate: aggregate, RowCounts: rowCounts, SortKey: sortKey);
+        // Scoped to the plain single-source/single-destination shape only, same reasoning as
+        // SortKey above -- a Conditional Split/Multicast branch's own error-redirect destination
+        // is unevidenced and left alone rather than guessed at.
+        ErrorRedirectPlan? errorRedirect = null;
+        if (conditionalSplit is null && multicast is null)
+        {
+            var (hasGap, resolved) = ResolveErrorRedirect(taskName, pipeline, destination, gaps);
+            if (hasGap) return null; // ResolveErrorRedirect already added the gap
+            errorRedirect = resolved;
+        }
+
+        // General defensive check, closing the bug CLASS this whole feature exists to fix, not
+        // just the one shape above: a destination component in this pipeline that is neither the
+        // resolved primary destination nor its own error-redirect destination would otherwise
+        // silently vanish with no file and no gap -- exactly what happened to the real
+        // OLEDST_StagingErrors before this round existed. Mirrors the wording/placement of the
+        // existing multi-SOURCE gates earlier in this method. Scoped the same way as the two
+        // checks above -- Conditional Split/Multicast already account for every one of their own
+        // branch destinations individually.
+        if (conditionalSplit is null && multicast is null)
+        {
+            var allDestinations = pipeline.Components.Where(c =>
+                c.ComponentClassId is "Microsoft.OLEDBDestination" or "Microsoft.FlatFileDestination"
+                || c.AdoNetDestination is not null).ToList();
+            var accountedRefIds = errorRedirect is null
+                ? new HashSet<string> { destination.RefId }
+                : new HashSet<string> { destination.RefId, errorRedirect.ErrorDestinationComponent.RefId };
+            var unaccounted = allDestinations.Where(c => !accountedRefIds.Contains(c.RefId)).ToList();
+            if (unaccounted.Count > 0)
+            {
+                var names = string.Join(", ", unaccounted.Select(c => c.Name));
+                gaps.Add(new GenerationGap(taskName,
+                    $"this Data Flow Task has {allDestinations.Count} destination components but only {accountedRefIds.Count} are accounted for ({names} left unresolved) -- not supported"));
+                return null;
+            }
+        }
+
+        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, ExcelSource: excelSource, Multicast: multicast, Aggregate: aggregate, RowCounts: rowCounts, SortKey: sortKey, ErrorRedirect: errorRedirect);
+    }
+
+    /// <summary>Picks the primary destination among candidates of the SAME destination type --
+    /// the one whose own input is NOT itself fed by another destination's error output. A bare
+    /// <c>FirstOrDefault</c> here (what this method replaced) picks whichever component happens
+    /// to sort first alphabetically -- <c>PipelineSpec.Components</c>'s own deterministic-output
+    /// convention, confirmed by reading <see cref="PipelineFlowOrder"/>'s own doc comment, not
+    /// XML document order. Confirmed to matter for real, not hypothetical: the real evidenced
+    /// case (<c>OLEDST_StagingCustomers</c>/<c>OLEDST_StagingErrors</c>) only ever "worked" by
+    /// alphabetical coincidence ("StagingC" sorts before "StagingE") -- a fixture built to prove
+    /// this feature, named the other way round (<c>OLEDST_Target</c>/<c>OLEDST_Errors</c>),
+    /// picked the ERROR table as "the" destination instead, caught immediately by the general
+    /// multi-destination gap this same round added. Falls back to a bare
+    /// <c>FirstOrDefault</c>-equivalent when candidates can't be distinguished this way (0 or 1
+    /// candidate, or 2+ with neither redirect-fed -- an unevidenced shape this method does not
+    /// try to arbitrate) -- every existing single-destination fixture/real package is completely
+    /// unaffected.</summary>
+    private static PipelineComponentSpec? SelectPrimaryDestination(PipelineSpec pipeline, List<PipelineComponentSpec> candidates)
+    {
+        if (candidates.Count <= 1) return candidates.FirstOrDefault();
+
+        var errorOutputRefIds = new HashSet<string>(pipeline.Components
+            .SelectMany(c => c.Outputs.Where(o => o.IsErrorOut == true))
+            .Select(o => o.RefId));
+        var redirectTargetInputRefIds = new HashSet<string>(pipeline.Paths
+            .Where(p => errorOutputRefIds.Contains(p.StartId))
+            .Select(p => p.EndId));
+
+        return candidates.FirstOrDefault(c => !c.Inputs.Any(i => redirectTargetInputRefIds.Contains(i.RefId)))
+            ?? candidates[0];
+    }
+
+    /// <summary>Resolves a destination's own error-redirect target
+    /// (<c>ErrorRowDisposition=RedirectRow</c> on its input), if any -- RBC_Demo_ETL's own real
+    /// DFT_LoadCustomers shape (<c>OLEDST_StagingCustomers -&gt; OLEDST_StagingErrors</c>),
+    /// silently dropped before this round existed (see CLAUDE.md's own account). Returns
+    /// <c>(false, null)</c> when the destination has no redirect configured at all -- every
+    /// existing, already-verified single-destination fixture is completely unaffected. Returns
+    /// <c>(true, null)</c> -- a gap already added -- when redirect IS configured but cannot be
+    /// safely resolved: no error output on the destination, no downstream path from it, or the
+    /// resolved target is not itself a supported destination type. Never guesses a target.
+    ///
+    /// Resolution needs no new model/reader work at all: an error-output path is modeled through
+    /// the exact same generic <c>PipelineOutputSpec</c>/<c>PipelinePathSpec</c> structures as any
+    /// other path (confirmed by reading <c>PipelineReader.Read</c> directly -- every &lt;path&gt;
+    /// is read unconditionally, with no special-casing for one that happens to start at an error
+    /// output). This is the same two-step lookup <see cref="ResolveBranch"/> already uses for a
+    /// Conditional Split/Multicast case output, just walked forward from an ERROR output instead
+    /// -- no existing call site in this file ever did that before now; every prior
+    /// <c>IsErrorOut</c> check only EXCLUDES it when picking a component's main output.</summary>
+    private static (bool HasGap, ErrorRedirectPlan? Plan) ResolveErrorRedirect(
+        string taskName, PipelineSpec pipeline, PipelineComponentSpec destination, List<GenerationGap> gaps)
+    {
+        var input = destination.Inputs.FirstOrDefault();
+        if (input?.ErrorRowDisposition != "RedirectRow") return (false, null);
+
+        var errorOutput = destination.Outputs.FirstOrDefault(o => o.IsErrorOut == true);
+        if (errorOutput is null)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"'{destination.Name}' has ErrorRowDisposition=RedirectRow but no error output of its own -- not supported"));
+            return (true, null);
+        }
+
+        var path = pipeline.Paths.FirstOrDefault(p => p.StartId == errorOutput.RefId);
+        var errorDestination = path is null ? null : pipeline.Components.FirstOrDefault(c => c.Inputs.Any(i => i.RefId == path.EndId));
+        if (errorDestination is null)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"'{destination.Name}' has ErrorRowDisposition=RedirectRow but its error output has no downstream path -- not supported"));
+            return (true, null);
+        }
+
+        var isSupportedDestinationType = errorDestination.ComponentClassId is "Microsoft.OLEDBDestination" or "Microsoft.FlatFileDestination"
+            || errorDestination.AdoNetDestination is not null;
+        if (!isSupportedDestinationType)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"'{destination.Name}' redirects its error output to '{errorDestination.Name}' ({errorDestination.ComponentClassId}), which is not a supported destination type -- not supported"));
+            return (true, null);
+        }
+
+        return (false, new ErrorRedirectPlan(errorDestination));
     }
 
     /// <summary>Detects a standalone <c>Microsoft.Sort</c> in the plain (non-Conditional-Split,

@@ -30,7 +30,7 @@ namespace Ssis.Extract.Cli;
 internal static class ApplyTestsCommand
 {
     /// <summary>Matches a "more test" provenance comment, e.g.
-    /// <c>// ssisx-more-test: Author=me Date=2026-09-06 Targets=FooTransform.Fill_Bar</c>.
+    /// <c>// ssisx-more-test: Author=me Date=2026-09-06 Targets=FooTransform.SCR_CleanseCustomerRow</c>.
     /// Audit-only -- never used to decide whether a file is applied (see this file's own class
     /// doc comment).</summary>
     private static readonly Regex ProvenanceCommentPattern =

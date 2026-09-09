@@ -139,7 +139,7 @@ public class GeneratedSolutionBuildTests
     [Fact]
     public void GeneratedProjectCompiles_SyntheticParallelShapes()
     {
-        var fixturePath = Path.Combine(ExtractorRoot, "..", "..", "SSIS", "SyntheticParallelShapes.dtsx");
+        var fixturePath = Path.Combine(ExtractorRoot, "..", "..", "..", "SSIS_Packages", "SSIS", "SyntheticParallelShapes.dtsx");
         Assert.True(File.Exists(fixturePath), $"fixture missing: {fixturePath}");
 
         var ssisx = FindSsisx();

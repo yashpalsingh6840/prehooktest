@@ -102,6 +102,23 @@ public static class ComponentInsight
             return detail;
         }
 
+        // Neither Multicast nor Merge/UnionAll carries a bespoke payload (unlike every type
+        // above) -- there is nothing SSIS-specific to decode, only a real input/output count
+        // already captured generically. Keyed on ComponentClassId, not a payload check, for
+        // exactly that reason.
+        if (comp.ComponentClassId is "Microsoft.Multicast")
+        {
+            // A Dangling output is a permanently-unconnected spare Microsoft.Multicast itself
+            // auto-provisions the instant an existing output gets a path attached (see
+            // PipelineOutputSpec.Dangling's own doc comment) -- counting it would overstate the
+            // real fan-out by one.
+            var outputs = comp.Outputs.Count(o => o.IsErrorOut != true && o.Dangling != true);
+            return $"Fans out to {outputs} output(s)";
+        }
+
+        if (comp.ComponentClassId is "Microsoft.Merge" or "Microsoft.UnionAll")
+            return $"Merges {comp.Inputs.Count} input(s) into one output";
+
         return "";
     }
 
