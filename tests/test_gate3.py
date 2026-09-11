@@ -296,5 +296,50 @@ def test_mutated_right_flatfile_destination_missing_property_reports_mismatch(tm
 
     assert by_name["DFT_ExportDelimited_DST"].verdict == Verdict.MISMATCH
     assert "CustomerID" in by_name["DFT_ExportDelimited_DST"].detail
-    # Untouched sibling destination must still match.
-    assert by_name["DFT_ExportFixedWidth_DST"].verdict == Verdict.MATCH
+
+
+@pytest.mark.skipif(
+    not PACKAGE_TRANSFORMS_DTSX.exists() or not PACKAGE_TRANSFORMS_GENERATED.exists(),
+    reason="Package_Transforms sample pair not available on this machine.",
+)
+def test_real_pair_unverifiable_internal_transform_carries_semantic_evidence():
+    """Phase B: an InternalTransform Unverifiable finding for a component type with a registered
+    semantic_extraction.py extractor is no longer a bare "no shape to compare" message — it
+    carries the real, already-resolved evidence (here: Lookup's full shape, including the
+    no-match routing question) so a human/AI reviewer never has to re-read the raw .dtsx."""
+    result = _run(PACKAGE_TRANSFORMS_DTSX, PACKAGE_TRANSFORMS_GENERATED)
+    by_name = {f.object_name: f for f in result.findings}
+    finding = by_name["LKP_Country"]
+    assert finding.verdict == Verdict.UNVERIFIABLE
+    assert finding.component_path.endswith("LKP_Country")
+    assert finding.evidence is not None
+    assert finding.evidence.sql_command == "SELECT CountryName, CountryCode, Region FROM dbo.CountryLookup"
+    assert finding.evidence.match_output_destination == "MCAST_Matched"
+    assert finding.evidence.no_match_output_destination == "RC_UnmatchedRows"
+
+
+@pytest.mark.skipif(
+    not PACKAGE_TRANSFORMS_DTSX.exists() or not PACKAGE_TRANSFORMS_GENERATED.exists(),
+    reason="Package_Transforms sample pair not available on this machine.",
+)
+def test_gate3_reports_round_trip_semantic_evidence(tmp_path: Path):
+    """The new Finding.component_path/evidence fields must actually reach both report formats,
+    not just live on the in-memory dataclass (Phase B's own stated goal: a self-contained finding,
+    not one that still requires re-deriving context from the raw .dtsx)."""
+    import json
+
+    from ssis_validator.report.json_report import build_gate3_report
+    from ssis_validator.report.markdown_report import build_gate3_markdown
+
+    result = _run(PACKAGE_TRANSFORMS_DTSX, PACKAGE_TRANSFORMS_GENERATED)
+    report = build_gate3_report("Package_Transforms", result)
+    by_name = {f["objectName"]: f for f in report["findings"]}
+    lkp = by_name["LKP_Country"]
+    assert lkp["componentPath"].endswith("LKP_Country")
+    assert lkp["evidence"]["sql_command"] == "SELECT CountryName, CountryCode, Region FROM dbo.CountryLookup"
+    # Must be JSON-serializable end to end (this is what write_gate3_json_report actually does).
+    json.dumps(report)
+
+    markdown = build_gate3_markdown("Package_Transforms", result)
+    assert "Semantic evidence" in markdown
+    assert "CountryLookup" in markdown

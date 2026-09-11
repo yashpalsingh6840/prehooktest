@@ -10,25 +10,33 @@
       "scope": "DestinationInput",
       "objectName": "FFDST_AuditTrail_APPEND",
       "verdict": "Unverifiable",
-      "detail": "'FFDST_AuditTrail_APPEND' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table), and no generated factory method is named after this component either \u2014 no schema-correlation mechanism matched (2 declared column(s) not compared)."
+      "detail": "'FFDST_AuditTrail_APPEND' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table), and no generated factory method is named after this component either \u2014 no schema-correlation mechanism matched (2 declared column(s) not compared).",
+      "componentPath": "",
+      "evidence": null
     },
     {
       "scope": "SourceOutput",
       "objectName": "FF_SRC_CustomersFixed",
       "verdict": "Match",
-      "detail": "vs. generated class 'DFT_FixedWidthImportCsvRow' (Csv\\DFT_FixedWidthImportCsvRow.cs):\n  = CountryCode: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'."
+      "detail": "vs. generated class 'DFT_FixedWidthImportCsvRow' (Csv\\DFT_FixedWidthImportCsvRow.cs):\n  = CountryCode: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "MCAST_FixedRows",
       "verdict": "Unverifiable",
-      "detail": "'MCAST_FixedRows' (Microsoft.Multicast) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'MCAST_FixedRows' (Microsoft.Multicast) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76).",
+      "componentPath": "Package\\DFT_FixedWidthImport\\MCAST_FixedRows",
+      "evidence": null
     },
     {
       "scope": "DestinationInput",
       "objectName": "OLEDST_CustomerFixedImport",
       "verdict": "Match",
-      "detail": "vs. generated class 'CustomerFixedImport' (Model\\CustomerFixedImport.cs):\n  = CountryCode: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'."
+      "detail": "vs. generated class 'CustomerFixedImport' (Model\\CustomerFixedImport.cs):\n  = CountryCode: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
     }
   ]
 }

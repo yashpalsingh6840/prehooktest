@@ -12,181 +12,411 @@
       "scope": "InternalTransform",
       "objectName": "CSPLIT_Validity",
       "verdict": "Unverifiable",
-      "detail": "'CSPLIT_Validity' (Microsoft.ConditionalSplit) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'CSPLIT_Validity' (Microsoft.ConditionalSplit) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\CSPLIT_Validity",
+      "evidence": {
+        "outputs": [
+          {
+            "output_name": "Valid",
+            "is_default": false,
+            "friendly_expression": "!ISNULL(CustomerID_i4) && FINDSTRING(TRIM(Email),\"@\",1) > 0",
+            "evaluation_order": 0
+          },
+          {
+            "output_name": "Invalid",
+            "is_default": true,
+            "friendly_expression": null,
+            "evaluation_order": null
+          }
+        ]
+      }
     },
     {
       "scope": "InternalTransform",
       "objectName": "DCONV_Types",
       "verdict": "Unverifiable",
-      "detail": "'DCONV_Types' (Microsoft.DataConvert) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'DCONV_Types' (Microsoft.DataConvert) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76).",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\DCONV_Types",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "DER_Enrich",
       "verdict": "Unverifiable",
-      "detail": "'DER_Enrich' (Microsoft.DerivedColumn) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'DER_Enrich' (Microsoft.DerivedColumn) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\DER_Enrich",
+      "evidence": {
+        "columns": [
+          {
+            "output_name": "FullName",
+            "friendly_expression": "(DT_WSTR,200)(TRIM(FirstName) + \" \" + TRIM(LastName))"
+          },
+          {
+            "output_name": "EmailDomain",
+            "friendly_expression": "(DT_WSTR,200)(FINDSTRING(TRIM(Email),\"@\",1) > 0 ? SUBSTRING(TRIM(Email),FINDSTRING(TRIM(Email),\"@\",1) + 1,100) : \"(none)\")"
+          },
+          {
+            "output_name": "TenureDays",
+            "friendly_expression": "ISNULL(SignupDate_dt) ? -1 : DATEDIFF(\"dd\",SignupDate_dt,GETDATE())"
+          }
+        ]
+      }
     },
     {
       "scope": "InternalTransform",
       "objectName": "DER_TagInvalid",
       "verdict": "Unverifiable",
-      "detail": "'DER_TagInvalid' (Microsoft.DerivedColumn) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'DER_TagInvalid' (Microsoft.DerivedColumn) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\DER_TagInvalid",
+      "evidence": {
+        "columns": [
+          {
+            "output_name": "RowSource",
+            "friendly_expression": "\"Invalid\""
+          }
+        ]
+      }
     },
     {
       "scope": "InternalTransform",
       "objectName": "DER_TagValid",
       "verdict": "Unverifiable",
-      "detail": "'DER_TagValid' (Microsoft.DerivedColumn) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'DER_TagValid' (Microsoft.DerivedColumn) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\DER_TagValid",
+      "evidence": {
+        "columns": [
+          {
+            "output_name": "RowSource",
+            "friendly_expression": "\"Valid\""
+          }
+        ]
+      }
     },
     {
       "scope": "SourceOutput",
       "objectName": "FF_SRC_Customers",
       "verdict": "Match",
-      "detail": "vs. generated class 'DFT_DerivedAndSplitCsvRow' (Csv\\DFT_DerivedAndSplitCsvRow.cs):\n  = Country: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FirstName: SSIS 'wstr' -> 'string'.\n  = LastName: SSIS 'wstr' -> 'string'.\n  = Phone: SSIS 'wstr' -> 'string'.\n  = SignupDate: SSIS 'wstr' -> 'string'."
+      "detail": "vs. generated class 'DFT_DerivedAndSplitCsvRow' (Csv\\DFT_DerivedAndSplitCsvRow.cs):\n  = Country: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FirstName: SSIS 'wstr' -> 'string'.\n  = LastName: SSIS 'wstr' -> 'string'.\n  = Phone: SSIS 'wstr' -> 'string'.\n  = SignupDate: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
     },
     {
       "scope": "DestinationInput",
       "objectName": "OLEDST_CustomerEnriched",
       "verdict": "NormalizedMatch",
-      "detail": "vs. generated class 'CustomerEnriched' (Model\\CustomerEnriched.cs):\n  = CustomerID: SSIS 'i4' -> 'int?'.\n  = EmailDomain: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.\n  = RowSource: SSIS 'wstr' -> 'string'.\n  ~ SignupDate: SSIS 'dbDate' -> 'DateOnly?' (accepted modern equivalent of 'DateTime').\n  = TenureDays: SSIS 'i4' -> 'int'."
+      "detail": "vs. generated class 'CustomerEnriched' (Model\\CustomerEnriched.cs):\n  = CustomerID: SSIS 'i4' -> 'int?'.\n  = EmailDomain: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.\n  = RowSource: SSIS 'wstr' -> 'string'.\n  ~ SignupDate: SSIS 'dbDate' -> 'DateOnly?' (accepted modern equivalent of 'DateTime').\n  = TenureDays: SSIS 'i4' -> 'int'.",
+      "componentPath": "",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "UNION_Recombine",
       "verdict": "LeftOnly",
-      "detail": "'UNION_Recombine' (Microsoft.UnionAll) has no generated counterpart: none of ('ConcatenatingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
+      "detail": "'UNION_Recombine' (Microsoft.UnionAll) has no generated counterpart: none of ('ConcatenatingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\UNION_Recombine",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "AGG_ByRegion",
       "verdict": "Unverifiable",
-      "detail": "'AGG_ByRegion' (Microsoft.Aggregate) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'AGG_ByRegion' (Microsoft.Aggregate) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "componentPath": "Package\\DFT_LookupAndAggregate\\AGG_ByRegion",
+      "evidence": {
+        "columns": [
+          {
+            "name": "Region",
+            "aggregation_type": {
+              "property_name": "AggregationType",
+              "raw_value": "0",
+              "description": "Specifies the type of aggregation."
+            },
+            "source_component": "LKP_Country",
+            "source_column": "Region"
+          },
+          {
+            "name": "CustomerCount",
+            "aggregation_type": {
+              "property_name": "AggregationType",
+              "raw_value": "1",
+              "description": "Specifies the type of aggregation."
+            },
+            "source_component": "FF_SRC_Customers2",
+            "source_column": "CustomerID"
+          }
+        ]
+      }
     },
     {
       "scope": "SourceOutput",
       "objectName": "FF_SRC_Customers2",
       "verdict": "Match",
-      "detail": "vs. generated class 'AGG_ByRegionSourceCsvRow' (Csv\\AGG_ByRegionSourceCsvRow.cs):\n  = Country: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FirstName: SSIS 'wstr' -> 'string'.\n  = LastName: SSIS 'wstr' -> 'string'.\n  = Phone: SSIS 'wstr' -> 'string'.\n  = SignupDate: SSIS 'wstr' -> 'string'."
+      "detail": "vs. generated class 'AGG_ByRegionSourceCsvRow' (Csv\\AGG_ByRegionSourceCsvRow.cs):\n  = Country: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FirstName: SSIS 'wstr' -> 'string'.\n  = LastName: SSIS 'wstr' -> 'string'.\n  = Phone: SSIS 'wstr' -> 'string'.\n  = SignupDate: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "LKP_Country",
       "verdict": "Unverifiable",
-      "detail": "'LKP_Country' (Microsoft.Lookup) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'LKP_Country' (Microsoft.Lookup) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "componentPath": "Package\\DFT_LookupAndAggregate\\LKP_Country",
+      "evidence": {
+        "sql_command": "SELECT CountryName, CountryCode, Region FROM dbo.CountryLookup",
+        "connection_type": {
+          "property_name": "ConnectionType",
+          "raw_value": "0",
+          "description": "Specifies the type of connection used to access the reference dataset."
+        },
+        "cache_type": {
+          "property_name": "CacheType",
+          "raw_value": "0",
+          "description": "Specifies the cache type of the lookup table."
+        },
+        "no_match_behavior": {
+          "property_name": "NoMatchBehavior",
+          "raw_value": "1",
+          "description": "Specifies how the Lookup transformation handles rows without matching entries in the reference data set."
+        },
+        "join_columns": [
+          {
+            "input_column": "Country",
+            "join_to_reference_column": "CountryName"
+          }
+        ],
+        "output_columns": [
+          {
+            "name": "CountryCode",
+            "copy_from_reference_column": "CountryCode"
+          },
+          {
+            "name": "Region",
+            "copy_from_reference_column": "Region"
+          }
+        ],
+        "match_output_destination": "MCAST_Matched",
+        "no_match_output_destination": "RC_UnmatchedRows"
+      }
     },
     {
       "scope": "InternalTransform",
       "objectName": "MCAST_Matched",
       "verdict": "Unverifiable",
-      "detail": "'MCAST_Matched' (Microsoft.Multicast) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'MCAST_Matched' (Microsoft.Multicast) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76).",
+      "componentPath": "Package\\DFT_LookupAndAggregate\\MCAST_Matched",
+      "evidence": null
     },
     {
       "scope": "DestinationInput",
       "objectName": "OLEDST_RegionSummary",
       "verdict": "Match",
-      "detail": "vs. generated class 'RegionSummary' (Model\\RegionSummary.cs):\n  = CustomerCount: SSIS 'i4' -> 'int'.\n  = Region: SSIS 'wstr' -> 'string'."
+      "detail": "vs. generated class 'RegionSummary' (Model\\RegionSummary.cs):\n  = CustomerCount: SSIS 'i4' -> 'int'.\n  = Region: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "RC_MatchedRows",
       "verdict": "LeftOnly",
-      "detail": "'RC_MatchedRows' (Microsoft.RowCount) has no generated counterpart: none of ('CountingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
+      "detail": "'RC_MatchedRows' (Microsoft.RowCount) has no generated counterpart: none of ('CountingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.",
+      "componentPath": "Package\\DFT_LookupAndAggregate\\RC_MatchedRows",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "RC_UnmatchedRows",
       "verdict": "LeftOnly",
-      "detail": "'RC_UnmatchedRows' (Microsoft.RowCount) has no generated counterpart: none of ('CountingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
+      "detail": "'RC_UnmatchedRows' (Microsoft.RowCount) has no generated counterpart: none of ('CountingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.",
+      "componentPath": "Package\\DFT_LookupAndAggregate\\RC_UnmatchedRows",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "CSPLIT_ByCountry",
       "verdict": "Unverifiable",
-      "detail": "'CSPLIT_ByCountry' (Microsoft.ConditionalSplit) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'CSPLIT_ByCountry' (Microsoft.ConditionalSplit) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "componentPath": "Package\\DFT_MergeSortedBranches\\CSPLIT_ByCountry",
+      "evidence": {
+        "outputs": [
+          {
+            "output_name": "Canada",
+            "is_default": false,
+            "friendly_expression": "TRIM(Country) == \"Canada\"",
+            "evaluation_order": 0
+          },
+          {
+            "output_name": "RestOfWorld",
+            "is_default": true,
+            "friendly_expression": null,
+            "evaluation_order": null
+          }
+        ]
+      }
     },
     {
       "scope": "InternalTransform",
       "objectName": "DCONV_MergeId",
       "verdict": "Unverifiable",
-      "detail": "'DCONV_MergeId' (Microsoft.DataConvert) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'DCONV_MergeId' (Microsoft.DataConvert) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76).",
+      "componentPath": "Package\\DFT_MergeSortedBranches\\DCONV_MergeId",
+      "evidence": null
     },
     {
       "scope": "SourceOutput",
       "objectName": "FF_SRC_Customers4",
       "verdict": "Match",
-      "detail": "vs. generated class 'DFT_MergeSortedBranchesCsvRow' (Csv\\DFT_MergeSortedBranchesCsvRow.cs):\n  = Country: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FirstName: SSIS 'wstr' -> 'string'.\n  = LastName: SSIS 'wstr' -> 'string'.\n  = Phone: SSIS 'wstr' -> 'string'.\n  = SignupDate: SSIS 'wstr' -> 'string'."
+      "detail": "vs. generated class 'DFT_MergeSortedBranchesCsvRow' (Csv\\DFT_MergeSortedBranchesCsvRow.cs):\n  = Country: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FirstName: SSIS 'wstr' -> 'string'.\n  = LastName: SSIS 'wstr' -> 'string'.\n  = Phone: SSIS 'wstr' -> 'string'.\n  = SignupDate: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "MRG_SortedUnion",
       "verdict": "LeftOnly",
-      "detail": "'MRG_SortedUnion' (Microsoft.Merge) has no generated counterpart: none of ('MergeInterleaveRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
+      "detail": "'MRG_SortedUnion' (Microsoft.Merge) has no generated counterpart: none of ('MergeInterleaveRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.",
+      "componentPath": "Package\\DFT_MergeSortedBranches\\MRG_SortedUnion",
+      "evidence": null
     },
     {
       "scope": "DestinationInput",
       "objectName": "OLEDST_CustomerMerged",
       "verdict": "Match",
-      "detail": "vs. generated class 'CustomerMerged' (Model\\CustomerMerged.cs):\n  = CustomerID: SSIS 'i4' -> 'int?'.\n  = Email: SSIS 'wstr' -> 'string'."
+      "detail": "vs. generated class 'CustomerMerged' (Model\\CustomerMerged.cs):\n  = CustomerID: SSIS 'i4' -> 'int?'.\n  = Email: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "SORT_Canada",
       "verdict": "LeftOnly",
-      "detail": "'SORT_Canada' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
+      "detail": "'SORT_Canada' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.",
+      "componentPath": "Package\\DFT_MergeSortedBranches\\SORT_Canada",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "SORT_RestOfWorld",
       "verdict": "LeftOnly",
-      "detail": "'SORT_RestOfWorld' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
+      "detail": "'SORT_RestOfWorld' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.",
+      "componentPath": "Package\\DFT_MergeSortedBranches\\SORT_RestOfWorld",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "DCONV_CustId_L",
       "verdict": "Unverifiable",
-      "detail": "'DCONV_CustId_L' (Microsoft.DataConvert) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'DCONV_CustId_L' (Microsoft.DataConvert) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76).",
+      "componentPath": "Package\\DFT_SortAndMergeJoin\\DCONV_CustId_L",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "DCONV_CustId_R",
       "verdict": "Unverifiable",
-      "detail": "'DCONV_CustId_R' (Microsoft.DataConvert) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'DCONV_CustId_R' (Microsoft.DataConvert) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76).",
+      "componentPath": "Package\\DFT_SortAndMergeJoin\\DCONV_CustId_R",
+      "evidence": null
     },
     {
       "scope": "SourceOutput",
       "objectName": "FF_SRC_Contacts",
       "verdict": "Match",
-      "detail": "vs. generated class 'MRG_CustomerContactsRightCsvRow' (Csv\\MRG_CustomerContactsRightCsvRow.cs):\n  = ContactPhone: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = PreferredChannel: SSIS 'wstr' -> 'string'."
+      "detail": "vs. generated class 'MRG_CustomerContactsRightCsvRow' (Csv\\MRG_CustomerContactsRightCsvRow.cs):\n  = ContactPhone: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = PreferredChannel: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
     },
     {
       "scope": "SourceOutput",
       "objectName": "FF_SRC_Customers3",
       "verdict": "Match",
-      "detail": "vs. generated class 'MRG_CustomerContactsLeftCsvRow' (Csv\\MRG_CustomerContactsLeftCsvRow.cs):\n  = Country: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FirstName: SSIS 'wstr' -> 'string'.\n  = LastName: SSIS 'wstr' -> 'string'.\n  = Phone: SSIS 'wstr' -> 'string'.\n  = SignupDate: SSIS 'wstr' -> 'string'."
+      "detail": "vs. generated class 'MRG_CustomerContactsLeftCsvRow' (Csv\\MRG_CustomerContactsLeftCsvRow.cs):\n  = Country: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = FirstName: SSIS 'wstr' -> 'string'.\n  = LastName: SSIS 'wstr' -> 'string'.\n  = Phone: SSIS 'wstr' -> 'string'.\n  = SignupDate: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "MRG_CustomerContacts",
       "verdict": "Unverifiable",
-      "detail": "'MRG_CustomerContacts' (Microsoft.MergeJoin) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "detail": "'MRG_CustomerContacts' (Microsoft.MergeJoin) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "componentPath": "Package\\DFT_SortAndMergeJoin\\MRG_CustomerContacts",
+      "evidence": {
+        "join_type": {
+          "property_name": "JoinType",
+          "raw_value": "2",
+          "description": "Specifies the type of join to perform."
+        },
+        "num_key_columns": 1,
+        "treat_nulls_as_equal": true,
+        "input_columns": [
+          {
+            "name": "CustomerID_i4",
+            "side": "left",
+            "sort_key_position": 1
+          },
+          {
+            "name": "Email",
+            "side": "left",
+            "sort_key_position": null
+          },
+          {
+            "name": "CustomerID_i4",
+            "side": "right",
+            "sort_key_position": 1
+          },
+          {
+            "name": "ContactPhone",
+            "side": "right",
+            "sort_key_position": null
+          },
+          {
+            "name": "PreferredChannel",
+            "side": "right",
+            "sort_key_position": null
+          }
+        ],
+        "output_columns": [
+          {
+            "name": "Email",
+            "source_column": "Email"
+          },
+          {
+            "name": "CustomerID_i4",
+            "source_column": "CustomerID_i4"
+          },
+          {
+            "name": "ContactPhone",
+            "source_column": "ContactPhone"
+          },
+          {
+            "name": "PreferredChannel",
+            "source_column": "PreferredChannel"
+          }
+        ]
+      }
     },
     {
       "scope": "DestinationInput",
       "objectName": "OLEDST_CustomerWithContact",
       "verdict": "Match",
-      "detail": "vs. generated class 'CustomerWithContact' (Model\\CustomerWithContact.cs):\n  = ContactPhone: SSIS 'wstr' -> 'string?'.\n  = CustomerID: SSIS 'i4' -> 'int?'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = PreferredChannel: SSIS 'wstr' -> 'string?'."
+      "detail": "vs. generated class 'CustomerWithContact' (Model\\CustomerWithContact.cs):\n  = ContactPhone: SSIS 'wstr' -> 'string?'.\n  = CustomerID: SSIS 'i4' -> 'int?'.\n  = Email: SSIS 'wstr' -> 'string'.\n  = PreferredChannel: SSIS 'wstr' -> 'string?'.",
+      "componentPath": "",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "SORT_Contacts",
       "verdict": "LeftOnly",
-      "detail": "'SORT_Contacts' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
+      "detail": "'SORT_Contacts' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.",
+      "componentPath": "Package\\DFT_SortAndMergeJoin\\SORT_Contacts",
+      "evidence": null
     },
     {
       "scope": "InternalTransform",
       "objectName": "SORT_Customers",
       "verdict": "LeftOnly",
-      "detail": "'SORT_Customers' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
+      "detail": "'SORT_Customers' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.",
+      "componentPath": "Package\\DFT_SortAndMergeJoin\\SORT_Customers",
+      "evidence": null
     }
   ]
 }

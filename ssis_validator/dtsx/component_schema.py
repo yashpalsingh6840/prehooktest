@@ -37,6 +37,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ssis_validator.dtsx.data_flow import DataFlowPath, _parse_port_ref
+from ssis_validator.dtsx.semantic_extraction import (
+    extract_aggregate,
+    extract_conditional_split,
+    extract_derived_column,
+    extract_lookup,
+    extract_merge_join,
+    extract_script_component_source,
+    extract_sort,
+)
 from ssis_validator.dtsx.sql_extraction import (
     _direct_children,
     _dts_attr,
@@ -44,6 +54,19 @@ from ssis_validator.dtsx.sql_extraction import (
     _resolve_component_type,
     parse_dtsx,
 )
+
+# Dispatch by the resolved component type (see sql_extraction._resolve_component_type -- a Script
+# Component's componentClassID is always "Microsoft.ManagedComponentHost", resolved to the more
+# specific "Microsoft.ScriptComponentHost" via its own UserComponentTypeName property first).
+_SEMANTIC_EXTRACTORS = {
+    "Microsoft.DerivedColumn": lambda comp, paths: extract_derived_column(comp),
+    "Microsoft.ConditionalSplit": lambda comp, paths: extract_conditional_split(comp),
+    "Microsoft.Lookup": lambda comp, paths: extract_lookup(comp, paths),
+    "Microsoft.Aggregate": lambda comp, paths: extract_aggregate(comp),
+    "Microsoft.MergeJoin": lambda comp, paths: extract_merge_join(comp),
+    "Microsoft.Sort": lambda comp, paths: extract_sort(comp),
+    "Microsoft.ScriptComponentHost": lambda comp, paths: extract_script_component_source(comp),
+}
 
 
 @dataclass
@@ -65,6 +88,10 @@ class ComponentSchema:
     component_name: str
     component_type: str
     sides: list[ComponentSchemaSide] = field(default_factory=list)
+    # Populated only when `sides` is empty (a pure pipeline-internal transform) and the component
+    # type has a registered extractor in semantic_extraction.py -- gives Gate 3's otherwise-bare
+    # Unverifiable finding a self-contained, already-resolved evidence packet (Phase B).
+    semantic_evidence: object | None = None
 
 
 def _extract_external_columns(container_elem) -> list[ColumnDecl]:
@@ -113,7 +140,9 @@ def _extract_mapped_input_columns(input_elem) -> list[ColumnDecl]:
     return columns
 
 
-def _extract_component_schema(component_elem, component_path: str) -> ComponentSchema:
+def _extract_component_schema(
+    component_elem, component_path: str, paths: list[DataFlowPath] = ()
+) -> ComponentSchema:
     schema = ComponentSchema(
         component_path=component_path,
         component_name=component_elem.attrib.get("name", ""),
@@ -146,6 +175,10 @@ def _extract_component_schema(component_elem, component_path: str) -> ComponentS
                     port_name=output_elem.attrib.get("name", ""),
                     columns=columns,
                 ))
+    if not schema.sides:
+        extractor = _SEMANTIC_EXTRACTORS.get(schema.component_type)
+        if extractor is not None:
+            schema.semantic_evidence = extractor(component_elem, paths)
     return schema
 
 
@@ -161,12 +194,26 @@ def _extract_pipeline_component_schemas(pipeline_executable, dft_path: str) -> l
     )
     if components_container is None:
         return []
+
+    paths_container = next((c for c in pipeline_elem if _local_name(c.tag) == "paths"), None)
+    paths: list[DataFlowPath] = []
+    if paths_container is not None:
+        for path_elem in paths_container:
+            if _local_name(path_elem.tag) != "path":
+                continue
+            start_comp, start_port = _parse_port_ref(path_elem.attrib.get("startId", ""))
+            end_comp, end_port = _parse_port_ref(path_elem.attrib.get("endId", ""))
+            paths.append(DataFlowPath(
+                start_component=start_comp, start_port=start_port,
+                end_component=end_comp, end_port=end_port,
+            ))
+
     results = []
     for component in components_container:
         if _local_name(component.tag) != "component":
             continue
         comp_name = component.attrib.get("name", "?")
-        results.append(_extract_component_schema(component, f"{dft_path}\\{comp_name}"))
+        results.append(_extract_component_schema(component, f"{dft_path}\\{comp_name}", paths))
     return results
 
 

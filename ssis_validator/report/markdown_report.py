@@ -1,6 +1,7 @@
 """Markdown reports — human-readable, every item accounted for."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from ssis_validator.compare.gate1_sql import Gate1Result
@@ -9,6 +10,7 @@ from ssis_validator.compare.gate2_graph import Gate2Result
 from ssis_validator.compare.gate2_graph import Verdict as Gate2Verdict
 from ssis_validator.compare.gate3_schema import Gate3Result
 from ssis_validator.compare.gate3_schema import Verdict as Gate3Verdict
+from ssis_validator.report.json_report import _evidence_to_dict
 
 _GATE1_VERDICT_ORDER = [
     Gate1Verdict.MISMATCH, Gate1Verdict.LEFT_ONLY, Gate1Verdict.RIGHT_ONLY,
@@ -85,7 +87,13 @@ def build_gate2_markdown(package: str, gate2: Gate2Result) -> str:
 
 
 def _format_gate3_finding(f) -> str:
-    return f"### [{f.scope}] `{f.object_name}` — **{f.verdict.value}**\n\n```\n{f.detail}\n```\n"
+    lines = [f"### [{f.scope}] `{f.object_name}` — **{f.verdict.value}**", "", f"```\n{f.detail}\n```"]
+    if f.evidence is not None:
+        lines += ["", "<details><summary>Semantic evidence</summary>", "", "```json"]
+        lines.append(json.dumps(_evidence_to_dict(f.evidence), indent=2, default=str))
+        lines += ["```", "", "</details>"]
+    lines.append("")
+    return "\n".join(lines)
 
 
 def build_gate3_markdown(package: str, gate3: Gate3Result) -> str:

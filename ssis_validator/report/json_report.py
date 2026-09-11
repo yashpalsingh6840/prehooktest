@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 from ssis_validator.compare.gate1_sql import Gate1Result
@@ -66,6 +66,14 @@ def build_gate2_report(package: str, gate2: Gate2Result) -> dict:
     }
 
 
+def _evidence_to_dict(evidence) -> dict | None:
+    if evidence is None:
+        return None
+    if is_dataclass(evidence):
+        return asdict(evidence)
+    return evidence
+
+
 def build_gate3_report(package: str, gate3: Gate3Result) -> dict:
     return {
         "package": package,
@@ -77,6 +85,8 @@ def build_gate3_report(package: str, gate3: Gate3Result) -> dict:
                 "objectName": f.object_name,
                 "verdict": f.verdict.value,
                 "detail": f.detail,
+                "componentPath": f.component_path,
+                "evidence": _evidence_to_dict(f.evidence),
             }
             for f in gate3.findings
         ],

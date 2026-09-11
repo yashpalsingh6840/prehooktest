@@ -25,6 +25,14 @@ Correlation strategy (see codegen/csharp_schema.py for the empirical basis):
   for 2 of 3 real FlatFileDestination instances; the third has no standalone factory method at
   all and stays honestly `Unverifiable`.
 
+Evidence enrichment (Phase B): an `InternalTransform` `Unverifiable` finding for a component type
+with a registered dtsx/semantic_extraction.py extractor carries a structured `evidence` payload
+(FriendlyExpression / decoded sort key / resolved lineage / raw enum value with its own
+`description` text / Script source) instead of being a bare "no shape to compare" message. This
+never changes the verdict — Tier 1 still cannot judge business-logic equivalence — it only makes
+the finding self-contained for a human or the Tier 2 AI-assisted adjudication step (see
+SSIS-Rewrite-Validation-Plan.md's two-tier architecture) without re-reading the raw .dtsx.
+
 Resolved false-positive history: an earlier version compared each mapped `<inputColumn>`'s own
 pipeline-buffer `cachedName`/`cachedDataType` instead of resolving through its
 `externalMetadataColumnId` to the destination's actual declared column — see
@@ -61,6 +69,14 @@ class Finding:
     object_name: str
     verdict: Verdict
     detail: str
+    component_path: str = ""
+    # Populated only for InternalTransform findings whose component type has a registered
+    # semantic_extraction.py extractor (Phase B) -- a self-contained, already-resolved evidence
+    # packet (FriendlyExpression / decoded sort key / resolved lineage / raw enum + its own
+    # `description` text / Script source), so a surviving Unverifiable finding never requires
+    # re-reading the raw .dtsx to make sense of it. None when no extractor is registered for this
+    # component type (still Unverifiable, just without added evidence).
+    evidence: object | None = None
 
 
 @dataclass
@@ -170,6 +186,7 @@ def run_gate3(
                 result.findings.append(Finding(
                     scope="InternalTransform", object_name=schema.component_name,
                     verdict=Verdict.LEFT_ONLY,
+                    component_path=schema.component_path,
                     detail=(
                         f"'{schema.component_name}' ({schema.component_type}) has no generated "
                         f"counterpart: none of {construct_names!r} — the Etl.Core construct(s) "
@@ -183,11 +200,18 @@ def run_gate3(
             result.findings.append(Finding(
                 scope="InternalTransform", object_name=schema.component_name,
                 verdict=Verdict.UNVERIFIABLE,
+                component_path=schema.component_path,
+                evidence=schema.semantic_evidence,
                 detail=(
                     f"'{schema.component_name}' ({schema.component_type}) has no populated "
                     "externalMetadataColumns on either side — a pipeline-internal component with "
                     "no generated declared-shape counterpart of its own (see "
                     "docs/dtsx-graph-notes.md §6)."
+                    + (
+                        " Semantic evidence attached (see `evidence`) for a human/AI reviewer to "
+                        "judge the generated logic against."
+                        if schema.semantic_evidence is not None else ""
+                    )
                 ),
             ))
             continue
