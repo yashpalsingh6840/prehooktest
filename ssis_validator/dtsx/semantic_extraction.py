@@ -43,11 +43,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ssis_validator.dtsx.sql_extraction import (
     _direct_children,
+    _dts_attr,
     _find_properties,
+    _local_name,
     _property_text,
+    parse_dtsx,
 )
 
 _LINEAGE_RE = re.compile(
@@ -435,3 +439,34 @@ def extract_script_task_source(script_project_elem) -> ScriptSemantics:
         if name.strip().lower() in _SCRIPT_TASK_REAL_FILES:
             result.files.append(ScriptSourceFile(file_name=name, source_code=item.text or ""))
     return result
+
+
+def extract_all_script_task_sources(dtsx_path: str | Path) -> dict[str, ScriptSemantics]:
+    """Returns {task_object_name: ScriptSemantics} for every Microsoft.ScriptTask in the package,
+    at any nesting depth. A Script Task is a control-flow node, not a data-flow component, so it
+    never appears in dtsx/component_schema.py's per-pipeline walk -- this is package-wide, mirroring
+    dtsx/data_flow.py's own top-to-bottom Executables walk."""
+    root = parse_dtsx(dtsx_path)
+    results: dict[str, ScriptSemantics] = {}
+
+    def walk(owner_elem) -> None:
+        for executables_wrapper in _direct_children(owner_elem, "Executables"):
+            for child in _direct_children(executables_wrapper, "Executable"):
+                if _dts_attr(child, "Disabled") == "True":
+                    continue
+                object_name = _dts_attr(child, "ObjectName") or "?"
+                if _dts_attr(child, "CreationName") == "Microsoft.ScriptTask":
+                    object_data = next(iter(_direct_children(child, "ObjectData")), None)
+                    if object_data is not None:
+                        script_project = next(
+                            (c for c in object_data if _local_name(c.tag) == "ScriptProject"), None
+                        )
+                        if script_project is not None:
+                            semantics = extract_script_task_source(script_project)
+                            if semantics.files:
+                                results[object_name] = semantics
+                else:
+                    walk(child)
+
+    walk(root)
+    return results

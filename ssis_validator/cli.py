@@ -6,6 +6,7 @@ Gate 3 (per-component input/output schema parity) for one .dtsx + generated-C#-f
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -24,7 +25,13 @@ from ssis_validator.dtsx.component_schema import extract as extract_left_schema
 from ssis_validator.dtsx.control_flow import extract as extract_control_flow
 from ssis_validator.dtsx.data_flow import extract_all as extract_data_flow
 from ssis_validator.dtsx.no_translation_registry import NO_TRANSLATION_CONSTRUCTS
+from ssis_validator.dtsx.semantic_extraction import extract_all_script_task_sources
 from ssis_validator.dtsx.sql_extraction import extract as extract_left_sql
+from ssis_validator.report.ai_context import (
+    build_data_flow_packets,
+    build_script_task_packets,
+    render_markdown,
+)
 from ssis_validator.report.json_report import (
     write_gate2_json_report,
     write_gate3_json_report,
@@ -45,6 +52,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     validate.add_argument("--dtsx", required=True, help="Path to the .dtsx source file.")
     validate.add_argument("--generated", required=True, help="Path to the generated C# project folder.")
     validate.add_argument("--out", required=True, help="Output directory for reports.")
+
+    ai_context = subparsers.add_parser(
+        "ai-context",
+        help=(
+            "Emit Tier 2 (AI-assisted adjudication) evidence packets for the genuinely "
+            "irreducible business-logic-equivalence findings Tier 1 cannot resolve further -- "
+            "see docs/ai-validation-prompt.md. Advisory only; never merged into gate1/2/3 reports."
+        ),
+    )
+    ai_context.add_argument("--dtsx", required=True, help="Path to the .dtsx source file.")
+    ai_context.add_argument("--generated", required=True, help="Path to the generated C# project folder.")
+    ai_context.add_argument("--out", required=True, help="Output directory for evidence packets.")
     return parser
 
 
@@ -127,11 +146,55 @@ def run_validate(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
     return 1 if (gate1_blocking or gate2_blocking or gate3_blocking) else 0
 
 
+def run_ai_context(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
+    dtsx_path_obj = Path(dtsx_path)
+    package = dtsx_path_obj.stem
+    out_dir_obj = Path(out_dir)
+    out_dir_obj.mkdir(parents=True, exist_ok=True)
+
+    left_sql = extract_left_sql(dtsx_path_obj)
+    right_sql = extract_right_sql(generated_dir)
+    left_schema = extract_left_schema(dtsx_path_obj)
+    right_schema = extract_right_schema(generated_dir)
+    all_construct_names = sorted({
+        name for names in NO_TRANSLATION_CONSTRUCTS.values() for name in names
+    })
+    present_constructs = frozenset(
+        name for name in all_construct_names
+        if any_construct_referenced(generated_dir, (name,))
+    )
+    gate3 = run_gate3(
+        left_schema, left_sql.sql_items, right_sql.sql_items, right_schema, present_constructs,
+    )
+
+    package_cs_file = find_package_cs_file(generated_dir)
+    task_sources = extract_all_script_task_sources(dtsx_path_obj)
+
+    packets = build_data_flow_packets(package, dtsx_path_obj, gate3, package_cs_file)
+    packets += build_script_task_packets(package, dtsx_path_obj, task_sources, package_cs_file)
+
+    for packet in packets:
+        stem = f"{package}.{packet['component_name']}"
+        (out_dir_obj / f"{stem}.ai-context.json").write_text(
+            json.dumps(packet, indent=2, default=str), encoding="utf-8",
+        )
+        (out_dir_obj / f"{stem}.ai-context.md").write_text(render_markdown(packet), encoding="utf-8")
+
+    print(f"AI context — {package}: {len(packets)} evidence packet(s) written to {out_dir_obj}.")
+    for packet in packets:
+        print(f"  [{packet['scope']}] {packet['component_name']}")
+    if not packets:
+        print("  (no genuinely irreducible findings survived Tier 1 for this package)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
     if args.command == "validate":
         return run_validate(args.dtsx, args.generated, args.out)
+    if args.command == "ai-context":
+        return run_ai_context(args.dtsx, args.generated, args.out)
     parser.print_help()
     return 2
 

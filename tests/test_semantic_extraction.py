@@ -11,6 +11,7 @@ import pytest
 
 from ssis_validator.dtsx.semantic_extraction import (
     extract_aggregate,
+    extract_all_script_task_sources,
     extract_conditional_split,
     extract_derived_column,
     extract_lookup,
@@ -193,3 +194,11 @@ def test_script_task_source_keeps_only_scriptmain():
     assert names == ["ScriptMain.cs", "ScriptMain.vb"]
     combined = "\n".join(f.source_code for f in all_files)
     assert "EtlAuditLog" in combined or "RowsLoaded" in combined
+
+
+def test_extract_all_script_task_sources_finds_every_script_task_by_name():
+    result = extract_all_script_task_sources(PACKAGE_DTSX)
+    assert set(result.keys()) == {"SCR_NotifyAndLogProgress", "SCR_ValidateAndLogStart"}
+    for semantics in result.values():
+        assert semantics.files
+        assert semantics.files[0].file_name in ("ScriptMain.cs", "ScriptMain.vb")
