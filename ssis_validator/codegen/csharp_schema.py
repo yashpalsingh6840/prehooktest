@@ -19,6 +19,18 @@ relies on for SQL sources (docs/dtsx-xml-notes.md §2). Destination correlation 
 (observed as both the bare component name and a table-derived name across the 5 samples), so
 destination correlation instead reuses Gate 1's already-proven (schema, table) identity match
 (see compare/gate3_schema.py), never a method or constructor name.
+
+For a destination with no (schema, table) identity at all (a non-database destination Gate 1's
+registry doesn't cover, e.g. FlatFileDestination), a second, narrower fallback applies: confirmed
+against 2 of 3 real FlatFileDestination instances, the *enclosing factory method's own name*
+(not its `FlatFileBulkSink<T>(File("..."), ...)` construction site's string argument, which is
+the flat-file connection manager's file name, unrelated to the component) equals the SSIS
+component's own name — `internal IBulkSink<T> DFT_ExportDelimited_DST()` for SSIS component
+`DFT_ExportDelimited_DST`. The third instance (`FFDST_AuditTrail_APPEND`) is constructed inline
+inside a `ConditionalSplitBranch` array with no standalone factory method at all — a distinct
+shape observed exactly once, not generalized into a heuristic (never guess from a single sample).
+This fallback is only ever consulted when the (schema, table) path already failed, so it can
+never conflict with or override that proven, more specific correlation.
 """
 from __future__ import annotations
 
@@ -39,6 +51,9 @@ _PROPERTY_RE = re.compile(
 _ROW_SOURCE_RE = re.compile(
     r'new\s+\w*RowSource<(?P<row_type>\w+)>\(\s*"(?P<name>[^"]+)"'
 )
+_BULK_SINK_METHOD_RE = re.compile(
+    r"(?:public|internal)\s+I\w*BulkSink<(?P<row_type>\w+)>\s+(?P<name>\w+)\s*\("
+)
 
 
 @dataclass
@@ -58,6 +73,7 @@ class CsClass:
 class CsharpSchemaIndex:
     classes: dict[str, CsClass] = field(default_factory=dict)
     row_source_methods: dict[str, str] = field(default_factory=dict)  # component name -> row class
+    bulk_sink_methods: dict[str, str] = field(default_factory=dict)  # component name -> entity class
 
 
 def _scan_classes(text: str, file_path: str) -> list[CsClass]:
@@ -76,6 +92,10 @@ def _scan_row_source_methods(text: str) -> dict[str, str]:
     return {m.group("name"): m.group("row_type") for m in _ROW_SOURCE_RE.finditer(text)}
 
 
+def _scan_bulk_sink_methods(text: str) -> dict[str, str]:
+    return {m.group("name"): m.group("row_type") for m in _BULK_SINK_METHOD_RE.finditer(text)}
+
+
 def extract(generated_package_dir: str | Path) -> CsharpSchemaIndex:
     root = Path(generated_package_dir)
     index = CsharpSchemaIndex()
@@ -87,4 +107,5 @@ def extract(generated_package_dir: str | Path) -> CsharpSchemaIndex:
         for cls in _scan_classes(text, rel_path):
             index.classes[cls.name] = cls
         index.row_source_methods.update(_scan_row_source_methods(text))
+        index.bulk_sink_methods.update(_scan_bulk_sink_methods(text))
     return index

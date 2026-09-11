@@ -12,7 +12,7 @@ Per-component input/output schema parity. Declared column name + SSIS-type-to-.N
 ### [DestinationInput] `FFDST_AuditTrail_APPEND` — **Unverifiable**
 
 ```
-'FFDST_AuditTrail_APPEND' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table) — no schema-correlation mechanism covers this destination kind yet (2 declared column(s) not compared).
+'FFDST_AuditTrail_APPEND' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table), and no generated factory method is named after this component either — no schema-correlation mechanism matched (2 declared column(s) not compared).
 ```
 
 ### [InternalTransform] `MCAST_FixedRows` — **Unverifiable**

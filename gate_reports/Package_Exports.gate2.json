@@ -34,7 +34,7 @@
       "scope": "DataFlow:DFT_AdoNetRoundTrip",
       "objectName": "ADO_DST_ExportLog",
       "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_AdoNetRoundTrip's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "detail": "Component name found by text presence inside DFT_AdoNetRoundTrip's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
     },
     {
       "scope": "DataFlow:DFT_AdoNetRoundTrip",
@@ -46,7 +46,7 @@
       "scope": "DataFlow:DFT_ExportDelimited",
       "objectName": "DFT_ExportDelimited_DST",
       "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_ExportDelimited's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "detail": "Component name found by text presence inside DFT_ExportDelimited's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
     },
     {
       "scope": "DataFlow:DFT_ExportDelimited",
@@ -58,7 +58,7 @@
       "scope": "DataFlow:DFT_ExportFixedWidth",
       "objectName": "DFT_ExportFixedWidth_DST",
       "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_ExportFixedWidth's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "detail": "Component name found by text presence inside DFT_ExportFixedWidth's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
     },
     {
       "scope": "DataFlow:DFT_ExportFixedWidth",

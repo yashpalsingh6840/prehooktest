@@ -10,7 +10,7 @@
       "scope": "DestinationInput",
       "objectName": "FFDST_AuditTrail_APPEND",
       "verdict": "Unverifiable",
-      "detail": "'FFDST_AuditTrail_APPEND' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table) \u2014 no schema-correlation mechanism covers this destination kind yet (2 declared column(s) not compared)."
+      "detail": "'FFDST_AuditTrail_APPEND' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table), and no generated factory method is named after this component either \u2014 no schema-correlation mechanism matched (2 declared column(s) not compared)."
     },
     {
       "scope": "SourceOutput",

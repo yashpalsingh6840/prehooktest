@@ -1,0 +1,238 @@
+{
+  "package": "Package_Transforms",
+  "gate": "Gate2_GraphParity",
+  "counts": {
+    "Match": 8,
+    "Unverifiable": 30
+  },
+  "findings": [
+    {
+      "scope": "ControlFlow",
+      "objectName": "SQL_TruncateEnriched",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "DFT_DerivedAndSplit",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "SQL_TruncateRegionSummary",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "DFT_LookupAndAggregate",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "SQL_TruncateWithContact",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "DFT_SortAndMergeJoin",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "SQL_TruncateMerged",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "DFT_MergeSortedBranches",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "CSPLIT_Validity",
+      "verdict": "Unverifiable",
+      "detail": "Component name found by text presence inside DFT_DerivedAndSplit's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "DCONV_Types",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_DerivedAndSplit's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "DER_Enrich",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_DerivedAndSplit's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "DER_TagInvalid",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_DerivedAndSplit's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "DER_TagValid",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_DerivedAndSplit's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "FF_SRC_Customers",
+      "verdict": "Unverifiable",
+      "detail": "Component name found by text presence inside DFT_DerivedAndSplit's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "OLEDST_CustomerEnriched",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_DerivedAndSplit's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "UNION_Recombine",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_DerivedAndSplit's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "AGG_ByRegion",
+      "verdict": "Unverifiable",
+      "detail": "Component name found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "FF_SRC_Customers2",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "LKP_Country",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "MCAST_Matched",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "OLEDST_RegionSummary",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "RC_MatchedRows",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "RC_UnmatchedRows",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "CSPLIT_ByCountry",
+      "verdict": "Unverifiable",
+      "detail": "Component name found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "DCONV_MergeId",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "FF_SRC_Customers4",
+      "verdict": "Unverifiable",
+      "detail": "Component name found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "MRG_SortedUnion",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "OLEDST_CustomerMerged",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "SORT_Canada",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "SORT_RestOfWorld",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "DCONV_CustId_L",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "DCONV_CustId_R",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "FF_SRC_Contacts",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "FF_SRC_Customers3",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "MRG_CustomerContacts",
+      "verdict": "Unverifiable",
+      "detail": "Component name found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "OLEDST_CustomerWithContact",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "SORT_Contacts",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "SORT_Customers",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    }
+  ]
+}

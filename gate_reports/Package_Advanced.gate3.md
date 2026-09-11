@@ -12,7 +12,7 @@ Per-component input/output schema parity. Declared column name + SSIS-type-to-.N
 ### [DestinationInput] `OLECMD_SetFlag` — **Unverifiable**
 
 ```
-'OLECMD_SetFlag' (Microsoft.OLEDBCommand) is not a database destination Gate 1 can identify by (schema, table) — no schema-correlation mechanism covers this destination kind yet (1 declared column(s) not compared).
+'OLECMD_SetFlag' (Microsoft.OLEDBCommand) is not a database destination Gate 1 can identify by (schema, table), and no generated factory method is named after this component either — no schema-correlation mechanism matched (1 declared column(s) not compared).
 ```
 
 ## Match (3)

@@ -4,24 +4,9 @@ Per-component input/output schema parity. Declared column name + SSIS-type-to-.N
 
 | Verdict | Count |
 |---|---|
-| Unverifiable | 2 |
-| Match | 4 |
+| Match | 6 |
 
-## Unverifiable (2)
-
-### [DestinationInput] `DFT_ExportDelimited_DST` — **Unverifiable**
-
-```
-'DFT_ExportDelimited_DST' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table) — no schema-correlation mechanism covers this destination kind yet (3 declared column(s) not compared).
-```
-
-### [DestinationInput] `DFT_ExportFixedWidth_DST` — **Unverifiable**
-
-```
-'DFT_ExportFixedWidth_DST' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table) — no schema-correlation mechanism covers this destination kind yet (4 declared column(s) not compared).
-```
-
-## Match (4)
+## Match (6)
 
 ### [DestinationInput] `ADO_DST_ExportLog` — **Match**
 
@@ -39,6 +24,15 @@ vs. generated class 'CustomerExportLogSqlRow' (Sql\CustomerExportLogSqlRow.cs):
   = FullName: SSIS 'wstr' -> 'string'.
 ```
 
+### [DestinationInput] `DFT_ExportDelimited_DST` — **Match**
+
+```
+vs. generated class 'DFT_ExportDelimited' (Model\DFT_ExportDelimited.cs):
+  = CleanEmail: SSIS 'wstr' -> 'string'.
+  = CustomerID: SSIS 'wstr' -> 'string'.
+  = FullName: SSIS 'wstr' -> 'string'.
+```
+
 ### [SourceOutput] `DFT_ExportDelimited_SRC` — **Match**
 
 ```
@@ -46,6 +40,16 @@ vs. generated class 'DFT_ExportDelimitedSqlRow' (Sql\DFT_ExportDelimitedSqlRow.c
   = CleanEmail: SSIS 'wstr' -> 'string'.
   = CustomerID: SSIS 'wstr' -> 'string'.
   = FullName: SSIS 'wstr' -> 'string'.
+```
+
+### [DestinationInput] `DFT_ExportFixedWidth_DST` — **Match**
+
+```
+vs. generated class 'DFT_ExportFixedWidth' (Model\DFT_ExportFixedWidth.cs):
+  = CleanEmail: SSIS 'wstr' -> 'string'.
+  = CustomerID: SSIS 'wstr' -> 'string'.
+  = FullName: SSIS 'wstr' -> 'string'.
+  = RowEnd: SSIS 'wstr' -> 'string'.
 ```
 
 ### [SourceOutput] `DFT_ExportFixedWidth_SRC` — **Match**

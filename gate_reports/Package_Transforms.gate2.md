@@ -59,7 +59,7 @@ Component name NOT found by text presence inside DFT_LookupAndAggregate's genera
 
 ### [DataFlow:DFT_LookupAndAggregate] `OLEDST_RegionSummary` — **Unverifiable**
 
-Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
+Component name found by text presence inside DFT_LookupAndAggregate's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
 ### [DataFlow:DFT_LookupAndAggregate] `RC_MatchedRows` — **Unverifiable**
 
@@ -119,7 +119,7 @@ Component name found by text presence inside DFT_SortAndMergeJoin's generated me
 
 ### [DataFlow:DFT_SortAndMergeJoin] `OLEDST_CustomerWithContact` — **Unverifiable**
 
-Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
+Component name found by text presence inside DFT_SortAndMergeJoin's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
 ### [DataFlow:DFT_SortAndMergeJoin] `SORT_Contacts` — **Unverifiable**
 

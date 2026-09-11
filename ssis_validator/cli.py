@@ -9,6 +9,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from ssis_validator.codegen.csharp_construct_presence import any_construct_referenced
 from ssis_validator.codegen.csharp_graph import extract as extract_right_graph
 from ssis_validator.codegen.csharp_graph import find_package_cs_file
 from ssis_validator.codegen.csharp_schema import extract as extract_right_schema
@@ -22,6 +23,7 @@ from ssis_validator.compare.gate3_schema import run_gate3
 from ssis_validator.dtsx.component_schema import extract as extract_left_schema
 from ssis_validator.dtsx.control_flow import extract as extract_control_flow
 from ssis_validator.dtsx.data_flow import extract_all as extract_data_flow
+from ssis_validator.dtsx.no_translation_registry import NO_TRANSLATION_CONSTRUCTS
 from ssis_validator.dtsx.sql_extraction import extract as extract_left_sql
 from ssis_validator.report.json_report import (
     write_gate2_json_report,
@@ -93,7 +95,16 @@ def run_validate(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
 
     left_schema = extract_left_schema(dtsx_path_obj)
     right_schema = extract_right_schema(generated_dir)
-    gate3 = run_gate3(left_schema, left_sql.sql_items, right_sql.sql_items, right_schema)
+    all_construct_names = sorted({
+        name for names in NO_TRANSLATION_CONSTRUCTS.values() for name in names
+    })
+    present_constructs = frozenset(
+        name for name in all_construct_names
+        if any_construct_referenced(generated_dir, (name,))
+    )
+    gate3 = run_gate3(
+        left_schema, left_sql.sql_items, right_sql.sql_items, right_schema, present_constructs,
+    )
     write_gate3_json_report(package, gate3, out_dir_obj / f"{package}.gate3.json")
     write_gate3_markdown_report(package, gate3, out_dir_obj / f"{package}.gate3.md")
 

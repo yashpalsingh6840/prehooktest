@@ -2,9 +2,10 @@
   "package": "Package_Transforms",
   "gate": "Gate3_ComponentSchemaParity",
   "counts": {
-    "Unverifiable": 21,
+    "Unverifiable": 13,
     "Match": 8,
-    "NormalizedMatch": 1
+    "NormalizedMatch": 1,
+    "LeftOnly": 8
   },
   "findings": [
     {
@@ -52,8 +53,8 @@
     {
       "scope": "InternalTransform",
       "objectName": "UNION_Recombine",
-      "verdict": "Unverifiable",
-      "detail": "'UNION_Recombine' (Microsoft.UnionAll) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "verdict": "LeftOnly",
+      "detail": "'UNION_Recombine' (Microsoft.UnionAll) has no generated counterpart: none of ('ConcatenatingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
     },
     {
       "scope": "InternalTransform",
@@ -88,14 +89,14 @@
     {
       "scope": "InternalTransform",
       "objectName": "RC_MatchedRows",
-      "verdict": "Unverifiable",
-      "detail": "'RC_MatchedRows' (Microsoft.RowCount) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "verdict": "LeftOnly",
+      "detail": "'RC_MatchedRows' (Microsoft.RowCount) has no generated counterpart: none of ('CountingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
     },
     {
       "scope": "InternalTransform",
       "objectName": "RC_UnmatchedRows",
-      "verdict": "Unverifiable",
-      "detail": "'RC_UnmatchedRows' (Microsoft.RowCount) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "verdict": "LeftOnly",
+      "detail": "'RC_UnmatchedRows' (Microsoft.RowCount) has no generated counterpart: none of ('CountingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
     },
     {
       "scope": "InternalTransform",
@@ -118,8 +119,8 @@
     {
       "scope": "InternalTransform",
       "objectName": "MRG_SortedUnion",
-      "verdict": "Unverifiable",
-      "detail": "'MRG_SortedUnion' (Microsoft.Merge) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "verdict": "LeftOnly",
+      "detail": "'MRG_SortedUnion' (Microsoft.Merge) has no generated counterpart: none of ('MergeInterleaveRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
     },
     {
       "scope": "DestinationInput",
@@ -130,14 +131,14 @@
     {
       "scope": "InternalTransform",
       "objectName": "SORT_Canada",
-      "verdict": "Unverifiable",
-      "detail": "'SORT_Canada' (Microsoft.Sort) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "verdict": "LeftOnly",
+      "detail": "'SORT_Canada' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
     },
     {
       "scope": "InternalTransform",
       "objectName": "SORT_RestOfWorld",
-      "verdict": "Unverifiable",
-      "detail": "'SORT_RestOfWorld' (Microsoft.Sort) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "verdict": "LeftOnly",
+      "detail": "'SORT_RestOfWorld' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
     },
     {
       "scope": "InternalTransform",
@@ -178,14 +179,14 @@
     {
       "scope": "InternalTransform",
       "objectName": "SORT_Contacts",
-      "verdict": "Unverifiable",
-      "detail": "'SORT_Contacts' (Microsoft.Sort) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "verdict": "LeftOnly",
+      "detail": "'SORT_Contacts' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
     },
     {
       "scope": "InternalTransform",
       "objectName": "SORT_Customers",
-      "verdict": "Unverifiable",
-      "detail": "'SORT_Customers' (Microsoft.Sort) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76)."
+      "verdict": "LeftOnly",
+      "detail": "'SORT_Customers' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) \u2014 the Etl.Core construct(s) that would represent this SSIS component type if translated \u2014 are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity."
     }
   ]
 }

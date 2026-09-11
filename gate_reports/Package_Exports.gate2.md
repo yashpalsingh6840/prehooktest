@@ -11,7 +11,7 @@ Control-flow / data-flow graph parity. Every node/edge/concurrency-group item fr
 
 ### [DataFlow:DFT_AdoNetRoundTrip] `ADO_DST_ExportLog` — **Unverifiable**
 
-Component name NOT found by text presence inside DFT_AdoNetRoundTrip's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
+Component name found by text presence inside DFT_AdoNetRoundTrip's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
 ### [DataFlow:DFT_AdoNetRoundTrip] `ADO_SRC_Customers` — **Unverifiable**
 
@@ -19,7 +19,7 @@ Component name found by text presence inside DFT_AdoNetRoundTrip's generated met
 
 ### [DataFlow:DFT_ExportDelimited] `DFT_ExportDelimited_DST` — **Unverifiable**
 
-Component name NOT found by text presence inside DFT_ExportDelimited's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
+Component name found by text presence inside DFT_ExportDelimited's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
 ### [DataFlow:DFT_ExportDelimited] `DFT_ExportDelimited_SRC` — **Unverifiable**
 
@@ -27,7 +27,7 @@ Component name found by text presence inside DFT_ExportDelimited's generated met
 
 ### [DataFlow:DFT_ExportFixedWidth] `DFT_ExportFixedWidth_DST` — **Unverifiable**
 
-Component name NOT found by text presence inside DFT_ExportFixedWidth's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
+Component name found by text presence inside DFT_ExportFixedWidth's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
 ### [DataFlow:DFT_ExportFixedWidth] `DFT_ExportFixedWidth_SRC` — **Unverifiable**
 

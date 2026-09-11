@@ -130,7 +130,7 @@
       "scope": "DataFlow:DFT_LookupAndAggregate",
       "objectName": "OLEDST_RegionSummary",
       "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "detail": "Component name found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
     },
     {
       "scope": "DataFlow:DFT_LookupAndAggregate",
@@ -220,7 +220,7 @@
       "scope": "DataFlow:DFT_SortAndMergeJoin",
       "objectName": "OLEDST_CustomerWithContact",
       "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "detail": "Component name found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
     },
     {
       "scope": "DataFlow:DFT_SortAndMergeJoin",

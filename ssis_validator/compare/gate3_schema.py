@@ -14,7 +14,16 @@ Correlation strategy (see codegen/csharp_schema.py for the empirical basis):
 - A component with no populated externalMetadataColumns on either side (a pure pipeline-internal
   transform — Derived Column, Lookup, Script Component, etc.) has no generated declared-shape
   counterpart to compare (it collapses into constructor arguments/local functions of another
-  method — docs/dtsx-graph-notes.md §6) and is reported `Unverifiable`, not a silent pass.
+  method — docs/dtsx-graph-notes.md §6) and is reported `Unverifiable`, not a silent pass — UNLESS
+  its componentClassID is in `dtsx/no_translation_registry.py` and none of that type's expected
+  Etl.Core construct(s) are referenced anywhere in the generated project at all, in which case it
+  is a real, tool-detected gap (`LeftOnly`), not an unresolvable ambiguity — see
+  `codegen/csharp_construct_presence.py`.
+- A non-database destination (no (schema, table) identity Gate 1's registry gives us) falls back
+  to a second correlation path: an enclosing factory method whose own name equals the SSIS
+  component's name (`codegen/csharp_schema.py`'s `bulk_sink_methods` index) — confirmed reliable
+  for 2 of 3 real FlatFileDestination instances; the third has no standalone factory method at
+  all and stays honestly `Unverifiable`.
 
 Resolved false-positive history: an earlier version compared each mapped `<inputColumn>`'s own
 pipeline-buffer `cachedName`/`cachedDataType` instead of resolving through its
@@ -33,6 +42,7 @@ from enum import Enum
 from ssis_validator.codegen.csharp_schema import CsClass, CsharpSchemaIndex
 from ssis_validator.codegen.csharp_sql import CodegenSqlItem
 from ssis_validator.dtsx.component_schema import ComponentSchema, ComponentSchemaSide
+from ssis_validator.dtsx.no_translation_registry import NO_TRANSLATION_CONSTRUCTS
 from ssis_validator.dtsx.schema_types import normalize_clr_type, resolve_ssis_type
 from ssis_validator.dtsx.sql_extraction import SqlItem, SqlKind
 
@@ -147,6 +157,7 @@ def run_gate3(
     left_sql_items: list[SqlItem],
     right_sql_items: list[CodegenSqlItem],
     csharp_index: CsharpSchemaIndex,
+    present_constructs: frozenset[str] = frozenset(),
 ) -> Gate3Result:
     result = Gate3Result()
     left_tables_by_path = _left_table_items_by_path(left_sql_items)
@@ -154,6 +165,21 @@ def run_gate3(
 
     for schema in component_schemas:
         if not schema.sides:
+            construct_names = NO_TRANSLATION_CONSTRUCTS.get(schema.component_type)
+            if construct_names and not (set(construct_names) & present_constructs):
+                result.findings.append(Finding(
+                    scope="InternalTransform", object_name=schema.component_name,
+                    verdict=Verdict.LEFT_ONLY,
+                    detail=(
+                        f"'{schema.component_name}' ({schema.component_type}) has no generated "
+                        f"counterpart: none of {construct_names!r} — the Etl.Core construct(s) "
+                        "that would represent this SSIS component type if translated — are "
+                        "referenced anywhere in the generated project. A project-wide presence "
+                        "check, not a per-instance match: a real, tool-detected gap, not a "
+                        "naming ambiguity."
+                    ),
+                ))
+                continue
             result.findings.append(Finding(
                 scope="InternalTransform", object_name=schema.component_name,
                 verdict=Verdict.UNVERIFIABLE,
@@ -175,23 +201,29 @@ def run_gate3(
                     # Gate 1's sql_extraction only classifies OLE DB/ADO.NET destinations as a
                     # TABLE_IDENTITY item (database, EF-mappable) — a destination type outside
                     # that registry (e.g. OLEDBCommand, FlatFileDestination) has no (schema,
-                    # table) identity to correlate by. This is an uncovered shape, not a detected
-                    # gap: report it honestly rather than as a false LeftOnly.
-                    result.findings.append(Finding(
-                        scope=scope, object_name=schema.component_name, verdict=Verdict.UNVERIFIABLE,
-                        detail=(
-                            f"'{schema.component_name}' ({schema.component_type}) is not a "
-                            "database destination Gate 1 can identify by (schema, table) — no "
-                            "schema-correlation mechanism covers this destination kind yet "
-                            f"({len(side.columns)} declared column(s) not compared)."
-                        ),
-                    ))
-                    continue
-                right_item = (
-                    right_tables_by_table.get(left_table_item.table_name.lower())
-                    if left_table_item.table_name else None
-                )
-                cls_name = right_item.object_name if right_item else None
+                    # table) identity to correlate by. Fall back to a factory-method-name match
+                    # (confirmed reliable for FlatFileDestination when a standalone method
+                    # exists — see csharp_schema.py's bulk_sink_methods docstring) before giving
+                    # up honestly.
+                    cls_name = csharp_index.bulk_sink_methods.get(schema.component_name)
+                    if cls_name is None:
+                        result.findings.append(Finding(
+                            scope=scope, object_name=schema.component_name, verdict=Verdict.UNVERIFIABLE,
+                            detail=(
+                                f"'{schema.component_name}' ({schema.component_type}) is not a "
+                                "database destination Gate 1 can identify by (schema, table), and "
+                                "no generated factory method is named after this component either "
+                                f"— no schema-correlation mechanism matched "
+                                f"({len(side.columns)} declared column(s) not compared)."
+                            ),
+                        ))
+                        continue
+                else:
+                    right_item = (
+                        right_tables_by_table.get(left_table_item.table_name.lower())
+                        if left_table_item.table_name else None
+                    )
+                    cls_name = right_item.object_name if right_item else None
             else:
                 cls_name = csharp_index.row_source_methods.get(schema.component_name)
 

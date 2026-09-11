@@ -1,0 +1,58 @@
+{
+  "package": "Package_Legacy",
+  "gate": "Gate2_GraphParity",
+  "counts": {
+    "Match": 3,
+    "Unverifiable": 5
+  },
+  "findings": [
+    {
+      "scope": "ControlFlow",
+      "objectName": "SQL_AtomicSwap",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "DFT_FixedWidthImport",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "SQL_CacheSet_SecondDb",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "SQL_LegacyStep_DISABLED",
+      "verdict": "Unverifiable",
+      "detail": "DTS:Disabled=\"True\" \u2014 excluded from the comparable node/edge set; confirmed to have no generated counterpart by design, not treated as a gap."
+    },
+    {
+      "scope": "DataFlow:DFT_FixedWidthImport",
+      "objectName": "FFDST_AuditTrail_APPEND",
+      "verdict": "Unverifiable",
+      "detail": "Component name found by text presence inside DFT_FixedWidthImport's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_FixedWidthImport",
+      "objectName": "FF_SRC_CustomersFixed",
+      "verdict": "Unverifiable",
+      "detail": "Component name found by text presence inside DFT_FixedWidthImport's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_FixedWidthImport",
+      "objectName": "MCAST_FixedRows",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_FixedWidthImport's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    },
+    {
+      "scope": "DataFlow:DFT_FixedWidthImport",
+      "objectName": "OLEDST_CustomerFixedImport",
+      "verdict": "Unverifiable",
+      "detail": "Component name NOT found by text presence inside DFT_FixedWidthImport's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+    }
+  ]
+}

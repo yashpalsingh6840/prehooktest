@@ -11,7 +11,7 @@ Control-flow / data-flow graph parity. Every node/edge/concurrency-group item fr
 
 ### [DataFlow:DFT_BuildSalesSummary] `OLEDST_SalesSummary` — **Unverifiable**
 
-Component name NOT found by text presence inside DFT_BuildSalesSummary's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
+Component name found by text presence inside DFT_BuildSalesSummary's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
 ### [DataFlow:DFT_BuildSalesSummary] `OLESRC_OrdersAndDetails` — **Unverifiable**
 

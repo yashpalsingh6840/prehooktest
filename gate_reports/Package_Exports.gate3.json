@@ -2,8 +2,7 @@
   "package": "Package_Exports",
   "gate": "Gate3_ComponentSchemaParity",
   "counts": {
-    "Match": 4,
-    "Unverifiable": 2
+    "Match": 6
   },
   "findings": [
     {
@@ -21,8 +20,8 @@
     {
       "scope": "DestinationInput",
       "objectName": "DFT_ExportDelimited_DST",
-      "verdict": "Unverifiable",
-      "detail": "'DFT_ExportDelimited_DST' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table) \u2014 no schema-correlation mechanism covers this destination kind yet (3 declared column(s) not compared)."
+      "verdict": "Match",
+      "detail": "vs. generated class 'DFT_ExportDelimited' (Model\\DFT_ExportDelimited.cs):\n  = CleanEmail: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'."
     },
     {
       "scope": "SourceOutput",
@@ -33,8 +32,8 @@
     {
       "scope": "DestinationInput",
       "objectName": "DFT_ExportFixedWidth_DST",
-      "verdict": "Unverifiable",
-      "detail": "'DFT_ExportFixedWidth_DST' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table) \u2014 no schema-correlation mechanism covers this destination kind yet (4 declared column(s) not compared)."
+      "verdict": "Match",
+      "detail": "vs. generated class 'DFT_ExportFixedWidth' (Model\\DFT_ExportFixedWidth.cs):\n  = CleanEmail: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.\n  = RowEnd: SSIS 'wstr' -> 'string'."
     },
     {
       "scope": "SourceOutput",

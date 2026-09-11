@@ -22,7 +22,7 @@
       "scope": "DestinationInput",
       "objectName": "OLECMD_SetFlag",
       "verdict": "Unverifiable",
-      "detail": "'OLECMD_SetFlag' (Microsoft.OLEDBCommand) is not a database destination Gate 1 can identify by (schema, table) \u2014 no schema-correlation mechanism covers this destination kind yet (1 declared column(s) not compared)."
+      "detail": "'OLECMD_SetFlag' (Microsoft.OLEDBCommand) is not a database destination Gate 1 can identify by (schema, table), and no generated factory method is named after this component either \u2014 no schema-correlation mechanism matched (1 declared column(s) not compared)."
     },
     {
       "scope": "SourceOutput",

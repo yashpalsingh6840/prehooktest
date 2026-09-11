@@ -4,11 +4,62 @@ Per-component input/output schema parity. Declared column name + SSIS-type-to-.N
 
 | Verdict | Count |
 |---|---|
-| Unverifiable | 21 |
+| LeftOnly | 8 |
+| Unverifiable | 13 |
 | NormalizedMatch | 1 |
 | Match | 8 |
 
-## Unverifiable (21)
+## LeftOnly (8)
+
+### [InternalTransform] `UNION_Recombine` — **LeftOnly**
+
+```
+'UNION_Recombine' (Microsoft.UnionAll) has no generated counterpart: none of ('ConcatenatingRowSource',) — the Etl.Core construct(s) that would represent this SSIS component type if translated — are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.
+```
+
+### [InternalTransform] `RC_MatchedRows` — **LeftOnly**
+
+```
+'RC_MatchedRows' (Microsoft.RowCount) has no generated counterpart: none of ('CountingRowSource',) — the Etl.Core construct(s) that would represent this SSIS component type if translated — are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.
+```
+
+### [InternalTransform] `RC_UnmatchedRows` — **LeftOnly**
+
+```
+'RC_UnmatchedRows' (Microsoft.RowCount) has no generated counterpart: none of ('CountingRowSource',) — the Etl.Core construct(s) that would represent this SSIS component type if translated — are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.
+```
+
+### [InternalTransform] `MRG_SortedUnion` — **LeftOnly**
+
+```
+'MRG_SortedUnion' (Microsoft.Merge) has no generated counterpart: none of ('MergeInterleaveRowSource',) — the Etl.Core construct(s) that would represent this SSIS component type if translated — are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.
+```
+
+### [InternalTransform] `SORT_Canada` — **LeftOnly**
+
+```
+'SORT_Canada' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) — the Etl.Core construct(s) that would represent this SSIS component type if translated — are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.
+```
+
+### [InternalTransform] `SORT_RestOfWorld` — **LeftOnly**
+
+```
+'SORT_RestOfWorld' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) — the Etl.Core construct(s) that would represent this SSIS component type if translated — are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.
+```
+
+### [InternalTransform] `SORT_Contacts` — **LeftOnly**
+
+```
+'SORT_Contacts' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) — the Etl.Core construct(s) that would represent this SSIS component type if translated — are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.
+```
+
+### [InternalTransform] `SORT_Customers` — **LeftOnly**
+
+```
+'SORT_Customers' (Microsoft.Sort) has no generated counterpart: none of ('SortingRowSource',) — the Etl.Core construct(s) that would represent this SSIS component type if translated — are referenced anywhere in the generated project. A project-wide presence check, not a per-instance match: a real, tool-detected gap, not a naming ambiguity.
+```
+
+## Unverifiable (13)
 
 ### [InternalTransform] `CSPLIT_Validity` — **Unverifiable**
 
@@ -40,12 +91,6 @@ Per-component input/output schema parity. Declared column name + SSIS-type-to-.N
 'DER_TagValid' (Microsoft.DerivedColumn) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
 ```
 
-### [InternalTransform] `UNION_Recombine` — **Unverifiable**
-
-```
-'UNION_Recombine' (Microsoft.UnionAll) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
-```
-
 ### [InternalTransform] `AGG_ByRegion` — **Unverifiable**
 
 ```
@@ -64,18 +109,6 @@ Per-component input/output schema parity. Declared column name + SSIS-type-to-.N
 'MCAST_Matched' (Microsoft.Multicast) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
 ```
 
-### [InternalTransform] `RC_MatchedRows` — **Unverifiable**
-
-```
-'RC_MatchedRows' (Microsoft.RowCount) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
-```
-
-### [InternalTransform] `RC_UnmatchedRows` — **Unverifiable**
-
-```
-'RC_UnmatchedRows' (Microsoft.RowCount) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
-```
-
 ### [InternalTransform] `CSPLIT_ByCountry` — **Unverifiable**
 
 ```
@@ -86,24 +119,6 @@ Per-component input/output schema parity. Declared column name + SSIS-type-to-.N
 
 ```
 'DCONV_MergeId' (Microsoft.DataConvert) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
-```
-
-### [InternalTransform] `MRG_SortedUnion` — **Unverifiable**
-
-```
-'MRG_SortedUnion' (Microsoft.Merge) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
-```
-
-### [InternalTransform] `SORT_Canada` — **Unverifiable**
-
-```
-'SORT_Canada' (Microsoft.Sort) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
-```
-
-### [InternalTransform] `SORT_RestOfWorld` — **Unverifiable**
-
-```
-'SORT_RestOfWorld' (Microsoft.Sort) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
 ```
 
 ### [InternalTransform] `DCONV_CustId_L` — **Unverifiable**
@@ -122,18 +137,6 @@ Per-component input/output schema parity. Declared column name + SSIS-type-to-.N
 
 ```
 'MRG_CustomerContacts' (Microsoft.MergeJoin) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
-```
-
-### [InternalTransform] `SORT_Contacts` — **Unverifiable**
-
-```
-'SORT_Contacts' (Microsoft.Sort) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
-```
-
-### [InternalTransform] `SORT_Customers` — **Unverifiable**
-
-```
-'SORT_Customers' (Microsoft.Sort) has no populated externalMetadataColumns on either side — a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md §6).
 ```
 
 ## NormalizedMatch (1)
