@@ -1,0 +1,53 @@
+{
+  "package": "Package_Transforms",
+  "scope": "DataFlowComponent",
+  "component_name": "CSPLIT_ByCountry",
+  "component_path": "Package\\DFT_MergeSortedBranches\\CSPLIT_ByCountry",
+  "dtsx_file": "D:\\PoC\\SSIS_Packages\\SSIS_From_Sandeep\\RBC_Demo_ETL\\RBC_Demo_ETL\\Package_Transforms.dtsx",
+  "generated_file_path": "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs",
+  "generated_method_name": "DFT_MergeSortedBranches",
+  "generated_method_excerpt": "\n        var source = FF_SRC_Customers4();\n        var step = new ConditionalSplitStep<DFT_MergeSortedBranchesCsvRow>(\n            \"DFT_MergeSortedBranches\",\n            source,\n            new CSPLIT_ByCountryRouter(),\n            [\n                new ConditionalSplitBranch<DFT_MergeSortedBranchesCsvRow, CustomerMerged>(\n                    \"Canada\",\n                    new CSPLIT_ByCountry_Canada(),\n                    new SqlBulkSink<CustomerMerged>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerMerged>>())),\n                new ConditionalSplitBranch<DFT_MergeSortedBranchesCsvRow, CustomerMerged>(\n                    \"RestOfWorld\",\n                    new CSPLIT_ByCountry_RestOfWorld(),\n                    new SqlBulkSink<CustomerMerged>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerMerged>>()))\n            ],\n            Log<ConditionalSplitStep<DFT_MergeSortedBranchesCsvRow>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+  "related_generated_sources": {
+    "FF_SRC_Customers4": [
+      {
+        "file": "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method FF_SRC_Customers4)",
+        "source": "\n        return new CsvRowSource<DFT_MergeSortedBranchesCsvRow>(\"FF_SRC_Customers4\", new CsvSourceOptions { FilePath = File(\"DFT_MergeSortedBranches\") }, new DFT_MergeSortedBranchesCsvRowMap());\n    "
+      }
+    ],
+    "CSPLIT_ByCountryRouter": [
+      {
+        "file": "Mapping\\CSPLIT_ByCountryRouter.cs",
+        "source": "using Package_Transforms.Csv;\nusing Etl.Core.Abstractions;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_ByCountryRouter : IRowRouter<DFT_MergeSortedBranchesCsvRow>\n{\n    public int SelectBranch(DFT_MergeSortedBranchesCsvRow row, in RowContext ctx)\n    {\n        if (string.Equals(SsisFn.Trim(row.Country), \"Canada\", System.StringComparison.Ordinal)) return 0;\n        return 1; // RestOfWorld\n    }\n}\n"
+      }
+    ],
+    "CSPLIT_ByCountry_Canada": [
+      {
+        "file": "Mapping\\CSPLIT_ByCountry_Canada.cs",
+        "source": "using Etl.Core.Abstractions;\nusing Package_Transforms.Csv;\nusing Package_Transforms.Model;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_ByCountry_Canada : IRowTransform<DFT_MergeSortedBranchesCsvRow, CustomerMerged>\n{\n    public CustomerMerged Map(DFT_MergeSortedBranchesCsvRow row, in RowContext ctx) => new()\n    {\n        CustomerID = SsisFn.ToNullableI4(row.CustomerID),\n        Email = row.Email,\n    };\n}\n"
+      }
+    ],
+    "CSPLIT_ByCountry_RestOfWorld": [
+      {
+        "file": "Mapping\\CSPLIT_ByCountry_RestOfWorld.cs",
+        "source": "using Etl.Core.Abstractions;\nusing Package_Transforms.Csv;\nusing Package_Transforms.Model;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_ByCountry_RestOfWorld : IRowTransform<DFT_MergeSortedBranchesCsvRow, CustomerMerged>\n{\n    public CustomerMerged Map(DFT_MergeSortedBranchesCsvRow row, in RowContext ctx) => new()\n    {\n        CustomerID = SsisFn.ToNullableI4(row.CustomerID),\n        Email = row.Email,\n    };\n}\n"
+      }
+    ]
+  },
+  "tier1_detail": "'CSPLIT_ByCountry' (Microsoft.ConditionalSplit) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+  "evidence": {
+    "outputs": [
+      {
+        "output_name": "Canada",
+        "is_default": false,
+        "friendly_expression": "TRIM(Country) == \"Canada\"",
+        "evaluation_order": 0
+      },
+      {
+        "output_name": "RestOfWorld",
+        "is_default": true,
+        "friendly_expression": null,
+        "evaluation_order": null
+      }
+    ]
+  }
+}

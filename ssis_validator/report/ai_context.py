@@ -26,6 +26,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 from ssis_validator.codegen.csharp_graph import _extract_method_bodies
+from ssis_validator.codegen.csharp_related_source import collect_related_sources
 from ssis_validator.compare.gate3_schema import Gate3Result
 from ssis_validator.compare.gate3_schema import Verdict as Gate3Verdict
 from ssis_validator.dtsx.semantic_extraction import ScriptSemantics
@@ -51,17 +52,18 @@ def _method_name_for(container_name: str, package: str) -> str:
     return "RunAsync" if container_name == package else container_name
 
 
-def _method_bodies(package_cs_file: Path | None) -> dict[str, str]:
+def _read_own_file(package_cs_file: Path | None) -> str | None:
     if package_cs_file is None:
-        return {}
-    text = package_cs_file.read_text(encoding="utf-8-sig", errors="replace")
-    return _extract_method_bodies(text)
+        return None
+    return package_cs_file.read_text(encoding="utf-8-sig", errors="replace")
 
 
 def build_data_flow_packets(
     package: str, dtsx_path: str | Path, gate3: Gate3Result, package_cs_file: Path | None,
+    generated_dir: str | Path,
 ) -> list[dict]:
-    method_bodies = _method_bodies(package_cs_file)
+    own_text = _read_own_file(package_cs_file)
+    method_bodies = _extract_method_bodies(own_text) if own_text else {}
     packets = []
     for finding in gate3.findings:
         if finding.verdict != Gate3Verdict.UNVERIFIABLE:
@@ -70,6 +72,7 @@ def build_data_flow_packets(
             continue
         dft_name = _dft_name_for(finding.component_path)
         method_name = _method_name_for(dft_name, package) if dft_name else None
+        excerpt = method_bodies.get(method_name) if method_name else None
         packets.append({
             "package": package,
             "scope": "DataFlowComponent",
@@ -78,7 +81,10 @@ def build_data_flow_packets(
             "dtsx_file": str(dtsx_path),
             "generated_file_path": str(package_cs_file) if package_cs_file else None,
             "generated_method_name": method_name,
-            "generated_method_excerpt": method_bodies.get(method_name) if method_name else None,
+            "generated_method_excerpt": excerpt,
+            "related_generated_sources": collect_related_sources(
+                generated_dir, excerpt, own_text, str(package_cs_file), finding.object_name,
+            ),
             "tier1_detail": finding.detail,
             "evidence": _evidence_to_dict(finding.evidence),
         })
@@ -87,12 +93,14 @@ def build_data_flow_packets(
 
 def build_script_task_packets(
     package: str, dtsx_path: str | Path, task_sources: dict[str, ScriptSemantics],
-    package_cs_file: Path | None,
+    package_cs_file: Path | None, generated_dir: str | Path,
 ) -> list[dict]:
-    method_bodies = _method_bodies(package_cs_file)
+    own_text = _read_own_file(package_cs_file)
+    method_bodies = _extract_method_bodies(own_text) if own_text else {}
     packets = []
     for task_name, semantics in task_sources.items():
         method_name = _method_name_for(task_name, package)
+        excerpt = method_bodies.get(method_name)
         packets.append({
             "package": package,
             "scope": "ScriptTask",
@@ -101,7 +109,10 @@ def build_script_task_packets(
             "dtsx_file": str(dtsx_path),
             "generated_file_path": str(package_cs_file) if package_cs_file else None,
             "generated_method_name": method_name,
-            "generated_method_excerpt": method_bodies.get(method_name),
+            "generated_method_excerpt": excerpt,
+            "related_generated_sources": collect_related_sources(
+                generated_dir, excerpt, own_text, str(package_cs_file), task_name,
+            ),
             "tier1_detail": (
                 "Gate 2 can only confirm this Script Task's call site exists in the expected "
                 "control-flow position (or is guarded/absorbed/inlined into a failure handler) "
@@ -136,4 +147,18 @@ def render_markdown(packet: dict) -> str:
         packet["generated_method_excerpt"] or "(not found)",
         "```", "",
     ]
+    related = packet.get("related_generated_sources") or {}
+    if related:
+        lines += [
+            "## Related generated source", "",
+            "The excerpt above only wires together factory calls; each referenced identifier's "
+            "own definition (where found in this package's own generated files) follows, since "
+            "that is typically where the actual per-row/per-script logic lives.", "",
+        ]
+        for name, entries in related.items():
+            for entry in entries:
+                lines += [
+                    f"### `{name}` — `{entry['file']}`", "",
+                    "```csharp", entry["source"], "```", "",
+                ]
     return "\n".join(lines)

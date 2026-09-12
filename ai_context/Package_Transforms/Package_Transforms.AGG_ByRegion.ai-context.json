@@ -1,0 +1,55 @@
+{
+  "package": "Package_Transforms",
+  "scope": "DataFlowComponent",
+  "component_name": "AGG_ByRegion",
+  "component_path": "Package\\DFT_LookupAndAggregate\\AGG_ByRegion",
+  "dtsx_file": "D:\\PoC\\SSIS_Packages\\SSIS_From_Sandeep\\RBC_Demo_ETL\\RBC_Demo_ETL\\Package_Transforms.dtsx",
+  "generated_file_path": "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs",
+  "generated_method_name": "DFT_LookupAndAggregate",
+  "generated_method_excerpt": "\n        var source = AGG_ByRegion();\n        var transform = new RegionSummaryTransform();\n        var sink = OLEDST_RegionSummary();\n\n        var step = new DataFlowStep<RegionSummaryAggregateRow, RegionSummary>(\"DFT_LookupAndAggregate\", source, transform, sink, Log<DataFlowStep<RegionSummaryAggregateRow, RegionSummary>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+  "related_generated_sources": {
+    "AGG_ByRegion": [
+      {
+        "file": "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method AGG_ByRegion)",
+        "source": "\n        IRowSource<AGG_ByRegionSourceCsvRow> BuildAggregateSource()\n        {\n            IRowSource<AGG_ByRegionSourceCsvRow> BuildRawSource()\n            {\n                return new CsvRowSource<AGG_ByRegionSourceCsvRow>(\"FF_SRC_Customers2\", new CsvSourceOptions { FilePath = File(\"AGG_ByRegionSource\") }, new AGG_ByRegionSourceCsvRowMap());\n            }\n\n            return new FilteringRowSource<AGG_ByRegionSourceCsvRow>(\"AGG_ByRegion\", BuildRawSource(), row => lKP_CountryCache.ContainsKey(row.Country));\n        }\n\n        return new AggregateRowSource<AGG_ByRegionSourceCsvRow, string, RegionSummaryAggregateRow>(\n            \"AGG_ByRegion\",\n            BuildAggregateSource(),\n            row => lKP_CountryCache[row.Country].Region,\n            (key, rows) => new RegionSummaryAggregateRow\n            {\n                Region = key,\n                CustomerCount = rows.Count(r => r.CustomerID != null)\n            });\n    "
+      }
+    ],
+    "RegionSummaryTransform": [
+      {
+        "file": "Mapping\\RegionSummaryTransform.cs",
+        "source": "using Etl.Core.Abstractions;\nusing Package_Transforms.Sql;\nusing Package_Transforms.Model;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class RegionSummaryTransform : IRowTransform<RegionSummaryAggregateRow, RegionSummary>\n{\n    public RegionSummary Map(RegionSummaryAggregateRow row, in RowContext ctx) => new()\n    {\n        Region = row.Region,\n        CustomerCount = SsisFn.NarrowI8ToI4(row.CustomerCount),\n    };\n}\n"
+      }
+    ],
+    "OLEDST_RegionSummary": [
+      {
+        "file": "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method OLEDST_RegionSummary)",
+        "source": "\n        return new SqlBulkSink<RegionSummary>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<RegionSummary>>());\n    "
+      }
+    ]
+  },
+  "tier1_detail": "'AGG_ByRegion' (Microsoft.Aggregate) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+  "evidence": {
+    "columns": [
+      {
+        "name": "Region",
+        "aggregation_type": {
+          "property_name": "AggregationType",
+          "raw_value": "0",
+          "description": "Specifies the type of aggregation."
+        },
+        "source_component": "LKP_Country",
+        "source_column": "Region"
+      },
+      {
+        "name": "CustomerCount",
+        "aggregation_type": {
+          "property_name": "AggregationType",
+          "raw_value": "1",
+          "description": "Specifies the type of aggregation."
+        },
+        "source_component": "FF_SRC_Customers2",
+        "source_column": "CustomerID"
+      }
+    ]
+  }
+}

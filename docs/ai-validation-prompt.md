@@ -39,12 +39,17 @@ The packet you were given is the **only** input for this judgment. Do not:
    actually routes, a resolved aggregation/join source column, a Script Component/Task's real
    source file).
 2. **`generated_method_excerpt`** — the brace-matched body of the one generated method Gate 2
-   already correlated to this component's owning container. Note: for a data-flow component, this
-   excerpt is often the *owning Data Flow Task's* orchestration method (e.g. it wires up factory
-   methods like `AGG_ByRegion()` and `SomeTransform()` rather than containing the transform logic
-   inline) — if the excerpt doesn't contain the logic you need to judge, that is itself useful
-   information to report, not a sign you did something wrong.
-3. **`tier1_detail`** — why Tier 1 could not resolve this on its own; context, not evidence.
+   already correlated to this component's owning container. This excerpt is usually just the
+   *owning Data Flow Task's* orchestration wiring (`var transform = new SomeTransform(); ...`),
+   not the actual per-row logic.
+3. **`related_generated_sources`** — the packet builder already resolved every identifier the
+   excerpt references (and the component's own name) against this package's own generated files,
+   so this is typically where the real logic actually lives: a sibling factory method in the same
+   file, a `Mapping/<Name>.cs` transform class, or a `Fills/<Name>.Fills.cs` ported
+   business-logic implementation. Always check this section before concluding a packet lacks
+   enough evidence — an identifier that resolved to nothing here (absent from this dict) is an
+   Etl.Core framework construct, not a missing lookup.
+4. **`tier1_detail`** — why Tier 1 could not resolve this on its own; context, not evidence.
 
 ## Required output format
 

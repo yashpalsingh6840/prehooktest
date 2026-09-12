@@ -1,0 +1,51 @@
+{
+  "package": "Package_Transforms",
+  "scope": "DataFlowComponent",
+  "component_name": "DER_TagValid",
+  "component_path": "Package\\DFT_DerivedAndSplit\\DER_TagValid",
+  "dtsx_file": "D:\\PoC\\SSIS_Packages\\SSIS_From_Sandeep\\RBC_Demo_ETL\\RBC_Demo_ETL\\Package_Transforms.dtsx",
+  "generated_file_path": "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs",
+  "generated_method_name": "DFT_DerivedAndSplit",
+  "generated_method_excerpt": "\n        var source = FF_SRC_Customers();\n        var step = new ConditionalSplitStep<DFT_DerivedAndSplitCsvRow>(\n            \"DFT_DerivedAndSplit\",\n            source,\n            new CSPLIT_ValidityRouter(),\n            [\n                new ConditionalSplitBranch<DFT_DerivedAndSplitCsvRow, CustomerEnriched>(\n                    \"Valid\",\n                    new CSPLIT_Validity_Valid(),\n                    new SqlBulkSink<CustomerEnriched>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerEnriched>>())),\n                new ConditionalSplitBranch<DFT_DerivedAndSplitCsvRow, CustomerEnriched>(\n                    \"Invalid\",\n                    new CSPLIT_Validity_Invalid(),\n                    new SqlBulkSink<CustomerEnriched>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerEnriched>>()))\n            ],\n            Log<ConditionalSplitStep<DFT_DerivedAndSplitCsvRow>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+  "related_generated_sources": {
+    "FF_SRC_Customers": [
+      {
+        "file": "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method FF_SRC_Customers)",
+        "source": "\n        return new CsvRowSource<DFT_DerivedAndSplitCsvRow>(\"FF_SRC_Customers\", new CsvSourceOptions { FilePath = File(\"DFT_DerivedAndSplit\") }, new DFT_DerivedAndSplitCsvRowMap());\n    "
+      }
+    ],
+    "CSPLIT_ValidityRouter": [
+      {
+        "file": "Mapping\\CSPLIT_ValidityRouter.cs",
+        "source": "using Package_Transforms.Csv;\nusing Etl.Core.Abstractions;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_ValidityRouter : IRowRouter<DFT_DerivedAndSplitCsvRow>\n{\n    public int SelectBranch(DFT_DerivedAndSplitCsvRow row, in RowContext ctx)\n    {\n        if ((!((SsisFn.ToNullableI4(row.CustomerID) is null)) && (SsisFn.FindString(SsisFn.Trim(row.Email), \"@\", 1) > 0))) return 0;\n        return 1; // Invalid\n    }\n}\n"
+      }
+    ],
+    "CSPLIT_Validity_Valid": [
+      {
+        "file": "Mapping\\CSPLIT_Validity_Valid.cs",
+        "source": "using Etl.Core.Abstractions;\nusing Package_Transforms.Csv;\nusing Package_Transforms.Model;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_Validity_Valid : IRowTransform<DFT_DerivedAndSplitCsvRow, CustomerEnriched>\n{\n    public CustomerEnriched Map(DFT_DerivedAndSplitCsvRow row, in RowContext ctx) => new()\n    {\n        CustomerID = SsisFn.ToNullableI4(row.CustomerID),\n        FullName = DER_Enrich.FullName(row, ctx),\n        EmailDomain = DER_Enrich.EmailDomain(row, ctx),\n        SignupDate = SsisFn.ToNullableDate(row.SignupDate),\n        TenureDays = DER_Enrich.TenureDays(row, ctx),\n        RowSource = DER_TagValid.RowSource(row, ctx),\n    };\n}\n"
+      }
+    ],
+    "CSPLIT_Validity_Invalid": [
+      {
+        "file": "Mapping\\CSPLIT_Validity_Invalid.cs",
+        "source": "using Etl.Core.Abstractions;\nusing Package_Transforms.Csv;\nusing Package_Transforms.Model;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_Validity_Invalid : IRowTransform<DFT_DerivedAndSplitCsvRow, CustomerEnriched>\n{\n    public CustomerEnriched Map(DFT_DerivedAndSplitCsvRow row, in RowContext ctx) => new()\n    {\n        CustomerID = SsisFn.ToNullableI4(row.CustomerID),\n        FullName = DER_Enrich.FullName(row, ctx),\n        EmailDomain = DER_Enrich.EmailDomain(row, ctx),\n        SignupDate = SsisFn.ToNullableDate(row.SignupDate),\n        TenureDays = DER_Enrich.TenureDays(row, ctx),\n        RowSource = DER_TagInvalid.RowSource(row, ctx),\n    };\n}\n"
+      }
+    ],
+    "DER_TagValid": [
+      {
+        "file": "Mapping\\DER_TagValid.cs",
+        "source": "using Etl.Core.Abstractions;\nusing Package_Transforms.Csv;\n\nnamespace Package_Transforms.Mapping;\n\ninternal static class DER_TagValid\n{\n    // \"Valid\"\n    public static string RowSource(DFT_DerivedAndSplitCsvRow row, in RowContext ctx) => \"Valid\";\n}\n"
+      }
+    ]
+  },
+  "tier1_detail": "'DER_TagValid' (Microsoft.DerivedColumn) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+  "evidence": {
+    "columns": [
+      {
+        "output_name": "RowSource",
+        "friendly_expression": "\"Valid\""
+      }
+    ]
+  }
+}

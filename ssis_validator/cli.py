@@ -170,8 +170,10 @@ def run_ai_context(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
     package_cs_file = find_package_cs_file(generated_dir)
     task_sources = extract_all_script_task_sources(dtsx_path_obj)
 
-    packets = build_data_flow_packets(package, dtsx_path_obj, gate3, package_cs_file)
-    packets += build_script_task_packets(package, dtsx_path_obj, task_sources, package_cs_file)
+    packets = build_data_flow_packets(package, dtsx_path_obj, gate3, package_cs_file, generated_dir)
+    packets += build_script_task_packets(
+        package, dtsx_path_obj, task_sources, package_cs_file, generated_dir,
+    )
 
     for packet in packets:
         stem = f"{package}.{packet['component_name']}"

@@ -1,0 +1,43 @@
+{
+  "package": "Package",
+  "scope": "DataFlowComponent",
+  "component_name": "SCR_ComputeCustomerTier",
+  "component_path": "Package\\DFT_BuildSalesSummary\\SCR_ComputeCustomerTier",
+  "dtsx_file": "D:\\PoC\\SSIS_Packages\\SSIS_From_Sandeep\\RBC_Demo_ETL\\RBC_Demo_ETL\\Package.dtsx",
+  "generated_file_path": "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package\\Package.cs",
+  "generated_method_name": "DFT_BuildSalesSummary",
+  "generated_method_excerpt": "\n        var source = OLESRC_OrdersAndDetails(uow);\n        var transform = new SalesSummaryTransform();\n        var sink = OLEDST_SalesSummary();\n\n        var step = new DataFlowStep<SalesSummarySqlRow, SalesSummary>(\"DFT_BuildSalesSummary\", source, transform, sink, Log<DataFlowStep<SalesSummarySqlRow, SalesSummary>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+  "related_generated_sources": {
+    "OLESRC_OrdersAndDetails": [
+      {
+        "file": "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package\\Package.cs (method OLESRC_OrdersAndDetails)",
+        "source": "\n        return new SqlRowSource<SalesSummarySqlRow>(\"OLESRC_OrdersAndDetails\", new SqlSourceOptions { ConnectionString = SqlConnectionStringFactory.Build(Db()), CommandText = \"SELECT\\n    o.CustomerID,\\n    c.FullName,\\n    c.CleanEmail AS Email,\\n    COUNT(DISTINCT o.OrderID) AS TotalOrders,\\n    SUM(od.Quantity * od.UnitPrice) AS TotalRevenue,\\n    MAX(o.OrderDate) AS LastOrderDate\\nFROM dbo.Orders o\\nINNER JOIN dbo.OrderDetails od ON od.OrderID = o.OrderID\\nINNER JOIN dbo.StagingCustomers c ON o.CustomerID = TRY_CAST(c.CustomerID AS INT)\\nWHERE ISNULL(c.IsValidRow, 1) = 1\\nGROUP BY o.CustomerID, c.FullName, c.CleanEmail\" }, SalesSummarySqlRowReader.Read, uow);\n    "
+      }
+    ],
+    "SalesSummaryTransform": [
+      {
+        "file": "Fills\\SalesSummaryTransform.Fills.cs",
+        "source": "using Etl.Core.Abstractions;\nusing Package.Sql;\n\nnamespace Package.Mapping;\n\npublic sealed partial class SalesSummaryTransform\n{\n    // ssisx-fill: GapId=SCRIPT-COLUMN:Package:SalesSummary.SCR_ComputeCustomerTier Author=GitHub Copilot Date=2026-09-09 EvidenceSha256=acb950341c43d6703f6b632a5deaa307a86c1d04914c3f382b6ea5acc05f95cf\n    private partial SCR_ComputeCustomerTierResult SCR_ComputeCustomerTier(SalesSummarySqlRow row, in RowContext ctx)\n    {\n        var revenue = row.TotalRevenue;\n        string customerTier;\n        if (revenue >= 10000) customerTier = \"Platinum\";\n        else if (revenue >= 5000) customerTier = \"Gold\";\n        else if (revenue >= 1000) customerTier = \"Silver\";\n        else customerTier = \"Bronze\";\n\n        var processedDateTime = ctx.LoadedAtUtc;\n\n        return new(CustomerTier: customerTier, ProcessedDateTime: processedDateTime);\n    }\n}\n"
+      },
+      {
+        "file": "Mapping\\SalesSummaryTransform.cs",
+        "source": "using Etl.Core.Abstractions;\nusing Package.Sql;\nusing Package.Model;\n\nnamespace Package.Mapping;\n\ninternal readonly record struct SCR_ComputeCustomerTierResult(string CustomerTier, DateTime ProcessedDateTime);\n\n/// <summary>Has 1 unimplemented Tier-2 seam(s): each is a Script Component, computing\n/// one or more columns together, whose logic this tool does not translate. Implement each\n/// one in a SECOND PART of this partial class -- a class part, not just a method body, so\n/// the port can declare its own fields (a compiled Regex, a lookup table). Until then this\n/// project deliberately does NOT compile: CS8795, one error per unfilled seam. Put the\n/// part in fills/&lt;Package&gt;/SalesSummaryTransform.Fills.cs and run `ssisx apply-fills`.</summary>\npublic sealed partial class SalesSummaryTransform : IRowTransform<SalesSummarySqlRow, SalesSummary>\n{\n    public SalesSummary Map(SalesSummarySqlRow row, in RowContext ctx)\n    {\n        var sCR_ComputeCustomerTierResult = SCR_ComputeCustomerTier(row, ctx);\n        return new()\n        {\n            CustomerID = row.CustomerID,\n            FullName = row.FullName,\n            Email = row.Email,\n            TotalOrders = row.TotalOrders,\n            TotalRevenue = row.TotalRevenue,\n            LastOrderDate = row.LastOrderDate,\n            CustomerTier = sCR_ComputeCustomerTierResult.CustomerTier,\n            ProcessedDateTime = sCR_ComputeCustomerTierResult.ProcessedDateTime,\n        };\n    }\n\n    /// <summary>Script Component 'SCR_ComputeCustomerTier', producing 2 column(s)\n    /// together: CustomerTier, ProcessedDateTime. Work packet: SCRIPT-COLUMN SalesSummary.SCR_ComputeCustomerTier.</summary>\n    private partial SCR_ComputeCustomerTierResult SCR_ComputeCustomerTier(SalesSummarySqlRow row, in RowContext ctx);\n}\n"
+      }
+    ],
+    "OLEDST_SalesSummary": [
+      {
+        "file": "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package\\Package.cs (method OLEDST_SalesSummary)",
+        "source": "\n        return new SqlBulkSink<SalesSummary>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<SalesSummary>>());\n    "
+      }
+    ]
+  },
+  "tier1_detail": "'SCR_ComputeCustomerTier' (Microsoft.ScriptComponentHost) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+  "evidence": {
+    "files": [
+      {
+        "file_name": "main.cs",
+        "source_code": "using System;\nusing Microsoft.SqlServer.Dts.Pipeline;\n\nnamespace SC_ComputeCustomerTier\n{\n    /// <summary>\n    /// Second row-level Script Component (requirement 4), this one in\n    /// DFT_BuildSalesSummary. Assigns a loyalty tier from the aggregated revenue and\n    /// stamps the processing time.\n    ///\n    /// Thresholds match sql\\04_verify_expected_output.sql exactly, so the package output\n    /// can be diffed against the pure T-SQL harness.\n    /// </summary>\n    [SSISScriptComponentEntryPoint]\n    public class ScriptMain : UserComponent\n    {\n        public override void Input0_ProcessInputRow(Input0Buffer Row)\n        {\n            double revenue = Row.TotalRevenue;\n\n            if (revenue >= 10000)     Row.CustomerTier = \"Platinum\";\n            else if (revenue >= 5000) Row.CustomerTier = \"Gold\";\n            else if (revenue >= 1000) Row.CustomerTier = \"Silver\";\n            else                      Row.CustomerTier = \"Bronze\";\n\n            Row.ProcessedDateTime = DateTime.Now;\n        }\n    }\n}\n"
+      }
+    ]
+  }
+}
