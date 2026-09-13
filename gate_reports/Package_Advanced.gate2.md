@@ -4,28 +4,16 @@ Control-flow / data-flow graph parity. Every node/edge/concurrency-group item fr
 
 | Verdict | Count |
 |---|---|
-| Unverifiable | 4 |
-| Match | 8 |
+| Unverifiable | 1 |
+| Match | 11 |
 
-## Unverifiable (4)
-
-### [DataFlow:DFT_ExcelImport] `EXCEL_SRC_Drip` — **Unverifiable**
-
-Component name found by text presence inside DFT_ExcelImport's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_ExcelImport] `OLEDST_Drip` — **Unverifiable**
-
-Component name found by text presence inside DFT_ExcelImport's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
+## Unverifiable (1)
 
 ### [DataFlow:DFT_FlagCustomers] `OLECMD_SetFlag` — **Unverifiable**
 
 Component name NOT found by text presence inside DFT_FlagCustomers's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
-### [DataFlow:DFT_FlagCustomers] `OLESRC_CustomerIds` — **Unverifiable**
-
-Component name found by text presence inside DFT_FlagCustomers's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-## Match (8)
+## Match (11)
 
 ### [ControlFlow] `SEQ_Prepare` — **Match**
 
@@ -58,3 +46,15 @@ ForEach Loop's single child task is absorbed into FEL_SampleFiles's ForEachLoopS
 ### [EventHandler] `SQL_LogOnError` — **Match**
 
 OnError event-handler task found inlined in the generated catch-block handler set.
+
+### [DataFlow:DFT_ExcelImport] `EXCEL_SRC_Drip` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_ExcelImport] `OLEDST_Drip` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_FlagCustomers] `OLESRC_CustomerIds` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).

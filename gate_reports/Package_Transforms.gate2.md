@@ -4,10 +4,45 @@ Control-flow / data-flow graph parity. Every node/edge/concurrency-group item fr
 
 | Verdict | Count |
 |---|---|
-| Unverifiable | 30 |
-| Match | 8 |
+| LeftOnly | 8 |
+| Unverifiable | 13 |
+| Match | 17 |
 
-## Unverifiable (30)
+## LeftOnly (8)
+
+### [DataFlow:DFT_DerivedAndSplit] `UNION_Recombine` — **LeftOnly**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_LookupAndAggregate] `RC_MatchedRows` — **LeftOnly**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_LookupAndAggregate] `RC_UnmatchedRows` — **LeftOnly**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_MergeSortedBranches] `MRG_SortedUnion` — **LeftOnly**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_MergeSortedBranches] `SORT_Canada` — **LeftOnly**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_MergeSortedBranches] `SORT_RestOfWorld` — **LeftOnly**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_SortAndMergeJoin] `SORT_Contacts` — **LeftOnly**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_SortAndMergeJoin] `SORT_Customers` — **LeftOnly**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+## Unverifiable (13)
 
 ### [DataFlow:DFT_DerivedAndSplit] `CSPLIT_Validity` — **Unverifiable**
 
@@ -29,43 +64,15 @@ Component name NOT found by text presence inside DFT_DerivedAndSplit's generated
 
 Component name NOT found by text presence inside DFT_DerivedAndSplit's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
-### [DataFlow:DFT_DerivedAndSplit] `FF_SRC_Customers` — **Unverifiable**
-
-Component name found by text presence inside DFT_DerivedAndSplit's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_DerivedAndSplit] `OLEDST_CustomerEnriched` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_DerivedAndSplit's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_DerivedAndSplit] `UNION_Recombine` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_DerivedAndSplit's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
 ### [DataFlow:DFT_LookupAndAggregate] `AGG_ByRegion` — **Unverifiable**
 
 Component name found by text presence inside DFT_LookupAndAggregate's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_LookupAndAggregate] `FF_SRC_Customers2` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
 ### [DataFlow:DFT_LookupAndAggregate] `LKP_Country` — **Unverifiable**
 
 Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
 ### [DataFlow:DFT_LookupAndAggregate] `MCAST_Matched` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_LookupAndAggregate] `OLEDST_RegionSummary` — **Unverifiable**
-
-Component name found by text presence inside DFT_LookupAndAggregate's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_LookupAndAggregate] `RC_MatchedRows` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_LookupAndAggregate] `RC_UnmatchedRows` — **Unverifiable**
 
 Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
@@ -77,26 +84,6 @@ Component name found by text presence inside DFT_MergeSortedBranches's generated
 
 Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
-### [DataFlow:DFT_MergeSortedBranches] `FF_SRC_Customers4` — **Unverifiable**
-
-Component name found by text presence inside DFT_MergeSortedBranches's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_MergeSortedBranches] `MRG_SortedUnion` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_MergeSortedBranches] `OLEDST_CustomerMerged` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_MergeSortedBranches] `SORT_Canada` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_MergeSortedBranches] `SORT_RestOfWorld` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
 ### [DataFlow:DFT_SortAndMergeJoin] `DCONV_CustId_L` — **Unverifiable**
 
 Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
@@ -105,31 +92,11 @@ Component name NOT found by text presence inside DFT_SortAndMergeJoin's generate
 
 Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
-### [DataFlow:DFT_SortAndMergeJoin] `FF_SRC_Contacts` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_SortAndMergeJoin] `FF_SRC_Customers3` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
 ### [DataFlow:DFT_SortAndMergeJoin] `MRG_CustomerContacts` — **Unverifiable**
 
 Component name found by text presence inside DFT_SortAndMergeJoin's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
 
-### [DataFlow:DFT_SortAndMergeJoin] `OLEDST_CustomerWithContact` — **Unverifiable**
-
-Component name found by text presence inside DFT_SortAndMergeJoin's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_SortAndMergeJoin] `SORT_Contacts` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-### [DataFlow:DFT_SortAndMergeJoin] `SORT_Customers` — **Unverifiable**
-
-Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method — not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented.
-
-## Match (8)
+## Match (17)
 
 ### [ControlFlow] `SQL_TruncateEnriched` — **Match**
 
@@ -162,3 +129,39 @@ Sequential call found in expected position in RunAsync.
 ### [ControlFlow] `DFT_MergeSortedBranches` — **Match**
 
 Sequential call found in expected position in RunAsync.
+
+### [DataFlow:DFT_DerivedAndSplit] `FF_SRC_Customers` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_DerivedAndSplit] `OLEDST_CustomerEnriched` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'NormalizedMatch' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_LookupAndAggregate] `FF_SRC_Customers2` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_LookupAndAggregate] `OLEDST_RegionSummary` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_MergeSortedBranches] `FF_SRC_Customers4` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_MergeSortedBranches] `OLEDST_CustomerMerged` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_SortAndMergeJoin] `FF_SRC_Contacts` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_SortAndMergeJoin] `FF_SRC_Customers3` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).
+
+### [DataFlow:DFT_SortAndMergeJoin] `OLEDST_CustomerWithContact` — **Match**
+
+Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' — stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison).

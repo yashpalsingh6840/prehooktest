@@ -2,8 +2,8 @@
   "package": "Package_Advanced",
   "gate": "Gate2_GraphParity",
   "counts": {
-    "Match": 8,
-    "Unverifiable": 4
+    "Match": 11,
+    "Unverifiable": 1
   },
   "findings": [
     {
@@ -57,14 +57,14 @@
     {
       "scope": "DataFlow:DFT_ExcelImport",
       "objectName": "EXCEL_SRC_Drip",
-      "verdict": "Unverifiable",
-      "detail": "Component name found by text presence inside DFT_ExcelImport's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_ExcelImport",
       "objectName": "OLEDST_Drip",
-      "verdict": "Unverifiable",
-      "detail": "Component name found by text presence inside DFT_ExcelImport's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_FlagCustomers",
@@ -75,8 +75,8 @@
     {
       "scope": "DataFlow:DFT_FlagCustomers",
       "objectName": "OLESRC_CustomerIds",
-      "verdict": "Unverifiable",
-      "detail": "Component name found by text presence inside DFT_FlagCustomers's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     }
   ]
 }

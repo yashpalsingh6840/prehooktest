@@ -10,7 +10,12 @@ Two-tier comparison, per docs/dtsx-graph-notes.md §6.1 (node-granularity mismat
    (docs/dtsx-graph-notes.md §4.4) — collapsed into one owning method's body. We do not yet have a
    structural extractor for that method's internal constructor-argument/local-function shape, so
    this level is reported as a scoped `Unverifiable` presence check (does the component's name
-   appear at all in its owning DFT's generated method body), never a false Match/Mismatch claim.
+   appear at all in its owning DFT's generated method body), never a false Match/Mismatch claim —
+   *unless* Gate 3 already ran its own real per-component schema comparison for the same
+   component and reached a stronger verdict, in which case this defers to that instead of
+   re-reporting the weaker text-presence signal (see `_compare_data_flow_internals`'s docstring;
+   confirmed real case, Package_Advanced, 2026-09-13, three components independently `Match` in
+   Gate 3 while still sitting `Unverifiable` here before this cross-reference existed).
 """
 from __future__ import annotations
 
@@ -231,12 +236,36 @@ def _compare_disabled(graph: ControlFlowGraph, result: Gate2Result) -> None:
         ))
 
 
+_GATE3_TO_GATE2_VERDICT = {
+    "Match": Verdict.MATCH,
+    "NormalizedMatch": Verdict.MATCH,
+    "Mismatch": Verdict.MISMATCH,
+    "LeftOnly": Verdict.LEFT_ONLY,
+}
+
+
 def _compare_data_flow_internals(
-    dft_graphs: dict[str, DataFlowGraph], package_cs_text: str, result: Gate2Result
+    dft_graphs: dict[str, DataFlowGraph], package_cs_text: str, result: Gate2Result,
+    gate3_verdicts: dict[str, str] | None = None,
 ) -> None:
-    """Scoped presence check only — see module docstring. Never claims full component/path
-    parity; that requires a per-component-shape extractor this tool doesn't have yet."""
+    """Scoped presence check by default — see module docstring: a name-presence match alone can
+    only ever be corroborating evidence, never a real verdict, since the generator may legitimately
+    name a component's counterpart after its target table instead.
+
+    `gate3_verdicts` (component_name -> Gate 3's own Verdict.value string, plain strings so this
+    module has no import-time dependency on compare/gate3_schema.py) is a deliberate exception:
+    when Gate 3 already ran its OWN structural comparison for a component's declared column shape
+    and reached Match/NormalizedMatch/Mismatch/LeftOnly, that is real, independent evidence — not
+    the same "text happens to appear nearby" signal this function otherwise relies on — so this
+    defers to it rather than re-reporting the weaker presence-only signal for a component Gate 3
+    already resolved. Confirmed real case (Package_Advanced, 2026-09-13): EXCEL_SRC_Drip,
+    OLEDST_Drip, and OLESRC_CustomerIds were all independently `Match` in Gate 3 while sitting
+    here as `Unverifiable` — the two gates simply weren't talking to each other. A Gate 3
+    `Unverifiable` verdict (no stronger claim available there either) or a component Gate 3 never
+    reports on at all (e.g. it never populates an external column shape) still falls through to
+    the unchanged presence-only check below."""
     bodies = _extract_method_bodies(package_cs_text)
+    gate3_verdicts = gate3_verdicts or {}
     for dft_path, dfg in dft_graphs.items():
         dft_name = _short_name(dft_path)
         body = bodies.get(dft_name)
@@ -249,6 +278,19 @@ def _compare_data_flow_internals(
                 ))
             continue
         for comp in dfg.components:
+            gate3_verdict_str = gate3_verdicts.get(comp.name)
+            upgraded = _GATE3_TO_GATE2_VERDICT.get(gate3_verdict_str) if gate3_verdict_str else None
+            if upgraded is not None:
+                result.findings.append(Finding(
+                    scope=scope, object_name=comp.name, verdict=upgraded,
+                    detail=(
+                        f"Deferring to Gate 3's own per-component schema comparison for this "
+                        f"component, which independently reached {gate3_verdict_str!r} — stronger, "
+                        "real evidence than this scope's plain name-presence check (see the Gate 3 "
+                        "report for the actual column-level comparison)."
+                    ),
+                ))
+                continue
             # A negative result here is NOT evidence of a gap: destination/transform components
             # are frequently named after their target table rather than the SSIS component
             # (docs/dtsx-graph-notes.md §4.4 — confirmed, e.g. "SalesSummaryTransform" for a
@@ -273,6 +315,7 @@ def run_gate2(
     dft_graphs: dict[str, DataFlowGraph],
     right: CsharpControlFlowGraph,
     package_cs_text: str,
+    gate3_verdicts: dict[str, str] | None = None,
 ) -> Gate2Result:
     result = Gate2Result()
 
@@ -302,6 +345,6 @@ def run_gate2(
 
     _compare_event_handlers(graph, right, result)
     _compare_disabled(graph, result)
-    _compare_data_flow_internals(dft_graphs, package_cs_text, result)
+    _compare_data_flow_internals(dft_graphs, package_cs_text, result, gate3_verdicts)
 
     return result

@@ -175,3 +175,75 @@ def test_mutated_right_broken_concurrency_group_reports_gap(tmp_path: Path):
     assert by_name["SQL_TruncateExportLog"].verdict == Verdict.LEFT_ONLY
     for name in ["DFT_ExportDelimited", "DFT_ExportFixedWidth"]:
         assert by_name[name].verdict == Verdict.LEFT_ONLY
+
+
+def _gate3_verdicts_for(dtsx_path: Path, generated_dir: Path) -> dict[str, str]:
+    from ssis_validator.codegen.csharp_construct_presence import any_construct_referenced
+    from ssis_validator.codegen.csharp_schema import extract as extract_right_schema
+    from ssis_validator.codegen.csharp_sql import extract as extract_right_sql
+    from ssis_validator.compare.gate3_schema import run_gate3
+    from ssis_validator.dtsx.component_schema import extract as extract_left_schema
+    from ssis_validator.dtsx.no_translation_registry import NO_TRANSLATION_CONSTRUCTS
+    from ssis_validator.dtsx.sql_extraction import extract as extract_left_sql
+
+    left_schema = extract_left_schema(dtsx_path)
+    left_sql = extract_left_sql(dtsx_path)
+    right_sql = extract_right_sql(generated_dir)
+    right_schema = extract_right_schema(generated_dir)
+    all_names = sorted({n for ns in NO_TRANSLATION_CONSTRUCTS.values() for n in ns})
+    present = frozenset(n for n in all_names if any_construct_referenced(generated_dir, (n,)))
+    gate3 = run_gate3(left_schema, left_sql.sql_items, right_sql.sql_items, right_schema, present)
+    return {f.object_name: f.verdict.value for f in gate3.findings}
+
+
+def test_real_pair_defers_to_gate3_match_instead_of_reporting_unverifiable():
+    """Real gap found in Package_Advanced (2026-09-13): EXCEL_SRC_Drip, OLEDST_Drip, and
+    OLESRC_CustomerIds are all independently `Match` in Gate 3 (a real per-component schema
+    comparison) while Gate 2's own plain name-presence check reported them as `Unverifiable` --
+    the two gates weren't cross-referenced. Passing Gate 3's verdicts must upgrade these three to
+    Gate 2's own `Match`, citing Gate 3's stronger evidence, instead of the weaker presence-only
+    signal."""
+    dtsx = DTSX_BASE / "Package_Advanced.dtsx"
+    generated = GENERATED_BASE / "Package_Advanced"
+    gate3_verdicts = _gate3_verdicts_for(dtsx, generated)
+    assert gate3_verdicts["EXCEL_SRC_Drip"] == "Match"  # fixture assumption
+
+    cf = extract_control_flow(dtsx)
+    df = extract_data_flow(dtsx)
+    cs_file = find_package_cs_file(generated)
+    right = extract_right(cs_file)
+    text = cs_file.read_text(encoding="utf-8-sig", errors="replace")
+    result = run_gate2(cf, df, right, text, gate3_verdicts)
+
+    by_name = _by_name(result)
+    for name in ["EXCEL_SRC_Drip", "OLEDST_Drip", "OLESRC_CustomerIds"]:
+        assert by_name[name].verdict == Verdict.MATCH, name
+        assert "Gate 3" in by_name[name].detail
+
+    # OLECMD_SetFlag is Unverifiable in Gate 3 too (a naming-correlation gap, not a resolved
+    # match) -- must fall through to the unchanged presence-only check, not be upgraded to
+    # anything stronger just because *some* entry exists for it.
+    assert gate3_verdicts["OLECMD_SetFlag"] == "Unverifiable"  # fixture assumption
+    assert by_name["OLECMD_SetFlag"].verdict == Verdict.UNVERIFIABLE
+    assert "text presence" in by_name["OLECMD_SetFlag"].detail
+
+
+def test_mutated_gate3_leftonly_upgrades_gate2_to_leftonly_not_silently_kept_unverifiable(tmp_path: Path):
+    """Proves the upgrade path actually reflects Gate 3's verdict rather than always mapping to
+    Match: feed a synthetic gate3_verdicts dict with a LeftOnly entry for a real component and
+    confirm Gate 2 reports LeftOnly, citing Gate 3, instead of its own presence-only Unverifiable."""
+    dtsx = DTSX_BASE / "Package_Advanced.dtsx"
+    generated = GENERATED_BASE / "Package_Advanced"
+    result = _run(dtsx, generated)
+    assert _by_name(result)["EXCEL_SRC_Drip"].verdict == Verdict.UNVERIFIABLE  # no gate3 input yet
+
+    cf = extract_control_flow(dtsx)
+    df = extract_data_flow(dtsx)
+    cs_file = find_package_cs_file(generated)
+    right = extract_right(cs_file)
+    text = cs_file.read_text(encoding="utf-8-sig", errors="replace")
+    result = run_gate2(cf, df, right, text, {"EXCEL_SRC_Drip": "LeftOnly"})
+
+    by_name = _by_name(result)
+    assert by_name["EXCEL_SRC_Drip"].verdict == Verdict.LEFT_ONLY
+    assert "Gate 3" in by_name["EXCEL_SRC_Drip"].detail

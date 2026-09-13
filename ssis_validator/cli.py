@@ -100,6 +100,27 @@ def run_validate(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
     if left_sql.unrecognized_component_types:
         print(f"  Unrecognized left-side component types: {left_sql.unrecognized_component_types}")
 
+    # Gate 3 is computed before Gate 2 is printed/written (though still reported afterwards, in
+    # the usual 1-2-3 order) because Gate 2's own data-flow-internal check defers to Gate 3's
+    # verdict for a component when both cover it -- Gate 3's real per-component schema comparison
+    # is stronger evidence than Gate 2's own plain name-presence check (see
+    # compare/gate2_graph.py's _compare_data_flow_internals docstring). None of Gate 3's own
+    # inputs depend on Gate 2's, so this reordering changes nothing about what either gate itself
+    # computes.
+    left_schema = extract_left_schema(dtsx_path_obj)
+    right_schema = extract_right_schema(generated_dir)
+    all_construct_names = sorted({
+        name for names in NO_TRANSLATION_CONSTRUCTS.values() for name in names
+    })
+    present_constructs = frozenset(
+        name for name in all_construct_names
+        if any_construct_referenced(generated_dir, (name,))
+    )
+    gate3 = run_gate3(
+        left_schema, left_sql.sql_items, right_sql.sql_items, right_schema, present_constructs,
+    )
+    gate3_verdicts_by_name = {f.object_name: f.verdict.value for f in gate3.findings}
+
     cs_file = find_package_cs_file(generated_dir)
     gate2_blocking = False
     if cs_file is None:
@@ -109,7 +130,7 @@ def run_validate(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
         data_flow = extract_data_flow(dtsx_path_obj)
         right_graph = extract_right_graph(cs_file)
         cs_text = cs_file.read_text(encoding="utf-8-sig", errors="replace")
-        gate2 = run_gate2(control_flow, data_flow, right_graph, cs_text)
+        gate2 = run_gate2(control_flow, data_flow, right_graph, cs_text, gate3_verdicts_by_name)
         write_gate2_json_report(package, gate2, out_dir_obj / f"{package}.gate2.json")
         write_gate2_markdown_report(package, gate2, out_dir_obj / f"{package}.gate2.md")
 
@@ -123,18 +144,6 @@ def run_validate(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
             for f in gate2.findings
         )
 
-    left_schema = extract_left_schema(dtsx_path_obj)
-    right_schema = extract_right_schema(generated_dir)
-    all_construct_names = sorted({
-        name for names in NO_TRANSLATION_CONSTRUCTS.values() for name in names
-    })
-    present_constructs = frozenset(
-        name for name in all_construct_names
-        if any_construct_referenced(generated_dir, (name,))
-    )
-    gate3 = run_gate3(
-        left_schema, left_sql.sql_items, right_sql.sql_items, right_schema, present_constructs,
-    )
     write_gate3_json_report(package, gate3, out_dir_obj / f"{package}.gate3.json")
     write_gate3_markdown_report(package, gate3, out_dir_obj / f"{package}.gate3.md")
 

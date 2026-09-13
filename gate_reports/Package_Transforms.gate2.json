@@ -2,8 +2,9 @@
   "package": "Package_Transforms",
   "gate": "Gate2_GraphParity",
   "counts": {
-    "Match": 8,
-    "Unverifiable": 30
+    "Match": 17,
+    "Unverifiable": 13,
+    "LeftOnly": 8
   },
   "findings": [
     {
@@ -87,20 +88,20 @@
     {
       "scope": "DataFlow:DFT_DerivedAndSplit",
       "objectName": "FF_SRC_Customers",
-      "verdict": "Unverifiable",
-      "detail": "Component name found by text presence inside DFT_DerivedAndSplit's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_DerivedAndSplit",
       "objectName": "OLEDST_CustomerEnriched",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_DerivedAndSplit's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'NormalizedMatch' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_DerivedAndSplit",
       "objectName": "UNION_Recombine",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_DerivedAndSplit's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "LeftOnly",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_LookupAndAggregate",
@@ -111,8 +112,8 @@
     {
       "scope": "DataFlow:DFT_LookupAndAggregate",
       "objectName": "FF_SRC_Customers2",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_LookupAndAggregate",
@@ -129,20 +130,20 @@
     {
       "scope": "DataFlow:DFT_LookupAndAggregate",
       "objectName": "OLEDST_RegionSummary",
-      "verdict": "Unverifiable",
-      "detail": "Component name found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_LookupAndAggregate",
       "objectName": "RC_MatchedRows",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "LeftOnly",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_LookupAndAggregate",
       "objectName": "RC_UnmatchedRows",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_LookupAndAggregate's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "LeftOnly",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_MergeSortedBranches",
@@ -159,32 +160,32 @@
     {
       "scope": "DataFlow:DFT_MergeSortedBranches",
       "objectName": "FF_SRC_Customers4",
-      "verdict": "Unverifiable",
-      "detail": "Component name found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_MergeSortedBranches",
       "objectName": "MRG_SortedUnion",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "LeftOnly",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_MergeSortedBranches",
       "objectName": "OLEDST_CustomerMerged",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_MergeSortedBranches",
       "objectName": "SORT_Canada",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "LeftOnly",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_MergeSortedBranches",
       "objectName": "SORT_RestOfWorld",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_MergeSortedBranches's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "LeftOnly",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_SortAndMergeJoin",
@@ -201,14 +202,14 @@
     {
       "scope": "DataFlow:DFT_SortAndMergeJoin",
       "objectName": "FF_SRC_Contacts",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_SortAndMergeJoin",
       "objectName": "FF_SRC_Customers3",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_SortAndMergeJoin",
@@ -219,20 +220,20 @@
     {
       "scope": "DataFlow:DFT_SortAndMergeJoin",
       "objectName": "OLEDST_CustomerWithContact",
-      "verdict": "Unverifiable",
-      "detail": "Component name found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_SortAndMergeJoin",
       "objectName": "SORT_Contacts",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "LeftOnly",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     },
     {
       "scope": "DataFlow:DFT_SortAndMergeJoin",
       "objectName": "SORT_Customers",
-      "verdict": "Unverifiable",
-      "detail": "Component name NOT found by text presence inside DFT_SortAndMergeJoin's generated method \u2014 not a structural check of its data-flow shape; the generator may legitimately name this component's generated counterpart after its target table instead. Full data-flow-internal parity is not yet implemented."
+      "verdict": "LeftOnly",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'LeftOnly' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
     }
   ]
 }
