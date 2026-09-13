@@ -42,10 +42,12 @@ separate, human-reviewed file that never edits Tier 1's own reports.
   (`sqlglot`), not text diff.
 - **Gate 2** — control-flow/data-flow graph parity. Compares the `.dtsx`'s task/container graph
   (nodes, precedence-constraint edges, concurrency groups) against the generated code's own call
-  structure. Its data-flow-*internal* (per-component, inside one Data Flow Task) check is
-  intentionally scoped to an `Unverifiable` presence-only signal — see
-  [docs/dtsx-graph-notes.md](docs/dtsx-graph-notes.md) §6 for why a stronger claim isn't safe at
-  that level; Gate 3 is where per-component shape is actually compared.
+  structure. Its data-flow-*internal* (per-component, inside one Data Flow Task) check is a plain
+  name-presence signal on its own — see [docs/dtsx-graph-notes.md](docs/dtsx-graph-notes.md) §6
+  for why a stronger claim isn't safe at that level — but it now defers to Gate 3's own verdict
+  for the same component when Gate 3 already ran a real schema comparison, rather than
+  re-reporting the weaker signal; a component Gate 3 doesn't cover still falls back to the
+  presence-only check.
 - **Gate 3** — per-component input/output schema parity. Correlates a destination by (schema,
   table) identity (reusing Gate 1's proven match), a source by its generated row-source factory
   method name, and — since Phase A — a non-database destination (e.g. `FlatFileDestination`) by
@@ -119,13 +121,22 @@ ready-to-use integrations so you don't have to paste the prompt by hand every ti
 See [docs/tier2-tooling-setup.md](docs/tier2-tooling-setup.md) for the full index and exactly
 which file does what.
 
+A packet carries two different kinds of question. Most entries, under `## Components`, ask "does
+this generated code implement the same *logic* as this SSIS-side evidence?" — a small number,
+under `## Correlation gaps`, ask the more basic "which generated code even represents this
+component, if any?" (e.g. an OLEDBCommand or FlatFileDestination Gate 3 couldn't correlate by
+schema). For those, the packet reuses Gate 1's own SQL-content correlation when it already found
+one, or a short, capped list of name-mention candidates from this package's own generated files
+when it didn't — never an open-ended search. Either way, the AI's job is judging what's already
+in the packet, never going looking for more itself.
+
 The output of a Tier 2 review is always a new `<package>.ai-review.md` file, saved next to its
 evidence packet under `ai_context/<PackageName>/` — never merged into or overwriting Gate 1/2/3's
-own reports. `ai_context/` already has two real, worked examples (`Package` and
-`Package_Transforms`) from an actual adjudication run, including a genuine discrepancy it found
-(a Lookup's "no-match rows" tracking silently dropped in the rewrite) and a cross-cutting pattern
-across three unrelated Script Components — read those `.ai-review.md` files to see what real
-output looks like.
+own reports. `ai_context/` already has real, worked examples from actual adjudication runs across
+all packages that produced a packet, including a genuine discrepancy (a Lookup's "no-match rows"
+tracking silently dropped in the rewrite), a cross-cutting pattern across three unrelated Script
+Components, and two resolved correlation gaps (an OLEDBCommand and a FlatFileDestination, both
+confirmed matches) — read those `.ai-review.md` files to see what real output looks like.
 
 ### The guardrails, in one place
 

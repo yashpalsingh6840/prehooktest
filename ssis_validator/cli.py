@@ -29,9 +29,11 @@ from ssis_validator.dtsx.semantic_extraction import extract_all_script_task_sour
 from ssis_validator.dtsx.sql_extraction import extract as extract_left_sql
 from ssis_validator.report.ai_context import (
     build_combined_package_packet,
+    build_correlation_gap_packets,
     build_data_flow_packets,
     build_script_task_packets,
     render_combined_markdown,
+    render_correlation_gap_markdown,
     render_markdown,
 )
 from ssis_validator.report.json_report import (
@@ -183,6 +185,7 @@ def run_ai_context(dtsx_path: str, generated_dir: str, out_dir: str, combined: b
         name for name in all_construct_names
         if any_construct_referenced(generated_dir, (name,))
     )
+    gate1 = run_gate1(left_sql.sql_items, right_sql.sql_items)
     gate3 = run_gate3(
         left_schema, left_sql.sql_items, right_sql.sql_items, right_schema, present_constructs,
     )
@@ -194,19 +197,25 @@ def run_ai_context(dtsx_path: str, generated_dir: str, out_dir: str, combined: b
     packets += build_script_task_packets(
         package, dtsx_path_obj, task_sources, package_cs_file, generated_dir,
     )
+    correlation_gap_packets = build_correlation_gap_packets(
+        package, dtsx_path_obj, gate1.findings, gate3, package_cs_file, generated_dir,
+    )
 
-    if not packets:
+    if not packets and not correlation_gap_packets:
         print(f"AI context — {package}: no genuinely irreducible findings survived Tier 1.")
         return 0
 
     if combined:
-        merged = build_combined_package_packet(package, dtsx_path_obj, package_cs_file, packets)
+        merged = build_combined_package_packet(
+            package, dtsx_path_obj, package_cs_file, packets, correlation_gap_packets,
+        )
         json_text = json.dumps(merged, indent=2, default=str)
         md_text = render_combined_markdown(merged)
         (out_dir_obj / f"{package}.ai-context.json").write_text(json_text, encoding="utf-8")
         (out_dir_obj / f"{package}.ai-context.md").write_text(md_text, encoding="utf-8")
         print(
-            f"AI context — {package}: {len(packets)} component(s) combined into one packet "
+            f"AI context — {package}: {len(packets)} component(s) + "
+            f"{len(correlation_gap_packets)} correlation gap(s) combined into one packet "
             f"({len(merged['sources'])} distinct shared source file(s), written once each) "
             f"— {len(md_text)} bytes, written to {out_dir_obj}."
         )
@@ -217,9 +226,22 @@ def run_ai_context(dtsx_path: str, generated_dir: str, out_dir: str, combined: b
                 json.dumps(packet, indent=2, default=str), encoding="utf-8",
             )
             (out_dir_obj / f"{stem}.ai-context.md").write_text(render_markdown(packet), encoding="utf-8")
-        print(f"AI context — {package}: {len(packets)} evidence packet(s) written to {out_dir_obj}.")
+        for packet in correlation_gap_packets:
+            stem = f"{package}.{packet['component_name']}.correlation-gap"
+            (out_dir_obj / f"{stem}.ai-context.json").write_text(
+                json.dumps(packet, indent=2, default=str), encoding="utf-8",
+            )
+            (out_dir_obj / f"{stem}.ai-context.md").write_text(
+                render_correlation_gap_markdown(packet), encoding="utf-8",
+            )
+        print(
+            f"AI context — {package}: {len(packets)} evidence packet(s) + "
+            f"{len(correlation_gap_packets)} correlation gap packet(s) written to {out_dir_obj}."
+        )
         for packet in packets:
             print(f"  [{packet['scope']}] {packet['component_name']}")
+        for packet in correlation_gap_packets:
+            print(f"  [CorrelationGap] {packet['component_name']}")
     return 0
 
 

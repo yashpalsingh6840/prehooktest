@@ -107,6 +107,63 @@ def test_combined_mode_is_smaller_than_the_sum_of_per_component_files(tmp_path: 
     assert combined_total < per_component_total
 
 
+PACKAGE_ADVANCED_DTSX = DTSX_DIR / "Package_Advanced.dtsx"
+PACKAGE_ADVANCED_GENERATED = GENERATED_ROOT / "Package_Advanced"
+PACKAGE_LEGACY_DTSX = DTSX_DIR / "Package_Legacy.dtsx"
+PACKAGE_LEGACY_GENERATED = GENERATED_ROOT / "Package_Legacy"
+
+
+@pytest.mark.skipif(
+    not PACKAGE_ADVANCED_DTSX.exists() or not PACKAGE_ADVANCED_GENERATED.exists(),
+    reason="Package_Advanced sample pair not available on this machine.",
+)
+def test_correlation_gap_uses_gate1s_own_correlation_when_available(tmp_path: Path):
+    """Real case: OLECMD_SetFlag (Microsoft.OLEDBCommand) has no (schema,table) identity for
+    Gate 3 to correlate by, but Gate 1 already content-matched its SQL to the OleDbCommandStep
+    construction site in DFT_FlagCustomers. The correlation-gap packet must reuse that known
+    correlate rather than falling back to a blind name search."""
+    exit_code = run_ai_context(
+        str(PACKAGE_ADVANCED_DTSX), str(PACKAGE_ADVANCED_GENERATED), str(tmp_path), combined=True,
+    )
+    assert exit_code == 0
+
+    combined = json.loads((tmp_path / "Package_Advanced.ai-context.json").read_text(encoding="utf-8"))
+    gaps = {g["component_name"]: g for g in combined["correlation_gaps"]}
+    gap = gaps["OLECMD_SetFlag"]
+    assert gap["known_correlate"] is not None
+    assert gap["known_correlate"]["generated_object_name"] == "DFT_FlagCustomers"
+    assert gap["known_correlate"]["generated_shape"] == "OleDbCommandStep"
+    assert "row.CustomerID" in gap["known_correlate"]["excerpt"]
+    assert gap["declared_columns"] == [{"name": "@CustomerID", "ssis_type_raw": "i4"}]
+    assert gap["unconfirmed_candidates"] is None
+
+
+@pytest.mark.skipif(
+    not PACKAGE_LEGACY_DTSX.exists() or not PACKAGE_LEGACY_GENERATED.exists(),
+    reason="Package_Legacy sample pair not available on this machine.",
+)
+def test_correlation_gap_falls_back_to_bounded_candidate_search(tmp_path: Path):
+    """Real case: FFDST_AuditTrail_APPEND (FlatFileDestination) carries no SQL, so Gate 1 never
+    sees it at all -- the packet must fall back to the bounded name-mention search and surface
+    real, useful candidates (the FlatFileBulkSink construction site and its mapper/model
+    classes), never silently produce nothing."""
+    exit_code = run_ai_context(
+        str(PACKAGE_LEGACY_DTSX), str(PACKAGE_LEGACY_GENERATED), str(tmp_path), combined=True,
+    )
+    assert exit_code == 0
+
+    combined = json.loads((tmp_path / "Package_Legacy.ai-context.json").read_text(encoding="utf-8"))
+    gaps = {g["component_name"]: g for g in combined["correlation_gaps"]}
+    gap = gaps["FFDST_AuditTrail_APPEND"]
+    assert gap["known_correlate"] is None
+    candidates = gap["unconfirmed_candidates"]
+    assert candidates
+    combined_text = "\n".join(c["excerpt"] for c in candidates)
+    assert "FlatFileBulkSink" in combined_text
+    assert "FlatFileColumnFormat" in combined_text
+    assert {c["name"] for c in gap["declared_columns"]} == {"CustomerID", "CountryCode"}
+
+
 def test_ai_context_markdown_twin_is_self_contained(tmp_path: Path):
     run_ai_context(str(TRANSFORMS_DTSX), str(TRANSFORMS_GENERATED), str(tmp_path))
     markdown = (tmp_path / "Package_Transforms.LKP_Country.ai-context.md").read_text(encoding="utf-8")

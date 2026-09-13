@@ -44,7 +44,7 @@ docs/Gate-Report-Findings-2026-09-09.md before the fix.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 
 from ssis_validator.codegen.csharp_schema import CsClass, CsharpSchemaIndex
@@ -233,6 +233,12 @@ def run_gate3(
                     if cls_name is None:
                         result.findings.append(Finding(
                             scope=scope, object_name=schema.component_name, verdict=Verdict.UNVERIFIABLE,
+                            component_path=schema.component_path,
+                            # The declared column shape itself -- not a schema/class correlate,
+                            # but real left-side evidence a Tier 2 correlation-assist packet can
+                            # use directly instead of re-deriving it from the raw .dtsx (see
+                            # report/ai_context.py's build_correlation_gap_packets).
+                            evidence=[asdict(c) for c in side.columns],
                             detail=(
                                 f"'{schema.component_name}' ({schema.component_type}) is not a "
                                 "database destination Gate 1 can identify by (schema, table), and "

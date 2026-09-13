@@ -60,6 +60,29 @@ The packet you were given is the **only** input for this judgment. Do not:
    Etl.Core framework construct, not a missing lookup.
 4. **`tier1_detail`** — why Tier 1 could not resolve this on its own; context, not evidence.
 
+## A second, different question: correlation gaps
+
+Some packets are not "does this code implement the same logic" but "we don't even know which
+generated code represents this, if any." These show up in a `## Correlation gaps` section (or a
+standalone `*.correlation-gap.ai-context.md` file) instead of `## Components`, and carry a
+different shape:
+
+- **`declared_columns`** — the SSIS side's real declared column shape. Not in question.
+- **`known_correlate`**, when present — Gate 1 already independently matched this component to a
+  specific generated construct by SQL content (not name). This is real, established evidence, not
+  a guess — but you should still confirm it's a sensible match before relying on it.
+- **`unconfirmed_candidates`**, when `known_correlate` is absent — a small, capped list of places
+  in the generated project whose name merely mentions this component (found by a bounded text
+  search, not an open-ended browse). None of these are confirmed; you decide whether any is
+  plausible.
+
+Your job on one of these has **two parts**, in order: (1) decide whether the known correlate or
+one of the candidates is genuinely the generated code for this component — cite specifically why;
+(2) only if you're confident which one it is, judge whether it correctly implements
+`declared_columns`, exactly like a normal component. If no candidate is plausible (or the
+candidate list is empty), that's `AiInconclusive` — stated as such, never forced into a guess at
+part (1) just to get to part (2).
+
 ## Required output format
 
 For **each** packet, produce:

@@ -64,7 +64,7 @@ def referenced_identifiers(excerpt: str) -> list[str]:
     return seen
 
 
-def _extract_named_method_bodies(text: str) -> dict[str, str]:
+def extract_named_method_bodies(text: str) -> dict[str, str]:
     bodies: dict[str, str] = {}
     for m in _ANY_METHOD_HEADER_RE.finditer(text):
         name = m.group(1)
@@ -103,6 +103,39 @@ def find_class_source(generated_package_dir: str | Path, class_name: str) -> lis
     return results
 
 
+def find_name_mentions(
+    generated_package_dir: str | Path, name: str, max_matches: int = 5, context_lines: int = 6,
+) -> list[dict[str, str]]:
+    """Bounded fallback for a component with NO known correlate anywhere (not even Gate 1's own
+    SQL-content correlation) -- a plain, capped text search for the component's own name as a
+    literal substring across this package's own generated files, returning a small excerpt (not
+    the whole file) around each hit. Deliberately capped at `max_matches`: this is meant to hand
+    an AI reviewer a short, plausible candidate list to judge, never an unbounded project-wide
+    dump. A component search that turns up zero mentions is itself real, reportable evidence (the
+    generated project may genuinely not reference this component's name anywhere) -- not an
+    error."""
+    results: list[dict[str, str]] = []
+    root = Path(generated_package_dir)
+    for cs_file in _iter_cs_files(generated_package_dir):
+        if len(results) >= max_matches:
+            break
+        text = cs_file.read_text(encoding="utf-8-sig", errors="replace")
+        idx = text.find(name)
+        if idx == -1:
+            continue
+        line_start = text.rfind("\n", 0, idx)
+        lines_before = text[:line_start].count("\n") if line_start != -1 else 0
+        all_lines = text.splitlines()
+        line_no = min(lines_before, len(all_lines) - 1)
+        lo = max(0, line_no - context_lines)
+        hi = min(len(all_lines), line_no + context_lines + 1)
+        results.append({
+            "file": str(cs_file.relative_to(root)),
+            "excerpt": "\n".join(all_lines[lo:hi]),
+        })
+    return results
+
+
 def collect_related_sources(
     generated_package_dir: str | Path,
     excerpt: str | None,
@@ -127,7 +160,7 @@ def collect_related_sources(
     if not excerpt and not component_name:
         return {}
 
-    same_file_methods = _extract_named_method_bodies(own_file_text) if own_file_text else {}
+    same_file_methods = extract_named_method_bodies(own_file_text) if own_file_text else {}
     related: dict[str, list[dict[str, str]]] = {}
 
     names = list(referenced_identifiers(excerpt)) if excerpt else []
