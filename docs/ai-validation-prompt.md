@@ -2,9 +2,18 @@
 
 This document is the companion to `ssis_validator ai-context` (Phase C of the two-tier validation
 architecture — see `SSIS-Rewrite-Validation-Plan.md`). It is **tool-agnostic**: paste it into
-Claude chat, Copilot Chat, or any other AI chat tool, together with one `*.ai-context.md` (or
+Claude chat, Copilot Chat, or any other AI chat tool, together with an `*.ai-context.md` (or
 `.json`) packet produced by the CLI. It is not a Claude Code skill and requires no special
 integration — that is deliberate, so a reviewer can run it wherever is convenient.
+
+**Run the CLI with `--combined`** (`ssis_validator ai-context --dtsx <path> --generated <dir>
+--out <dir> --combined`) unless you have a specific reason not to. It writes one
+`<package>.ai-context.md` for the whole package instead of one file per component: every shared
+generated source file is listed once in a `## Sources` section and every component references it
+by path, and you paste the single file once and ask for every component's verdict back in one
+reply — one AI roundtrip per package instead of one per component, with no duplicated source text
+inflating the token count. The per-component instructions below apply identically; just work
+through every entry under `## Components` in the same reply instead of one packet at a time.
 
 ## What Tier 1 already established (read this first)
 

@@ -66,6 +66,47 @@ def test_ai_context_includes_script_component_and_script_task_packets(tmp_path: 
     assert script_task["evidence"]["files"][0]["file_name"] in ("ScriptMain.vb", "ScriptMain.cs")
 
 
+def test_combined_mode_deduplicates_shared_related_sources(tmp_path: Path):
+    """Real, measured duplication this mode fixes: DER_Enrich, DER_TagInvalid, DER_TagValid, and
+    CSPLIT_Validity all belong to the same ConditionalSplitStep and each embed identical copies
+    of CSPLIT_ValidityRouter.cs/CSPLIT_Validity_Valid.cs/CSPLIT_Validity_Invalid.cs in
+    per-component mode. Combined mode must store each shared file exactly once."""
+    exit_code = run_ai_context(
+        str(TRANSFORMS_DTSX), str(TRANSFORMS_GENERATED), str(tmp_path), combined=True,
+    )
+    assert exit_code == 0
+
+    assert not list(tmp_path.glob("Package_Transforms.DER_Enrich.ai-context.json"))
+
+    combined = json.loads((tmp_path / "Package_Transforms.ai-context.json").read_text(encoding="utf-8"))
+    assert combined["package"] == "Package_Transforms"
+    assert {c["component_name"] for c in combined["components"]} == {
+        "CSPLIT_Validity", "DER_Enrich", "DER_TagInvalid", "DER_TagValid",
+        "AGG_ByRegion", "LKP_Country", "CSPLIT_ByCountry", "MRG_CustomerContacts",
+    }
+
+    router_paths = [p for p in combined["sources"] if p.endswith("CSPLIT_ValidityRouter.cs")]
+    assert len(router_paths) == 1  # stored once, not once per referencing component
+
+    der_enrich = next(c for c in combined["components"] if c["component_name"] == "DER_Enrich")
+    assert any(f.endswith("CSPLIT_Validity_Valid.cs") for f in der_enrich["related_source_files"])
+    # The component's own evidence (its FriendlyExpressions) is untouched by the restructuring.
+    assert der_enrich["evidence"]["columns"][0]["output_name"] == "FullName"
+
+
+def test_combined_mode_is_smaller_than_the_sum_of_per_component_files(tmp_path: Path):
+    per_component_dir = tmp_path / "per_component"
+    combined_dir = tmp_path / "combined"
+    run_ai_context(str(TRANSFORMS_DTSX), str(TRANSFORMS_GENERATED), str(per_component_dir))
+    run_ai_context(str(TRANSFORMS_DTSX), str(TRANSFORMS_GENERATED), str(combined_dir), combined=True)
+
+    per_component_total = sum(
+        f.stat().st_size for f in per_component_dir.glob("*.ai-context.json")
+    )
+    combined_total = (combined_dir / "Package_Transforms.ai-context.json").stat().st_size
+    assert combined_total < per_component_total
+
+
 def test_ai_context_markdown_twin_is_self_contained(tmp_path: Path):
     run_ai_context(str(TRANSFORMS_DTSX), str(TRANSFORMS_GENERATED), str(tmp_path))
     markdown = (tmp_path / "Package_Transforms.LKP_Country.ai-context.md").read_text(encoding="utf-8")

@@ -124,6 +124,84 @@ def build_script_task_packets(
     return packets
 
 
+def build_combined_package_packet(
+    package: str, dtsx_path: str | Path, package_cs_file: Path | None, packets: list[dict],
+) -> dict:
+    """Consolidates every per-component packet for one package into a single structure: every
+    distinct related-source file is stored exactly ONCE (keyed by its file path) and each
+    component references it by that path instead of re-embedding the same text. Concretely fixes
+    a real, measured duplication: 4 components sharing one ConditionalSplitStep in
+    Package_Transforms each embedded identical full copies of the same 3 sibling files. Designed
+    for a single AI conversation to adjudicate every component in the package in one pass, instead
+    of one roundtrip per component."""
+    sources: dict[str, str] = {}
+    components = []
+    for p in packets:
+        related = p.get("related_generated_sources") or {}
+        file_paths: list[str] = []
+        for entries in related.values():
+            for entry in entries:
+                sources.setdefault(entry["file"], entry["source"])
+                file_paths.append(entry["file"])
+        components.append({
+            "component_name": p["component_name"],
+            "scope": p["scope"],
+            "component_path": p["component_path"],
+            "generated_method_name": p["generated_method_name"],
+            "generated_method_excerpt": p["generated_method_excerpt"],
+            "related_source_files": sorted(set(file_paths)),
+            "tier1_detail": p["tier1_detail"],
+            "evidence": p["evidence"],
+        })
+    return {
+        "package": package,
+        "dtsx_file": str(dtsx_path),
+        "generated_file_path": str(package_cs_file) if package_cs_file else None,
+        "sources": sources,
+        "components": components,
+    }
+
+
+def render_combined_markdown(combined: dict) -> str:
+    lines = [
+        f"# AI evidence packet (combined) — {combined['package']}", "",
+        f"- .dtsx file: `{combined['dtsx_file']}`",
+        f"- Generated file: `{combined['generated_file_path']}`",
+        f"- {len(combined['components'])} component(s), "
+        f"{len(combined['sources'])} distinct shared source file(s) (each shown once below)",
+        "",
+        "Adjudicate every component below in ONE pass — see docs/ai-validation-prompt.md for the "
+        "required output (one Component/Verdict/Rationale block per component). Each component "
+        "references shared source files by path instead of repeating their content.",
+        "",
+        "## Sources", "",
+    ]
+    for path, text in combined["sources"].items():
+        lines += [f"### `{path}`", "", "```csharp", text, "```", ""]
+    lines.append("## Components")
+    lines.append("")
+    for c in combined["components"]:
+        lines += [
+            f"### {c['component_name']} (`{c['scope']}`)", "",
+            (
+                f"- Component path: `{c['component_path']}`" if c["component_path"]
+                else "- Component path: (control-flow level)"
+            ),
+            f"- Generated method: `{c['generated_method_name']}`",
+            "- Related source files: " + (
+                ", ".join(f"`{f}`" for f in c["related_source_files"]) or "(none — see Sources above)"
+            ),
+            "",
+            "**Tier 1 finding:** " + (c["tier1_detail"] or "(none)"),
+            "",
+            "**Left-side evidence:**", "",
+            "```json", json.dumps(c["evidence"], separators=(",", ":"), default=str), "```", "",
+            "**Right-side excerpt:**", "",
+            "```csharp", c["generated_method_excerpt"] or "(not found)", "```", "",
+        ]
+    return "\n".join(lines)
+
+
 def render_markdown(packet: dict) -> str:
     lines = [
         f"# AI evidence packet — {packet['package']} / {packet['component_name']}", "",

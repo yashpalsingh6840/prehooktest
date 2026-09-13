@@ -28,8 +28,10 @@ from ssis_validator.dtsx.no_translation_registry import NO_TRANSLATION_CONSTRUCT
 from ssis_validator.dtsx.semantic_extraction import extract_all_script_task_sources
 from ssis_validator.dtsx.sql_extraction import extract as extract_left_sql
 from ssis_validator.report.ai_context import (
+    build_combined_package_packet,
     build_data_flow_packets,
     build_script_task_packets,
+    render_combined_markdown,
     render_markdown,
 )
 from ssis_validator.report.json_report import (
@@ -64,6 +66,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     ai_context.add_argument("--dtsx", required=True, help="Path to the .dtsx source file.")
     ai_context.add_argument("--generated", required=True, help="Path to the generated C# project folder.")
     ai_context.add_argument("--out", required=True, help="Output directory for evidence packets.")
+    ai_context.add_argument(
+        "--combined", action="store_true",
+        help=(
+            "Write ONE consolidated <package>.ai-context.{json,md} instead of one pair per "
+            "component: every shared related-source file is stored once and referenced by path "
+            "from each component, and the whole package can be adjudicated in a single AI "
+            "roundtrip. Recommended when tokens/API calls are limited."
+        ),
+    )
     return parser
 
 
@@ -146,7 +157,7 @@ def run_validate(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
     return 1 if (gate1_blocking or gate2_blocking or gate3_blocking) else 0
 
 
-def run_ai_context(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
+def run_ai_context(dtsx_path: str, generated_dir: str, out_dir: str, combined: bool = False) -> int:
     dtsx_path_obj = Path(dtsx_path)
     package = dtsx_path_obj.stem
     out_dir_obj = Path(out_dir)
@@ -175,18 +186,31 @@ def run_ai_context(dtsx_path: str, generated_dir: str, out_dir: str) -> int:
         package, dtsx_path_obj, task_sources, package_cs_file, generated_dir,
     )
 
-    for packet in packets:
-        stem = f"{package}.{packet['component_name']}"
-        (out_dir_obj / f"{stem}.ai-context.json").write_text(
-            json.dumps(packet, indent=2, default=str), encoding="utf-8",
-        )
-        (out_dir_obj / f"{stem}.ai-context.md").write_text(render_markdown(packet), encoding="utf-8")
-
-    print(f"AI context — {package}: {len(packets)} evidence packet(s) written to {out_dir_obj}.")
-    for packet in packets:
-        print(f"  [{packet['scope']}] {packet['component_name']}")
     if not packets:
-        print("  (no genuinely irreducible findings survived Tier 1 for this package)")
+        print(f"AI context — {package}: no genuinely irreducible findings survived Tier 1.")
+        return 0
+
+    if combined:
+        merged = build_combined_package_packet(package, dtsx_path_obj, package_cs_file, packets)
+        json_text = json.dumps(merged, indent=2, default=str)
+        md_text = render_combined_markdown(merged)
+        (out_dir_obj / f"{package}.ai-context.json").write_text(json_text, encoding="utf-8")
+        (out_dir_obj / f"{package}.ai-context.md").write_text(md_text, encoding="utf-8")
+        print(
+            f"AI context — {package}: {len(packets)} component(s) combined into one packet "
+            f"({len(merged['sources'])} distinct shared source file(s), written once each) "
+            f"— {len(md_text)} bytes, written to {out_dir_obj}."
+        )
+    else:
+        for packet in packets:
+            stem = f"{package}.{packet['component_name']}"
+            (out_dir_obj / f"{stem}.ai-context.json").write_text(
+                json.dumps(packet, indent=2, default=str), encoding="utf-8",
+            )
+            (out_dir_obj / f"{stem}.ai-context.md").write_text(render_markdown(packet), encoding="utf-8")
+        print(f"AI context — {package}: {len(packets)} evidence packet(s) written to {out_dir_obj}.")
+        for packet in packets:
+            print(f"  [{packet['scope']}] {packet['component_name']}")
     return 0
 
 
@@ -196,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate":
         return run_validate(args.dtsx, args.generated, args.out)
     if args.command == "ai-context":
-        return run_ai_context(args.dtsx, args.generated, args.out)
+        return run_ai_context(args.dtsx, args.generated, args.out, args.combined)
     parser.print_help()
     return 2
 

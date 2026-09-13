@@ -1,0 +1,316 @@
+{
+  "package": "Package_Transforms",
+  "dtsx_file": "D:\\PoC\\SSIS_Packages\\SSIS_From_Sandeep\\RBC_Demo_ETL\\RBC_Demo_ETL\\Package_Transforms.dtsx",
+  "generated_file_path": "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs",
+  "sources": {
+    "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method FF_SRC_Customers)": "\n        return new CsvRowSource<DFT_DerivedAndSplitCsvRow>(\"FF_SRC_Customers\", new CsvSourceOptions { FilePath = File(\"DFT_DerivedAndSplit\") }, new DFT_DerivedAndSplitCsvRowMap());\n    ",
+    "Mapping\\CSPLIT_ValidityRouter.cs": "using Package_Transforms.Csv;\nusing Etl.Core.Abstractions;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_ValidityRouter : IRowRouter<DFT_DerivedAndSplitCsvRow>\n{\n    public int SelectBranch(DFT_DerivedAndSplitCsvRow row, in RowContext ctx)\n    {\n        if ((!((SsisFn.ToNullableI4(row.CustomerID) is null)) && (SsisFn.FindString(SsisFn.Trim(row.Email), \"@\", 1) > 0))) return 0;\n        return 1; // Invalid\n    }\n}\n",
+    "Mapping\\CSPLIT_Validity_Valid.cs": "using Etl.Core.Abstractions;\nusing Package_Transforms.Csv;\nusing Package_Transforms.Model;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_Validity_Valid : IRowTransform<DFT_DerivedAndSplitCsvRow, CustomerEnriched>\n{\n    public CustomerEnriched Map(DFT_DerivedAndSplitCsvRow row, in RowContext ctx) => new()\n    {\n        CustomerID = SsisFn.ToNullableI4(row.CustomerID),\n        FullName = DER_Enrich.FullName(row, ctx),\n        EmailDomain = DER_Enrich.EmailDomain(row, ctx),\n        SignupDate = SsisFn.ToNullableDate(row.SignupDate),\n        TenureDays = DER_Enrich.TenureDays(row, ctx),\n        RowSource = DER_TagValid.RowSource(row, ctx),\n    };\n}\n",
+    "Mapping\\CSPLIT_Validity_Invalid.cs": "using Etl.Core.Abstractions;\nusing Package_Transforms.Csv;\nusing Package_Transforms.Model;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_Validity_Invalid : IRowTransform<DFT_DerivedAndSplitCsvRow, CustomerEnriched>\n{\n    public CustomerEnriched Map(DFT_DerivedAndSplitCsvRow row, in RowContext ctx) => new()\n    {\n        CustomerID = SsisFn.ToNullableI4(row.CustomerID),\n        FullName = DER_Enrich.FullName(row, ctx),\n        EmailDomain = DER_Enrich.EmailDomain(row, ctx),\n        SignupDate = SsisFn.ToNullableDate(row.SignupDate),\n        TenureDays = DER_Enrich.TenureDays(row, ctx),\n        RowSource = DER_TagInvalid.RowSource(row, ctx),\n    };\n}\n",
+    "Mapping\\DER_Enrich.cs": "using Etl.Core.Abstractions;\nusing Etl.Core.Ssis;\nusing Package_Transforms.Csv;\nusing Package_Transforms.Model;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\ninternal static class DER_Enrich\n{\n    // (DT_WSTR,200)(TRIM(FirstName) + \" \" + TRIM(LastName))\n    public static string FullName(DFT_DerivedAndSplitCsvRow row, in RowContext ctx) => WidthGuard.Wstr($\"{SsisFn.Trim(row.FirstName)} {SsisFn.Trim(row.LastName)}\", 200, nameof(CustomerEnriched.FullName), ctx.RowNumber);\n\n    // (DT_WSTR,200)(FINDSTRING(TRIM(Email),\"@\",1) > 0 ? SUBSTRING(TRIM(Email),FINDSTRING(TRIM(Email),\"@\",1) + 1,100) : \"(none)\")\n    public static string EmailDomain(DFT_DerivedAndSplitCsvRow row, in RowContext ctx) => WidthGuard.Wstr(((SsisFn.FindString(SsisFn.Trim(row.Email), \"@\", 1) > 0) ? SsisFn.Substring(SsisFn.Trim(row.Email), (SsisFn.FindString(SsisFn.Trim(row.Email), \"@\", 1) + 1), 100) : \"(none)\"), 200, nameof(CustomerEnriched.EmailDomain), ctx.RowNumber);\n\n    // ISNULL(SignupDate_dt) ? -1 : DATEDIFF(\"dd\",SignupDate_dt,GETDATE())\n    public static int TenureDays(DFT_DerivedAndSplitCsvRow row, in RowContext ctx) => ((SsisFn.ToNullableDate(row.SignupDate) is null) ? -(1) : SsisFn.DateDiffDays(SsisFn.ToNullableDate(row.SignupDate)!.Value, ctx.LoadedAtUtc));\n}\n",
+    "Mapping\\DER_TagInvalid.cs": "using Etl.Core.Abstractions;\nusing Package_Transforms.Csv;\n\nnamespace Package_Transforms.Mapping;\n\ninternal static class DER_TagInvalid\n{\n    // \"Invalid\"\n    public static string RowSource(DFT_DerivedAndSplitCsvRow row, in RowContext ctx) => \"Invalid\";\n}\n",
+    "Mapping\\DER_TagValid.cs": "using Etl.Core.Abstractions;\nusing Package_Transforms.Csv;\n\nnamespace Package_Transforms.Mapping;\n\ninternal static class DER_TagValid\n{\n    // \"Valid\"\n    public static string RowSource(DFT_DerivedAndSplitCsvRow row, in RowContext ctx) => \"Valid\";\n}\n",
+    "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method AGG_ByRegion)": "\n        IRowSource<AGG_ByRegionSourceCsvRow> BuildAggregateSource()\n        {\n            IRowSource<AGG_ByRegionSourceCsvRow> BuildRawSource()\n            {\n                return new CsvRowSource<AGG_ByRegionSourceCsvRow>(\"FF_SRC_Customers2\", new CsvSourceOptions { FilePath = File(\"AGG_ByRegionSource\") }, new AGG_ByRegionSourceCsvRowMap());\n            }\n\n            return new FilteringRowSource<AGG_ByRegionSourceCsvRow>(\"AGG_ByRegion\", BuildRawSource(), row => lKP_CountryCache.ContainsKey(row.Country));\n        }\n\n        return new AggregateRowSource<AGG_ByRegionSourceCsvRow, string, RegionSummaryAggregateRow>(\n            \"AGG_ByRegion\",\n            BuildAggregateSource(),\n            row => lKP_CountryCache[row.Country].Region,\n            (key, rows) => new RegionSummaryAggregateRow\n            {\n                Region = key,\n                CustomerCount = rows.Count(r => r.CustomerID != null)\n            });\n    ",
+    "Mapping\\RegionSummaryTransform.cs": "using Etl.Core.Abstractions;\nusing Package_Transforms.Sql;\nusing Package_Transforms.Model;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class RegionSummaryTransform : IRowTransform<RegionSummaryAggregateRow, RegionSummary>\n{\n    public RegionSummary Map(RegionSummaryAggregateRow row, in RowContext ctx) => new()\n    {\n        Region = row.Region,\n        CustomerCount = SsisFn.NarrowI8ToI4(row.CustomerCount),\n    };\n}\n",
+    "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method OLEDST_RegionSummary)": "\n        return new SqlBulkSink<RegionSummary>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<RegionSummary>>());\n    ",
+    "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method FF_SRC_Customers4)": "\n        return new CsvRowSource<DFT_MergeSortedBranchesCsvRow>(\"FF_SRC_Customers4\", new CsvSourceOptions { FilePath = File(\"DFT_MergeSortedBranches\") }, new DFT_MergeSortedBranchesCsvRowMap());\n    ",
+    "Mapping\\CSPLIT_ByCountryRouter.cs": "using Package_Transforms.Csv;\nusing Etl.Core.Abstractions;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_ByCountryRouter : IRowRouter<DFT_MergeSortedBranchesCsvRow>\n{\n    public int SelectBranch(DFT_MergeSortedBranchesCsvRow row, in RowContext ctx)\n    {\n        if (string.Equals(SsisFn.Trim(row.Country), \"Canada\", System.StringComparison.Ordinal)) return 0;\n        return 1; // RestOfWorld\n    }\n}\n",
+    "Mapping\\CSPLIT_ByCountry_Canada.cs": "using Etl.Core.Abstractions;\nusing Package_Transforms.Csv;\nusing Package_Transforms.Model;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_ByCountry_Canada : IRowTransform<DFT_MergeSortedBranchesCsvRow, CustomerMerged>\n{\n    public CustomerMerged Map(DFT_MergeSortedBranchesCsvRow row, in RowContext ctx) => new()\n    {\n        CustomerID = SsisFn.ToNullableI4(row.CustomerID),\n        Email = row.Email,\n    };\n}\n",
+    "Mapping\\CSPLIT_ByCountry_RestOfWorld.cs": "using Etl.Core.Abstractions;\nusing Package_Transforms.Csv;\nusing Package_Transforms.Model;\nusing Package_Transforms.Ssis;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CSPLIT_ByCountry_RestOfWorld : IRowTransform<DFT_MergeSortedBranchesCsvRow, CustomerMerged>\n{\n    public CustomerMerged Map(DFT_MergeSortedBranchesCsvRow row, in RowContext ctx) => new()\n    {\n        CustomerID = SsisFn.ToNullableI4(row.CustomerID),\n        Email = row.Email,\n    };\n}\n",
+    "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method MRG_CustomerContacts)": "\n        IRowSource<MRG_CustomerContactsLeftCsvRow> BuildLeft()\n        {\n            return new CsvRowSource<MRG_CustomerContactsLeftCsvRow>(\"FF_SRC_Customers3\", new CsvSourceOptions { FilePath = File(\"MRG_CustomerContactsLeft\") }, new MRG_CustomerContactsLeftCsvRowMap());\n        }\n\n        IRowSource<MRG_CustomerContactsRightCsvRow> BuildRight()\n        {\n            return new CsvRowSource<MRG_CustomerContactsRightCsvRow>(\"FF_SRC_Contacts\", new CsvSourceOptions { FilePath = File(\"MRG_CustomerContactsRight\") }, new MRG_CustomerContactsRightCsvRowMap());\n        }\n\n        return new MergeJoinRowSource<MRG_CustomerContactsLeftCsvRow, MRG_CustomerContactsRightCsvRow, int?, MRG_CustomerContactsRow>(\n            \"MRG_CustomerContacts\", BuildLeft(), BuildRight(),\n            MRG_CustomerContactsMapper.LeftKey, MRG_CustomerContactsMapper.RightKey,\n            Comparer<int?>.Default,\n            MergeJoinType.Inner,\n            MRG_CustomerContactsMapper.Map);\n    ",
+    "Mapping\\CustomerWithContactTransform.cs": "using Etl.Core.Abstractions;\nusing Package_Transforms.Sql;\nusing Package_Transforms.Model;\n\nnamespace Package_Transforms.Mapping;\n\npublic sealed class CustomerWithContactTransform : IRowTransform<MRG_CustomerContactsRow, CustomerWithContact>\n{\n    public CustomerWithContact Map(MRG_CustomerContactsRow row, in RowContext ctx) => new()\n    {\n        CustomerID = row.CustomerID_i4,\n        Email = row.Email,\n        ContactPhone = row.ContactPhone,\n        PreferredChannel = row.PreferredChannel,\n    };\n}\n",
+    "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method OLEDST_CustomerWithContact)": "\n        return new SqlBulkSink<CustomerWithContact>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerWithContact>>());\n    "
+  },
+  "components": [
+    {
+      "component_name": "CSPLIT_Validity",
+      "scope": "DataFlowComponent",
+      "component_path": "Package\\DFT_DerivedAndSplit\\CSPLIT_Validity",
+      "generated_method_name": "DFT_DerivedAndSplit",
+      "generated_method_excerpt": "\n        var source = FF_SRC_Customers();\n        var step = new ConditionalSplitStep<DFT_DerivedAndSplitCsvRow>(\n            \"DFT_DerivedAndSplit\",\n            source,\n            new CSPLIT_ValidityRouter(),\n            [\n                new ConditionalSplitBranch<DFT_DerivedAndSplitCsvRow, CustomerEnriched>(\n                    \"Valid\",\n                    new CSPLIT_Validity_Valid(),\n                    new SqlBulkSink<CustomerEnriched>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerEnriched>>())),\n                new ConditionalSplitBranch<DFT_DerivedAndSplitCsvRow, CustomerEnriched>(\n                    \"Invalid\",\n                    new CSPLIT_Validity_Invalid(),\n                    new SqlBulkSink<CustomerEnriched>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerEnriched>>()))\n            ],\n            Log<ConditionalSplitStep<DFT_DerivedAndSplitCsvRow>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+      "related_source_files": [
+        "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method FF_SRC_Customers)",
+        "Mapping\\CSPLIT_ValidityRouter.cs",
+        "Mapping\\CSPLIT_Validity_Invalid.cs",
+        "Mapping\\CSPLIT_Validity_Valid.cs"
+      ],
+      "tier1_detail": "'CSPLIT_Validity' (Microsoft.ConditionalSplit) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "evidence": {
+        "outputs": [
+          {
+            "output_name": "Valid",
+            "is_default": false,
+            "friendly_expression": "!ISNULL(CustomerID_i4) && FINDSTRING(TRIM(Email),\"@\",1) > 0",
+            "evaluation_order": 0
+          },
+          {
+            "output_name": "Invalid",
+            "is_default": true,
+            "friendly_expression": null,
+            "evaluation_order": null
+          }
+        ]
+      }
+    },
+    {
+      "component_name": "DER_Enrich",
+      "scope": "DataFlowComponent",
+      "component_path": "Package\\DFT_DerivedAndSplit\\DER_Enrich",
+      "generated_method_name": "DFT_DerivedAndSplit",
+      "generated_method_excerpt": "\n        var source = FF_SRC_Customers();\n        var step = new ConditionalSplitStep<DFT_DerivedAndSplitCsvRow>(\n            \"DFT_DerivedAndSplit\",\n            source,\n            new CSPLIT_ValidityRouter(),\n            [\n                new ConditionalSplitBranch<DFT_DerivedAndSplitCsvRow, CustomerEnriched>(\n                    \"Valid\",\n                    new CSPLIT_Validity_Valid(),\n                    new SqlBulkSink<CustomerEnriched>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerEnriched>>())),\n                new ConditionalSplitBranch<DFT_DerivedAndSplitCsvRow, CustomerEnriched>(\n                    \"Invalid\",\n                    new CSPLIT_Validity_Invalid(),\n                    new SqlBulkSink<CustomerEnriched>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerEnriched>>()))\n            ],\n            Log<ConditionalSplitStep<DFT_DerivedAndSplitCsvRow>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+      "related_source_files": [
+        "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method FF_SRC_Customers)",
+        "Mapping\\CSPLIT_ValidityRouter.cs",
+        "Mapping\\CSPLIT_Validity_Invalid.cs",
+        "Mapping\\CSPLIT_Validity_Valid.cs",
+        "Mapping\\DER_Enrich.cs"
+      ],
+      "tier1_detail": "'DER_Enrich' (Microsoft.DerivedColumn) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "evidence": {
+        "columns": [
+          {
+            "output_name": "FullName",
+            "friendly_expression": "(DT_WSTR,200)(TRIM(FirstName) + \" \" + TRIM(LastName))"
+          },
+          {
+            "output_name": "EmailDomain",
+            "friendly_expression": "(DT_WSTR,200)(FINDSTRING(TRIM(Email),\"@\",1) > 0 ? SUBSTRING(TRIM(Email),FINDSTRING(TRIM(Email),\"@\",1) + 1,100) : \"(none)\")"
+          },
+          {
+            "output_name": "TenureDays",
+            "friendly_expression": "ISNULL(SignupDate_dt) ? -1 : DATEDIFF(\"dd\",SignupDate_dt,GETDATE())"
+          }
+        ]
+      }
+    },
+    {
+      "component_name": "DER_TagInvalid",
+      "scope": "DataFlowComponent",
+      "component_path": "Package\\DFT_DerivedAndSplit\\DER_TagInvalid",
+      "generated_method_name": "DFT_DerivedAndSplit",
+      "generated_method_excerpt": "\n        var source = FF_SRC_Customers();\n        var step = new ConditionalSplitStep<DFT_DerivedAndSplitCsvRow>(\n            \"DFT_DerivedAndSplit\",\n            source,\n            new CSPLIT_ValidityRouter(),\n            [\n                new ConditionalSplitBranch<DFT_DerivedAndSplitCsvRow, CustomerEnriched>(\n                    \"Valid\",\n                    new CSPLIT_Validity_Valid(),\n                    new SqlBulkSink<CustomerEnriched>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerEnriched>>())),\n                new ConditionalSplitBranch<DFT_DerivedAndSplitCsvRow, CustomerEnriched>(\n                    \"Invalid\",\n                    new CSPLIT_Validity_Invalid(),\n                    new SqlBulkSink<CustomerEnriched>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerEnriched>>()))\n            ],\n            Log<ConditionalSplitStep<DFT_DerivedAndSplitCsvRow>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+      "related_source_files": [
+        "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method FF_SRC_Customers)",
+        "Mapping\\CSPLIT_ValidityRouter.cs",
+        "Mapping\\CSPLIT_Validity_Invalid.cs",
+        "Mapping\\CSPLIT_Validity_Valid.cs",
+        "Mapping\\DER_TagInvalid.cs"
+      ],
+      "tier1_detail": "'DER_TagInvalid' (Microsoft.DerivedColumn) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "evidence": {
+        "columns": [
+          {
+            "output_name": "RowSource",
+            "friendly_expression": "\"Invalid\""
+          }
+        ]
+      }
+    },
+    {
+      "component_name": "DER_TagValid",
+      "scope": "DataFlowComponent",
+      "component_path": "Package\\DFT_DerivedAndSplit\\DER_TagValid",
+      "generated_method_name": "DFT_DerivedAndSplit",
+      "generated_method_excerpt": "\n        var source = FF_SRC_Customers();\n        var step = new ConditionalSplitStep<DFT_DerivedAndSplitCsvRow>(\n            \"DFT_DerivedAndSplit\",\n            source,\n            new CSPLIT_ValidityRouter(),\n            [\n                new ConditionalSplitBranch<DFT_DerivedAndSplitCsvRow, CustomerEnriched>(\n                    \"Valid\",\n                    new CSPLIT_Validity_Valid(),\n                    new SqlBulkSink<CustomerEnriched>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerEnriched>>())),\n                new ConditionalSplitBranch<DFT_DerivedAndSplitCsvRow, CustomerEnriched>(\n                    \"Invalid\",\n                    new CSPLIT_Validity_Invalid(),\n                    new SqlBulkSink<CustomerEnriched>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerEnriched>>()))\n            ],\n            Log<ConditionalSplitStep<DFT_DerivedAndSplitCsvRow>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+      "related_source_files": [
+        "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method FF_SRC_Customers)",
+        "Mapping\\CSPLIT_ValidityRouter.cs",
+        "Mapping\\CSPLIT_Validity_Invalid.cs",
+        "Mapping\\CSPLIT_Validity_Valid.cs",
+        "Mapping\\DER_TagValid.cs"
+      ],
+      "tier1_detail": "'DER_TagValid' (Microsoft.DerivedColumn) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "evidence": {
+        "columns": [
+          {
+            "output_name": "RowSource",
+            "friendly_expression": "\"Valid\""
+          }
+        ]
+      }
+    },
+    {
+      "component_name": "AGG_ByRegion",
+      "scope": "DataFlowComponent",
+      "component_path": "Package\\DFT_LookupAndAggregate\\AGG_ByRegion",
+      "generated_method_name": "DFT_LookupAndAggregate",
+      "generated_method_excerpt": "\n        var source = AGG_ByRegion();\n        var transform = new RegionSummaryTransform();\n        var sink = OLEDST_RegionSummary();\n\n        var step = new DataFlowStep<RegionSummaryAggregateRow, RegionSummary>(\"DFT_LookupAndAggregate\", source, transform, sink, Log<DataFlowStep<RegionSummaryAggregateRow, RegionSummary>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+      "related_source_files": [
+        "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method AGG_ByRegion)",
+        "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method OLEDST_RegionSummary)",
+        "Mapping\\RegionSummaryTransform.cs"
+      ],
+      "tier1_detail": "'AGG_ByRegion' (Microsoft.Aggregate) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "evidence": {
+        "columns": [
+          {
+            "name": "Region",
+            "aggregation_type": {
+              "property_name": "AggregationType",
+              "raw_value": "0",
+              "description": "Specifies the type of aggregation."
+            },
+            "source_component": "LKP_Country",
+            "source_column": "Region"
+          },
+          {
+            "name": "CustomerCount",
+            "aggregation_type": {
+              "property_name": "AggregationType",
+              "raw_value": "1",
+              "description": "Specifies the type of aggregation."
+            },
+            "source_component": "FF_SRC_Customers2",
+            "source_column": "CustomerID"
+          }
+        ]
+      }
+    },
+    {
+      "component_name": "LKP_Country",
+      "scope": "DataFlowComponent",
+      "component_path": "Package\\DFT_LookupAndAggregate\\LKP_Country",
+      "generated_method_name": "DFT_LookupAndAggregate",
+      "generated_method_excerpt": "\n        var source = AGG_ByRegion();\n        var transform = new RegionSummaryTransform();\n        var sink = OLEDST_RegionSummary();\n\n        var step = new DataFlowStep<RegionSummaryAggregateRow, RegionSummary>(\"DFT_LookupAndAggregate\", source, transform, sink, Log<DataFlowStep<RegionSummaryAggregateRow, RegionSummary>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+      "related_source_files": [
+        "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method AGG_ByRegion)",
+        "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method OLEDST_RegionSummary)",
+        "Mapping\\RegionSummaryTransform.cs"
+      ],
+      "tier1_detail": "'LKP_Country' (Microsoft.Lookup) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "evidence": {
+        "sql_command": "SELECT CountryName, CountryCode, Region FROM dbo.CountryLookup",
+        "connection_type": {
+          "property_name": "ConnectionType",
+          "raw_value": "0",
+          "description": "Specifies the type of connection used to access the reference dataset."
+        },
+        "cache_type": {
+          "property_name": "CacheType",
+          "raw_value": "0",
+          "description": "Specifies the cache type of the lookup table."
+        },
+        "no_match_behavior": {
+          "property_name": "NoMatchBehavior",
+          "raw_value": "1",
+          "description": "Specifies how the Lookup transformation handles rows without matching entries in the reference data set."
+        },
+        "join_columns": [
+          {
+            "input_column": "Country",
+            "join_to_reference_column": "CountryName"
+          }
+        ],
+        "output_columns": [
+          {
+            "name": "CountryCode",
+            "copy_from_reference_column": "CountryCode"
+          },
+          {
+            "name": "Region",
+            "copy_from_reference_column": "Region"
+          }
+        ],
+        "match_output_destination": "MCAST_Matched",
+        "no_match_output_destination": "RC_UnmatchedRows"
+      }
+    },
+    {
+      "component_name": "CSPLIT_ByCountry",
+      "scope": "DataFlowComponent",
+      "component_path": "Package\\DFT_MergeSortedBranches\\CSPLIT_ByCountry",
+      "generated_method_name": "DFT_MergeSortedBranches",
+      "generated_method_excerpt": "\n        var source = FF_SRC_Customers4();\n        var step = new ConditionalSplitStep<DFT_MergeSortedBranchesCsvRow>(\n            \"DFT_MergeSortedBranches\",\n            source,\n            new CSPLIT_ByCountryRouter(),\n            [\n                new ConditionalSplitBranch<DFT_MergeSortedBranchesCsvRow, CustomerMerged>(\n                    \"Canada\",\n                    new CSPLIT_ByCountry_Canada(),\n                    new SqlBulkSink<CustomerMerged>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerMerged>>())),\n                new ConditionalSplitBranch<DFT_MergeSortedBranchesCsvRow, CustomerMerged>(\n                    \"RestOfWorld\",\n                    new CSPLIT_ByCountry_RestOfWorld(),\n                    new SqlBulkSink<CustomerMerged>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerMerged>>()))\n            ],\n            Log<ConditionalSplitStep<DFT_MergeSortedBranchesCsvRow>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+      "related_source_files": [
+        "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method FF_SRC_Customers4)",
+        "Mapping\\CSPLIT_ByCountryRouter.cs",
+        "Mapping\\CSPLIT_ByCountry_Canada.cs",
+        "Mapping\\CSPLIT_ByCountry_RestOfWorld.cs"
+      ],
+      "tier1_detail": "'CSPLIT_ByCountry' (Microsoft.ConditionalSplit) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "evidence": {
+        "outputs": [
+          {
+            "output_name": "Canada",
+            "is_default": false,
+            "friendly_expression": "TRIM(Country) == \"Canada\"",
+            "evaluation_order": 0
+          },
+          {
+            "output_name": "RestOfWorld",
+            "is_default": true,
+            "friendly_expression": null,
+            "evaluation_order": null
+          }
+        ]
+      }
+    },
+    {
+      "component_name": "MRG_CustomerContacts",
+      "scope": "DataFlowComponent",
+      "component_path": "Package\\DFT_SortAndMergeJoin\\MRG_CustomerContacts",
+      "generated_method_name": "DFT_SortAndMergeJoin",
+      "generated_method_excerpt": "\n        var source = MRG_CustomerContacts();\n        var transform = new CustomerWithContactTransform();\n        var sink = OLEDST_CustomerWithContact();\n\n        var step = new DataFlowStep<MRG_CustomerContactsRow, CustomerWithContact>(\"DFT_SortAndMergeJoin\", source, transform, sink, Log<DataFlowStep<MRG_CustomerContactsRow, CustomerWithContact>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+      "related_source_files": [
+        "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method MRG_CustomerContacts)",
+        "D:\\tmp\\Sandeep_Packages\\gen\\generate\\Package_Transforms\\Package_Transforms.cs (method OLEDST_CustomerWithContact)",
+        "Mapping\\CustomerWithContactTransform.cs"
+      ],
+      "tier1_detail": "'MRG_CustomerContacts' (Microsoft.MergeJoin) has no populated externalMetadataColumns on either side \u2014 a pipeline-internal component with no generated declared-shape counterpart of its own (see docs/dtsx-graph-notes.md \u00a76). Semantic evidence attached (see `evidence`) for a human/AI reviewer to judge the generated logic against.",
+      "evidence": {
+        "join_type": {
+          "property_name": "JoinType",
+          "raw_value": "2",
+          "description": "Specifies the type of join to perform."
+        },
+        "num_key_columns": 1,
+        "treat_nulls_as_equal": true,
+        "input_columns": [
+          {
+            "name": "CustomerID_i4",
+            "side": "left",
+            "sort_key_position": 1
+          },
+          {
+            "name": "Email",
+            "side": "left",
+            "sort_key_position": null
+          },
+          {
+            "name": "CustomerID_i4",
+            "side": "right",
+            "sort_key_position": 1
+          },
+          {
+            "name": "ContactPhone",
+            "side": "right",
+            "sort_key_position": null
+          },
+          {
+            "name": "PreferredChannel",
+            "side": "right",
+            "sort_key_position": null
+          }
+        ],
+        "output_columns": [
+          {
+            "name": "Email",
+            "source_column": "Email"
+          },
+          {
+            "name": "CustomerID_i4",
+            "source_column": "CustomerID_i4"
+          },
+          {
+            "name": "ContactPhone",
+            "source_column": "ContactPhone"
+          },
+          {
+            "name": "PreferredChannel",
+            "source_column": "PreferredChannel"
+          }
+        ]
+      }
+    }
+  ]
+}
