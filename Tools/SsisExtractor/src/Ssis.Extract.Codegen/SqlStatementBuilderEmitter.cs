@@ -22,7 +22,7 @@ public static class SqlStatementBuilderEmitter
 {
     public static EmitResult Emit(string mappingNamespace, string taskName, string sql)
     {
-        var className = taskName + "Statement";
+        var className = PackageGenerator.SanitizeIdentifier(taskName) + "Statement";
         var lines = new List<string>
         {
             $"namespace {mappingNamespace};",
@@ -51,7 +51,7 @@ public static class SqlStatementBuilderEmitter
     /// already anticipated.</summary>
     public static EmitResult EmitParameterized(string mappingNamespace, string taskName, string parameterName, string csharpExpression)
     {
-        var className = taskName + "Statement";
+        var className = PackageGenerator.SanitizeIdentifier(taskName) + "Statement";
         var lines = new List<string>
         {
             $"namespace {mappingNamespace};",

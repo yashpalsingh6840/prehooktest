@@ -41,7 +41,54 @@ public sealed record TransformRequest(
     // Scoped to Script Components only (Tier 2, source present in the .dtsx). Any OTHER
     // unrecognized producer keeps its plain gap: that is missing TOOL support, and offering a
     // per-package hand-patch there would hide one systemic emitter gap behind N patches.
-    bool EmitSeams = false);
+    bool EmitSeams = false,
+    // 1-to-1 component-to-function mapping round (2026-09). One registry SHARED across every
+    // TransformEmitter.Emit call for the whole package (PackageGenerator creates exactly one, in
+    // Generate() itself, and threads it into every call site) -- this is what lets DER_Enrich (a
+    // Derived Column shared upstream of a Conditional Split, or reused across a Union-All-remerge
+    // pair of branches) get exactly ONE static holder class, referenced identically from every
+    // branch that needs it, instead of the SAME method bodies emitted byte-for-byte into each
+    // branch's own transform class. Null (the default) keeps every OTHER caller -- direct unit
+    // tests constructing a TransformRequest in isolation -- on the OLD behavior (a Derived
+    // Column's own compute method lives on the transform class itself), so this is purely
+    // additive: nothing about existing TransformEmitterTests needed to change for this round.
+    ComponentHolderRegistry? Holders = null);
+
+/// <summary>See <see cref="TransformRequest.Holders"/>. Keyed by the owning component's own
+/// <c>RefId</c> (a real .dtsx identity), never its display NAME -- two different Derived Column
+/// components can share SSIS's own schema-default name ("Derived Column 1") across different Data
+/// Flow Tasks in one package, and this guarantees each still gets its own reserved, package-wide
+/// unique class name via <see cref="ReserveName"/> rather than silently colliding.</summary>
+public sealed class ComponentHolderRegistry
+{
+    private readonly HashSet<string> _usedNames = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _reservedNameByRefId = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _emittedRefIds = new(StringComparer.Ordinal);
+
+    /// <summary>Returns this component's own reserved static-class name, deterministically the
+    /// same on every call for the same <paramref name="refId"/> -- the first caller to ask picks
+    /// the name (uniquified against every other holder AND against nothing else, since a
+    /// Mapping/ file's own class name lives in a separate namespace from the package class's own
+    /// method names); every later caller (a second branch referencing the same shared component)
+    /// gets that identical name back, so its own generated call site (<c>{Name}.{Method}(...)</c>)
+    /// agrees with whichever branch's call actually caused the file to be written.</summary>
+    public string ReserveName(string refId, string desiredName)
+    {
+        if (_reservedNameByRefId.TryGetValue(refId, out var existing)) return existing;
+        var name = desiredName;
+        var n = 2;
+        while (!_usedNames.Add(name)) name = $"{desiredName}_{n++}";
+        _reservedNameByRefId[refId] = name;
+        return name;
+    }
+
+    /// <summary>True only the FIRST time this is called for a given <paramref name="refId"/> --
+    /// the caller should build and return the holder's own GeneratedFile exactly then. Every
+    /// subsequent call (a second, third, ... branch referencing the same shared component) skips
+    /// re-emitting it: <see cref="ReserveName"/> already guarantees they compute the identical
+    /// call site regardless.</summary>
+    public bool ShouldEmit(string refId) => _emittedRefIds.Add(refId);
+}
 
 /// <summary>
 /// How a full-cache Lookup's added columns are resolved, once a human has confirmed the join key
@@ -92,7 +139,7 @@ public static class TransformEmitter
                 .SelectMany(o => o.Columns)
                 .Where(c => c.Expression is not null))
             {
-                computedByName.TryAdd(column.Name, new DerivedExpression(column.Name, column.RefId, column.Expression, column.FriendlyExpression));
+                computedByName.TryAdd(column.Name, new DerivedExpression(column.Name, column.RefId, column.Expression, column.FriendlyExpression, derivedColumn.Name, derivedColumn.RefId));
             }
 
             // "Replace <column>" mode: the expression lives on the readWrite INPUT column and no
@@ -103,7 +150,7 @@ public static class TransformEmitter
             {
                 foreach (var column in input.Columns.Where(c => c.Expression is not null))
                 {
-                    replacedByName.TryAdd(column.CachedName, new DerivedExpression(column.CachedName, column.RefId, column.Expression, column.FriendlyExpression));
+                    replacedByName.TryAdd(column.CachedName, new DerivedExpression(column.CachedName, column.RefId, column.Expression, column.FriendlyExpression, derivedColumn.Name, derivedColumn.RefId));
                 }
             }
         }
@@ -284,6 +331,13 @@ public static class TransformEmitter
         // known. Dictionary iteration order matches insertion order here (no removals), matching
         // this project's own established determinism convention elsewhere.
         var scriptComponentGroups = new Dictionary<string, ScriptComponentGroup>();
+        // 1-to-1 component-to-function mapping round (2026-09): one entry per Derived Column
+        // component actually referenced by THIS destination's own resolved columns, keyed by that
+        // component's own RefId -- see TransformRequest.Holders' own doc comment for why a shared,
+        // per-package ComponentHolderRegistry is what lets two branches sharing one upstream
+        // Derived Column (e.g. a Conditional Split's own shared "enrich" step) reference the SAME
+        // static holder class instead of each emitting a byte-identical private copy of it.
+        var holderMethodsByRefId = new Dictionary<string, (string ClassName, List<string> Lines)>();
         foreach (var column in resolved.Columns)
         {
             // A replaced column has the SAME name as the upstream column it rewrites, whereas a
@@ -300,12 +354,29 @@ public static class TransformEmitter
 
                 var expr = ((TranslatedOk)translated).CSharpExpression;
                 CollectSsisFunctions(expr, functionsUsed);
-                var methodName = $"Compute{column.ExternalColumnName}";
                 var isNullable = request.NullableColumnNames?.Contains(column.PipelineColumnName) ?? false;
                 var returnType = column.Type is null ? "object" : column.Type.ClrTypeName + (isNullable ? "?" : "");
-                AddComputeMethod(computeMethods, methodName, returnType, request.RowTypeName, expr,
-                    derivedColumn.FriendlyExpression ?? derivedColumn.Expression);
-                assignments.Add($"        {column.ExternalColumnName} = {methodName}(row, ctx),");
+                var friendlyComment = derivedColumn.FriendlyExpression ?? derivedColumn.Expression;
+
+                if (request.Holders is { } holders)
+                {
+                    // Named after the real SSIS Derived Column component ("DER_Enrich"), not the
+                    // transform class -- see PackageClassEmitter/ComponentManifestEmitter's own
+                    // naming table. The method itself keeps the destination's own external column
+                    // name (no "Compute" prefix, matching the plan's own worked example --
+                    // "DER_Enrich.FullName(row, ctx)").
+                    var ownerClassName = holders.ReserveName(derivedColumn.OwnerComponentRefId, PackageGenerator.SanitizeIdentifier(derivedColumn.OwnerComponentName));
+                    if (!holderMethodsByRefId.TryGetValue(derivedColumn.OwnerComponentRefId, out var holder))
+                        holderMethodsByRefId[derivedColumn.OwnerComponentRefId] = holder = (ownerClassName, []);
+                    AddComputeMethod(holder.Lines, column.ExternalColumnName, returnType, request.RowTypeName, expr, friendlyComment);
+                    assignments.Add($"        {column.ExternalColumnName} = {ownerClassName}.{column.ExternalColumnName}(row, ctx),");
+                }
+                else
+                {
+                    var methodName = $"Compute{column.ExternalColumnName}";
+                    AddComputeMethod(computeMethods, methodName, returnType, request.RowTypeName, expr, friendlyComment);
+                    assignments.Add($"        {column.ExternalColumnName} = {methodName}(row, ctx),");
+                }
             }
             else if (convertedByName.TryGetValue(column.PipelineColumnName, out var conversion))
             {
@@ -481,9 +552,57 @@ public static class TransformEmitter
             return new TransformEmitResult(new EmitResult([], gaps), functionsUsed);
         }
 
+        var files = new List<GeneratedFile>();
+        // Emit each Derived Column's own static holder class ONLY the first time this package-wide
+        // registry has seen its RefId -- a second branch referencing the SAME shared component
+        // (DER_Enrich) already resolved the identical class/method names via ReserveName above, so
+        // its own generated call site agrees with whichever branch's call caused the file to exist,
+        // without emitting a second, redundant copy of the file itself.
+        if (request.Holders is { } holderRegistry)
+        {
+            foreach (var (refId, holder) in holderMethodsByRefId)
+            {
+                if (!holderRegistry.ShouldEmit(refId)) continue;
+                var holderLines = BuildComponentHolderFile(request, holder.ClassName, holder.Lines);
+                files.Add(new GeneratedFile($"Mapping/{holder.ClassName}.cs", Rendering.JoinLines(holderLines)));
+            }
+        }
+
         var lines = BuildFile(request, assignments, functionsUsed, seams, computeMethods, scriptComponentLocals, scriptComponentRecords);
-        var file = new GeneratedFile($"Mapping/{request.TransformClassName}.cs", Rendering.JoinLines(lines));
-        return new TransformEmitResult(new EmitResult([file], gaps), functionsUsed);
+        files.Add(new GeneratedFile($"Mapping/{request.TransformClassName}.cs", Rendering.JoinLines(lines)));
+        return new TransformEmitResult(new EmitResult(files, gaps), functionsUsed);
+    }
+
+    /// <summary>Builds one Derived Column's own static holder class file (e.g. <c>Mapping/
+    /// DER_Enrich.cs</c>) -- a plain, dependency-free static class, one public static method per
+    /// destination column this component computes, named after the destination's own external
+    /// column name (matching <see cref="AddComputeMethod"/>'s per-transform convention exactly,
+    /// just hoisted out to its own file/class so more than one transform can call it). Needs its
+    /// own minimal `using` set rather than reusing <see cref="BuildFile"/>'s -- a holder never
+    /// declares a Script-Component seam/record and is never itself an <c>IRowTransform</c>, so it
+    /// has no need for those usings, but DOES need <c>Etl.Core.Ssis</c> whenever a WidthGuard call
+    /// landed in one of its own methods (the same check <see cref="BuildFile"/> already makes), and
+    /// the entity namespace too in that same case -- a truncation call embeds
+    /// <c>nameof({Entity}.{Column})</c> in its own diagnostic (see ExpressionTranslator's own
+    /// WidthGuard.Wstr construction), the one place a holder method still names the destination
+    /// entity type despite never constructing one.</summary>
+    private static List<string> BuildComponentHolderFile(TransformRequest request, string className, List<string> methodLines)
+    {
+        var usesWidthGuard = methodLines.Any(l => l.Contains("WidthGuard.Wstr("));
+        var usesFunctions = methodLines.Any(l => l.Contains("SsisFn."));
+        var lines = new List<string> { "using Etl.Core.Abstractions;" };
+        if (usesWidthGuard) lines.Add("using Etl.Core.Ssis;");
+        lines.Add($"using {request.RowTypeNamespace};");
+        if (usesWidthGuard) lines.Add($"using {request.EntityNamespace};");
+        if (usesFunctions) lines.Add($"using {request.SsisFnNamespace};");
+        lines.Add("");
+        lines.Add($"namespace {request.MappingNamespace};");
+        lines.Add("");
+        lines.Add($"internal static class {className}");
+        lines.Add("{");
+        lines.AddRange(methodLines);
+        lines.Add("}");
+        return lines;
     }
 
     /// <summary>Appends one Derived-Column-computed value as its own named, callable, public
@@ -603,7 +722,14 @@ public static class TransformEmitter
     /// Derived Column column, so that an OUTPUT column (a newly computed column) and a readWrite
     /// INPUT column (a "Replace &lt;column&gt;" in-place rewrite) can share one translation path
     /// instead of the in-place case having none at all.</summary>
-    private readonly record struct DerivedExpression(string Name, string RefId, string? Expression, string? FriendlyExpression);
+    /// <param name="OwnerComponentName">The real SSIS Derived Column component's own display
+    /// name (e.g. "DER_Enrich") -- added for the 1-to-1 component-to-function mapping round, used
+    /// to name/dedupe a <see cref="ComponentHolderRegistry"/> holder class.</param>
+    /// <param name="OwnerComponentRefId">The same component's own RefId -- <see cref="ComponentHolderRegistry"/>
+    /// is keyed by this, never by name, since two Derived Columns in one package can share SSIS's
+    /// own schema-default display name.</param>
+    private readonly record struct DerivedExpression(string Name, string RefId, string? Expression, string? FriendlyExpression,
+        string OwnerComponentName, string OwnerComponentRefId);
 
     /// <summary>One destination column a Script Component produces, deferred until every column
     /// in the same group is known -- see <see cref="ScriptComponentGroup"/>.</summary>

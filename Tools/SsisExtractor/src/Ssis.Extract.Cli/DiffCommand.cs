@@ -18,6 +18,11 @@ namespace Ssis.Extract.Cli;
 /// compare two packages is friction with no benefit (the diff is computed from the same
 /// typed model either way). Exit code 1 on <i>semantic</i> differences (never on the bytes
 /// merely differing), so it works as a CI drift gate without firing on every rebuild.
+///
+/// <c>--package</c> is repeatable/comma-splittable, same convention as every other command
+/// that loads packages (<see cref="PackageLoader"/>) -- needed so <c>ssisx extract
+/// --diff-against</c> can forward its own multi-name <c>--package</c> filter here unchanged
+/// rather than being limited to comparing exactly one package at a time.
 /// </summary>
 internal static class DiffCommand
 {
@@ -26,7 +31,7 @@ internal static class DiffCommand
         string? left = null;
         string? right = null;
         string? outPath = null;
-        string? packageName = null;
+        var packageNames = new List<string>();
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -37,7 +42,10 @@ internal static class DiffCommand
                     case "--left": left = RequireValue(args, ref i, "--left"); break;
                     case "--right": right = RequireValue(args, ref i, "--right"); break;
                     case "--out": outPath = RequireValue(args, ref i, "--out"); break;
-                    case "--package": packageName = RequireValue(args, ref i, "--package"); break;
+                    case "--package":
+                        var pkgArg = RequireValue(args, ref i, "--package");
+                        packageNames.AddRange(pkgArg.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
+                        break;
                     default:
                         Console.Error.WriteLine($"error: unknown diff option '{args[i]}'");
                         return 2;
@@ -64,14 +72,14 @@ internal static class DiffCommand
             using var leftLoaded = PackageLoader.Load(Path.GetFullPath(left), noRedact: false, recursive: false);
             using var rightLoaded = PackageLoader.Load(Path.GetFullPath(right), noRedact: false, recursive: false);
 
-            var leftPackages = Filter(leftLoaded.Packages, packageName);
-            var rightPackages = Filter(rightLoaded.Packages, packageName);
+            var leftPackages = Filter(leftLoaded.Packages, packageNames);
+            var rightPackages = Filter(rightLoaded.Packages, packageNames);
 
             if (leftPackages.Count == 0 || rightPackages.Count == 0)
             {
-                Console.Error.WriteLine(packageName is null
+                Console.Error.WriteLine(packageNames.Count == 0
                     ? "error: one or both sides contain no packages."
-                    : $"error: no package named '{packageName}' on one or both sides.");
+                    : $"error: no package named '{string.Join(", ", packageNames)}' on one or both sides.");
                 return 2;
             }
 
@@ -107,10 +115,10 @@ internal static class DiffCommand
         return anySemanticDifferences ? 1 : 0;
     }
 
-    private static List<PackageSpec> Filter(List<PackageSpec> packages, string? packageName) =>
-        packageName is null
+    private static List<PackageSpec> Filter(List<PackageSpec> packages, IReadOnlyList<string> packageNames) =>
+        packageNames.Count == 0
             ? packages
-            : packages.Where(p => p.ObjectName.Equals(packageName, StringComparison.OrdinalIgnoreCase)).ToList();
+            : packages.Where(p => packageNames.Any(n => p.ObjectName.Equals(n, StringComparison.OrdinalIgnoreCase))).ToList();
 
     /// <summary>
     /// Matches packages across the two sides by name. A single package on each side is

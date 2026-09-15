@@ -157,20 +157,32 @@ public sealed record OleDbCommandPlan(
 /// knows which LINQ aggregation to emit.</summary>
 public sealed record AggregateFunctionSpec(string OutputColumnName, string? SourceColumnName, int AggregationTypeRaw);
 
+/// <summary>One GroupBy column, resolved back to its own real source column via lineage --
+/// widened from a single column to a list (closing DWH_DimGeolocation's real 3-column GroupBy,
+/// found scanning a genuine client portfolio) since a composite key is exactly as sound as a
+/// single one: two rows agreeing on every GroupBy column's own value are the same group, whether
+/// there is one such column or several. .NET's own ValueTuple already implements structural
+/// equality/GetHashCode, so <c>PackageClassEmitter</c> needs no new generated key TYPE for this --
+/// only a tuple key selector/projection instead of a plain one when there's more than one.</summary>
+public sealed record AggregateGroupByColumn(string OutputColumnName, string SourceColumnName);
+
 /// <summary>A resolved <c>Microsoft.Aggregate</c> flow, built speculatively 2026-08-30, widened
-/// 2026-09-02 (gap-audit Phase 3.3) from Count-only to every measured AggregationType -- see
+/// 2026-09-02 (gap-audit Phase 3.3) from Count-only to every measured AggregationType, widened
+/// again to N GroupBy columns (see <see cref="AggregateGroupByColumn"/>'s own doc comment) -- see
 /// <c>Ssis.Extract.Model.Pipeline.AggregatePayload</c>'s own doc comment for the full raw-value
 /// mapping and how each was measured. Scoped deliberately to exactly the evidenced/measured
-/// shape: one GroupBy column (<see cref="GroupByOutputColumnName"/>, resolved back to its own
-/// real source column via lineage) plus one or more function columns (Count/CountAll/
-/// CountDistinct/Sum/Average/Minimum/Maximum). Any other AggregationType, zero or more than one
-/// GroupBy column, or an unresolvable source reference (for anything other than a column-less
-/// CountAll) is a generation gap, not a guess -- see <see cref="PackagePlanner"/>'s own
-/// <c>PlanAggregate</c>.</summary>
+/// shape: one or more GroupBy columns plus one or more function columns (Count/CountAll/
+/// CountDistinct/Sum/Average/Minimum/Maximum). Any other AggregationType, zero GroupBy columns,
+/// or an unresolvable source reference (for anything other than a column-less CountAll) is a
+/// generation gap, not a guess -- see <see cref="PackagePlanner"/>'s own <c>PlanAggregate</c>.
+/// <see cref="GenerateLookupThenAggregateFlow"/>'s own composed shape (a GroupBy value resolved
+/// through a Lookup's own reference cache) remains scoped to exactly one GroupBy column,
+/// deliberately -- see that method's own doc comment for why the real evidenced multi-GroupBy
+/// case (5 independent Lookups feeding one Aggregate) is a materially bigger, separate effort,
+/// not attempted here.</summary>
 public sealed record AggregatePlan(
     PipelineComponentSpec Component,
-    string GroupByOutputColumnName,
-    string GroupBySourceColumnName,
+    List<AggregateGroupByColumn> GroupByColumns,
     List<AggregateFunctionSpec> Functions);
 
 /// <summary>One side (Left or Right) of a Merge Join, resolved back through its own Sort and
@@ -2286,10 +2298,10 @@ public static class PackagePlanner
             return null;
         }
 
-        if (groupByColumns.Count != 1)
+        if (groupByColumns.Count == 0)
         {
             gaps.Add(new GenerationGap(taskName,
-                $"Aggregate '{component.Name}' has {groupByColumns.Count} GroupBy column(s) -- only exactly one is supported"));
+                $"Aggregate '{component.Name}' has no GroupBy column -- not supported"));
             return null;
         }
 
@@ -2300,13 +2312,17 @@ public static class PackagePlanner
             return null;
         }
 
-        var groupByCol = groupByColumns[0];
-        var groupBySource = ResolveSourceColumnName(groupByCol.OutputColumnName);
-        if (groupBySource is null)
+        var resolvedGroupByColumns = new List<AggregateGroupByColumn>();
+        foreach (var groupByCol in groupByColumns)
         {
-            gaps.Add(new GenerationGap(taskName,
-                $"Aggregate '{component.Name}': GroupBy column '{groupByCol.OutputColumnName}' has no resolvable source column -- not supported"));
-            return null;
+            var groupBySource = ResolveSourceColumnName(groupByCol.OutputColumnName);
+            if (groupBySource is null)
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"Aggregate '{component.Name}': GroupBy column '{groupByCol.OutputColumnName}' has no resolvable source column -- not supported"));
+                return null;
+            }
+            resolvedGroupByColumns.Add(new AggregateGroupByColumn(groupByCol.OutputColumnName, groupBySource));
         }
 
         var functions = new List<AggregateFunctionSpec>();
@@ -2323,7 +2339,7 @@ public static class PackagePlanner
             functions.Add(new AggregateFunctionSpec(col.OutputColumnName, source, rawType));
         }
 
-        return new AggregatePlan(component, groupByCol.OutputColumnName, groupBySource, functions);
+        return new AggregatePlan(component, resolvedGroupByColumns, functions);
     }
 
     /// <summary>Resolves one <c>Microsoft.OLEDBCommand</c> component into an <see cref="OleDbCommandPlan"/>

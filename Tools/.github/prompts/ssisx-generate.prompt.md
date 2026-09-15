@@ -52,9 +52,10 @@ Group the gaps by tier and report:
   `/ssisx-fill` prompt to actually port them.
 - **Advisory** — summarize in one line each; these do not block a build.
 
-Note explicitly if the portfolio-level `report` classified something differently from what
-`generate` emitted (e.g. a Script Task counted as Tier 3 by `report` but emitted as a Tier-2
-seam with a work packet by `generate` — the packet is authoritative).
+Note explicitly if the portfolio-level `extract` survey classified something differently from
+what `generate` emitted (e.g. a Script Task counted as Tier 3 by `extract`'s own
+`generation-readiness.md` but emitted as a Tier-2 seam with a work packet by `generate` — the
+packet is authoritative).
 
 Then stop. Do not start writing fills unless I ask.
 

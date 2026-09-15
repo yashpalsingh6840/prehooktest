@@ -30,7 +30,7 @@ public class DFT_LoadDesignationStepDataFlowTests
 
         var source = package.FF_SRC_Designation();
         var transform = new DesignationTransform();
-        var sink = package.DesignationDestination();
+        var sink = package.OLEDST_Designation();
         var step = new DataFlowStep<DesignationCsvRow, Designation>("DFT_LoadDesignation", source, transform, sink, NullLogger<DataFlowStep<DesignationCsvRow, Designation>>.Instance);
 
         await step.RunAsync(uow, new LoadContext(Guid.NewGuid(), DateTime.UtcNow, "DFT_LoadDesignation"), CancellationToken.None);

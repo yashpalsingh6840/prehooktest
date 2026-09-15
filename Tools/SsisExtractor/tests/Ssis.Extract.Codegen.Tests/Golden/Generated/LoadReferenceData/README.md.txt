@@ -57,9 +57,9 @@ registered and where it runs.
 | Kind | SSIS component / entity | Generated method (full signature) |
 |---|---|---|
 | Source | FF_SRC_Department | `internal IRowSource<DepartmentCsvRow> FF_SRC_Department()` |
-| Sink | Department | `internal IBulkSink<Department> DepartmentDestination()` |
+| Sink | OLEDST_Department | `internal IBulkSink<Department> OLEDST_Department()` |
 | Source | FF_SRC_Designation | `internal IRowSource<DesignationCsvRow> FF_SRC_Designation()` |
-| Sink | Designation | `internal IBulkSink<Designation> DesignationDestination()` |
+| Sink | OLEDST_Designation | `internal IBulkSink<Designation> OLEDST_Designation()` |
 
 ## Test coverage notes
 

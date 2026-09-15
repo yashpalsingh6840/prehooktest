@@ -331,7 +331,7 @@ public static class AiPacketEmitter
         """ + PinnedTestingApiBlock + """
 
 
-        The evidence below tells you WHICH of four shapes this is -- read it before writing anything:
+        The evidence below tells you WHICH of five shapes this is -- read it before writing anything:
 
         - **A Conditional Split case** this pilot's own oracle-based evaluator could not resolve to a
           boolean for a representative row (see the reason above). Construct your OWN representative
@@ -354,6 +354,11 @@ public static class AiPacketEmitter
           production code uses), feeding it a small in-memory fake `IRowSource<TSourceRow>` and a
           key-selector function using a plain dictionary as a stand-in for the Lookup cache (no real
           database needed) -- then assert the grouped/counted output rows.
+        - **A ForEach-Loop-over-a-Data-Flow-Task's own loop body**, whose per-iteration source has no
+          static Tier-A sample file to point a test at (its path is computed fresh each iteration, not
+          a fixed location). Write two small temp files into `harness.ForEachLoopFolder(key)` (the
+          evidence below names the real folder/file-spec/destination the real package uses) and assert
+          the destination sink receives rows from both.
 
         **If you cannot determine a correct expected value with confidence, say so instead of
         guessing one** -- a test asserting a wrong value is worse than no test at all, since it looks
@@ -485,16 +490,21 @@ public static class AiPacketEmitter
     };
 
     /// <summary>
-    /// Dispatches to one of four shapes by trying, in order, what <see cref="GapSpec.EvidenceRefId"/>
+    /// Dispatches to one of five shapes by trying, in order, what <see cref="GapSpec.EvidenceRefId"/>
     /// actually resolves to -- a Script Task companion test, a Script Component column companion
-    /// test, a Conditional Split router test, or an Aggregate GroupBy/count source test (see
-    /// <see cref="TestOracleContract"/>'s own bullets, which this must stay in lockstep with).
-    /// The fourth (Aggregate) shape was added 2026-09-06 after a real gap
-    /// (<c>Package_Transforms</c>'s own <c>RegionSummary</c>, whose GroupBy key resolves through a
-    /// Lookup cache rather than a plain row property) fell through to the generic "could not
-    /// resolve" fallback below -- <see cref="PipelineComponentSpec.Aggregate"/> was never checked
-    /// at all, not a bug in the refId lookup itself (<see cref="FindComponent"/> already resolved
-    /// the component correctly).
+    /// test, a Conditional Split router test, an Aggregate GroupBy/count source test, or a ForEach
+    /// Data Flow Loop's own loop-body test (see <see cref="TestOracleContract"/>'s own bullets,
+    /// which this must stay in lockstep with). The fourth (Aggregate) shape was added 2026-09-06
+    /// after a real gap (<c>Package_Transforms</c>'s own <c>RegionSummary</c>, whose GroupBy key
+    /// resolves through a Lookup cache rather than a plain row property) fell through to the
+    /// generic "could not resolve" fallback below -- <see cref="PipelineComponentSpec.Aggregate"/>
+    /// was never checked at all, not a bug in the refId lookup itself (<see cref="FindComponent"/>
+    /// already resolved the component correctly). The fifth (ForEach Data Flow Loop) shape closes
+    /// the identical failure class for real: its own EvidenceRefId points at the loop body's
+    /// DESTINATION component, which has none of ScriptComponent/ConditionalSplit/Aggregate set
+    /// either, and <see cref="FindComponent"/> alone can't tell "this is inside a loop" at all --
+    /// see <see cref="FindForEachDataFlowLoop"/>'s own doc comment for why that needed a real
+    /// ancestor-aware tree walk, not just another field check.
     /// </summary>
     private static string TestOracleEvidence(PackageSpec package, GenerationGap gap)
     {
@@ -530,6 +540,35 @@ public static class AiPacketEmitter
             sb.Append(ColumnTable(component.Inputs.SelectMany(i => i.Columns)
                 .Select(c => (c.CachedName, c.CachedDataType, c.CachedLength))));
             return sb.ToString();
+        }
+
+        // Fifth shape: a ForEach-Loop-over-a-Data-Flow-Task's own loop body (see
+        // PackageGenerator's own "no starter test coverage exists for this loop-body shape"
+        // comment) -- EvidenceRefId points at the loop body's DESTINATION component, which has
+        // none of ScriptComponent/ConditionalSplit/Aggregate set, so it fell through to the
+        // generic "could not resolve" message below until this branch was added. Checked AFTER
+        // Aggregate (an Aggregate can itself sit inside a loop body's own Data Flow Task in
+        // principle, though not evidenced yet -- the Aggregate-specific evidence is more useful
+        // when both match).
+        if (FindForEachDataFlowLoop(package, gap.EvidenceRefId) is { } loopMatch)
+        {
+            var (loop, dataFlowExecutable, destination) = loopMatch;
+            var fe = loop.ForEachLoop?.FileEnumerator;
+            var lsb = new StringBuilder();
+            lsb.Append($"- **ForEach Loop:** `{loop.ObjectName ?? loop.RefId}`\n");
+            lsb.Append($"- **Folder:** `{fe?.Folder ?? "(unresolved)"}`\n");
+            lsb.Append($"- **File spec:** `{fe?.FileSpec ?? "(unresolved)"}`\n");
+            lsb.Append($"- **Data Flow Task (runs once per file):** `{dataFlowExecutable.ObjectName ?? dataFlowExecutable.RefId}`\n");
+            lsb.Append($"- **Destination component:** `{destination.Name}`\n\n");
+            lsb.Append("### Destination's own input columns (the row shape written each iteration)\n\n");
+            lsb.Append(ColumnTable(destination.Inputs.SelectMany(i => i.Columns)
+                .Select(c => (c.CachedName, c.CachedDataType, c.CachedLength))));
+            lsb.Append("\n_There is no static sample file to point a source test at -- the path is computed" +
+                        " per iteration from the enumerated file name, not a fixed location. Write two small" +
+                        " temp files yourself (matching `harness.ForEachLoopFolder(key)`'s own convention, see" +
+                        " the pinned testing API above) and assert the destination sink receives rows from" +
+                        " each._\n");
+            return lsb.ToString();
         }
 
         if (found?.Component.Aggregate is { } agg)
@@ -858,5 +897,35 @@ public static class AiPacketEmitter
             if (component is not null) return (executable.ObjectName ?? executable.RefId, component);
         }
         return null;
+    }
+
+    /// <summary>Finds the nearest ForEach Loop container (if any) whose descendant Data Flow Task
+    /// contains the component identified by <paramref name="componentRefId"/> -- the "ForEach
+    /// Data Flow Loop" test-oracle shape's own lookup. <see cref="PackageTree.AllExecutables"/>
+    /// flattens the whole tree with no parent link, which is fine for every OTHER lookup in this
+    /// file (they only ever need the one matching node), but this one genuinely needs the
+    /// ANCESTOR relationship, so it walks the tree itself instead, tracking the nearest
+    /// ForEachLoop-payload executable seen on the way down.</summary>
+    private static (ExecutableSpec Loop, ExecutableSpec DataFlowExecutable, PipelineComponentSpec Component)? FindForEachDataFlowLoop(
+        PackageSpec package, string? componentRefId)
+    {
+        if (componentRefId is null) return null;
+        return Walk(package.Executables, null);
+
+        (ExecutableSpec, ExecutableSpec, PipelineComponentSpec)? Walk(List<ExecutableSpec> executables, ExecutableSpec? nearestLoop)
+        {
+            foreach (var ex in executables)
+            {
+                var loopHere = ex.ForEachLoop is not null ? ex : nearestLoop;
+                if (loopHere is not null && ex.DataFlowTask?.Pipeline is { } pipeline)
+                {
+                    var component = pipeline.Components.FirstOrDefault(c => c.RefId == componentRefId);
+                    if (component is not null) return (loopHere, ex, component);
+                }
+                var found = Walk(ex.Children, loopHere);
+                if (found is not null) return found;
+            }
+            return null;
+        }
     }
 }

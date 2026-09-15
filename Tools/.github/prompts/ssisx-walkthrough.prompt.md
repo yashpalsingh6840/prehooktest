@@ -28,28 +28,43 @@ and writes review documents plus deterministic sample data.
 - `sampledata`'s `<Lookup>.reference.sql` only exists for a Lookup with a resolvable join key
   (`JoinToReferenceColumn`) -- one with no resolvable key is skipped with a stated reason in the
   console output, never guessed.
+- Pass the package list as one quoted comma-separated argument. This is required for package
+  names containing spaces, for example `--package "DWH - FactOrders 3,ETL"`.
 
 ## Step 1 -- bootstrap
 
-Resolve `$ssisx`, `$svk`, `$dotnet` using the bootstrap block in `ssisx-extract.prompt.md`
-(Step 1). If both already exist, do not rebuild.
+Resolve only `$svk` using the existing-binary portion of the bootstrap block in
+`ssisx-extract.prompt.md` (the `SsisValidationKit/src/SvkCli/bin` search). This prompt does not
+need `ssisx` or `dotnet`. If `svk` is absent, run the documented solution build once, then
+resolve `svk` again; do not rebuild when it already exists.
 
 ## Step 2 -- run walkthrough, then sampledata
 
 ```powershell
 & $svk walkthrough --spec "<specPath>" --out "<specPath>/walkthrough" `
-    --claims "<specPath>/walkthrough/claims" --package <packages>
+  --claims "<specPath>/walkthrough/claims" --package "<packages>"
+$walkthroughExit = $LASTEXITCODE
+"WALKTHROUGH_EXIT=$walkthroughExit"
 
 & $svk sampledata --spec "<specPath>" --out "<specPath>/sampledata" `
-    --package <packages> --rows 20 --seed 42
+  --package "<packages>" --rows 20 --seed 42
+$sampledataExit = $LASTEXITCODE
+"SAMPLEDATA_EXIT=$sampledataExit"
 ```
 
 Pin `--seed` to a fixed value (`42` unless told otherwise) so this step is reproducible run to
 run -- do not omit it and let `svk` pick a random one.
 
+Do not claim success until both exit codes are printed and both `<specPath>/walkthrough` and
+`<specPath>/sampledata` exist. The CLI places generated files in nested subfolders:
+walkthrough reports are under `<specPath>/walkthrough/walkthrough/`, and sample-data files are
+under `<specPath>/sampledata/sampledata/`. If the shell is in a continuation prompt or the
+output/exit codes were not captured, rerun both commands in a fresh non-interactive PowerShell
+invocation before inspecting files.
+
 ## Step 3 -- summarize, then STOP
 
-Read only `<specPath>/walkthrough/<Package>.walkthrough.md`'s own structure (component count,
+Read only `<specPath>/walkthrough/walkthrough/<Package>.walkthrough.md`'s own structure (component count,
 whether any concurrent-execution callout appears) and the `sampledata` console output (which
 files were written, which Lookups were skipped and why). Do not open every generated `.sql`/
 `.csv` file line by line.
@@ -62,4 +77,5 @@ Then stop. Generating C# is `ssisx-generate.prompt.md`'s job, not this one.
 ## Logging
 
 Append to `session-logs/<yyyy-MM-dd>-session.md`: this prompt, the exact commands, their
-output, and a bump of the counters.
+output, exit codes, and a bump of the counters. Do not reread the entire session log just to
+verify the append; report the log path after the write.

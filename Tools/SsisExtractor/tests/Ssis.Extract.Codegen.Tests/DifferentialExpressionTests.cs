@@ -118,14 +118,32 @@ public class DifferentialExpressionTests
         // needs EF Core, Program.cs needs Etl.Core.Hosting/Microsoft.Extensions.*, and
         // Csv/*Map.cs needs CsvHelper, none of which this test project references (and
         // shouldn't need to, just to prove one Derived Column expression's runtime value).
-        // Only the four files Transform.Map's own call graph actually touches.
+        // Only the files Transform.Map's own call graph actually touches.
+        var transformPath = $"Mapping/{entityName}Transform.cs";
         var neededPaths = new HashSet<string>(StringComparer.Ordinal)
         {
             $"Csv/{rowTypeName}.cs",
             $"Model/{entityName}.cs",
-            $"Mapping/{entityName}Transform.cs",
+            transformPath,
             "Ssis/SsisFn.cs",
         };
+        var transformContent = result.Files.First(f => f.RelativePath == transformPath).Content;
+        // The 1-to-1 component-to-function mapping round (2026-09) moved a Derived Column's own
+        // compute methods out of {Entity}Transform.cs into their own static holder class (e.g.
+        // Mapping/DER_Something.cs), named after the real SSIS component and referenced from the
+        // transform as `{ClassName}.{Method}(row, ctx)`. A package with more than one Data Flow
+        // Task (LoadReferenceData: Department AND Designation) generates one holder file PER
+        // component across the WHOLE package, so blindly including every Mapping/*.cs file would
+        // pull in the OTHER flow's own row/entity types too, which aren't in this minimal
+        // compile's neededPaths at all -- instead, only a holder file whose own class name is
+        // textually referenced by THIS transform is included (the file is always named
+        // Mapping/{ClassName}.cs, so this is exact, not a guess).
+        foreach (var file in result.Files.Where(f => f.RelativePath.StartsWith("Mapping/", StringComparison.Ordinal) && f.RelativePath != transformPath))
+        {
+            var className = System.IO.Path.GetFileNameWithoutExtension(file.RelativePath);
+            if (transformContent.Contains(className + ".", StringComparison.Ordinal))
+                neededPaths.Add(file.RelativePath);
+        }
         var sources = new List<string> { ImplicitGlobalUsings, EtlCoreStandIns };
         sources.AddRange(result.Files.Where(f => neededPaths.Contains(f.RelativePath)).Select(f => f.Content));
 

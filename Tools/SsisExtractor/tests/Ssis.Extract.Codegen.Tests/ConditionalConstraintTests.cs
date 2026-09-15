@@ -412,7 +412,7 @@ public class ConditionalConstraintTests
                 // in a Task.WhenAll, not the plain sequential shape this test actually wants to
                 // assert (the real planner never produces two root steps sharing a Wave unless
                 // they genuinely have no precedence constraint between them).
-                new ProgramFlowStep(new ProgramFlowSpec("DFT_Load", new CsvFlowSource("FF_SRC_Load", "Load"), "LoadCsvRow", "Load", "LoadTransform", new SqlFlowSink())) { Wave = 0 },
+                new ProgramFlowStep(new ProgramFlowSpec("DFT_Load", new CsvFlowSource("FF_SRC_Load", "Load"), "LoadCsvRow", "Load", "LoadTransform", new SqlFlowSink("OLEDST_Load"))) { Wave = 0 },
                 new ProgramSqlStep("SQL_Handler", "SQL_HandlerStatement") { Wave = 1 },
             ])
         {

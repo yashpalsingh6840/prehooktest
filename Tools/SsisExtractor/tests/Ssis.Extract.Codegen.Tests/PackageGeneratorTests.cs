@@ -487,22 +487,27 @@ public class PackageGeneratorTests
         var routerFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/CSPLIT_ValidityRouter.cs");
         Assert.Contains("!((SsisFn.ToNullableI4(row.CustomerIdText) is null))", routerFile.Content);
 
-        var validTransformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticDataConversionSplitTargetValidTransform.cs");
+        var validTransformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/CSPLIT_Validity_Valid.cs");
         Assert.Contains("SignupDate_dt = SsisFn.ToNullableDate(row.SignupDateText),", validTransformFile.Content);
         // TenureDays is a genuine Derived Column output, so it's now its own named, callable
-        // function rather than inlined -- unlike SignupDate_dt above (a Data Conversion column,
-        // deliberately left as a single already-named SsisFn.* call, not double-wrapped).
-        // The null-forgiving "!" before .Value in the non-null ternary branch -- without it,
-        // calling SsisFn.ToNullableDate twice (once for the ISNULL check, once here) is a build
-        // ERROR (CS8629) under this project's Nullable+TreatWarningsAsErrors, since Roslyn's
-        // flow analysis never narrows a repeated METHOD CALL the way it narrows a plain
+        // function on a static holder class named after the real SSIS component (DER_InvalidTenure
+        // -- both branches resolve to the SAME real component here, so both correctly reference
+        // it identically) rather than inlined or duplicated -- unlike SignupDate_dt above (a Data
+        // Conversion column, deliberately left as a single already-named SsisFn.* call, not
+        // double-wrapped). The null-forgiving "!" before .Value in the non-null ternary branch --
+        // without it, calling SsisFn.ToNullableDate twice (once for the ISNULL check, once here)
+        // is a build ERROR (CS8629) under this project's Nullable+TreatWarningsAsErrors, since
+        // Roslyn's flow analysis never narrows a repeated METHOD CALL the way it narrows a plain
         // row-property reference. Caught only by actually building the generated project, not
         // unit tests alone.
-        Assert.Contains("TenureDays = ComputeTenureDays(row, ctx),", validTransformFile.Content);
-        Assert.Contains("public static int ComputeTenureDays(DFT_DataConversionSplitDemoSqlRow row, in RowContext ctx) => ((SsisFn.ToNullableDate(row.SignupDateText) is null) ? -(1) : SsisFn.DateDiffDays(SsisFn.ToNullableDate(row.SignupDateText)!.Value, ctx.LoadedAtUtc));", validTransformFile.Content);
+        Assert.Contains("TenureDays = DER_InvalidTenure.TenureDays(row, ctx),", validTransformFile.Content);
+        var tenureHolder = Assert.Single(result.Files, f => f.RelativePath == "Mapping/DER_InvalidTenure.cs");
+        Assert.Contains("public static int TenureDays(DFT_DataConversionSplitDemoSqlRow row, in RowContext ctx) => ((SsisFn.ToNullableDate(row.SignupDateText) is null) ? -(1) : SsisFn.DateDiffDays(SsisFn.ToNullableDate(row.SignupDateText)!.Value, ctx.LoadedAtUtc));", tenureHolder.Content);
+        CodeAssertions.AssertNoSyntaxErrors(tenureHolder.Content);
 
-        var invalidTransformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticDataConversionSplitTargetInvalidTransform.cs");
+        var invalidTransformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/CSPLIT_Validity_Invalid.cs");
         Assert.Contains("SignupDate_dt = SsisFn.ToNullableDate(row.SignupDateText),", invalidTransformFile.Content);
+        Assert.Contains("TenureDays = DER_InvalidTenure.TenureDays(row, ctx),", invalidTransformFile.Content);
 
         var entityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticDataConversionSplitTarget.cs");
         Assert.Contains("public int? CustomerId_i4 { get; set; }", entityFile.Content);
@@ -644,19 +649,30 @@ public class PackageGeneratorTests
 
         // Two DISTINCT transforms, disambiguated by branch output name since they'd otherwise
         // both be "SyntheticRemergeTargetTransform".
-        var highFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticRemergeTargetHighTransform.cs");
-        var lowFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticRemergeTargetLowTransform.cs");
+        var highFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/CSPLIT_Amount_High.cs");
+        var lowFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/CSPLIT_Amount_Low.cs");
 
         // Each transform combines the flow's shared Derived Column (LoadedAtUtc) with its OWN
         // per-branch one (Segment) -- proving TransformEmitter's merged-DerivedColumns list
         // resolves columns from both, not just one. Both are genuine Derived Column outputs, so
-        // each is now its own named, callable function rather than inlined.
-        Assert.Contains("LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),", highFile.Content);
-        Assert.Contains("Segment = ComputeSegment(row, ctx),", highFile.Content);
-        Assert.Contains("public static string ComputeSegment(DFT_ConditionalSplitRemergeDemoSqlRow row, in RowContext ctx) => \"High\";", highFile.Content);
-        Assert.Contains("LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),", lowFile.Content);
-        Assert.Contains("Segment = ComputeSegment(row, ctx),", lowFile.Content);
-        Assert.Contains("public static string ComputeSegment(DFT_ConditionalSplitRemergeDemoSqlRow row, in RowContext ctx) => \"Low\";", lowFile.Content);
+        // each is now its own named, callable function on a static holder class named after the
+        // real SSIS component -- and the SHARED one (DER_LoadedAtUtc) is referenced identically
+        // from BOTH branches, proving the 1-to-1 component-to-function mapping round's own
+        // de-duplication mechanism: exactly ONE Mapping/DER_LoadedAtUtc.cs file is emitted (see
+        // the assertion below), not one duplicated per branch.
+        Assert.Contains("LoadedAtUtc = DER_LoadedAtUtc.LoadedAtUtc(row, ctx),", highFile.Content);
+        Assert.Contains("Segment = DER_TagHigh.Segment(row, ctx),", highFile.Content);
+        Assert.Contains("LoadedAtUtc = DER_LoadedAtUtc.LoadedAtUtc(row, ctx),", lowFile.Content);
+        Assert.Contains("Segment = DER_TagLow.Segment(row, ctx),", lowFile.Content);
+        var sharedHolder = Assert.Single(result.Files, f => f.RelativePath == "Mapping/DER_LoadedAtUtc.cs");
+        Assert.Contains("public static DateTime LoadedAtUtc(DFT_ConditionalSplitRemergeDemoSqlRow row, in RowContext ctx) => ctx.LoadedAtUtc;", sharedHolder.Content);
+        var highTagHolder = Assert.Single(result.Files, f => f.RelativePath == "Mapping/DER_TagHigh.cs");
+        Assert.Contains("public static string Segment(DFT_ConditionalSplitRemergeDemoSqlRow row, in RowContext ctx) => \"High\";", highTagHolder.Content);
+        var lowTagHolder = Assert.Single(result.Files, f => f.RelativePath == "Mapping/DER_TagLow.cs");
+        Assert.Contains("public static string Segment(DFT_ConditionalSplitRemergeDemoSqlRow row, in RowContext ctx) => \"Low\";", lowTagHolder.Content);
+        CodeAssertions.AssertNoSyntaxErrors(sharedHolder.Content);
+        CodeAssertions.AssertNoSyntaxErrors(highTagHolder.Content);
+        CodeAssertions.AssertNoSyntaxErrors(lowTagHolder.Content);
         CodeAssertions.AssertNoSyntaxErrors(highFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(lowFile.Content);
 
@@ -667,8 +683,8 @@ public class PackageGeneratorTests
         // branch constructs its own SqlBulkSink<SyntheticRemergeTarget> directly.
         Assert.DoesNotContain("AddBulkSink", classFile.Content);
         Assert.DoesNotContain("AddScoped<IRowTransform<", classFile.Content);
-        Assert.Contains("new SyntheticRemergeTargetHighTransform(),", classFile.Content);
-        Assert.Contains("new SyntheticRemergeTargetLowTransform(),", classFile.Content);
+        Assert.Contains("new CSPLIT_Amount_High(),", classFile.Content);
+        Assert.Contains("new CSPLIT_Amount_Low(),", classFile.Content);
         // Both branches share the one shared table, each constructing its own sink.
         Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(classFile.Content, "new SqlBulkSink<SyntheticRemergeTarget>\\(Opt<BulkCopyOptions>\\(\\), Log<SqlBulkSink<SyntheticRemergeTarget>>\\(\\)\\)").Count);
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
@@ -762,8 +778,8 @@ public class PackageGeneratorTests
 
         Assert.Contains(result.Files, f => f.RelativePath == "Model/SyntheticHighValue.cs");
         Assert.Contains(result.Files, f => f.RelativePath == "Model/SyntheticLowValue.cs");
-        Assert.Contains(result.Files, f => f.RelativePath == "Mapping/SyntheticHighValueTransform.cs");
-        Assert.Contains(result.Files, f => f.RelativePath == "Mapping/SyntheticLowValueTransform.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Mapping/ConditionalSplit_HighValue.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Mapping/ConditionalSplit_LowValue.cs");
         Assert.Contains(result.Files, f => f.RelativePath == "Mapping/ConditionalSplitRouter.cs");
 
         var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticConditionalSplit.cs");
@@ -782,8 +798,8 @@ public class PackageGeneratorTests
         Assert.Contains("var step = new ConditionalSplitStep<DFT_ConditionalSplitDemoSqlRow>(", classFile.Content);
         Assert.Contains("new ConditionalSplitBranch<DFT_ConditionalSplitDemoSqlRow, SyntheticHighValue>(", classFile.Content);
         Assert.Contains("new ConditionalSplitBranch<DFT_ConditionalSplitDemoSqlRow, SyntheticLowValue>(", classFile.Content);
-        Assert.Contains("new SyntheticHighValueTransform(),", classFile.Content);
-        Assert.Contains("new SyntheticLowValueTransform(),", classFile.Content);
+        Assert.Contains("new ConditionalSplit_HighValue(),", classFile.Content);
+        Assert.Contains("new ConditionalSplit_LowValue(),", classFile.Content);
         Assert.Contains("await DFT_ConditionalSplitDemo(uow, ct);", classFile.Content);
 
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
@@ -886,20 +902,24 @@ public class PackageGeneratorTests
         // ONE entity/table -- both branches converge on the same destination.
         Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticSortMergeTarget.cs");
 
-        var canadaFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticSortMergeTargetCanadaTransform.cs");
-        var restFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticSortMergeTargetRestOfWorldTransform.cs");
+        var canadaFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/CSPLIT_ByCategory_Canada.cs");
+        var restFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/CSPLIT_ByCategory_RestOfWorld.cs");
 
         // Every destination column is a plain passthrough (no Derived Column of its own beyond
         // the shared LoadedAtUtc) -- proving TransformEmitter's existing "row.PipelineColumnName"
         // fallback resolves correctly straight through Sort/Merge, with zero new
         // value-resolution code needed for this feature. LoadedAtUtc IS a genuine Derived Column
-        // (GETUTCDATE()), so it's its own named, callable function, unlike the plain passthroughs.
+        // (GETUTCDATE()), so it's its own named, callable function on a static holder class named
+        // after the real SSIS component (DER_LoadedAtUtc) -- shared identically by both branches,
+        // and emitted exactly once (see the assertion below), not duplicated per branch.
         Assert.Contains("ID = row.ID,", canadaFile.Content);
         Assert.Contains("Name = row.Name,", canadaFile.Content);
-        Assert.Contains("LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),", canadaFile.Content);
+        Assert.Contains("LoadedAtUtc = DER_LoadedAtUtc.LoadedAtUtc(row, ctx),", canadaFile.Content);
         Assert.Contains("ID = row.ID,", restFile.Content);
         Assert.Contains("Name = row.Name,", restFile.Content);
-        Assert.Contains("LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),", restFile.Content);
+        Assert.Contains("LoadedAtUtc = DER_LoadedAtUtc.LoadedAtUtc(row, ctx),", restFile.Content);
+        var sharedHolder = Assert.Single(result.Files, f => f.RelativePath == "Mapping/DER_LoadedAtUtc.cs");
+        CodeAssertions.AssertNoSyntaxErrors(sharedHolder.Content);
         CodeAssertions.AssertNoSyntaxErrors(canadaFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(restFile.Content);
 
@@ -1347,7 +1367,7 @@ public class PackageGeneratorTests
         Assert.Contains("new FlatFileBulkSink<DFT_FixedWidthImportFFDST_AuditTrail_APPEND>(", classFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
-        var flatFileTransform = Assert.Single(result.Files, f => f.RelativePath == "Mapping/DFT_FixedWidthImportFFDST_AuditTrail_APPENDTransform.cs");
+        var flatFileTransform = Assert.Single(result.Files, f => f.RelativePath == "Mapping/MC_Fanout_MulticastOutput2.cs");
         // The ToString() widening itself -- an int source column assigned to the flat file
         // destination's own string-typed entity property.
         Assert.Contains("ID = row.ID.ToString(),", flatFileTransform.Content);

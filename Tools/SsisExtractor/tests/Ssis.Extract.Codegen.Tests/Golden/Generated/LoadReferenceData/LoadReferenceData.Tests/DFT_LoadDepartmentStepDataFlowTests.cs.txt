@@ -30,7 +30,7 @@ public class DFT_LoadDepartmentStepDataFlowTests
 
         var source = package.FF_SRC_Department();
         var transform = new DepartmentTransform();
-        var sink = package.DepartmentDestination();
+        var sink = package.OLEDST_Department();
         var step = new DataFlowStep<DepartmentCsvRow, Department>("DFT_LoadDepartment", source, transform, sink, NullLogger<DataFlowStep<DepartmentCsvRow, Department>>.Instance);
 
         await step.RunAsync(uow, new LoadContext(Guid.NewGuid(), DateTime.UtcNow, "DFT_LoadDepartment"), CancellationToken.None);

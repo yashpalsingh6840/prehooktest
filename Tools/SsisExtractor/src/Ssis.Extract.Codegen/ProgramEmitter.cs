@@ -85,6 +85,14 @@ public sealed record AggregateFunctionFieldSpec(string OutputPropertyName, strin
 /// throws.</summary>
 public sealed record AggregateLookupKeySpec(string LookupVariableName, string JoinInputPropertyName, string ReferenceColumnName);
 
+/// <summary>One GroupBy column's own destination-facing property name and CLR type -- a list on
+/// <see cref="AggregateFlowSource"/> (not a single value), closing a real 3-column GroupBy found
+/// in a genuine client portfolio. Exactly one entry reproduces the original, single-column shape
+/// byte-for-byte (a plain <c>TKey</c>, a plain <c>row => row.X</c> key selector); more than one
+/// uses a named C# tuple as <c>TKey</c> instead -- see <c>PackageClassEmitter</c>'s own Aggregate
+/// case for exactly where that split happens.</summary>
+public sealed record AggregateGroupByFieldSpec(string OutputPropertyName, string ClrType);
+
 /// <summary>A Microsoft.Aggregate flow (GroupBy + Count), built speculatively 2026-08-30 -- see
 /// <c>Ssis.Extract.Model.Pipeline.AggregatePayload</c>'s own doc comment for why (the one real
 /// evidenced instance is unreachable, blocked by its own upstream Lookup regardless). Wraps
@@ -108,8 +116,7 @@ public sealed record AggregateFlowSource(
     string ComponentName,
     FlowSourceSpec InnerSource,
     string SourceRowTypeName,
-    string GroupByPropertyName,
-    string GroupByKeyClrType,
+    List<AggregateGroupByFieldSpec> GroupByColumns,
     List<AggregateFunctionFieldSpec> Functions,
     AggregateLookupKeySpec? LookupKey = null,
     (string LookupVariableName, string JoinInputPropertyName)? LookupFilter = null) : FlowSourceSpec(ComponentName);
@@ -124,23 +131,27 @@ public sealed record FlatFileColumnFormatSpec(string PropertyName, int? FixedWid
 /// Flat File Destination (no EF Core table at all; constructed directly with an explicit file
 /// path + column layout, the same "construct directly, don't fight the DI container" pattern
 /// ConditionalSplitStep's own branches already use for their transforms). Exactly one concrete
-/// case per flow.</summary>
-public abstract record FlowSinkSpec;
-public sealed record SqlFlowSink : FlowSinkSpec;
-public sealed record FlatFileFlowSink(string FileSourceKey, bool Overwrite, string? HeaderLine, IReadOnlyList<FlatFileColumnFormatSpec> Columns) : FlowSinkSpec;
+/// case per flow. <see cref="ComponentName"/> is the destination's own real SSIS component name
+/// (e.g. "OLEDST_CustomerEnriched") -- every subtype carries it now (added for the 1-to-1
+/// component-to-function mapping round), not just <see cref="RedirectingSqlFlowSink"/>, so
+/// PackageClassEmitter.EmitSinkMethod can name a plain single-destination sink after its own real
+/// component instead of the entity it lands ("{Entity}Destination"), the same traceability every
+/// source method already had.</summary>
+public abstract record FlowSinkSpec(string ComponentName);
+public sealed record SqlFlowSink(string ComponentName) : FlowSinkSpec(ComponentName);
+public sealed record FlatFileFlowSink(string ComponentName, string FileSourceKey, bool Overwrite, string? HeaderLine, IReadOnlyList<FlatFileColumnFormatSpec> Columns) : FlowSinkSpec(ComponentName);
 
 /// <summary>A destination whose own input is configured ErrorRowDisposition=RedirectRow -- a row
 /// that fails to insert is redirected to a second, named destination (ErrorEntityName/table)
 /// instead of aborting the load. <see cref="PrimaryComponentName"/>/<see cref="ErrorComponentName"/>
 /// are each destination's own SSIS component name (e.g. OLEDST_StagingCustomers/
-/// OLEDST_StagingErrors) -- unlike every other FlowSinkSpec, this one carries component identity
-/// at all, because naming BOTH sink methods after their own component is the only way two
-/// destinations in one flow stay distinguishable (see PackageClassEmitter.EmitSinkMethod's own
-/// doc comment for why a plain single-destination flow still names its sink after the entity, not
-/// the component). <see cref="ErrorMapClassName"/> is the generated static class translating a
-/// failed TEntity + the causing DbException into the error entity -- see
-/// PackageGenerator.ResolveErrorRedirectSink.</summary>
-public sealed record RedirectingSqlFlowSink(string PrimaryComponentName, string ErrorComponentName, string ErrorEntityName, string ErrorMapClassName) : FlowSinkSpec;
+/// OLEDST_StagingErrors) -- this one carries TWO component identities, because naming BOTH sink
+/// methods after their own component is the only way two destinations in one flow stay
+/// distinguishable; <see cref="FlowSinkSpec.ComponentName"/> (the base record's own property)
+/// resolves to <see cref="PrimaryComponentName"/>. <see cref="ErrorMapClassName"/> is the
+/// generated static class translating a failed TEntity + the causing DbException into the error
+/// entity -- see PackageGenerator.ResolveErrorRedirectSink.</summary>
+public sealed record RedirectingSqlFlowSink(string PrimaryComponentName, string ErrorComponentName, string ErrorEntityName, string ErrorMapClassName) : FlowSinkSpec(PrimaryComponentName);
 
 /// <summary>One Data Flow Task's already-decided naming, combining PackagePlanner's
 /// DataFlowPlan facts (StepName, Source) with the naming choices the caller makes for the

@@ -289,9 +289,9 @@ public class ComponentTestEmitterTests
         var columns = new List<ResolvedColumn> { Column("CustomerID", "wstr"), Column("CountryCode", "wstr") };
         var branches = new List<ComponentTestEmitter.MulticastTestBranch>
         {
-            new("Multicast Output 1", "MyPackage.Model", "CustomerFixedImport", "CustomerFixedImportTransform", new SqlFlowSink()),
+            new("Multicast Output 1", "MyPackage.Model", "CustomerFixedImport", "CustomerFixedImportTransform", new SqlFlowSink("OLEDST_CustomerFixedImport")),
             new("Multicast Output 2", "MyPackage.Model", "AuditTrail", "AuditTrailTransform",
-                new FlatFileFlowSink("Audit", true, null, [new FlatFileColumnFormatSpec("CustomerID", null, ","), new FlatFileColumnFormatSpec("CountryCode", null, "\r\n")])),
+                new FlatFileFlowSink("FFDST_AuditTrail", "Audit", true, null, [new FlatFileColumnFormatSpec("CustomerID", null, ","), new FlatFileColumnFormatSpec("CountryCode", null, "\r\n")])),
         };
 
         var file = ComponentTestEmitter.EmitMulticastTest(
@@ -313,7 +313,7 @@ public class ComponentTestEmitterTests
         var columns = new List<ResolvedColumn> { Column("CustomerID", "wstr") };
         var branches = new List<ComponentTestEmitter.MulticastTestBranch>
         {
-            new("Output 1", "MyPackage.Model", "AuditA", "AuditATransform", new FlatFileFlowSink("A", true, null, [new FlatFileColumnFormatSpec("CustomerID", null, "\r\n")])),
+            new("Output 1", "MyPackage.Model", "AuditA", "AuditATransform", new FlatFileFlowSink("FFDST_AuditA", "A", true, null, [new FlatFileColumnFormatSpec("CustomerID", null, "\r\n")])),
         };
 
         var file = ComponentTestEmitter.EmitMulticastTest(
@@ -340,7 +340,7 @@ public class ComponentTestEmitterTests
         var columns = new List<ResolvedColumn> { Column("SomeExoticColumn", pipelineDataType: null) };
         var branches = new List<ComponentTestEmitter.MulticastTestBranch>
         {
-            new("Output 1", "MyPackage.Model", "Entity", "EntityTransform", new SqlFlowSink()),
+            new("Output 1", "MyPackage.Model", "Entity", "EntityTransform", new SqlFlowSink("OLEDST_Entity")),
         };
 
         var file = ComponentTestEmitter.EmitMulticastTest(

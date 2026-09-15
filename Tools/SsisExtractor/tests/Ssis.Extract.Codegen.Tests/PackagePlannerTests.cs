@@ -506,8 +506,9 @@ public class PackagePlannerTests
         var flow = Assert.Single(plan.Flows);
         Assert.NotNull(flow.Aggregate);
         Assert.Equal("AGG_ByRegion", flow.Aggregate!.Component.Name);
-        Assert.Equal("Region", flow.Aggregate.GroupByOutputColumnName);
-        Assert.Equal("Region", flow.Aggregate.GroupBySourceColumnName);
+        var groupBy = Assert.Single(flow.Aggregate.GroupByColumns);
+        Assert.Equal("Region", groupBy.OutputColumnName);
+        Assert.Equal("Region", groupBy.SourceColumnName);
         var count = Assert.Single(flow.Aggregate.Functions);
         Assert.Equal("CustomerCount", count.OutputColumnName);
         Assert.Equal("CustomerID", count.SourceColumnName);
@@ -551,8 +552,9 @@ public class PackagePlannerTests
         Assert.Empty(plan.Gaps);
         var flow = Assert.Single(plan.Flows);
         Assert.NotNull(flow.Aggregate);
-        Assert.Equal("Region", flow.Aggregate!.GroupByOutputColumnName);
-        Assert.Equal("Region", flow.Aggregate.GroupBySourceColumnName);
+        var groupBy = Assert.Single(flow.Aggregate!.GroupByColumns);
+        Assert.Equal("Region", groupBy.OutputColumnName);
+        Assert.Equal("Region", groupBy.SourceColumnName);
         Assert.Equal(6, flow.Aggregate.Functions.Count);
 
         var totalRows = flow.Aggregate.Functions.Single(f => f.OutputColumnName == "TotalRows");

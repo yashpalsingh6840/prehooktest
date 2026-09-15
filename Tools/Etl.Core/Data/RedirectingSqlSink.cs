@@ -6,43 +6,22 @@ using Microsoft.Extensions.Logging;
 namespace Etl.Core.Data;
 
 /// <summary>
-/// An OLE DB Destination whose own SSIS input is configured <c>ErrorRowDisposition=RedirectRow</c>:
-/// a row that fails to insert does not abort the load -- it is mapped and sent to a second,
-/// caller-supplied sink instead, while every other row still lands normally.
+/// An OLE DB Destination configured <c>ErrorRowDisposition=RedirectRow</c>: a row that fails to
+/// insert doesn't abort the load -- it's mapped and sent to a second, caller-supplied sink instead,
+/// while every other row lands normally.
 /// </summary>
 /// <remarks>
-/// <see cref="SqlBulkSink{TEntity}"/> (what every OTHER destination in a generated package uses)
-/// has no way to catch a single bad row: SqlBulkCopy has no per-row failure signal at all, and a
-/// failure aborts the whole in-flight write. So THIS destination inserts row by row instead --
-/// a deliberate, stated trade of SqlBulkCopy's speed for real per-row redirect, scoped to exactly
-/// this one destination; every other destination in the same package is unaffected.
+/// Inserts row by row rather than via <see cref="SqlBulkSink{TEntity}"/>/SqlBulkCopy, and bypasses
+/// EF's change tracker (a raw parameterized <c>INSERT</c>, not <c>Add()</c>+<c>SaveChangesAsync()</c>).
+/// Both are necessary, not stylistic: SqlBulkCopy has no per-row failure signal (one bad row aborts
+/// the whole batch), and a destination resolved with no confident primary key is emitted
+/// <c>HasNoKey()</c>, which EF's tracker can't handle at all.
 ///
-/// Row-by-row insert also has to bypass EF Core's own change tracker entirely (a raw parameterized
-/// <c>INSERT</c> via <see cref="IUnitOfWork.ExecuteSqlAsync(string, object?[], CancellationToken)"/>,
-/// not <c>Context.Set&lt;TEntity&gt;().Add()</c> + <c>SaveChangesAsync()</c>) -- not as a stylistic
-/// choice, but because a destination entity resolved with no confident primary key is emitted
-/// <c>HasNoKey()</c> (see <c>DbContextEmitter</c>), and EF Core cannot track or insert a keyless
-/// entity type via its change-tracking APIs at all. Bypassing EF's tracker is exactly what
-/// <see cref="SqlBulkSink{TEntity}"/> already does for the same reason, via the same
-/// <see cref="EntityTableMap"/> this class reuses.
-///
-/// Catches <see cref="DbException"/>, not <c>SqlException</c> specifically -- a real, deliberate
-/// broadening (any ADO.NET provider failure redirects the row, not only a SQL Server one), and it
-/// is what makes this class unit-testable with a fake, non-sealed exception type instead of a real
-/// database. <c>ErrorCode</c> on the redirected row is populated from <c>SqlException.Number</c>
-/// when the failure IS a real SqlException (the overwhelmingly common case) -- SSIS's own
-/// <c>ErrorCode</c> is a native OLE DB HRESULT, which this rewrite (writing via
-/// <c>Microsoft.Data.SqlClient</c>, a different driver stack from the OLE DB provider dtexec uses)
-/// cannot reproduce bit-for-bit; the real SQL Server error number is a genuinely meaningful,
-/// documented value in its place, not a guess. <c>ErrorColumn</c> is left to the caller's own
-/// <c>mapToError</c> delegate -- SSIS resolves it to a column lineage id, which has no equivalent
-/// here; a caller that wants a best-effort column name can parse <c>DbException.Message</c> itself
-/// (SQL Server's own error text routinely names the offending column for common failures such as a
-/// NULL-constraint violation or a truncation on SQL Server 2019+).
-///
-/// If the error sink's own write throws, that exception propagates and aborts the run -- matching
-/// SSIS's own behaviour when a row cannot even be redirected successfully. There is no second level
-/// of redirect.
+/// Catches <see cref="DbException"/> (not just <c>SqlException</c>) so this is unit-testable without
+/// a real database. On the redirected row, <c>ErrorCode</c> is filled from
+/// <see cref="SqlException.Number"/> when available (SSIS's own OLE DB HRESULT has no equivalent
+/// here); <c>ErrorColumn</c> is left to the caller's <c>mapToError</c> delegate. If the error sink's
+/// own write throws, that propagates and aborts the run -- there's no second level of redirect.
 /// </remarks>
 public sealed class RedirectingSqlSink<TEntity, TErrorEntity>(
     IBulkSink<TErrorEntity> errorSink,
@@ -85,8 +64,7 @@ public sealed class RedirectingSqlSink<TEntity, TErrorEntity>(
         return written;
     }
 
-    /// <summary>Built once per call, not per row -- name-based column list (never ordinal), matching
-    /// <see cref="SqlBulkSink{TEntity}"/>'s own convention of never trusting property order.</summary>
+    /// <summary>Built once per call, not per row. Columns are name-based, never ordinal.</summary>
     private static string BuildInsertSql(EntityTableMap map)
     {
         var columnList = string.Join(", ", map.Columns.Select(c => $"[{c.ColumnName}]"));
@@ -103,9 +81,8 @@ public sealed class RedirectingSqlSink<TEntity, TErrorEntity>(
     }
 }
 
-/// <summary>Extracts <see cref="SqlException.Number"/> when <paramref name="ex"/> is a real
-/// SqlException, for a generated <c>mapToError</c> delegate's own <c>ErrorCode</c> assignment --
-/// kept here rather than inline so every generated error-map uses the identical, tested rule.</summary>
+/// <summary>Extracts <see cref="SqlException.Number"/> for a generated <c>mapToError</c> delegate's
+/// own <c>ErrorCode</c>, so every generated error-map uses the same tested rule.</summary>
 public static class DbExceptionErrorCode
 {
     public static int Resolve(DbException ex) => ex is SqlException sqlEx ? sqlEx.Number : -1;

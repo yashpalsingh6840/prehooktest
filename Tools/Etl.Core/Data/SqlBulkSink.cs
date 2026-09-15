@@ -4,12 +4,9 @@ using Microsoft.Extensions.Options;
 
 namespace Etl.Core.Data;
 
-/// <summary>
-/// An OLE DB Destination in fast-load mode. Delegates the actual SqlBulkCopy work to
-/// <see cref="IUnitOfWork.BulkInsertAsync"/> rather than reaching into a connection/transaction
-/// itself -- that indirection is what makes this class unit-testable against a fake IUnitOfWork,
-/// no SQL Server required (see the remarks on <see cref="IUnitOfWork"/>).
-/// </summary>
+/// <summary>An OLE DB Destination in fast-load mode (SqlBulkCopy). Delegates the actual copy to
+/// <see cref="IUnitOfWork.BulkInsertAsync"/> instead of touching a connection/transaction directly,
+/// so this is unit-testable against a fake <see cref="IUnitOfWork"/> -- no SQL Server needed.</summary>
 public sealed class SqlBulkSink<TEntity>(
     IOptions<BulkCopyOptions> options,
     ILogger<SqlBulkSink<TEntity>> logger) : IBulkSink<TEntity>

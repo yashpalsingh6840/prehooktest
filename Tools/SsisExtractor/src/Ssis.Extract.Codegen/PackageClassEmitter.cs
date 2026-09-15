@@ -43,7 +43,13 @@ namespace Ssis.Extract.Codegen;
 /// that compiled a WRONG row type into a RIGHT-looking method call before this field existed). A
 /// row type name is comparably far more likely to be unique, since it's derived from the flow's own
 /// destination entity name.</param>
-public sealed record ComponentMethodEntry(string Kind, string SsisName, string MethodName, string Signature, string? RowTypeName = null);
+/// <param name="EntityName">Only ever set for <c>Kind == "Sink"</c>, added for the 1-to-1
+/// component-to-function mapping round (2026-09) alongside <see cref="SsisName"/> switching from
+/// the destination's ENTITY name to its real SSIS component name. Several joins in
+/// <c>PackageGenerator</c> (the Sink-SQL/Sink-FlatFile/direct-invocation starter tests) used to key
+/// off <see cref="SsisName"/> back when it WAS the entity name -- this field lets them keep doing
+/// exactly that without caring what <see cref="SsisName"/> now means.</param>
+public sealed record ComponentMethodEntry(string Kind, string SsisName, string MethodName, string Signature, string? RowTypeName = null, string? EntityName = null);
 
 /// <summary>The three method-signature templates <see cref="PackageClassEmitter"/> emits,
 /// extracted so <see cref="PackageReadmeEmitter"/> renders the identical text in its own
@@ -162,7 +168,7 @@ public static class PackageClassEmitter
         // look like "SQL_Foo"/"DFT_Bar") is defended against rather than assumed away.
         var usedNames = new HashSet<string>(StringComparer.Ordinal)
         {
-            "packageVariables", "_results", "_load", "Log", "Opt", "Db", "File", "Config", "Step", "RunAsync", "RunBranchAsync",
+            "packageVariables", "_results", "_load", "Log", "Opt", "Db", "File", "Config", "RunAsync", "RunBranchAsync",
         };
         string Reserve(string desired)
         {
@@ -185,7 +191,7 @@ public static class PackageClassEmitter
         // comment.
         var reachedFlagFieldNames = request.FailureHandlers
             .Where(h => h.IsDualPosition)
-            .ToDictionary(h => h.TaskName, h => Reserve(h.TaskName + "Reached"));
+            .ToDictionary(h => h.TaskName, h => Reserve(PackageGenerator.SanitizeIdentifier(h.TaskName) + "Reached"));
 
         // ----- shared source/sink construction, recursive for Merge Join/Union/Aggregate -----
 
@@ -316,17 +322,34 @@ public static class PackageClassEmitter
                         w.CloseBlock();
                     }
                     w.Blank();
-                    w.Line($"{assignPrefix}new AggregateRowSource<{agg.SourceRowTypeName}, {agg.GroupByKeyClrType}, {rowTypeName}>(");
+                    // A single GroupBy column keeps the ORIGINAL shape byte-for-byte (a plain
+                    // TKey, a plain `row => row.X`/`key` selector/projection) -- the only shape a
+                    // Lookup-derived key (agg.LookupKey) ever appears with, since
+                    // GenerateLookupThenAggregateFlow's own composed shape stays scoped to
+                    // exactly one GroupBy column (see AggregatePlan's own doc comment). More than
+                    // one uses a named C# tuple as TKey instead -- ValueTuple already implements
+                    // structural equality/GetHashCode, so no new generated key type is needed.
+                    var isCompositeKey = agg.GroupByColumns.Count > 1;
+                    var keyClrType = isCompositeKey
+                        ? $"({string.Join(", ", agg.GroupByColumns.Select(g => $"{g.ClrType} {g.OutputPropertyName}"))})"
+                        : agg.GroupByColumns[0].ClrType;
+                    var keySelector = agg.LookupKey is { } lk
+                        ? $"{lookupFieldNames[lk.LookupVariableName]}[row.{lk.JoinInputPropertyName}].{lk.ReferenceColumnName}"
+                        : isCompositeKey
+                            ? $"({string.Join(", ", agg.GroupByColumns.Select(g => $"row.{g.OutputPropertyName}"))})"
+                            : $"row.{agg.GroupByColumns[0].OutputPropertyName}";
+                    w.Line($"{assignPrefix}new AggregateRowSource<{agg.SourceRowTypeName}, {keyClrType}, {rowTypeName}>(");
                     w.Indent();
                     w.Line($"{Str(agg.ComponentName)},");
                     w.Line("BuildAggregateSource(),");
-                    w.Line(agg.LookupKey is { } lk
-                        ? $"row => {lookupFieldNames[lk.LookupVariableName]}[row.{lk.JoinInputPropertyName}].{lk.ReferenceColumnName},"
-                        : $"row => row.{agg.GroupByPropertyName},");
+                    w.Line($"row => {keySelector},");
                     w.Line($"(key, rows) => new {rowTypeName}");
                     w.Line("{");
                     w.Indent();
-                    w.Line($"{agg.GroupByPropertyName} = key,");
+                    if (isCompositeKey)
+                        foreach (var g in agg.GroupByColumns) w.Line($"{g.OutputPropertyName} = key.{g.OutputPropertyName},");
+                    else
+                        w.Line($"{agg.GroupByColumns[0].OutputPropertyName} = key,");
                     for (var i = 0; i < agg.Functions.Count; i++)
                     {
                         var fn = agg.Functions[i];
@@ -414,16 +437,13 @@ public static class PackageClassEmitter
         // no `uow` parameter must be called with no argument either, or it won't compile.
         string SourceCallArgs(FlowSourceSpec source) => SourceNeedsUow(source) ? "uow" : "";
 
-        // A destination component carries no name of its own anywhere in the plan for the plain,
-        // single-destination case (unlike a source, an OLE DB/Flat File Destination's own .dtsx
-        // object name was never threaded this far) -- named after the entity it lands instead,
-        // which is just as deterministic and still gives every destination its own
-        // independently-constructible method. This stops being true the moment a flow has MORE
-        // than one destination (RedirectingSqlFlowSink, below) -- "{Entity}Destination" is
-        // ambiguous once there's more than one, which is exactly the shape whose own destination
-        // identity was silently dropped before this round existed (see CLAUDE.md's own account of
-        // the real OLEDST_StagingErrors bug). RedirectingSqlFlowSink is the one FlowSinkSpec that
-        // DOES carry component identity for this reason -- see its own doc comment.
+        // Every destination component now carries its own real SSIS object name all the way
+        // through FlowSinkSpec.ComponentName (added for the 1-to-1 component-to-function mapping
+        // round), so the generated sink method is named after the real component
+        // ("OLEDST_CustomerEnriched") rather than "{Entity}Destination" -- the same traceability a
+        // source method already had. RedirectingSqlFlowSink still needs special handling because
+        // it names TWO components (primary + error) from one FlowSinkSpec value, which is why it's
+        // still checked first.
         string EmitSinkMethod(string entityName, FlowSinkSpec sink)
         {
             if (sink is RedirectingSqlFlowSink redirect)
@@ -438,34 +458,37 @@ public static class PackageClassEmitter
                 componentMethods.Dedent();
                 componentMethods.CloseBlock();
                 componentMethods.Blank();
-                inventory.Add(new ComponentMethodEntry("Sink", redirect.PrimaryComponentName, primaryName, primarySignature));
+                inventory.Add(new ComponentMethodEntry("Sink", redirect.PrimaryComponentName, primaryName, primarySignature, EntityName: entityName));
 
                 var errorSignature = MethodSignatures.ForSink(errorName, redirect.ErrorEntityName);
                 componentMethods.OpenBlock(errorSignature);
                 componentMethods.Line($"return new SqlBulkSink<{redirect.ErrorEntityName}>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<{redirect.ErrorEntityName}>>());");
                 componentMethods.CloseBlock();
                 componentMethods.Blank();
-                inventory.Add(new ComponentMethodEntry("Sink", redirect.ErrorComponentName, errorName, errorSignature));
+                inventory.Add(new ComponentMethodEntry("Sink", redirect.ErrorComponentName, errorName, errorSignature, EntityName: redirect.ErrorEntityName));
 
                 return primaryName;
             }
 
-            var name = Reserve($"{entityName}Destination");
+            var name = Reserve(PackageGenerator.SanitizeIdentifier(sink.ComponentName));
             var signature = MethodSignatures.ForSink(name, entityName);
             componentMethods.OpenBlock(signature);
             EmitSinkConstruction(componentMethods, entityName, sink, "return ");
             componentMethods.CloseBlock();
             componentMethods.Blank();
-            // No SSIS name is available here -- a destination component's own object name is
-            // never threaded this far into the plan (see this method's own doc comment above);
-            // the entity name is the closest identifying fact PackageReadmeEmitter has to show.
-            inventory.Add(new ComponentMethodEntry("Sink", entityName, name, signature));
+            inventory.Add(new ComponentMethodEntry("Sink", sink.ComponentName, name, signature, EntityName: entityName));
             return name;
         }
 
         string EmitStepMethod(ProgramStep step)
         {
-            var methodName = Reserve(StepDisplayName(step));
+            // StepDisplayName is the raw SSIS task/component display name (e.g. "DFT - Load
+            // Customers") -- free text a designer author can type anything into, not a valid C#
+            // method name. Sanitized here the same way PackageGenerator.SanitizeIdentifier already
+            // sanitizes an entity/component name everywhere else in this emitter; the raw name is
+            // still used, unsanitized, wherever this step's own runtime label string is emitted
+            // (Str(flow.StepName) etc., below) -- only the IDENTIFIER position needs this.
+            var methodName = Reserve(PackageGenerator.SanitizeIdentifier(StepDisplayName(step)));
             var signature = MethodSignatures.ForStepOrContainer(methodName);
             methods.OpenBlock(signature);
 
@@ -487,26 +510,26 @@ public static class PackageClassEmitter
                     methods.Line($"var sink = {sinkMethodName}();");
                     methods.Blank();
                     methods.Line($"var step = new DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>({Str(flow.StepName)}, source, transform, sink, Log<DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>>());");
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 }
                 case ProgramSqlStep sqlStep:
                     methods.Line($"var step = new ExecuteSqlStep({Str(sqlStep.StepName)}, {sqlStep.StatementClassName}.BuildStatement(), Log<ExecuteSqlStep>());");
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramSecondaryConnectionSqlStep secStep:
                     methods.Line($"var connectionString = SqlConnectionStringFactory.Build(Config().GetSection({Str($"SecondaryConnections:{secStep.ConnectionManagerName}")}).Get<DatabaseOptions>()");
                     methods.Line($"    ?? throw new InvalidOperationException({Str($"The SecondaryConnections:{secStep.ConnectionManagerName} configuration section is missing.")}));");
                     methods.Line($"var step = new SecondaryConnectionSqlStep({Str(secStep.StepName)}, {Str(secStep.ConnectionManagerName)}, connectionString, {secStep.StatementClassName}.BuildStatement(), Log<SecondaryConnectionSqlStep>());");
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramScriptTaskStep scriptStep:
                     methods.Line($"var step = new {scriptStep.ClassName}(packageVariables, services);");
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramFileSystemStep fsStep:
                     methods.Line($"var step = new FileSystemStep({Str(fsStep.StepName)}, {FileSystemActionExpr(fsStep.Action)}, Log<FileSystemStep>());");
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramForEachFileLoopStep loopStep:
                     methods.Line("var step = new ForEachLoopStep(");
@@ -516,7 +539,7 @@ public static class PackageClassEmitter
                     methods.Line($"{loopStep.CurrentFileParamName} => {loopStep.StatementClassName}.BuildStatement({loopStep.CurrentFileParamName}),");
                     methods.Line("Log<ForEachLoopStep>());");
                     methods.Dedent();
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramForEachDataFlowLoopStep dfStep:
                     methods.Line($"var step = new ForEachFileDataFlowStep<{dfStep.RowTypeName}, {dfStep.EntityName}>(");
@@ -530,7 +553,7 @@ public static class PackageClassEmitter
                     methods.Line($"new SqlBulkSink<{dfStep.EntityName}>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<{dfStep.EntityName}>>()),");
                     methods.Line($"Log<DataFlowStep<{dfStep.RowTypeName}, {dfStep.EntityName}>>());");
                     methods.Dedent();
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramConditionalSplitStep splitStep:
                 {
@@ -563,7 +586,7 @@ public static class PackageClassEmitter
                     methods.Line("],");
                     methods.Line($"Log<ConditionalSplitStep<{splitStep.RowTypeName}>>());");
                     methods.Dedent();
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 }
                 case ProgramMulticastStep multicastStep:
@@ -594,7 +617,7 @@ public static class PackageClassEmitter
                     methods.Line("],");
                     methods.Line($"Log<MulticastStep<{multicastStep.RowTypeName}>>());");
                     methods.Dedent();
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 }
                 case ProgramOleDbCommandStep cmdStep:
@@ -608,7 +631,7 @@ public static class PackageClassEmitter
                     methods.Line($"row => new object?[] {{ {string.Join(", ", cmdStep.ParameterColumnNames.Select(c => $"row.{c}"))} }},");
                     methods.Line($"Log<OleDbCommandStep<{cmdStep.RowTypeName}>>());");
                     methods.Dedent();
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
             }
 
@@ -962,7 +985,12 @@ public static class PackageClassEmitter
         w2.Line("private string File(string key) => Opt<FileSourceOptions>().Value[key].ResolvedPath;");
         if (secondaryConnectionNames.Count > 0)
             w2.Line("private IConfiguration Config() => services.GetRequiredService<IConfiguration>();");
-        w2.Line("private async Task Step(ILoadTask task, IUnitOfWork uow, CancellationToken ct) => _results.Add(await task.RunAsync(uow, _load, ct));");
+        // No `Step(task, uow, ct)` helper any more (removed 2026-09-11): it hid exactly one line --
+        // `_results.Add(await task.RunAsync(uow, _load, ct))` -- behind a name that revealed neither
+        // that the result was being recorded nor that _load was passed, and it had to be reserved
+        // against every SSIS task name for the privilege. Each generated task method now says
+        // literally what it does instead. Unlike ExecuteSqlStep/DataFlowStep (real runtime
+        // behaviour: timing, logging, lazy streaming, the zero-row guard), this one bought nothing.
         if (hasConcurrency)
         {
             // One independent scope/connection/transaction per concurrent branch -- a SqlTransaction

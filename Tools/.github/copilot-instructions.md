@@ -15,7 +15,7 @@ written specifically for that situation; this file assumes `Tools\` itself is wh
 
 1. **Never re-implement, patch, or "improve" `ssisx` or `Etl.Core` to do the actual
    extraction/generation work differently.** These are already built and tested. Your job is
-   to **run the CLI** (`ssisx report`, `ssisx generate`, `ssisx apply-fills`, ...) and to
+   to **run the CLI** (`ssisx extract`, `ssisx generate`, `ssisx apply-fills`, ...) and to
    **fill in human-facing gaps it explicitly asks for** (Tier-1 decisions, Tier-2 seams -- see
    below). If a command errors, read the error message and the linked doc section first --
    do not guess a fix by editing the tool's own source.
@@ -100,6 +100,11 @@ written specifically for that situation; this file assumes `Tools\` itself is wh
    `--etl-core` from what the user actually gave you (a real client folder path), never a
    placeholder like `D:\Something\SSIS` copied from a doc. If you are not sure what folder to
    point at, ask.
+8a. **Do not report a CLI step as complete from intent alone.** Capture `$LASTEXITCODE` (or
+the equivalent process exit code), print it, and verify the command's expected output directory
+or file exists before summarizing success. If PowerShell is left at a continuation prompt or
+the output was not captured, rerun the command in a fresh non-interactive invocation. For
+multi-step read-only workflows, verify each step separately before moving to the next one.
 9. **Budget your own reads.** Do not open `CLAUDE.md`, anything under `Docs\` (e.g.
    `Docs\Emitter-Rewrite-Plan.md`, `Docs\Phase0-Extractor-Plan.md`,
    `Docs\Migration-Validation-Plan.md`, `Docs\SsisValidationKit-Plan.md`,
@@ -191,7 +196,7 @@ $ssisx = "SsisExtractor\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe"
 
 # 1. Survey the whole portfolio once -- lists every package name, complexity, and how many
 #    would generate cleanly today. Safe to run against everything; writes nothing but reports.
-& $ssisx report --input <client-folder> --out out --recursive
+& $ssisx extract --input <client-folder> --out out --recursive
 
 # 2. Generate ONE named package (the normal case) -- --etl-core and --fills are BOTH required
 #    every time, no exceptions: omit --etl-core and it will not build; omit --fills and any

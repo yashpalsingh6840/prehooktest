@@ -48,7 +48,7 @@ registered and where it runs.
 | Kind | SSIS component / entity | Generated method (full signature) |
 |---|---|---|
 | Source | FF_SRC_Employees | `internal IRowSource<EmployeeCsvRow> FF_SRC_Employees()` |
-| Sink | Employee | `internal IBulkSink<Employee> EmployeeDestination()` |
+| Sink | OLEDST_Employee | `internal IBulkSink<Employee> OLEDST_Employee()` |
 
 ## Test coverage notes
 
