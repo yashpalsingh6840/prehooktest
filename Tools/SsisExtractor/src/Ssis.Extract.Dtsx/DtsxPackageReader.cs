@@ -24,7 +24,7 @@ public static partial class DtsxPackageReader
     private static readonly XNamespace Dts = "www.microsoft.com/SqlServer/Dts";
     private static readonly XNamespace SqlTask = "www.microsoft.com/sqlserver/dts/tasks/sqltask";
 
-    public static PackageSpec Read(string path, bool noRedact)
+    public static PackageSpec Read(string path, bool noRedact, IReadOnlyList<ConnectionManagerSpec>? projectConnectionManagers = null)
     {
         var doc = XDocument.Load(path, LoadOptions.PreserveWhitespace);
         var root = doc.Root ?? throw new InvalidDataException($"{path}: no root element");
@@ -41,9 +41,22 @@ public static partial class DtsxPackageReader
         var unmapped = new List<UnmappedFragment>();
         var coverage = new CoverageAccumulator();
 
-        var connectionManagers = (root.Element(Dts + "ConnectionManagers")?.Elements(Dts + "ConnectionManager") ?? [])
+        var packageConnectionManagers = (root.Element(Dts + "ConnectionManagers")?.Elements(Dts + "ConnectionManager") ?? [])
             .Select(cmEl => ReadConnectionManager(cmEl, noRedact))
             .ToList();
+        // A project-scoped connection manager (a standalone .conmgr file, referenced from the
+        // .dtproj manifest rather than embedded in this .dtsx) is visible to every package in
+        // the project -- the same way SSIS itself makes it available regardless of whether a
+        // given package actually uses it (CLAUDE.md's own "Sensitive credential" section
+        // documents the identical behavior for auto-split connection parameters: an unused
+        // connection manager gets one too). So every project CM the caller (PackageLoader, via
+        // DtprojReader) resolved is folded in here unconditionally, each still correctly tagged
+        // Scope: "Project" -- not filtered down to "only the ones this package references",
+        // which would need a second pass scanning every payload type for a connection
+        // reference and risks silently missing one.
+        var connectionManagers = projectConnectionManagers is { Count: > 0 }
+            ? packageConnectionManagers.Concat(projectConnectionManagers).ToList()
+            : packageConnectionManagers;
         var cmDtsIdToName = connectionManagers
             .Where(cm => cm.DtsId is not null)
             .ToDictionary(cm => cm.DtsId!, cm => cm.ObjectName);
@@ -745,7 +758,16 @@ public static partial class DtsxPackageReader
     // internal (not private), same reasoning as ReadFileSystemTask/ReadScriptTask above: a
     // direct unit test via InternalsVisibleTo, for a shape (DPAPI ciphertext) no synthetic
     // fixture builder can easily produce.
-    internal static ConnectionManagerSpec ReadConnectionManager(XElement cmEl, bool noRedact)
+    //
+    // <paramref name="scope"/>/<paramref name="refIdOverride"/> exist for the project-scoped
+    // (.conmgr) case: a standalone .conmgr file's root <DTS:ConnectionManager> element is
+    // byte-for-byte the same schema as a package-embedded one (confirmed directly against
+    // real GitHub SSIS portfolios), but it carries no DTS:refId of its own (that path shape,
+    // "Project.ConnectionManagers[{Name}]", is synthesized by the caller -- DtprojReader --
+    // and only ever appears inside a .dtsx's own pipeline/task XML, never inside the .conmgr
+    // file itself). The two package-embedded call sites (this file, and the direct unit tests
+    // in SyntheticFixtureTests) keep the defaults unchanged.
+    internal static ConnectionManagerSpec ReadConnectionManager(XElement cmEl, bool noRedact, string scope = "Package", string? refIdOverride = null)
     {
         var creationName = cmEl.Attr(Dts + "CreationName") ?? "";
         var objectData = cmEl.Element(Dts + "ObjectData")?.Element(Dts + "ConnectionManager");
@@ -779,11 +801,11 @@ public static partial class DtsxPackageReader
         return new ConnectionManagerSpec
         {
             ObjectName = cmEl.Attr(Dts + "ObjectName") ?? "",
-            RefId = cmEl.Attr(Dts + "refId"),
+            RefId = refIdOverride ?? cmEl.Attr(Dts + "refId"),
             DtsId = cmEl.Attr(Dts + "DTSID"),
             Description = cmEl.Attr(Dts + "Description"),
             CreationName = creationName,
-            Scope = "Package", // every connection manager inside a .dtsx is package-scoped by definition; project-scoped ones live in .conmgr files referenced from .dtproj (none in this PoC)
+            Scope = scope, // "Package" for a .dtsx-embedded <DTS:ConnectionManager>; "Project" when read from a standalone .conmgr file via DtprojReader
             ConnectionString = redactedConnString,
             UnredactedConnectionString = noRedact ? rawConnString : null,
             WasRedacted = hadPassword,

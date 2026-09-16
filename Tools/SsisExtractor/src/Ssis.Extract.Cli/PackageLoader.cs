@@ -225,7 +225,7 @@ internal static class PackageLoader
                  .ToList();
 
     /// <summary>Reads one package, recording rather than propagating a failure. Returns true if it loaded.</summary>
-    private static bool LoadDtsx(LoadResult result, string dtsxPath, bool noRedact)
+    private static bool LoadDtsx(LoadResult result, string dtsxPath, bool noRedact, IReadOnlyList<Ssis.Extract.Model.Shared.ConnectionManagerSpec>? projectConnectionManagers = null)
     {
         var fullPath = Path.GetFullPath(dtsxPath);
         // Marked BEFORE the read, not after: a failed package must still count as seen, or
@@ -234,7 +234,7 @@ internal static class PackageLoader
         result.AttemptedDtsxPaths.Add(fullPath);
         try
         {
-            result.Packages.Add(DtsxPackageReader.Read(dtsxPath, noRedact));
+            result.Packages.Add(DtsxPackageReader.Read(dtsxPath, noRedact, projectConnectionManagers));
             return true;
         }
         catch (Exception ex)
@@ -253,7 +253,7 @@ internal static class PackageLoader
         ProjectSpec project;
         try
         {
-            project = DtprojReader.Read(dtprojPath, File.Exists(projectParamsPath) ? projectParamsPath : null);
+            project = DtprojReader.Read(dtprojPath, File.Exists(projectParamsPath) ? projectParamsPath : null, noRedact);
         }
         catch (Exception ex)
         {
@@ -279,7 +279,7 @@ internal static class PackageLoader
                 Console.Error.WriteLine($"warning: {pkgEntry.Name} listed in {Path.GetFileName(dtprojPath)} but not found at {dtsxPath} -- skipped");
                 continue;
             }
-            LoadDtsx(result, dtsxPath, noRedact);
+            LoadDtsx(result, dtsxPath, noRedact, project.ConnectionManagers);
         }
     }
 
