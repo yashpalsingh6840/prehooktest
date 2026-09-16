@@ -8091,6 +8091,47 @@ summary line for this step now annotates exit 2 explicitly
 that already had a passing test project) as a no-regression check — identical exit 0, identical
 gap counts, `coverage-report.md` unchanged in shape.
 
+### The remaining 6 of the 9 GitHub portfolios, verified for the first time (2026-09-16, same day)
+
+Immediately after the `Run-Coverage.ps1` fix above, ran the same Step D-style verification
+(`Run-Pipeline.ps1 -Quiet -Framework net10.0`) against the 6 portfolios never re-run in the earlier
+round: `DataWareHouse_SSIS`, `Datawarehouse_ETL_SSIS_end-to-end_Project`, `ETL_DWH_WITH_SSIS`,
+`mssql-ssis-community-samples`, `sql-server-samples`, `ssis-etl-sql-reporting` (the latter two with
+a narrowed `-InputPath` pointing at the actual SSIS project subfolder, per this session's own
+earlier convention for those two large, mostly-unrelated repos). Full per-portfolio table and gap
+detail in `D:\PoC\SSIS_Packages_From_GitHub\Output\BATCH-SUMMARY.md`, extended in place rather than
+duplicated.
+
+**All 6 built with 0 warnings/0 errors, none crashed** — confirming the `Run-Coverage.ps1` fix on 4
+independent real cases beyond the 2 already verified above (all 4 hit the "0 packages fully
+generated" path and completed cleanly instead of dying mid-script). Every Tier-3 gap across all 6
+is precisely named, never a crash or a silent guess — including a genuine live confirmation of two
+already-built features on real third-party packages neither had been checked against before:
+`ETL_DWH_WITH_SSIS`'s own disabled Execute SQL Task correctly produces the non-blocking
+"skips a disabled executable" advisory (the 2026-08-31 fix), and a Conditional Split routed through
+an OLE DB Command before a destination in `DataWareHouse_SSIS` is correctly named as its own
+distinct, unsupported shape rather than silently mis-generated. Two portfolios reached genuinely
+passing generated tests: `Datawarehouse_ETL_SSIS_end-to-end_Project` (4 packages PASS,
+90.7–92.7% own-code coverage on 3 of the 4) and `ssis-etl-sql-reporting` (1 package PASS, 90.7%).
+
+**A real, undiagnosed-further characteristic was found, not a bug fixed this round**:
+`sql-server-samples`'s `DailyETLMain` wrote 53 production files and 106 individual starter test
+files (per-statement/per-step tests, which don't need the whole package wired) but **no
+`DailyETLMain.Tests.csproj`** exists anywhere to build them — `Run-Coverage.ps1` correctly reports
+"no test projects" rather than crashing, but the 106 `.cs` files sit on disk unbuildable. Named in
+`BATCH-SUMMARY.md` as a real follow-up candidate, not investigated further this round.
+
+**A path-escaping mistake was made and caught mid-run, not shipped**: the first attempt at this
+6-portfolio loop used `-OutputPath "...\Output\$name"` in a bash `for` loop — bash's own
+double-quote rule turns `\$` into a literal `$` with the variable left unexpanded, so every
+portfolio's `-OutputPath` resolved to the SAME literal stray sibling folder
+(`SSIS_Packages_From_GitHub\Output$name`), each run overwriting the last. Caught before writing
+any summary (cross-checked `Get-ChildItem` directly against what the terminal was echoing), the
+stray folder was confirmed to hold nothing but disposable, regenerate-on-demand pipeline output
+(no user data) and deleted, and the loop was rebuilt using forward slashes throughout (accepted
+natively by Windows, `ssisx`, `dotnet`, and PowerShell's own path cmdlets), then re-run cleanly.
+The results above are from the corrected run.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,
