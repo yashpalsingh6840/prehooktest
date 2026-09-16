@@ -8064,6 +8064,33 @@ D's own scope was specifically the 3 portfolios Fix A/B were built to unblock); 
 `Run-Coverage.ps1` termination bug just found; Phase B (AI-assisted gap filling) against any of the
 3 — still explicitly held per the user's own standing instruction.
 
+### `Run-Coverage.ps1`'s termination bug, fixed (2026-09-16, later the same day)
+
+Closed the bug named at the end of the round above. `Run-Coverage.ps1` used
+`Write-Error "No {Package}.Tests.csproj found..." -ErrorAction Stop` for the "0 packages fully
+generated, so no test project exists at all" case — a genuinely normal outcome for a real-world
+portfolio, not a script misuse. `-ErrorAction Stop` throws a *terminating* error, and calling this
+script via `& $coverageScript ...` (as `Run-Pipeline.ps1` does) does not isolate that: an unhandled
+terminating error unwinds straight through the `&` call and kills the CALLING script too, before
+it ever reaches its own final summary/gap-by-tier block. Hit for real on 2 of the 3 portfolios in
+the round above.
+
+**Fix**: the "no test projects" case is no longer a terminating error. `Run-Coverage.ps1` now
+writes a `Warning`, writes a `coverage-report.md` stating plainly that 0 packages fully generated
+and pointing at `generate-report.md` for why, and exits with a new, distinct code — **2** (0 =
+every test passed, 1 = at least one test failed, 2 = nothing to test at all) — a plain exit code,
+not a thrown exception, so a caller can read it and continue. `Run-Pipeline.ps1`'s own final
+summary line for this step now annotates exit 2 explicitly
+("no test projects -- 0 packages fully generated"), the same style the summary already uses for
+`generate`'s own exit 3 and `apply-fills`' own exit 3.
+
+**Verified against exactly the two real cases that crashed before**: re-ran
+`SSIS-Data-Warehouse-ETL-Pipeline` and `Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline`
+— both now complete without crashing, printing their full summary including the gap-by-tier line
+(previously lost entirely). Re-ran `E-Commerce-Datawarehouse-implementation` (the one portfolio
+that already had a passing test project) as a no-regression check — identical exit 0, identical
+gap counts, `coverage-report.md` unchanged in shape.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

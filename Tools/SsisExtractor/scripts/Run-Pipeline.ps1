@@ -272,7 +272,7 @@ Write-Host "     sampledata   : exit $sampledataExit (advisory)"
 Write-Host "  3. generate     : exit $generateExit $(if ($generateExit -eq 3) {'(gaps reported -- see generate-report.md)'})"
 Write-Host "  4. apply-fills  : exit $applyFillsExit $(if ($applyFillsExit -eq 3) {'(seams still open)'})"
 Write-Host "  5. build        : exit $buildExit"
-Write-Host "     test+coverage: exit $coverageExit -- see $generateDir\coverage-report.md"
+Write-Host "     test+coverage: exit $coverageExit $(if ($coverageExit -eq 2) {'(no test projects -- 0 packages fully generated)'}) -- see $generateDir\coverage-report.md"
 
 # Gap counts by tier, parsed once here from gaps.json -- so a caller (especially an agent) never
 # needs a SEPARATE Read of that file just to get this number. MissingDatum/MissingLogic are the
