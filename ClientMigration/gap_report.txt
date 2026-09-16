@@ -1,0 +1,182 @@
+====================================================================================================
+COMPONENT TYPES NOT IN known_client_side_component_types.txt
+====================================================================================================
+
+--- Attunity.CdcSourceComponent  (4 package instance(s)) ---
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\INCREMENTAL.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\Package1.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\obj\Development\INCREMENTAL.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\obj\Development\Package1.dtsx
+
+--- Attunity.CdcSplitterComponent  (4 package instance(s)) ---
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\INCREMENTAL.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\Package1.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\obj\Development\INCREMENTAL.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\obj\Development\Package1.dtsx
+
+--- Extracts data from an XML data file.  (2 package instance(s)) ---
+    mssql-ssis-community-samples\main\BizTalkIntegration\Sample1\Sample1.dtsx
+    mssql-ssis-community-samples\main\BizTalkIntegration\Sample2\Sample2.dtsx
+
+--- Flat File Destination  (2 package instance(s)) ---
+    mssql-ssis-community-samples\main\BizTalkIntegration\Sample1\Sample1.dtsx
+    mssql-ssis-community-samples\main\BizTalkIntegration\Sample2\Sample2.dtsx
+
+--- Microsoft.CopyMap  (4 package instance(s)) ---
+    ETL-SSIS-Real-Scenarios\UseCase_24\24 How to use multiple transformation in a SSIS package\24 How to use multiple transformation in a SSIS package\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_24\24 How to use multiple transformation in a SSIS package\24 How to use multiple transformation in a SSIS package\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_35\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_35\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+
+--- Microsoft.PctSampling  (2 package instance(s)) ---
+    ETL-SSIS-Real-Scenarios\UseCase_89\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_89\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+
+--- Microsoft.SCD  (23 package instance(s)) ---
+    E-Commerce-Datawarehouse-implementation\SSIS\Integration Services Project2\DateDimensionImport.dtsx
+    E-Commerce-Datawarehouse-implementation\SSIS\Integration Services Project2\Product_ratingfact.dtsx
+    E-Commerce-Datawarehouse-implementation\SSIS\Integration Services Project2\Sales_fact.dtsx
+    E-Commerce-Datawarehouse-implementation\SSIS\Integration Services Project2\Stage_to_DW_Sales_all_dimensions.dtsx
+    E-Commerce-Datawarehouse-implementation\SSIS\Integration Services Project2\obj\Development\DateDimensionImport.dtsx
+    E-Commerce-Datawarehouse-implementation\SSIS\Integration Services Project2\obj\Development\Product_ratingfact.dtsx
+    E-Commerce-Datawarehouse-implementation\SSIS\Integration Services Project2\obj\Development\Sales_fact.dtsx
+    E-Commerce-Datawarehouse-implementation\SSIS\Integration Services Project2\obj\Development\Stage_DW.dtsx
+    E-Commerce-Datawarehouse-implementation\SSIS\Integration Services Project2\obj\Development\Stage_to_DW_Sales_all_dimensions.dtsx
+    E-Commerce-Datawarehouse-implementation\SSIS\Integration Services Project2\obj\Development\Stage_to_DW_all_dimensions.dtsx
+    ETL-SSIS-Real-Scenarios\SALES_DATA_MART\sales-data-mart-master\Adventure Works DWH\Adventure Works ETL\01. Dim Customer ETL.dtsx
+    ETL-SSIS-Real-Scenarios\SALES_DATA_MART\sales-data-mart-master\Adventure Works DWH\Adventure Works ETL\02. Dim Product ETL.dtsx
+    ETL-SSIS-Real-Scenarios\SALES_DATA_MART\sales-data-mart-master\Adventure Works DWH\Adventure Works ETL\obj\Development\01. Dim Customer ETL.dtsx
+    ETL-SSIS-Real-Scenarios\SALES_DATA_MART\sales-data-mart-master\Adventure Works DWH\Adventure Works ETL\obj\Development\01. Dim Product ETL.dtsx
+    ETL-SSIS-Real-Scenarios\SALES_DATA_MART\sales-data-mart-master\Adventure Works DWH\Adventure Works ETL\obj\Development\02. Dim Product ETL.dtsx
+    ETL-SSIS-Real-Scenarios\SCD SSIS\SCD DEMO PACKAGE\Integration Services Project2\SCD.dtsx
+    ETL-SSIS-Real-Scenarios\SCD SSIS\SCD DEMO PACKAGE\Integration Services Project2\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\SCD SSIS\SCD DEMO PACKAGE\Integration Services Project2\obj\Development\SCD.dtsx
+    SSIS-Data-Warehouse-ETL-Pipeline\SSISPackages\dimensions\customer_dim.dtsx
+    SSIS-Data-Warehouse-ETL-Pipeline\SSISPackages\dimensions\shipping_dim.dtsx
+    Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline\Integration Services Project1\03_Dim_Sales_Man.dtsx
+    Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline\Integration Services Project1\dimcustomer.dtsx
+    Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline\Integration Services Project1\dimproduct.dtsx
+
+--- Microsoft.XmlSourceAdapter  (2 package instance(s)) ---
+    ETL-SSIS-Real-Scenarios\UseCase_73\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_73\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+
+--- ZappySys.JsonSource  (1 package instance(s)) ---
+    DataWareHouse_SSIS\Q1.dtsx
+
+--- {2E42D45B-F83C-400F-8D77-61DDE6A7DF29}  (1 package instance(s)) ---
+    mssql-ssis-community-samples\main\SharePointListAdapters\Samples\SampleSSISAdapterProject\Package.dtsx
+
+====================================================================================================
+TASK TYPES NOT IN known_client_side_component_types.txt
+====================================================================================================
+
+--- Attunity.CdcControlTask  (8 package instance(s)) ---
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\INCREMENTAL.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\Package1.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\initial.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\obj\Development\INCREMENTAL.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\obj\Development\Package1.dtsx
+    ETL-SSIS-Real-Scenarios\CDC\Integration Services Project1\Integration Services Project1\obj\Development\initial.dtsx
+
+--- DTS.Pipeline.1  (2 package instance(s)) ---
+    mssql-ssis-community-samples\main\BizTalkIntegration\Sample1\Sample1.dtsx
+    mssql-ssis-community-samples\main\BizTalkIntegration\Sample2\Sample2.dtsx
+
+--- MSDTS.Package.1  (2 package instance(s)) ---
+    mssql-ssis-community-samples\main\BizTalkIntegration\Sample1\Sample1.dtsx
+    mssql-ssis-community-samples\main\BizTalkIntegration\Sample2\Sample2.dtsx
+
+--- Microsoft.ExpressionTask  (1 package instance(s)) ---
+    sql-server-samples\samples\databases\wide-world-importers\wwi-ssis\wwi-ssis\DailyETLMain.dtsx
+
+--- Microsoft.SqlServer.Dts.Tasks.ScriptTask.ScriptTask, Microsoft.SqlServer.ScriptTask, Version=9.0.242.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91  (2 package instance(s)) ---
+    mssql-ssis-community-samples\main\BizTalkIntegration\Sample1\Sample1.dtsx
+    mssql-ssis-community-samples\main\BizTalkIntegration\Sample2\Sample2.dtsx
+
+--- Microsoft.TransferSqlServerObjectsTask  (2 package instance(s)) ---
+    ETL-SSIS-Real-Scenarios\UseCase_55\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_55\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+
+--- SSIS.Package.2  (1 package instance(s)) ---
+    mssql-ssis-community-samples\main\SharePointListAdapters\Samples\SampleSSISAdapterProject\Package.dtsx
+
+--- SSIS.Pipeline.2  (1 package instance(s)) ---
+    mssql-ssis-community-samples\main\SharePointListAdapters\Samples\SampleSSISAdapterProject\Package.dtsx
+
+--- STOCK:FOREACHLOOP  (42 package instance(s)) ---
+    Datawarehouse_ETL_SSIS_end-to-end_Project\DSTI_EXAM_PROJECT\STA_Orders.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase100\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase100\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase98\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_07\07 Dynamically Execute Package\07 Dynamically Execute Package\ParentPackage.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_07\07 Dynamically Execute Package\07 Dynamically Execute Package\obj\Development\ParentPackage.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_22\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_22\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_23\Integration Services Project1\Integration Services Project1\Package (1).dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_23\Integration Services Project1\Integration Services Project1\obj\Development\Package (1).dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_29\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_29\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_33\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_33\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_36\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_36\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_40\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_40\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_43\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_43\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_46\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_46\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_49\Integration Services Project2\Integration Services Project2\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_49\Integration Services Project2\Integration Services Project2\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_51\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_51\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_65\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_65\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_82\Integration Services Project1\Integration Services Project1\get date from filename.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_82\Integration Services Project1\Integration Services Project1\obj\Development\get date from filename.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_83\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_83\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_88\Integration Services Project1\Integration Services Project1\Export 50000 records to multiple csv files.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_88\Integration Services Project1\Integration Services Project1\obj\Development\Export 50000 records to multiple csv files.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_90\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_90\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_91\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_91\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_92\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_92\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_95\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_95\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+
+--- STOCK:FORLOOP  (4 package instance(s)) ---
+    ETL-SSIS-Real-Scenarios\UseCase_25\25 Import files in an order using ssis\25 Import files in an order using ssis\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_25\25 Import files in an order using ssis\25 Import files in an order using ssis\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_34\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_34\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+
+--- STOCK:SEQUENCE  (15 package instance(s)) ---
+    Datawarehouse_ETL_SSIS_end-to-end_Project\DSTI_EXAM_PROJECT\ETL.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_08\08 Incremental data load in SSIS\08 Incremental data load in SSIS\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_08\08 Incremental data load in SSIS\08 Incremental data load in SSIS\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_21\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_21\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_27\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_27\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_62\62 How to do performance tuning in SSIS\62 How to do performance tuning in ssis\62 How to do performance tuning in ssis\Package 1.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_62\62 How to do performance tuning in SSIS\62 How to do performance tuning in ssis\62 How to do performance tuning in ssis\Package 2.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_62\62 How to do performance tuning in SSIS\62 How to do performance tuning in ssis\62 How to do performance tuning in ssis\Package 3.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_62\62 How to do performance tuning in SSIS\62 How to do performance tuning in ssis\62 How to do performance tuning in ssis\Package 4.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_64\Integration Services Project1\Integration Services Project1\Package.dtsx
+    ETL-SSIS-Real-Scenarios\UseCase_64\Integration Services Project1\Integration Services Project1\obj\Development\Package.dtsx
+    ETL_DWH_WITH_SSIS\SSIS Files\SourcePackage.dtsx
+    sql-server-samples\samples\databases\wide-world-importers\wwi-ssis\wwi-ssis\DailyETLMain.dtsx
+
+====================================================================================================
+SUMMARY
+====================================================================================================
+Distinct component types found : 27
+  -> not in known list         : 10
+Distinct task types found      : 17
+  -> not in known list         : 11

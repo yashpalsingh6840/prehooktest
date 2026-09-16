@@ -1,0 +1,552 @@
+﻿category,item,canonical,package,object_name,language,source_present,vendor_contact,notes
+package,Q1,,Q1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Q2,,Q2,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Q3,,Q3,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH - FactOrders 1,,DWH - FactOrders 1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH - FactOrders 2,,DWH - FactOrders 2,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH - FactOrders 2_new_idea,,DWH - FactOrders 2_new_idea,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH - FactOrders 3,,DWH - FactOrders 3,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH - FactOrders 4,,DWH - FactOrders 4,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH - FactOrders,,DWH - FactOrders,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH_DimCustomers,,DWH_DimCustomers,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH_DimGeolocation,,DWH_DimGeolocation,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH_DimOrderItems,,DWH_DimOrderItems,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH_DimProducts 1,,DWH_DimProducts 1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH_DimProducts,,DWH_DimProducts,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH_DimReviews,,DWH_DimReviews,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DWH_DimSellers,,DWH_DimSellers,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,ETL,,ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,ODS_Customers,,ODS_Customers,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,ODS_Geolocation,,ODS_Geolocation,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,ODS_OrderItems,,ODS_OrderItems,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,ODS_OrderPayments,,ODS_OrderPayments,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,ODS_OrderReviews,,ODS_OrderReviews,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,ODS_Orders,,ODS_Orders,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,ODS_ProductCategory,,ODS_ProductCategory,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,ODS_Products,,ODS_Products,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,ODS_Sellers,,ODS_Sellers,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,STA_Customers,,STA_Customers,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,STA_Geolocation,,STA_Geolocation,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,STA_OrderItems,,STA_OrderItems,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,STA_OrderPayments,,STA_OrderPayments,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,STA_OrderReviews,,STA_OrderReviews,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,STA_Orders,,STA_Orders,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,STA_Product_Category,,STA_Product_Category,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,STA_Products,,STA_Products,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,STA_Sellers,,STA_Sellers,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DateDimensionImport,,DateDimensionImport,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Product_ratingfact,,Product_ratingfact,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Sales_fact,,Sales_fact,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Source_to_Stage_Sales_all_dimensions,,Source_to_Stage_Sales_all_dimensions,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Source_to_Stage_productrating_dim,,Source_to_Stage_productrating_dim,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Stage_to_DW_Sales_all_dimensions,,Stage_to_DW_Sales_all_dimensions,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,DateDimensionImport,,DateDimensionImport,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Product_ratingfact,,Product_ratingfact,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Sales_fact,,Sales_fact,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Source_to_Stage,,Source_to_Stage,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Source_to_Stage_Sales_all_dimensions,,Source_to_Stage_Sales_all_dimensions,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Source_to_Stage_all_dimensions,,Source_to_Stage_all_dimensions,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Source_to_Stage_productrating_dim,,Source_to_Stage_productrating_dim,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Stage_DW,,Stage_DW,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Stage_to_DW_Sales_all_dimensions,,Stage_to_DW_Sales_all_dimensions,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Stage_to_DW_all_dimensions,,Stage_to_DW_all_dimensions,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,INCREMENTAL,,INCREMENTAL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package1,,Package1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,initial,,initial,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,INCREMENTAL,,INCREMENTAL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package1,,Package1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,initial,,initial,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,01. Dim Customer ETL,,01. Dim Customer ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,02. Dim Product ETL,,02. Dim Product ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,03. Dim Date ETL,,03. Dim Date ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,04. Dim Territory ETL,,04. Dim Territory ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,05. Fact Sales - Full Load,,05. Fact Sales - Full Load,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,05. Fact Sales - Incremental Load,,05. Fact Sales - Incremental Load,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=yes; txn=Supported(default/none)
+package,05. Fact Sales-Full Load,,05. Fact Sales-Full Load,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Master DWH ETL,,Master DWH ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Master Dims ETL,,Master Dims ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Master Facts ETL,,Master Facts ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,01. Dim Customer ETL,,01. Dim Customer ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,01. Dim Product ETL,,01. Dim Product ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,02. Dim Product ETL,,02. Dim Product ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,03. Dim Date ETL,,03. Dim Date ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,03. Dim Date ETL.dtsx,,03. Dim Date ETL.dtsx,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,04. Dim Territory ETL,,04. Dim Territory ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,05. Fact Sales - Full Load,,05. Fact Sales - Full Load,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,05. Fact Sales - Incremental Load,,05. Fact Sales - Incremental Load,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=yes; txn=Supported(default/none)
+package,Master DWH ETL,,Master DWH ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Master Dims ETL,,Master Dims ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Master Facts ETL,,Master Facts ETL,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,SCD,,SCD,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,SCD,,SCD,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,ChildPkg1,,ChildPkg1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,ChildPkg2,,ChildPkg2,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,ChildPkg3,,ChildPkg3,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,ParentPackage,,ParentPackage,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,ChildPkg1,,ChildPkg1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,ChildPkg2,,ChildPkg2,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,ChildPkg3,,ChildPkg3,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package1,,Package1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,ParentPackage,,ParentPackage,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Precedence constrainst in SSIS Define flow based on value from database,,Precedence constrainst in SSIS Define flow based on value from database,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Precedence constrainst in SSIS Define flow based on value from database,,Precedence constrainst in SSIS Define flow based on value from database,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package 1,,Package 1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package 1,,Package 1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package (1),,Package (1),,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package (1),,Package (1),,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Required
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Required
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package (1),,Package (1),,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package1,,Package1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package1,,Package1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package1,,Package1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package1,,Package1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Child1,,Child1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Child2,,Child2,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Parent,,Parent,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Child1,,Child1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Child2,,Child2,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Parent,,Parent,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package 1,,Package 1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package 2,,Package 2,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package 3,,Package 3,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package 4,,Package 4,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package 5,,Package 5,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=yes; disabled=no; txn=Supported(default/none)
+package,add an auto increment column in data flow in ssis,,add an auto increment column in data flow in ssis,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,load alternate records,,load alternate records,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,load alternate records,,load alternate records,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,get date from filename,,get date from filename,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,get date from filename,,get date from filename,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Load Email Table,,Load Email Table,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Load Product Table,,Load Product Table,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Load Email Table,,Load Email Table,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Load Product Table,,Load Product Table,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,top 100 records from one file to another,,top 100 records from one file to another,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Export 50000 records to multiple csv files,,Export 50000 records to multiple csv files,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Export 50000 records to multiple csv files,,Export 50000 records to multiple csv files,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=yes; disabled=no; txn=Supported(default/none)
+package,SourcePackage,,SourcePackage,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=yes; txn=Supported(default/none)
+package,address_dim,,address_dim,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,auth_book_dim,,auth_book_dim,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,author_dim,,author_dim,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,book_dim,,book_dim,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,customer_address_dim,,customer_address_dim,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,customer_dim,,customer_dim,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,order_history_status,,order_history_status,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,shipping_dim,,shipping_dim,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,fact_sales,,fact_sales,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,03_Dim_Sales_Man,,03_Dim_Sales_Man,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Fact,,Fact,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package1,,Package1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,dimcustomer,,dimcustomer,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,dimproduct,,dimproduct,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,Sample1,,Sample1,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Sample2,,Sample2,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,Package,,Package,,,,,format=2012+; protection=(absent - VERIFY); dataflows=no; scripts=no; disabled=no; txn=Supported(default/none)
+package,DailyETLMain,,DailyETLMain,,,,,format=2012+; protection=DontSaveSensitive; dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+package,SalesOrderImport,,SalesOrderImport,,,,,format=2012+; protection=(absent - VERIFY); dataflows=yes; scripts=no; disabled=no; txn=Supported(default/none)
+task_type,Attunity.CdcControlTask,,,,,,,e.g. INCREMENTAL; Package; Package1; initial
+task_type,DTS.Pipeline.1,,,,,,,e.g. Sample1; Sample2
+task_type,MSDTS.Package.1,,,,,,,e.g. Sample1; Sample2
+task_type,Microsoft.ExecutePackageTask,,,,,,,e.g. ETL; Master DWH ETL; Master Dims ETL; Master Facts ETL; Package ; ...
+task_type,Microsoft.ExecuteSQLTask,,,,,,,e.g. 03. Dim Date ETL; 05. Fact Sales - Full Load; 05. Fact Sales - Incremental Load; Child1; Child2 ; ...
+task_type,Microsoft.ExpressionTask,,,,,,,e.g. DailyETLMain
+task_type,Microsoft.FileSystemTask,,,,,,,e.g. Package
+task_type,Microsoft.Package,,,,,,,e.g. 01. Dim Customer ETL; 01. Dim Product ETL; 02. Dim Product ETL; 03. Dim Date ETL; 03. Dim Date ETL.dtsx ; ...
+task_type,Microsoft.Pipeline,,,,,,,e.g. 01. Dim Customer ETL; 01. Dim Product ETL; 02. Dim Product ETL; 03. Dim Date ETL; 03. Dim Date ETL.dtsx ; ...
+task_type,Microsoft.ScriptTask,,,,,,,e.g. Package; get date from filename
+task_type,"Microsoft.SqlServer.Dts.Tasks.ScriptTask.ScriptTask, Microsoft.SqlServer.ScriptTask, Version=9.0.242.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91",,,,,,,e.g. Sample1; Sample2
+task_type,Microsoft.TransferSqlServerObjectsTask,,,,,,,e.g. Package
+task_type,SSIS.Package.2,,,,,,,e.g. Package
+task_type,SSIS.Pipeline.2,,,,,,,e.g. Package
+task_type,STOCK:FOREACHLOOP,,,,,,,e.g. Export 50000 records to multiple csv files; Package; Package (1); ParentPackage; STA_Orders ; ...
+task_type,STOCK:FORLOOP,,,,,,,e.g. Package
+task_type,STOCK:SEQUENCE,,,,,,,e.g. DailyETLMain; ETL; Package; Package 1; Package 2 ; ...
+component_type,Attunity.CdcSourceComponent,,,,,,,e.g. INCREMENTAL; Package1
+component_type,Attunity.CdcSplitterComponent,,,,,,,e.g. INCREMENTAL; Package1
+component_type,Extracts data from an XML data file.,,,,,,,e.g. Sample1; Sample2
+component_type,Flat File Destination,,,,,,,e.g. Sample1; Sample2
+component_type,Microsoft.Aggregate,,,,,,,e.g. DWH - FactOrders 2_new_idea; DWH_DimGeolocation; DWH_DimOrderItems
+component_type,Microsoft.ConditionalSplit,,,,,,,e.g. Package; Package (1); Package1; Q2; Q3 ; ...
+component_type,Microsoft.CopyMap,,,,,,,e.g. Package
+component_type,Microsoft.DataConvert,,,,,,,e.g. 03. Dim Date ETL; 03. Dim Date ETL.dtsx; 03_Dim_Sales_Man; DWH - FactOrders; DWH - FactOrders 1 ; ...
+component_type,Microsoft.DerivedColumn,,,,,,,e.g. 01. Dim Customer ETL; 01. Dim Product ETL; 02. Dim Product ETL; 03_Dim_Sales_Man; 04. Dim Territory ETL ; ...
+component_type,Microsoft.ExcelSource,,,,,,,e.g. 03. Dim Date ETL; 03. Dim Date ETL.dtsx; Package
+component_type,Microsoft.FlatFileDestination,,,,,,,e.g. Export 50000 records to multiple csv files; Package; Package1; top 100 records from one file to another
+component_type,Microsoft.FlatFileSource,,,,,,,e.g. Load Email Table; Load Product Table; Package; Package (1); Package 1 ; ...
+component_type,Microsoft.Lookup,,,,,,,e.g. 01. Dim Customer ETL; 01. Dim Product ETL; 02. Dim Product ETL; 04. Dim Territory ETL; 05. Fact Sales - Full Load ; ...
+component_type,Microsoft.MergeJoin,,,,,,,e.g. 05. Fact Sales - Full Load; 05. Fact Sales - Incremental Load; SourcePackage
+component_type,Microsoft.Multicast,,,,,,,e.g. DWH - FactOrders; DWH - FactOrders 1; DWH - FactOrders 2; DWH - FactOrders 2_new_idea; DWH - FactOrders 3 ; ...
+component_type,Microsoft.OLEDBCommand,,,,,,,e.g. 01. Dim Customer ETL; 01. Dim Product ETL; 02. Dim Product ETL; 03_Dim_Sales_Man; DateDimensionImport ; ...
+component_type,Microsoft.OLEDBDestination,,,,,,,e.g. 01. Dim Customer ETL; 01. Dim Product ETL; 02. Dim Product ETL; 03. Dim Date ETL; 03. Dim Date ETL.dtsx ; ...
+component_type,Microsoft.OLEDBSource,,,,,,,e.g. 01. Dim Customer ETL; 01. Dim Product ETL; 02. Dim Product ETL; 03_Dim_Sales_Man; 04. Dim Territory ETL ; ...
+component_type,Microsoft.PctSampling,,,,,,,e.g. Package
+component_type,Microsoft.RowCount,,,,,,,e.g. Package; Package (1)
+component_type,Microsoft.SCD,,,,,,,e.g. 01. Dim Customer ETL; 01. Dim Product ETL; 02. Dim Product ETL; 03_Dim_Sales_Man; DateDimensionImport ; ...
+component_type,Microsoft.ScriptComponentHost,,,,,,,e.g. Package; add an auto increment column in data flow in ssis; load alternate records; top 100 records from one file to another
+component_type,Microsoft.Sort,,,,,,,e.g. Package; SourcePackage
+component_type,Microsoft.UnionAll,,,,,,,e.g. 01. Dim Customer ETL; 01. Dim Product ETL; 02. Dim Product ETL; 03_Dim_Sales_Man; DWH - FactOrders ; ...
+component_type,Microsoft.XmlSourceAdapter,,,,,,,e.g. Package
+component_type,ZappySys.JsonSource,,,,,,,e.g. Q1
+component_type,{2E42D45B-F83C-400F-8D77-61DDE6A7DF29},,,,,,,e.g. Package
+component_by_clsid,{2E42D45B-F83C-400F-8D77-61DDE6A7DF29},{2E42D45B-F83C-400F-8D77-61DDE6A7DF29},,,,,(none),e.g. Package
+component_by_clsid,{A1DF9F6D-8EE4-4EF0-BB2E-D526130D7A7B},Flat File Destination,,,,,Microsoft Corporation,e.g. Sample1; Sample2
+component_by_clsid,{BF01D463-7089-41EE-8F05-0A6DC17CE633},Extracts data from an XML data file.,,,,,Microsoft Corporation,e.g. Sample1; Sample2
+component_THIRD_PARTY,Attunity.CdcSourceComponent [All Rights Reserved],,,,,,,e.g. INCREMENTAL; Package1
+component_THIRD_PARTY,Attunity.CdcSplitterComponent [All Rights Reserved],,,,,,,e.g. INCREMENTAL; Package1
+component_THIRD_PARTY,ZappySys.JsonSource [ZappySys LLC (c) All Rights Reserved],,,,,,,e.g. Q1
+component_THIRD_PARTY,{2E42D45B-F83C-400F-8D77-61DDE6A7DF29} [vendor unknown],,,,,,,e.g. Package
+connection_type,"ADO.NET:System.Data.SqlClient.SqlConnection, System.Data, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",,,,,,,STOCK; e.g. Package
+connection_type,EXCEL,,,,,,,STOCK; e.g. 03. Dim Date ETL; 03. Dim Date ETL.dtsx; Package
+connection_type,FILE,,,,,,,STOCK; e.g. ParentPackage
+connection_type,FLATFILE,,,,,,,STOCK; e.g. Export 50000 records to multiple csv files; Load Email Table; Load Product Table; Package; Package (1) ; ...
+connection_type,OLEDB,,,,,,,STOCK; e.g. Child1; Child2; ChildPkg1; ChildPkg2; ChildPkg3 ; ...
+connection_type,SMOServer,,,,,,,STOCK; e.g. Package
+script,ScriptTask,,Package,Call Stored Procedure,CSharp,yes,,loc=49; file=ScriptMain.cs
+script,ScriptTask,,Package,Call Stored Procedure,CSharp,yes,,loc=49; file=ScriptMain.cs
+script,ScriptTask,,Package,Check IF Good File,CSharp,yes,,loc=56; file=ScriptMain.cs
+script,ScriptTask,,Package,Check IF Good File,CSharp,yes,,loc=56; file=ScriptMain.cs
+script,ScriptTask,,Package,Check if file Modified Today,CSharp,yes,,loc=43; file=ScriptMain.cs
+script,ScriptTask,,Package,Check if file Modified Today,CSharp,yes,,loc=43; file=ScriptMain.cs
+script,ScriptTask,,Package,Delete older files,CSharp,yes,,loc=41; file=ScriptMain.cs
+script,ScriptTask,,Package,Export Data To CSV,CSharp,yes,,loc=57; file=ScriptMain.cs
+script,ScriptTask,,Package,Export Data To CSV,CSharp,yes,,loc=57; file=ScriptMain.cs
+script,ScriptTask,,Package,GET FIEL SIZE,CSharp,yes,,loc=36; file=ScriptMain.cs
+script,ScriptTask,,Package,GET FIEL SIZE,CSharp,yes,,loc=36; file=ScriptMain.cs
+script,ScriptTask,,Package,GET TOTAL FILES,CSharp,yes,,loc=33; file=ScriptMain.cs
+script,ScriptTask,,Package,GET TOTAL FILES,CSharp,yes,,loc=33; file=ScriptMain.cs
+script,ScriptTask,,Package,Package Completed Send Email,CSharp,yes,,loc=56; file=ScriptMain.cs
+script,ScriptTask,,Package,Package Completed Send Email,CSharp,yes,,loc=56; file=ScriptMain.cs
+script,ScriptTask,,Package,Package Started Send Email,CSharp,yes,,loc=56; file=ScriptMain.cs
+script,ScriptTask,,Package,Package Started Send Email,CSharp,yes,,loc=56; file=ScriptMain.cs
+script,ScriptTask,,Package,Reject Email,CSharp,yes,,loc=68; file=ScriptMain.cs
+script,ScriptTask,,Package,SEND EMAIL,CSharp,yes,,loc=56; file=ScriptMain.cs
+script,ScriptTask,,Package,SEND EMAIL,CSharp,yes,,loc=56; file=ScriptMain.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=48; file=raw0.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=106; file=raw1.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=52; file=raw2.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=149; file=raw3.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=13; file=raw4.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=86; file=raw5.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=20; file=raw6.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=11; file=raw7.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=7; file=raw8.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=35; file=raw9.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=48; file=raw0.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=106; file=raw1.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=52; file=raw2.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=149; file=raw3.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=13; file=raw4.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=86; file=raw5.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=20; file=raw6.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=11; file=raw7.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=7; file=raw8.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=35; file=raw9.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=48; file=raw0.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=106; file=raw1.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=45; file=raw2.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=76; file=raw3.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=13; file=raw4.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=86; file=raw5.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=20; file=raw6.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=11; file=raw7.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=7; file=raw8.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=35; file=raw9.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=48; file=raw0.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=106; file=raw1.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=45; file=raw2.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=76; file=raw3.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=13; file=raw4.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=86; file=raw5.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=20; file=raw6.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=11; file=raw7.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=7; file=raw8.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=35; file=raw9.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=48; file=raw0.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=106; file=raw1.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=32; file=raw2.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=40; file=raw3.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=13; file=raw4.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=86; file=raw5.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=20; file=raw6.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=11; file=raw7.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=7; file=raw8.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=35; file=raw9.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=32; file=raw0.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=106; file=raw1.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=87; file=raw2.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=48; file=raw3.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=13; file=raw4.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=48; file=raw5.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=20; file=raw6.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=11; file=raw7.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=7; file=raw8.cs
+script,ScriptComponent,,Package,Script Component,CSharp,yes,,loc=35; file=raw9.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=52; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=52; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=76; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=33; file=SftpClient.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=62; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=62; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=43; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=59; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=74; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=74; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=42; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=42; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=72; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=72; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=56; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=95; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=51; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=57; file=ScriptMain.cs
+script,ScriptTask,,Package,Script Task,CSharp,yes,,loc=57; file=ScriptMain.cs
+script,ScriptTask,,Package,Send Error Mesage,CSharp,yes,,loc=56; file=ScriptMain.cs
+script,ScriptTask,,Package,Send Error Mesage,CSharp,yes,,loc=56; file=ScriptMain.cs
+script,ScriptTask,,Package,delete more than 3 months older files except month end files,CSharp,yes,,loc=49; file=ScriptMain.cs
+script,ScriptTask,,Package,delete more than 3 months older files except month end files,CSharp,yes,,loc=49; file=ScriptMain.cs
+script,ScriptTask,,Package,get num of records,CSharp,yes,,loc=35; file=ScriptMain.cs
+script,ScriptTask,,Package,get num of records,CSharp,yes,,loc=35; file=ScriptMain.cs
+script,ScriptTask,,Package,get oldest file,CSharp,yes,,loc=49; file=ScriptMain.cs
+script,ScriptTask,,Package,get oldest file,CSharp,yes,,loc=49; file=ScriptMain.cs
+script,ScriptTask,,Package,send unmatched data,CSharp,yes,,loc=78; file=ScriptMain.cs
+script,ScriptTask,,Package,send unmatched data,CSharp,yes,,loc=78; file=ScriptMain.cs
+script,ScriptComponent,,add an auto increment column in data flow in ssis,Script Component,CSharp,yes,,loc=48; file=raw0.cs
+script,ScriptComponent,,add an auto increment column in data flow in ssis,Script Component,CSharp,yes,,loc=106; file=raw1.cs
+script,ScriptComponent,,add an auto increment column in data flow in ssis,Script Component,CSharp,yes,,loc=32; file=raw2.cs
+script,ScriptComponent,,add an auto increment column in data flow in ssis,Script Component,CSharp,yes,,loc=40; file=raw3.cs
+script,ScriptComponent,,add an auto increment column in data flow in ssis,Script Component,CSharp,yes,,loc=13; file=raw4.cs
+script,ScriptComponent,,add an auto increment column in data flow in ssis,Script Component,CSharp,yes,,loc=86; file=raw5.cs
+script,ScriptComponent,,add an auto increment column in data flow in ssis,Script Component,CSharp,yes,,loc=20; file=raw6.cs
+script,ScriptComponent,,add an auto increment column in data flow in ssis,Script Component,CSharp,yes,,loc=11; file=raw7.cs
+script,ScriptComponent,,add an auto increment column in data flow in ssis,Script Component,CSharp,yes,,loc=7; file=raw8.cs
+script,ScriptComponent,,add an auto increment column in data flow in ssis,Script Component,CSharp,yes,,loc=35; file=raw9.cs
+script,ScriptTask,,get date from filename,Script Task,CSharp,yes,,loc=59; file=ScriptMain.cs
+script,ScriptTask,,get date from filename,Script Task,CSharp,yes,,loc=59; file=ScriptMain.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=48; file=raw0.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=106; file=raw1.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=32; file=raw2.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=40; file=raw3.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=13; file=raw4.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=20; file=raw5.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=11; file=raw6.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=87; file=raw7.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=7; file=raw8.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=35; file=raw9.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=48; file=raw0.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=106; file=raw1.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=32; file=raw2.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=40; file=raw3.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=13; file=raw4.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=20; file=raw5.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=11; file=raw6.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=87; file=raw7.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=7; file=raw8.cs
+script,ScriptComponent,,load alternate records,Script Component,CSharp,yes,,loc=35; file=raw9.cs
+script,ScriptComponent,,top 100 records from one file to another,Script Component,CSharp,yes,,loc=32; file=raw0.cs
+script,ScriptComponent,,top 100 records from one file to another,Script Component,CSharp,yes,,loc=106; file=raw1.cs
+script,ScriptComponent,,top 100 records from one file to another,Script Component,CSharp,yes,,loc=87; file=raw2.cs
+script,ScriptComponent,,top 100 records from one file to another,Script Component,CSharp,yes,,loc=48; file=raw3.cs
+script,ScriptComponent,,top 100 records from one file to another,Script Component,CSharp,yes,,loc=13; file=raw4.cs
+script,ScriptComponent,,top 100 records from one file to another,Script Component,CSharp,yes,,loc=48; file=raw5.cs
+script,ScriptComponent,,top 100 records from one file to another,Script Component,CSharp,yes,,loc=20; file=raw6.cs
+script,ScriptComponent,,top 100 records from one file to another,Script Component,CSharp,yes,,loc=11; file=raw7.cs
+script,ScriptComponent,,top 100 records from one file to another,Script Component,CSharp,yes,,loc=7; file=raw8.cs
+script,ScriptComponent,,top 100 records from one file to another,Script Component,CSharp,yes,,loc=35; file=raw9.cs
+aggregate_op,Count,,,,,,,
+aggregate_op,GroupBy,,,,,,,
+aggregate_op,Min,,,,,,,
+lookup_cache_mode,FullCache,,,,,,,
+lookup_cache_mode,NoCache,,,,,,,
+lookup_cache_mode,PartialCache,,,,,,,
+lookup_join_key,join key declared,,,,,,,
+precedence_constraint,EvalOp=Constraint(default) | Outcome=Completion,,,,,,,
+precedence_constraint,EvalOp=Success AND expression | Outcome=Success(default),,,,,,,
+expression_function,GETDATE,,,,,,,
+expression_function,ISNULL,,,,,,,
+expression_function,LEFT,,,,,,,
+expression_function,NULL,,,,,,,
+expression_function,REPLACE,,,,,,,
+expression_cast,DT_BOOL,,,,,,,
+expression_cast,DT_CY,,,,,,,
+expression_cast,DT_DATE,,,,,,,
+expression_cast,DT_DBDATE,,,,,,,
+expression_cast,DT_DBTIME2,,,,,,,
+expression_cast,DT_DBTIMESTAMP,,,,,,,
+expression_cast,DT_DBTIMESTAMP2,,,,,,,
+expression_cast,DT_I1,,,,,,,
+expression_cast,DT_NUMERIC,,,,,,,
+expression_cast,DT_STR,,,,,,,
+expression_cast,DT_UI1,,,,,,,
+expression_cast,DT_WSTR,,,,,,,
+PACKAGE_DRIFT,01. dim customer etl.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,02. dim product etl.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,03. dim date etl.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,04. dim territory etl.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,05. fact sales - full load.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,05. fact sales - incremental load.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,child1.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,child2.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,childpkg1.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,childpkg2.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,childpkg3.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,datedimensionimport.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,export 50000 records to multiple csv files.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,get date from filename.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,incremental.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,initial.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,load alternate records.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,load email table.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,load product table.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,master dims etl.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,master dwh etl.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,master facts etl.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,package (1).dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,package 1.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,package.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,package1.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,parent.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,parentpackage.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,precedence constrainst in ssis define flow based on value from database.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,product_ratingfact.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,sales_fact.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,scd.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,source_to_stage_productrating_dim.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,source_to_stage_sales_all_dimensions.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
+PACKAGE_DRIFT,stage_to_dw_sales_all_dimensions.dtsx,,,,,,,"same filename, DIFFERENT content in more than one folder - reconcile"
