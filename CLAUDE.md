@@ -8198,14 +8198,51 @@ matches whatever `PackageClassEmitter.Reserve()` will independently compute.
    regression test, `PackageGeneratorTests.Generate_DisambiguatesTwoExecuteSqlTasks_
    ThatShareTheIdenticalDisplayName`.
 
-**Not done this round, deliberately separate**: the OTHER half of the original "missing
-`.Tests.csproj`" investigation — a package with 0 wired flows currently emits no MAIN project
-`.csproj` either (not just no test project; `ProjectEmitter.Emit`/`PackageClassEmitter.Emit` are
-both inside the same "at least one flow wired" gate), so `DailyETLMain`'s own 53 correctly-
-disambiguated statement classes and their tests are STILL orphaned with nothing to build them.
-Fixing that is a genuine, unmade design decision (should a fully-unwired package still get a
-minimal buildable project shell for its standalone Execute SQL Task logic?), not a mechanical gate
-widening — surfaced to the user rather than acted on unilaterally this round.
+**Second half, same day — a minimal main project for a fully-unwired package with real standalone
+SQL logic.** Surfaced to the user as a real design decision (not acted on unilaterally): a package
+with 0 wired flows emitted no MAIN project `.csproj` either, not just no test project
+(`ProjectEmitter.Emit`/`PackageClassEmitter.Emit` were both inside the same "at least one flow
+wired" gate), so `DailyETLMain`'s own 53 correctly-disambiguated statement classes and their tests
+were orphaned with nothing to build them. Chose the "emit a minimal main project too" option.
+
+**What changed**, all in `PackageGenerator.Generate`:
+- The repeated `wiredFlows.Count > 0 || wiredSplits.Count > 0 || ...` predicate (used in three
+  places) became one `willWire` local, computed once.
+- The pre-load-statement loop (statement class + its class-independent statement-text test) moved
+  OUT of the `if (willWire)` block to run unconditionally — mirroring `ResolveSqlStep`'s own
+  already-unconditional treatment of a post-flow/secondary-connection statement exactly. Only the
+  "which ones got wired INTO Program.cs" list-building (`preLoadStatements`, fed to
+  `ProgramRequest`) stays inside `willWire` — a pre-load statement is invoked inline in
+  `Program.cs`'s own try block, and there is no `Program.cs` at all when nothing wires.
+- `ResolveSqlStep`'s own STEP-LEVEL test (`EmitStepTest`/`EmitSecondaryConnectionStepTest`) and
+  `ComponentTestEmitter.EmitFileSystemTaskTest` are now gated on `willWire` too — both generate code
+  calling `package.{Name}(...)`, a method that only exists once `PackageClassEmitter` actually runs;
+  emitting them unconditionally (the naive version of this fix) would have produced tests that
+  don't compile, since no package class would exist to call. The class-independent statement-text
+  test stays unconditional either way.
+- A new `else if (testFiles.Count > 0)` branch emits a genuinely minimal main `{Package}.csproj`
+  (`EmitMinimalCsproj`, new) — deliberately NOT `ProjectEmitter`'s usual one (that assumes a
+  runnable `Program.cs`: `OutputType=Exe`, appsettings.json, an Etl.Core reference — none apply
+  here, since a plain `SqlStatementBuilderEmitter` class has zero dependencies beyond `System`). It
+  exists purely so `TestProjectEmitter`'s own hard-coded `<ProjectReference Include="..\{Package}\
+  {Package}.csproj" />` resolves to a real project instead of a dangling path.
+- `--skip-tests`, the README, and the `.Tests.csproj` emission (previously all inside `if
+  (willWire)`) moved to run unconditionally, after both branches — a fully-unwired package's own
+  standalone SQL logic deserves the same README/test-project treatment as any other package's.
+
+**Verified against the real motivating case, the strongest evidence tier available**: regenerated
+`DailyETLMain.dtsx` — `DailyETLMain.csproj` (a bare, dependency-free shell) and
+`DailyETLMain.Tests.csproj` both now exist; the whole regenerated solution (plus a copy of
+`Etl.Core`) builds **0 warnings/0 errors**; `dotnet test --filter Category!=Integration` runs
+**53/53 statement-text tests, all PASS** — exactly the class-independent tests that survive the
+new `willWire` gate, with no orphaned step-level test attempting to call a nonexistent method.
+No dedicated permanent fixture was built for this specific branch this round — the one obvious
+existing candidate, `SyntheticParallelShapes.dtsx`, has OTHER flows that do successfully wire
+(so `willWire` stays true there), and constructing a fresh fixture with a genuinely unwireable-yet-
+still-present flow was judged not worth the additional risk/effort given the real package already
+provides stronger, harder-to-game evidence than a hand-built one would. Full suite re-run: same 2
+pre-existing unrelated `GenerateGoldenFileTests` golden-string failures, zero new regressions,
+`GeneratedSolutionBuildTests`' own real generate+build cycle across 10 fixtures still green.
 
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**

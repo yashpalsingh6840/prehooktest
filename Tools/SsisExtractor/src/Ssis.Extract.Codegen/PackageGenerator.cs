@@ -633,7 +633,14 @@ public static partial class PackageGenerator
         // connection/transaction as everything else in the package -- so a package whose ONLY
         // successfully-wired flow is an OLE DB Command still needs a (possibly table-less)
         // DbContext generated, same reasoning as the Flat File Destination case right above.
-        if (tables.Count > 0 || wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0 || wiredScds.Count > 0 || wiredDataFlowLoops.Count > 0 || wiredForLoops.Count > 0)
+        // True once ANY flow shape successfully wires -- the one condition that decides both
+        // whether a real PackageClassEmitter/ProgramEmitter/PackageHarness gets generated at all
+        // (below) AND whether ResolveSqlStep's own step-level test can safely reference a
+        // generated package method (see its own use of this flag). Computed once, here, so the
+        // three places that used to repeat this same predicate independently can never drift.
+        var willWire = wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0 || wiredScds.Count > 0 || wiredDataFlowLoops.Count > 0 || wiredForLoops.Count > 0;
+
+        if (tables.Count > 0 || willWire)
             Merge(files, gaps, DbContextEmitter.Emit($"{ns}.Model", $"{package.ObjectName}DbContext", tables));
 
         Merge(files, gaps, SsisFnEmitter.Emit($"{ns}.Ssis", functionsUsed));
@@ -664,7 +671,7 @@ public static partial class PackageGenerator
                     programSteps.Add(programScd);
                     break;
                 case SqlStep sqlStep:
-                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, testFiles, testCoverageNotes, ns, $"{ns}.Mapping", gaps, ReserveStatementIdentifier));
+                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, testFiles, testCoverageNotes, ns, $"{ns}.Mapping", gaps, ReserveStatementIdentifier, willWire));
                     break;
                 case ExpressionStep expressionStep:
                     programSteps.Add(new ProgramExpressionStep(
@@ -687,7 +694,10 @@ public static partial class PackageGenerator
                     programSteps.Add(new ProgramFileSystemStep(fileSystemStep.TaskName, fileSystemStep.Action));
                     if (fileSystemStep.Action.SourceConnectionName is { } fstSourceKey) fileSystemTaskKeys.Add(fstSourceKey);
                     if (fileSystemStep.Action.DestinationConnectionName is { } fstDestKey) fileSystemTaskKeys.Add(fstDestKey);
-                    if (ComponentTestEmitter.EmitFileSystemTaskTest($"{package.ObjectName}.Tests", ns, fileSystemStep.TaskName, fileSystemStep.Action) is { } fstTest)
+                    // Gated on willWire -- this test's own generated code calls
+                    // package.{safeTaskName}(...), a method that only exists once PackageClassEmitter
+                    // actually runs (see ResolveSqlStep's own identical willWire gate above).
+                    if (willWire && ComponentTestEmitter.EmitFileSystemTaskTest($"{package.ObjectName}.Tests", ns, fileSystemStep.TaskName, fileSystemStep.Action) is { } fstTest)
                     {
                         var fstTestFinal = fstTest with { RelativePath = $"{package.ObjectName}.Tests/{fstTest.RelativePath}" };
                         testFiles.Add(fstTestFinal);
@@ -725,23 +735,34 @@ public static partial class PackageGenerator
             }
         }
 
-        if (wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0 || wiredScds.Count > 0 || wiredDataFlowLoops.Count > 0 || wiredForLoops.Count > 0)
+        // Unconditional, mirroring ResolveSqlStep's own treatment of a post-flow/secondary-
+        // connection statement exactly -- the STATEMENT CLASS and its class-independent
+        // statement-text test are real, generatable output regardless of whether this package
+        // ever wires a flow (see the "nothing wired" branch below, which needs these to already
+        // exist). Only the "which ones got wired INTO Program.cs" list-building stays inside
+        // willWire, since a pre-load statement is invoked inline in Program.cs's own try block --
+        // there is no Program.cs at all to invoke it from when nothing wires.
+        var preLoadStatements = new List<ProgramPreLoadStatement>();
+        foreach (var stmt in plan.PreLoadStatements)
         {
-            // Named, testable statement class (SqlStatementBuilderEmitter) rather than an
-            // anonymous string literal embedded in Program.cs -- same treatment ResolveSqlStep
-            // already gives a post-flow SQL step, applied here to a pre-load one.
-            var preLoadStatements = new List<ProgramPreLoadStatement>();
-            foreach (var stmt in plan.PreLoadStatements)
-            {
-                // ReserveStatementIdentifier (see its own doc comment above) -- not a bare
-                // SanitizeIdentifier(stmt.TaskName), since two pre-load statements (or a pre-load
-                // and a post-flow/secondary-connection one) can share the identical display name.
-                var identifierBase = ReserveStatementIdentifier(stmt.TaskName);
-                var statementClassName = identifierBase + "Statement";
-                Merge(files, gaps, SqlStatementBuilderEmitter.Emit($"{ns}.Mapping", stmt.TaskName, identifierBase, stmt.Sql));
-                preLoadStatements.Add(new ProgramPreLoadStatement(stmt.TaskName, statementClassName));
-            }
+            // ReserveStatementIdentifier (see its own doc comment above) -- not a bare
+            // SanitizeIdentifier(stmt.TaskName), since two pre-load statements (or a pre-load
+            // and a post-flow/secondary-connection one) can share the identical display name.
+            var identifierBase = ReserveStatementIdentifier(stmt.TaskName);
+            var statementClassName = identifierBase + "Statement";
+            Merge(files, gaps, SqlStatementBuilderEmitter.Emit($"{ns}.Mapping", stmt.TaskName, identifierBase, stmt.Sql));
+            var preLoadStatementTest = SqlStatementTestEmitter.Emit($"{package.ObjectName}.Tests", $"{ns}.Mapping", stmt.TaskName, identifierBase, stmt.Sql);
+            var preLoadStatementTestFinal = preLoadStatementTest with { RelativePath = $"{package.ObjectName}.Tests/{preLoadStatementTest.RelativePath}" };
+            testFiles.Add(preLoadStatementTestFinal);
+            NoteTest(testCoverageNotes, preLoadStatementTestFinal, "StatementText",
+                "asserts the built SQL text only; never executes it.");
+            preLoadStatements.Add(new ProgramPreLoadStatement(stmt.TaskName, statementClassName));
+        }
 
+        IReadOnlyList<ComponentMethodEntry> methodInventory = [];
+
+        if (willWire)
+        {
             var programRequest = new ProgramRequest(
                 PackageName: package.ObjectName,
                 RootNamespace: ns,
@@ -754,7 +775,7 @@ public static partial class PackageGenerator
                 FailureHandlers = plan.FailureHandlers,
             };
             Merge(files, gaps, ProgramEmitter.Emit(programRequest));
-            Merge(files, gaps, PackageClassEmitter.Emit(programRequest, out var methodInventory, out var supportsFakeHappyPath, out var usesLookupPreload));
+            Merge(files, gaps, PackageClassEmitter.Emit(programRequest, out methodInventory, out var supportsFakeHappyPath, out var usesLookupPreload));
 
             // Foundation phase of the generated-tests plan (Docs/Generated-Tests-Plan.md):
             // FakeUnitOfWork/RecordingNotifier/PackageHarness, emitted per package (the same
@@ -1213,44 +1234,60 @@ public static partial class PackageGenerator
                 SecondaryConnections: secondaryConnections.Values.ToList())));
 
             gaps.Add(new GenerationGap($"{package.ObjectName}.Notification", "a .dtsx carries no notification-recipient information -- OnSuccessRecipients/OnFailureRecipients were generated empty; fill in appsettings.json manually", IsBlocking: false));
-
-            // --skip-tests (Docs/Generated-Tests-Plan.md's own "Opt-out"): discard every starter
-            // test computed above, right before anything downstream (the README, the final
-            // result) would otherwise describe or ship them -- a single clean cut point rather
-            // than guarding dozens of individual testFiles.Add(...) call sites throughout this
-            // method, which would be far more invasive for the same outcome. TestOracle/
-            // LocalFileSourceData gaps are dropped alongside the tests they exist FOR: with no
-            // generated test at all, there is nothing for either to be an oracle/sample-data
-            // answer to. appsettings.Development.json (ProjectEmitter, above) is deliberately
-            // UNCHANGED -- it also serves a real, non-test `dotnet run --environment Development`,
-            // which --skip-tests has no opinion about.
-            if (skipTests)
-            {
-                testFiles.Clear();
-                testCoverageNotes.Clear();
-                gaps.RemoveAll(g => g.Kind is GapKind.TestOracle or GapKind.LocalFileSourceData);
-            }
-
-            // README.md -- the primary token-saving artifact (Docs/Generated-Tests-Plan.md): every
-            // generated method's own full signature, which control-flow task produced it, and
-            // where its test/gap (if any) live, so a reader/assistant never has to re-derive that
-            // by reading {Package}.cs top to bottom. Built AFTER every gap for this package (the
-            // Notification one included) so it shows the complete picture.
-            var readmeRequest = new ReadmeRequest(
-                PackageName: package.ObjectName,
-                Steps: programSteps,
-                MethodInventory: methodInventory,
-                Flows: plan.Flows.Select(f => new ReadmeFlowSection(f.TaskName, f.Pipeline)).ToList(),
-                TestFiles: testFiles,
-                TestCoverageNotes: testCoverageNotes,
-                Gaps: gaps);
-            files.Add(PackageReadmeEmitter.Emit(readmeRequest));
-
-            // The test PROJECT file itself is only worth emitting once at least one starter
-            // test class exists to put in it -- an empty xUnit project is not useful output.
-            if (testFiles.Count > 0)
-                testFiles.Add(TestProjectEmitter.Emit(package.ObjectName));
         }
+        else if (testFiles.Count > 0)
+        {
+            // Found running this generator against a real third-party portfolio (sql-server-
+            // samples' own DailyETLMain.dtsx): 0 flows wired anywhere in this package (every one
+            // independently blocked on an unrelated Tier-3 gap), yet real, correctly-generated
+            // standalone Execute SQL Task statement classes exist (pre-load/post-flow/secondary-
+            // connection tasks are all resolved unconditionally, above) -- with no ProjectEmitter/
+            // PackageClassEmitter output, they were orphaned loose .cs files with no project at
+            // all to build them, main or test. A minimal, dependency-free main project (no
+            // Program.cs, no appsettings -- nothing reads them without an EtlHost) gives them
+            // somewhere real to live, so this genuinely-correct output stops being unusable.
+            files.Add(EmitMinimalCsproj(package.ObjectName));
+        }
+
+        // --skip-tests (Docs/Generated-Tests-Plan.md's own "Opt-out"): discard every starter
+        // test computed above, right before anything downstream (the README, the final
+        // result) would otherwise describe or ship them -- a single clean cut point rather
+        // than guarding dozens of individual testFiles.Add(...) call sites throughout this
+        // method, which would be far more invasive for the same outcome. TestOracle/
+        // LocalFileSourceData gaps are dropped alongside the tests they exist FOR: with no
+        // generated test at all, there is nothing for either to be an oracle/sample-data
+        // answer to. appsettings.Development.json (ProjectEmitter, above) is deliberately
+        // UNCHANGED -- it also serves a real, non-test `dotnet run --environment Development`,
+        // which --skip-tests has no opinion about. Unconditional (not nested in willWire) since
+        // the "nothing wired" branch above can produce real starter tests too.
+        if (skipTests)
+        {
+            testFiles.Clear();
+            testCoverageNotes.Clear();
+            gaps.RemoveAll(g => g.Kind is GapKind.TestOracle or GapKind.LocalFileSourceData);
+        }
+
+        // README.md -- the primary token-saving artifact (Docs/Generated-Tests-Plan.md): every
+        // generated method's own full signature, which control-flow task produced it, and
+        // where its test/gap (if any) live, so a reader/assistant never has to re-derive that
+        // by reading {Package}.cs top to bottom. Built AFTER every gap for this package (the
+        // Notification one included) so it shows the complete picture. Unconditional -- even a
+        // "nothing wired" package's own standalone SQL statements deserve a README describing
+        // them, the same as any other package's.
+        var readmeRequest = new ReadmeRequest(
+            PackageName: package.ObjectName,
+            Steps: programSteps,
+            MethodInventory: methodInventory,
+            Flows: plan.Flows.Select(f => new ReadmeFlowSection(f.TaskName, f.Pipeline)).ToList(),
+            TestFiles: testFiles,
+            TestCoverageNotes: testCoverageNotes,
+            Gaps: gaps);
+        files.Add(PackageReadmeEmitter.Emit(readmeRequest));
+
+        // The test PROJECT file itself is only worth emitting once at least one starter
+        // test class exists to put in it -- an empty xUnit project is not useful output.
+        if (testFiles.Count > 0)
+            testFiles.Add(TestProjectEmitter.Emit(package.ObjectName));
 
         return new PackageGenerateResult(package.ObjectName, files, gaps, targetServer, targetDatabase) { SiblingFiles = testFiles };
     }
@@ -1259,6 +1296,31 @@ public static partial class PackageGenerator
     {
         files.AddRange(result.Files);
         gaps.AddRange(result.Gaps);
+    }
+
+    /// <summary>The "nothing wired, but real standalone Execute SQL Task statement classes
+    /// exist" case's own main project -- deliberately NOT <see cref="ProjectEmitter"/>'s usual
+    /// <c>.csproj</c> (that one assumes a runnable <c>Program.cs</c> exists: <c>OutputType=Exe</c>,
+    /// appsettings.json/appsettings.Development.json, an Etl.Core reference -- none of which
+    /// apply here, since a plain <c>SqlStatementBuilderEmitter</c>-produced class has zero
+    /// dependencies beyond <c>System</c>). A bare SDK-style library project, referencing
+    /// nothing, exists purely so <c>TestProjectEmitter</c>'s own hard-coded
+    /// <c>&lt;ProjectReference Include="..\{Package}\{Package}.csproj" /&gt;</c> resolves to a
+    /// real project instead of a dangling path.</summary>
+    private static GeneratedFile EmitMinimalCsproj(string packageName)
+    {
+        var lines = new List<string>
+        {
+            "<Project Sdk=\"Microsoft.NET.Sdk\">",
+            "",
+            "  <ItemGroup>",
+            $"    <InternalsVisibleTo Include=\"{packageName}.Tests\" />",
+            "  </ItemGroup>",
+            "",
+            "</Project>",
+        };
+
+        return new GeneratedFile($"{packageName}.csproj", Rendering.JoinLines(lines));
     }
 
     /// <summary>Records a <see cref="TestCoverageNote"/> for <paramref name="file"/>, keyed by its
@@ -3935,7 +3997,7 @@ public static partial class PackageGenerator
         PackageSpec package, SqlStep sqlStep, string? targetServer, string? targetDatabase,
         Dictionary<string, SecondaryConnectionRequest> secondaryConnections, List<GeneratedFile> files,
         List<GeneratedFile> testFiles, List<TestCoverageNote> testCoverageNotes, string rootNamespace, string mappingNamespace, List<GenerationGap> gaps,
-        Func<string, string> reserveStatementIdentifier)
+        Func<string, string> reserveStatementIdentifier, bool willWire)
     {
         // Named, testable statement class (SqlStatementBuilderEmitter) rather than an anonymous
         // string literal embedded in Program.cs -- emitted once here regardless of which of the
@@ -3963,12 +4025,18 @@ public static partial class PackageGenerator
             // a ProgramSecondaryConnectionSqlStep opens its own real SqlConnection unconditionally
             // and cannot be exercised against a fake at all (see SqlStatementTestEmitter.EmitStepTest's
             // own doc comment); that shape is deliberately left for an Integration-tagged test, a
-            // later phase.
-            var stepTest = SqlStatementTestEmitter.EmitStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName, identifierBase);
-            var stepTestFinal = stepTest with { RelativePath = $"{package.ObjectName}.Tests/{stepTest.RelativePath}" };
-            testFiles.Add(stepTestFinal);
-            NoteTest(testCoverageNotes, stepTestFinal, "ExecuteSqlStep",
-                "asserts SQL_X(fakeUow, ct) records the statement in uow.ExecutedSql; runs against the shared fake transaction, no real database.");
+            // later phase. Gated on willWire: this test's own generated code calls
+            // `package.{identifierBase}(uow, ct)`, a method PackageClassEmitter only emits when
+            // at least one flow wired -- with nothing wired, no package class exists at all, and
+            // this test would reference a method that was never generated.
+            if (willWire)
+            {
+                var stepTest = SqlStatementTestEmitter.EmitStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName, identifierBase);
+                var stepTestFinal = stepTest with { RelativePath = $"{package.ObjectName}.Tests/{stepTest.RelativePath}" };
+                testFiles.Add(stepTestFinal);
+                NoteTest(testCoverageNotes, stepTestFinal, "ExecuteSqlStep",
+                    "asserts SQL_X(fakeUow, ct) records the statement in uow.ExecutedSql; runs against the shared fake transaction, no real database.");
+            }
             return new ProgramSqlStep(sqlStep.TaskName, statementClassName);
         }
 
@@ -3982,12 +4050,17 @@ public static partial class PackageGenerator
         // "Secondary-connection SQL" taxonomy row -- mirrors Etl.Core.Tests' own
         // SecondaryConnectionSqlStepTests.RunAsync_NeverTouchesTheUnitOfWork exactly (see
         // TestDoublesEmitter's own unreachableSecondaryServer comment for why this needs no real
-        // server at all, unlike a SQL/Excel SOURCE's own Integration-tagged read).
-        var secondaryTest = SqlStatementTestEmitter.EmitSecondaryConnectionStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName, identifierBase);
-        var secondaryTestFinal = secondaryTest with { RelativePath = $"{package.ObjectName}.Tests/{secondaryTest.RelativePath}" };
-        testFiles.Add(secondaryTestFinal);
-        NoteTest(testCoverageNotes, secondaryTestFinal, "SecondaryConnection",
-            "asserts the step never touches the shared IUnitOfWork; PackageHarness wires a deliberately unreachable secondary server so a real SqlException is what proves it.");
+        // server at all, unlike a SQL/Excel SOURCE's own Integration-tagged read). Gated on
+        // willWire for the same reason EmitStepTest is above -- this test's own generated code
+        // also calls `package.{identifierBase}(...)`.
+        if (willWire)
+        {
+            var secondaryTest = SqlStatementTestEmitter.EmitSecondaryConnectionStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName, identifierBase);
+            var secondaryTestFinal = secondaryTest with { RelativePath = $"{package.ObjectName}.Tests/{secondaryTest.RelativePath}" };
+            testFiles.Add(secondaryTestFinal);
+            NoteTest(testCoverageNotes, secondaryTestFinal, "SecondaryConnection",
+                "asserts the step never touches the shared IUnitOfWork; PackageHarness wires a deliberately unreachable secondary server so a real SqlException is what proves it.");
+        }
 
         return new ProgramSecondaryConnectionSqlStep(sqlStep.TaskName, cmName, statementClassName);
     }
