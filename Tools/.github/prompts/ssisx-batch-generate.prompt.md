@@ -1,6 +1,6 @@
 ---
 mode: agent
-description: Unattended, auto-confirming variant of /ssisx-rewrite for background/batch runs against any InputPath -- no human present mid-run, so both AI boundaries are auto-confirmed and flagged UNREVIEWED instead of pausing. Two phases, invoked separately so a cheap model can run the mechanical half.
+description: Unattended, auto-confirming variant of /ssisx-rewrite for background/batch runs against any InputPath -- no human present mid-run, so both AI boundaries are auto-confirmed and flagged UNREVIEWED instead of pausing. Two phases, invoked separately so the mechanical half (Phase A) can run independently of the judgment-requiring half (Phase B). Phase A uses -Quiet on Run-Pipeline.ps1 (see its own Step 2) to keep its own token cost small regardless of model.
 ---
 
 # ssisx: batch-generate (unattended two-phase pipeline)
@@ -32,26 +32,36 @@ phases from a single invocation of this prompt**; each phase below is its own se
 
 ## Phase A -- mechanical run (no judgment required)
 
-1. Resolve `$ssisx`/`$svk`/`$dotnet` per the bootstrap block in `ssisx-extract.prompt.md` Step 1
-   -- but prefer, before that: check whether `Tools/SsisExtractor/scripts/ssisx.exe` and
-   `Tools/SsisExtractor/scripts/svk.exe` already exist next to the scripts (a fresh, published
-   copy may already be sitting there). If so, `Run-Pipeline.ps1`'s own `Resolve-Tool` finds them
-   directly with no build step at all -- do not rebuild in that case.
-2. Run exactly one command:
+1. Do nothing here -- `Run-Pipeline.ps1`'s own `Resolve-Tool` already handles this: it uses
+   `Tools/SsisExtractor/scripts/ssisx.exe`/`svk.exe` if one happens to already be sitting there,
+   and transparently falls back to `dotnet run --project` (against source, no publish step) if
+   not. **Never run `dotnet publish`/`dotnet build -o ...` into
+   `Tools/SsisExtractor/scripts/` yourself** to "speed this up" -- that folder holds only the
+   handful of tracked `.ps1`/`.bat` files (`git ls-files Tools/SsisExtractor/scripts` is the exact
+   list); publishing a whole framework-dependent build (the exe, its DLLs/PDBs, and a dozen
+   localized satellite-resource subfolders like `cs/`/`de/`/`ja/`) into it is real clutter a human
+   then has to notice and clean up, for a speed-up `Resolve-Tool` doesn't need any help with.
+2. Run exactly one command, **always with `-Quiet`**:
    ```powershell
-   Tools/SsisExtractor/scripts/Run-Pipeline.ps1 -InputPath "<inputPath>" -OutputPath "<outputPath>" -Framework <framework>
+   Tools/SsisExtractor/scripts/Run-Pipeline.ps1 -InputPath "<inputPath>" -OutputPath "<outputPath>" -Framework <framework> -Quiet
    ```
    This already runs, in order: `ssisx extract` -> `svk walkthrough`/`svk sampledata` (advisory)
    -> `ssisx generate` -> `ssisx apply-fills` (a no-op the first time -- nothing exists under
    `<outputPath>\fills` yet) -> `dotnet build` -> `Run-Coverage.ps1` (`dotnet test --filter
    Category!=Integration` + coverage). It never deletes anything under `<outputPath>` -- safe to
-   re-run.
-3. Read **only** `<outputPath>\gen\generate\generate-report.md` and
-   `<outputPath>\gen\generate\gaps.json` (never open the generated `.cs` files). Report:
-   - package count found under `<inputPath>`,
-   - the build exit code and `dotnet test` exit code exactly as `Run-Pipeline.ps1` printed them,
-   - gap counts broken down by `Kind`/tier: `MissingDatum` (Tier 1), `MissingLogic` (Tier 2),
-     `MissingToolSupport` (Tier 3 -- nothing to fill, ever), and Advisory (non-blocking).
+   re-run. **`-Quiet` is not optional here** -- without it, this ONE command's own console output
+   (dotnet restore/build/test chatter across every step) can be tens of thousands of tokens, which
+   is exactly what makes an otherwise mechanical, tool-only run expensive; `-Quiet` redirects all
+   of that to `<outputPath>\pipeline-run.log` and prints only a compact final summary (every step's
+   exit code, plus gap counts by tier already parsed from `gaps.json`) to the console -- this
+   command's own result already gives you everything Step 3 below asks for.
+3. The `-Quiet` summary already gives you everything to report: package count (from the extract
+   step's own console line, still shown), every step's exit code, and gap counts broken down by
+   tier (`MissingDatum` = Tier 1, `MissingLogic` = Tier 2, `MissingToolSupport` = Tier 3 -- nothing
+   to fill, ever -- and Advisory = non-blocking). Only fall back to reading
+   `<outputPath>\gen\generate\generate-report.md` (never the generated `.cs` files, never
+   `pipeline-run.log` in full) if you need the PER-PACKAGE breakdown the compact summary doesn't
+   carry, or if the summary's own gap-tier parse failed for some reason.
 4. **Stop here.** Do not decide whether to proceed to Phase B and do not write any fill --
    that decision (the threshold check below) belongs to whoever invoked you, using this report.
 

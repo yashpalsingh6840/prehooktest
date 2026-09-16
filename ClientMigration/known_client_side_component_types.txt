@@ -72,6 +72,25 @@ Microsoft.RowCount               [OK]      Transparent pass-through, or a valid 
                                             branch terminus in a Multicast/Lookup.
 Microsoft.OLEDBCommand           [OK]      Destination-less, per-row parameterized SQL
                                             (positional "?" params only, no named mapping).
+Microsoft.CopyMap                [OK]      "Copy Column" -- plain column duplication, direct
+                                            destination or a Conditional Split condition
+                                            cross-reference.
+Microsoft.PctSampling            [OK]      Percentage Sampling. SamplingSeed is reproducible
+                                            across runs (measured via dtexec) and reseeds the
+                                            generated router's own RNG; exact per-row parity
+                                            with real SSIS is not claimed (different RNG
+                                            algorithms), only the reproducibility property and
+                                            the statistical split.
+Microsoft.XmlSourceAdapter        [PARTIAL] Flat single-rowset XML only (literal XMLData path,
+                                            AccessMode=Default). A variable-driven path
+                                            (XMLDataVariable) or hierarchical/multi-rowset XML
+                                            is a gap.
+Microsoft.SCD                    [PARTIAL] 5 of 6 outputs (Unchanged/New/Fixed Attribute/
+                                            Changing Attribute Updates/Historical Attribute
+                                            Inserts). Inferred Member Updates is unmeasured and
+                                            unsupported. Only IncomingRowChangeType=1 is
+                                            supported. Classification rules were measured via
+                                            real dtexec runs, not guessed.
 Microsoft.ScriptComponentHost     [SEAM]    Never auto-translated. Each new column becomes a
                                             `private partial Fill_<Column>` seam -- the real
                                             script source is fully extracted and handed to a
@@ -101,6 +120,24 @@ Microsoft.ScriptTask              [SEAM]    Never auto-translated. Becomes a who
                                             shared PackageVariables bag for cross-task state
                                             -- same "extract fully, never guess the logic"
                                             discipline as Script Component.
+Microsoft.ExpressionTask          [PARTIAL] Assignment (`@Var = <rhs>`) to a package variable.
+                                            RHS supports string/int literals, negation, DATEADD
+                                            (Minute/mi/Day/Hour/Month/Year/Second only,
+                                            oracle-verified), GETUTCDATE/GETDATE, and a bare
+                                            reference to another variable; anything else is a
+                                            gap. Assigning a value of a different declared type
+                                            than the variable is not reproduced (measured real
+                                            SSIS silently coerces to an empty string here).
+STOCK:FORLOOP                    [PARTIAL] For Loop Container. Body scoped to exactly one Data
+                                            Flow Task, sourced from a Flat File Source whose
+                                            connection string is expression-driven off the
+                                            loop's own counter -- any other body shape is a gap.
+Microsoft.TransferSqlServerObjectsTask [GAP] Fully extracted (source/destination databases,
+                                            table list, all six copy flags) and reported as a
+                                            clear, specific generation gap naming exactly what
+                                            was found -- wraps SQL Server's own SMO Transfer
+                                            object, deliberately not auto-translated. Reproduce
+                                            by hand via DDL/DACPAC/SMO script.
 Microsoft.Package                --        The package root container itself, not a
                                             translatable unit.
 Microsoft.Pipeline               --        The Data Flow Task container; its own component

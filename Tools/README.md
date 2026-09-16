@@ -383,6 +383,13 @@ reason about an answer); if a chat session is available, use `/ssisx-rewrite` in
 .\SsisExtractor\scripts\Run-Pipeline.ps1 -InputPath <client-folder> -OutputPath out -Framework net10.0
 ```
 
+Add `-Quiet` when a script or agent (not a human watching a terminal) is invoking this and only
+cares about the final result -- every step's own verbose output goes to
+`out\pipeline-run.log` instead of the console, leaving only a compact summary (exit codes plus
+gap counts by tier). An agent capturing this command's own output otherwise pays for the FULL
+transcript regardless of what it's told to read afterward, which is real, avoidable cost for a
+purely mechanical run.
+
 `Etl.Core/` here is a **portable copy** -- see this project's own internal dev notes for where
 it's actually developed and how to refresh it; that's not this file's concern, since this
 folder is meant to be handed to a client as-is.

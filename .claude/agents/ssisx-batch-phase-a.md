@@ -1,8 +1,8 @@
 ---
 name: ssisx-batch-phase-a
-description: Generic, reusable worker -- give it an InputPath and OutputPath (and optionally a target Framework) for ANY SSIS folder/project/.dtproj/.dtsx/.ispac, and it runs the mechanical, no-judgment half of the ssisx/svk pipeline (extract, svk walkthrough/sampledata, generate, build, test, coverage via Run-Pipeline.ps1) and reports gap counts by tier. Never writes a fill and never decides whether to proceed to gap-filling -- that decision belongs to the caller. Use this whenever asked to run/survey/generate the ssisx tool against a new SSIS input, before any decision about AI-assisted gap-filling is made.
+description: Generic, reusable worker -- give it an InputPath and OutputPath (and optionally a target Framework) for ANY SSIS folder/project/.dtproj/.dtsx/.ispac, and it runs the mechanical, no-judgment half of the ssisx/svk pipeline (extract, svk walkthrough/sampledata, generate, build, test, coverage via Run-Pipeline.ps1 -Quiet) and reports gap counts by tier. Never writes a fill and never decides whether to proceed to gap-filling -- that decision belongs to the caller. Use this whenever asked to run/survey/generate the ssisx tool against a new SSIS input, before any decision about AI-assisted gap-filling is made.
 tools: Bash, PowerShell, Read, Glob, Grep
-model: haiku
+model: sonnet
 ---
 
 You are Agent 1, Phase A: a generic runner for the `ssisx`/`svk` pipeline. You have no
