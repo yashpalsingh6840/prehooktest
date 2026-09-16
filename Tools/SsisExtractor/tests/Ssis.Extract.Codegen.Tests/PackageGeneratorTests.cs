@@ -56,6 +56,41 @@ public class PackageGeneratorTests
         Assert.DoesNotContain("SQL_TruncateStatementTests.cs", readmeWithoutTests.Content);
     }
 
+    // Found running this generator against a real third-party portfolio (D:\PoC\
+    // SSIS_Packages_From_GitHub, sql-server-samples' own DailyETLMain.dtsx): SSIS lets two
+    // Execute SQL Tasks anywhere in one package share the identical display name (a real,
+    // evidenced authoring pattern -- a reusable task template copy-pasted into many branches,
+    // each with its own DIFFERENT SQL statement) -- that real package had 13 tasks all named
+    // "Get Lineage Key". Before this fix, SanitizeIdentifier alone named both tasks'
+    // Mapping/{Name}Statement.cs identically, and a plain File.WriteAllText silently kept only
+    // the LAST one written -- discarding the earlier task's own distinct SQL text with no error
+    // and no gap. SyntheticDuplicateTaskNames.dtsx reproduces the minimal shape: SQL_PreLoad
+    // (pre-load position, TRUNCATE) and a SECOND task also named "SQL_PreLoad" (post-flow
+    // position, UPDATE) -- deliberately built by renaming SyntheticPostFlowSql.dtsx's own
+    // SQL_PostLoad task's DTS:ObjectName, a byte-preserving edit (never a hand-written XML
+    // fixture) so every other structural detail (refIds, precedence constraints, the CSV source)
+    // stays exactly as already-proven correct elsewhere.
+    [Fact]
+    public void Generate_DisambiguatesTwoExecuteSqlTasks_ThatShareTheIdenticalDisplayName()
+    {
+        var package = LoadSyntheticFixture("SyntheticDuplicateTaskNames.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var preLoad = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SQL_PreLoadStatement.cs");
+        var preLoad2 = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SQL_PreLoad_2Statement.cs");
+        Assert.Contains("TRUNCATE TABLE dbo.SyntheticPostFlowTarget;", preLoad.Content);
+        Assert.Contains("UPDATE dbo.SyntheticPostFlowTarget SET Name = UPPER(Name);", preLoad2.Content);
+
+        // The paired starter tests must reference the SAME disambiguated name, not silently
+        // collide (or reference a name PackageClassEmitter's own Reserve() didn't actually use).
+        Assert.Single(result.SiblingFiles, f => f.RelativePath == $"{package.ObjectName}.Tests/SQL_PreLoadStatementTests.cs");
+        Assert.Single(result.SiblingFiles, f => f.RelativePath == $"{package.ObjectName}.Tests/SQL_PreLoad_2StatementTests.cs");
+        Assert.Single(result.SiblingFiles, f => f.RelativePath == $"{package.ObjectName}.Tests/SQL_PreLoad_2StepTests.cs");
+        var stepTest = Assert.Single(result.SiblingFiles, f => f.RelativePath == $"{package.ObjectName}.Tests/SQL_PreLoad_2StepTests.cs");
+        Assert.Contains("package.SQL_PreLoad_2(", stepTest.Content);
+    }
+
     [Fact]
     public void Generate_ReportsAnEncryptedConnectionManagerSecret_AsATier1Gap()
     {

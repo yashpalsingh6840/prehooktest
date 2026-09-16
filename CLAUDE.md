@@ -8132,6 +8132,81 @@ stray folder was confirmed to hold nothing but disposable, regenerate-on-demand 
 natively by Windows, `ssisx`, `dotnet`, and PowerShell's own path cmdlets), then re-run cleanly.
 The results above are from the corrected run.
 
+### Investigating `DailyETLMain`'s missing `.Tests.csproj` — a real, more serious bug found and fixed (2026-09-16)
+
+Following up on the "real, undiagnosed-further characteristic" named at the end of the round
+above (`sql-server-samples`' `DailyETLMain` writing 106 starter test `.cs` files with no
+`.csproj` to build them). Root-caused with a temporary diagnostic dump (added, used, and reverted
+in `GenerateCommand.cs` — never shipped) rather than guessed: this package has **13 real Execute
+SQL Tasks all display-named "Get Lineage Key"** (and 6 named "Get Last Movement ETL Cutoff Time")
+— a genuine, evidenced real-world SSIS authoring pattern, a reusable task template copy-pasted
+into many branches, each intended to carry its own SQL for a different dimension.
+
+**The real bug, more serious than the missing `.csproj`**: `SqlStatementBuilderEmitter.Emit`/
+`SqlStatementTestEmitter`'s own class names were derived purely from
+`PackageGenerator.SanitizeIdentifier(taskName)`, with no disambiguation — so all 13 "Get Lineage
+Key" tasks collided onto the identical `Mapping/GetLineageKeyStatement.cs` path, and a plain
+`File.WriteAllText` silently kept only the LAST one written, discarding every earlier instance's
+own SQL text with no error and no gap (confirmed by reproducing it directly: 53 statements
+reported, only 36 unique files survived on disk — exactly 53 minus 12 lost "Get Lineage Key"
+duplicates minus 5 lost "Get Last Movement..." duplicates). In THIS real package the lost text
+happened to be identical every time (a parameterized stored-proc call, `EXEC
+Integration.GetLineageKey ?, ?;`, with the real per-dimension variation bound via SQL parameters
+this tool doesn't model yet) — but the defect itself is real and general: any client package
+whose duplicate-named tasks carry genuinely different literal SQL would silently lose the
+non-surviving instances' own text, with the report claiming success.
+
+**A second, related latent risk was found while tracing this**: `PackageClassEmitter`'s own
+method-naming (`Reserve()`, see the emitter-rewrite section above) ALREADY disambiguates a
+step's generated METHOD name on collision (`GetLineageKey`, `GetLineageKey_2`, ...) — but
+`SqlStatementTestEmitter.EmitStepTest`/`EmitSecondaryConnectionStepTest`'s own generated test code
+(`package.{name}(uow, ct)`) assumed the method name was always the bare, undisambiguated
+`SanitizeIdentifier(taskName)`. Had a package with duplicate task names ever fully wired (unlike
+`DailyETLMain`, whose flows are all independently blocked on unrelated Tier-3 gaps), this would
+have compiled but called the WRONG generated method for one of the two same-named steps.
+
+**Fix**: a single, package-scoped disambiguator in `PackageGenerator.Generate`
+(`ReserveStatementIdentifier`), mirroring `PackageClassEmitter.Reserve()`'s own algorithm exactly
+(first occurrence keeps its bare name, every later collision appends `_2`/`_3`/...), threaded
+through every place a `Mapping/{Name}Statement.cs` class name is decided — pre-load statements,
+`ResolveSqlStep` (post-flow/secondary-connection), and a ForEach Loop body's own parameterized
+statement — all sharing ONE registry, since they all land in the same `{ns}.Mapping` namespace.
+`SqlStatementBuilderEmitter.Emit`/`.EmitParameterized` and `SqlStatementTestEmitter.Emit`/
+`.EmitStepTest`/`.EmitSecondaryConnectionStepTest` all now take the already-disambiguated
+identifier explicitly instead of re-deriving it internally, so a test's own generated method call
+matches whatever `PackageClassEmitter.Reserve()` will independently compute.
+
+**Verified two ways:**
+1. **The real motivating case** — regenerated the real `DailyETLMain.dtsx`: all 53 statements now
+   produce distinct files (`GetLineageKeyStatement.cs` through `GetLineageKey_13Statement.cs`,
+   `GetLastMovementETLCutoffTimeStatement.cs` through `..._6Statement.cs`), 106 distinct test
+   files (was 72), confirmed each duplicate now carries its own preserved SQL text (all identical
+   in this real case, as noted above — but no longer silently collapsed to one). Full suite
+   re-run: same 2 pre-existing unrelated `GenerateGoldenFileTests` golden-string failures (a
+   stale `FakeUnitOfWork.cs.txt` golden unrelated to this fix), zero new regressions.
+2. **A new dedicated fixture**, `tests/Ssis.Extract.Tests/Fixtures/SyntheticDuplicateTaskNames.dtsx`
+   — a byte-preserving rename of `SyntheticPostFlowSql.dtsx`'s own `SQL_PostLoad` task's
+   `DTS:ObjectName` to `SQL_PreLoad` (matching the pre-existing, separate `SQL_PreLoad` task's own
+   name), so the fixture has two identically-named tasks in two different positions (pre-load
+   TRUNCATE, post-flow UPDATE) with every other structural detail (refIds, precedence
+   constraints, the CSV source) unchanged from the already-proven original. **Generated, built
+   against a copy of `Etl.Core` (0 warnings/0 errors), and its own 10 starter tests actually RUN,
+   all PASS** — confirming not just that the two statements' distinct SQL text survives
+   (`TRUNCATE TABLE dbo.SyntheticPostFlowTarget;` / `UPDATE dbo.SyntheticPostFlowTarget SET Name =
+   UPPER(Name);`), but that the disambiguated test code (`package.SQL_PreLoad_2(...)`) correctly
+   calls the SAME disambiguated method `PackageClassEmitter` actually generated. New permanent
+   regression test, `PackageGeneratorTests.Generate_DisambiguatesTwoExecuteSqlTasks_
+   ThatShareTheIdenticalDisplayName`.
+
+**Not done this round, deliberately separate**: the OTHER half of the original "missing
+`.Tests.csproj`" investigation — a package with 0 wired flows currently emits no MAIN project
+`.csproj` either (not just no test project; `ProjectEmitter.Emit`/`PackageClassEmitter.Emit` are
+both inside the same "at least one flow wired" gate), so `DailyETLMain`'s own 53 correctly-
+disambiguated statement classes and their tests are STILL orphaned with nothing to build them.
+Fixing that is a genuine, unmade design decision (should a fully-unwired package still get a
+minimal buildable project shell for its standalone Execute SQL Task logic?), not a mechanical gate
+widening — surfaced to the user rather than acted on unilaterally this round.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

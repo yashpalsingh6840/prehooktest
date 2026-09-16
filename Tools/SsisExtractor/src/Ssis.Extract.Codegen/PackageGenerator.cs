@@ -116,6 +116,32 @@ public static partial class PackageGenerator
         // testFiles.Add(...) below; never a gap, never read by PortfolioDigest.
         var testCoverageNotes = new List<TestCoverageNote>();
 
+        // Found running this generator against a real third-party portfolio
+        // (D:\PoC\SSIS_Packages_From_GitHub, `sql-server-samples`' own `DailyETLMain.dtsx`):
+        // SSIS lets any two Execute SQL Tasks anywhere in one package share the identical display
+        // name -- a real, evidenced authoring pattern (a reusable task template, e.g. "Get
+        // Lineage Key", copy-pasted into many branches, each with its own DIFFERENT SQL statement
+        // for a different dimension; that one package had it 13 times, plus a second name 6
+        // times). SanitizeIdentifier alone would collide every duplicate's own
+        // Mapping/{Name}Statement.cs onto the identical file path, and a plain File.WriteAllText
+        // would silently keep only the LAST one written -- discarding every earlier instance's own
+        // distinct SQL text with no error and no gap (confirmed: reproduced the exact collision,
+        // 12 of 13 "Get Lineage Key" statements and 5 of 6 "Get Last Movement..." ones lost).
+        // Mirrors PackageClassEmitter's own Reserve() exactly (first occurrence keeps its bare
+        // name, every later collision appends _2/_3/...), scoped to this ONE package's own
+        // {ns}.Mapping namespace -- shared across every Execute SQL Task shape (pre-load,
+        // post-flow, secondary-connection, ForEach-loop-per-iteration) since they all land there
+        // and must not collide with each other either, not just within their own shape.
+        var sqlStatementIdentifiers = new HashSet<string>(StringComparer.Ordinal);
+        string ReserveStatementIdentifier(string taskName)
+        {
+            var desired = SanitizeIdentifier(taskName);
+            var name = desired;
+            var n = 2;
+            while (!sqlStatementIdentifiers.Add(name)) name = $"{desired}_{n++}";
+            return name;
+        }
+
         // A connection manager whose sensitive property is DPAPI-encrypted (ProtectionLevel
         // EncryptSensitiveWithUserKey/EncryptSensitiveWithPassword) is undecryptable outside the
         // original author's Windows account -- the extractor records that the value existed and
@@ -638,7 +664,7 @@ public static partial class PackageGenerator
                     programSteps.Add(programScd);
                     break;
                 case SqlStep sqlStep:
-                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, testFiles, testCoverageNotes, ns, $"{ns}.Mapping", gaps));
+                    programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, testFiles, testCoverageNotes, ns, $"{ns}.Mapping", gaps, ReserveStatementIdentifier));
                     break;
                 case ExpressionStep expressionStep:
                     programSteps.Add(new ProgramExpressionStep(
@@ -671,7 +697,7 @@ public static partial class PackageGenerator
                     break;
                 case ForEachFileLoopStep loopStep:
                 {
-                    var programLoop = ResolveForEachFileLoop(loopStep.Loop, files, $"{ns}.Mapping", fileSourceEntries, gaps);
+                    var programLoop = ResolveForEachFileLoop(loopStep.Loop, files, $"{ns}.Mapping", fileSourceEntries, gaps, ReserveStatementIdentifier);
                     if (programLoop is not null) programSteps.Add(programLoop);
                     break;
                 }
@@ -707,10 +733,12 @@ public static partial class PackageGenerator
             var preLoadStatements = new List<ProgramPreLoadStatement>();
             foreach (var stmt in plan.PreLoadStatements)
             {
-                // Must match SqlStatementBuilderEmitter.Emit's own sanitization exactly, since
-                // that's the class this name refers to.
-                var statementClassName = SanitizeIdentifier(stmt.TaskName) + "Statement";
-                Merge(files, gaps, SqlStatementBuilderEmitter.Emit($"{ns}.Mapping", stmt.TaskName, stmt.Sql));
+                // ReserveStatementIdentifier (see its own doc comment above) -- not a bare
+                // SanitizeIdentifier(stmt.TaskName), since two pre-load statements (or a pre-load
+                // and a post-flow/secondary-connection one) can share the identical display name.
+                var identifierBase = ReserveStatementIdentifier(stmt.TaskName);
+                var statementClassName = identifierBase + "Statement";
+                Merge(files, gaps, SqlStatementBuilderEmitter.Emit($"{ns}.Mapping", stmt.TaskName, identifierBase, stmt.Sql));
                 preLoadStatements.Add(new ProgramPreLoadStatement(stmt.TaskName, statementClassName));
             }
 
@@ -3906,15 +3934,20 @@ public static partial class PackageGenerator
     private static ProgramStep ResolveSqlStep(
         PackageSpec package, SqlStep sqlStep, string? targetServer, string? targetDatabase,
         Dictionary<string, SecondaryConnectionRequest> secondaryConnections, List<GeneratedFile> files,
-        List<GeneratedFile> testFiles, List<TestCoverageNote> testCoverageNotes, string rootNamespace, string mappingNamespace, List<GenerationGap> gaps)
+        List<GeneratedFile> testFiles, List<TestCoverageNote> testCoverageNotes, string rootNamespace, string mappingNamespace, List<GenerationGap> gaps,
+        Func<string, string> reserveStatementIdentifier)
     {
         // Named, testable statement class (SqlStatementBuilderEmitter) rather than an anonymous
         // string literal embedded in Program.cs -- emitted once here regardless of which of the
         // two ProgramStep shapes below this resolves to, since both reference it identically.
-        // Must match SqlStatementBuilderEmitter.Emit's own sanitization exactly.
-        var statementClassName = SanitizeIdentifier(sqlStep.TaskName) + "Statement";
-        Merge(files, gaps, SqlStatementBuilderEmitter.Emit(mappingNamespace, sqlStep.TaskName, sqlStep.Sql));
-        var statementTest = SqlStatementTestEmitter.Emit($"{package.ObjectName}.Tests", mappingNamespace, sqlStep.TaskName, sqlStep.Sql);
+        // reserveStatementIdentifier (see its own doc comment on Generate's own
+        // ReserveStatementIdentifier local) -- not a bare SanitizeIdentifier(sqlStep.TaskName),
+        // since two Execute SQL Tasks anywhere in this package can share the identical display
+        // name.
+        var identifierBase = reserveStatementIdentifier(sqlStep.TaskName);
+        var statementClassName = identifierBase + "Statement";
+        Merge(files, gaps, SqlStatementBuilderEmitter.Emit(mappingNamespace, sqlStep.TaskName, identifierBase, sqlStep.Sql));
+        var statementTest = SqlStatementTestEmitter.Emit($"{package.ObjectName}.Tests", mappingNamespace, sqlStep.TaskName, identifierBase, sqlStep.Sql);
         var statementTestFinal = statementTest with { RelativePath = $"{package.ObjectName}.Tests/{statementTest.RelativePath}" };
         testFiles.Add(statementTestFinal);
         NoteTest(testCoverageNotes, statementTestFinal, "StatementText",
@@ -3931,7 +3964,7 @@ public static partial class PackageGenerator
             // and cannot be exercised against a fake at all (see SqlStatementTestEmitter.EmitStepTest's
             // own doc comment); that shape is deliberately left for an Integration-tagged test, a
             // later phase.
-            var stepTest = SqlStatementTestEmitter.EmitStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName);
+            var stepTest = SqlStatementTestEmitter.EmitStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName, identifierBase);
             var stepTestFinal = stepTest with { RelativePath = $"{package.ObjectName}.Tests/{stepTest.RelativePath}" };
             testFiles.Add(stepTestFinal);
             NoteTest(testCoverageNotes, stepTestFinal, "ExecuteSqlStep",
@@ -3950,7 +3983,7 @@ public static partial class PackageGenerator
         // SecondaryConnectionSqlStepTests.RunAsync_NeverTouchesTheUnitOfWork exactly (see
         // TestDoublesEmitter's own unreachableSecondaryServer comment for why this needs no real
         // server at all, unlike a SQL/Excel SOURCE's own Integration-tagged read).
-        var secondaryTest = SqlStatementTestEmitter.EmitSecondaryConnectionStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName);
+        var secondaryTest = SqlStatementTestEmitter.EmitSecondaryConnectionStepTest($"{package.ObjectName}.Tests", rootNamespace, sqlStep.TaskName, identifierBase);
         var secondaryTestFinal = secondaryTest with { RelativePath = $"{package.ObjectName}.Tests/{secondaryTest.RelativePath}" };
         testFiles.Add(secondaryTestFinal);
         NoteTest(testCoverageNotes, secondaryTestFinal, "SecondaryConnection",
@@ -3970,7 +4003,8 @@ public static partial class PackageGenerator
     /// file.</summary>
     private static ProgramForEachFileLoopStep? ResolveForEachFileLoop(
         ForEachFileLoopPlan loop, List<GeneratedFile> files, string mappingNamespace,
-        List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps)
+        List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps,
+        Func<string, string> reserveStatementIdentifier)
     {
         const string currentFileParamName = "currentFile";
         var translated = ForEachLoopEmitter.TranslateSqlTemplate(loop.SqlTemplate, loop.VariableName, currentFileParamName);
@@ -3983,9 +4017,13 @@ public static partial class PackageGenerator
         var nameMode = ResolveForEachFileNameMode(loop.NameRetrievalTypeRaw, loop.TaskName, gaps);
         if (nameMode is null) return null;
 
-        var statementClassName = SanitizeIdentifier(loop.InnerTaskName) + "Statement";
+        // reserveStatementIdentifier -- shares the SAME package-wide registry as every ordinary
+        // Execute SQL Task's own statement class (see Generate's own ReserveStatementIdentifier
+        // doc comment), so this ForEach Loop body statement can't collide with one of those either.
+        var identifierBase = reserveStatementIdentifier(loop.InnerTaskName);
+        var statementClassName = identifierBase + "Statement";
         Merge(files, gaps, SqlStatementBuilderEmitter.EmitParameterized(
-            mappingNamespace, loop.InnerTaskName, currentFileParamName, ((TranslatedOk)translated).CSharpExpression));
+            mappingNamespace, loop.InnerTaskName, identifierBase, currentFileParamName, ((TranslatedOk)translated).CSharpExpression));
 
         // Emitter rewrite phase 6: the enumerator's own Folder is never backed by a connection
         // manager (unlike a Flat File Source's own path), so it's registered as a folder-only
