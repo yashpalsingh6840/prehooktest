@@ -133,7 +133,7 @@ public static class PackageClassEmitter
         var usesCsv = allSources.Any(s => s is CsvFlowSource or FixedWidthFlowSource) || dataFlowLoops.Count > 0 || forLoops.Count > 0;
         var usesExcel = allSources.Any(s => s is ExcelFlowSource);
         var usesXml = allSources.Any(s => s is XmlFlowSource);
-        var usesSql = allSources.Any(s => s is SqlFlowSource or MergeJoinFlowSource or AggregateFlowSource or UnionFlowSource);
+        var usesSql = allSources.Any(s => s is SqlFlowSource or MergeJoinFlowSource or AggregateFlowSource or UnionFlowSource or LookupNoMatchFilteredFlowSource);
         // SqlBulkSink<T>/BulkCopyOptions (both Etl.Core.Data) are now constructed DIRECTLY inside
         // whatever method needs them -- unlike the old DI-registration-lambda design, where
         // AddBulkSink<T>() (an Etl.Core.Hosting extension method) meant Program.cs never had to
@@ -374,6 +374,15 @@ public static class PackageClassEmitter
                     w.Dedent();
                     break;
                 }
+                case LookupNoMatchFilteredFlowSource noMatch:
+                {
+                    w.OpenBlock($"IRowSource<{rowTypeName}> BuildRawSource()");
+                    EmitSource(w, rowTypeName, noMatch.InnerSource, "return ");
+                    w.CloseBlock();
+                    w.Blank();
+                    w.Line($"{assignPrefix}new FilteringRowSource<{rowTypeName}>({Str(noMatch.ComponentName)}, BuildRawSource(), row => !{lookupFieldNames[noMatch.LookupVariableName]}.ContainsKey(row.{noMatch.JoinInputPropertyName}));");
+                    break;
+                }
             }
         }
 
@@ -430,6 +439,7 @@ public static class PackageClassEmitter
             MergeJoinFlowSource mj => SourceNeedsUow(mj.LeftSource) || SourceNeedsUow(mj.RightSource),
             UnionFlowSource union => union.Sides.Any(SourceNeedsUow),
             AggregateFlowSource agg => SourceNeedsUow(agg.InnerSource),
+            LookupNoMatchFilteredFlowSource noMatch => SourceNeedsUow(noMatch.InnerSource),
             _ => false,
         };
 
@@ -688,13 +698,25 @@ public static class PackageClassEmitter
                         sinkMethodNames[branch.Sink.ComponentName] = EmitSinkMethod(branch.EntityName, branch.Sink);
                     }
 
-                    var scdStepType = $"SlowlyChangingDimensionStep<{scdStep.RowTypeName}, {scdStep.BusinessKeyClrType}>";
+                    // Phase 4: a composite business key (more than one declared ColumnType=1
+                    // column) becomes a plain, unnamed C# tuple -- ValueTuple already implements
+                    // structural equality/GetHashCode for free, so no new generated key type is
+                    // needed, and this is byte-identical to the original single-column shape
+                    // whenever there is exactly one key column.
+                    var scdIsCompositeKey = scdStep.BusinessKeyColumns.Count > 1;
+                    var scdKeyClrType = scdIsCompositeKey
+                        ? $"({string.Join(", ", scdStep.BusinessKeyClrTypes)})"
+                        : scdStep.BusinessKeyClrTypes[0];
+                    var scdKeySelector = scdIsCompositeKey
+                        ? $"({string.Join(", ", scdStep.BusinessKeyColumns.Select(c => $"row.{c}"))})"
+                        : $"row.{scdStep.BusinessKeyColumns[0]}";
+                    var scdStepType = $"SlowlyChangingDimensionStep<{scdStep.RowTypeName}, {scdKeyClrType}>";
                     methods.Line($"var step = new {scdStepType}(");
                     methods.Indent();
                     methods.Line($"{Str(scdStep.StepName)},");
                     methods.Line("source,");
                     methods.Line($"loadCt => {scdStep.CacheClassName}.LoadAsync(SqlConnectionStringFactory.Build(Db()), loadCt),");
-                    methods.Line($"row => row.{scdStep.BusinessKeyColumn},");
+                    methods.Line($"row => {scdKeySelector},");
                     methods.Line($"row => new object?[] {{ {string.Join(", ", scdStep.AttributeColumns.Select(c => $"row.{c}"))} }},");
                     methods.Line("new ScdClassifier(");
                     methods.Indent();

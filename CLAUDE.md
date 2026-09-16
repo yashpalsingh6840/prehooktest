@@ -8244,6 +8244,94 @@ provides stronger, harder-to-game evidence than a hand-built one would. Full sui
 pre-existing unrelated `GenerateGoldenFileTests` golden-string failures, zero new regressions,
 `GeneratedSolutionBuildTests`' own real generate+build cycle across 10 fixtures still green.
 
+### Phase 2 checkpoint confirmed, then Phases 3 (Lookup "no-match is live") and 4 (SCD composite key) closed (2026-09-16, later still)
+
+Continuing the plan at `C:\Users\yashpal.singh01\.claude\plans\concurrent-whistling-turing.md`:
+Phase 2's own re-survey checkpoint was already satisfied (`BATCH-SUMMARY.md`'s "Phase 1" section,
+above, IS that re-survey — 15 real cross-database instances confirmed, Phase 5 reprioritized).
+Phases 3 and 4 were then built and verified in full, each with its own new dtexec-measured
+fixture per the plan's own standing discipline, rather than assuming the design and moving on.
+
+**Phase 3 — Lookup `NoMatchBehavior=1`, "no-match is the live route."** The real evidenced shape
+(`author_dim.dtsx`/`address_dim.dtsx`, both real GitHub portfolio packages, identical in shape):
+`Lookup Match Output` left completely UNROUTED (a match means "already loaded, skip it");
+`Lookup No Match Output` wired straight to the destination (a miss means "insert this row") — the
+classic "insert-if-new" dimension pattern, and the mirror image of the shape already built for
+`DFT_LookupAndAggregate` (where No-Match was the discarded side).
+
+`PackageGenerator.GenerateLookupFlow` now detects `matchOutput.Name ==
+lookup.Lookup?.NoMatchOutputName` (`liveOutputIsNoMatch`) and, when true, generalizes the
+existing dead-end-discard acceptance (previously one-directional: Match live, No-Match
+discardable) to the opposite direction too — no new runtime abstraction needed, since
+`Etl.Core.Data.FilteringRowSource<TRow>` was already generic and reusable unchanged. A new
+`ProgramEmitter.LookupNoMatchFilteredFlowSource` (mirroring `AggregateFlowSource.LookupFilter`'s
+own shape) wraps the raw source in `FilteringRowSource<TRow>` with `row => !cache.ContainsKey(key)`
+— the negation of the existing Match-side `ContainsKey` check. Since a miss has no reference row
+to copy columns from, `outputToReference` is empty by construction for this shape (no code change
+needed — it's built generically from `matchOutput.Columns`' own `CopyFromReferenceColumn`
+properties, which simply don't exist on a No-Match output), so `TransformEmitter` is called with
+`LookupJoin: null` and `ProgramFlowSpec.TransformNeedsLookupCache: false` — the transform is a
+plain passthrough with no constructor parameter, while the cache is still preloaded (needed by the
+filter, just not by the transform). **One real bug caught building this, not shipped**:
+`PackageClassEmitter`'s own `usesSql` detection (which drives the `using {ns}.Sql;` line) checked
+`SqlFlowSource`/`MergeJoinFlowSource`/`AggregateFlowSource`/`UnionFlowSource` by type but not the
+new wrapper — caught immediately by actually building the generated project (`CS0246`,
+`{Entity}SqlRow` type not found), not by the gap-count report. Fixed by adding the new type to
+that same check, matching the existing "check the wrapper type itself, not its contents"
+convention those other three wrappers already use.
+
+**Phase 4 — SCD composite business key.** Confirmed mechanical, exactly as the plan predicted:
+`SlowlyChangingDimensionStep<TRow,TKey>`/`ScdClassifier` needed zero changes at all (`where TKey :
+notnull` already accepts a `ValueTuple`, which gets structural equality for free). `PackagePlanner.
+PlanScd`'s `keyColumns.Count != 1` gate became `keyColumns.Count == 0` (still gapping on zero keys,
+now accepting any number ≥ 1); `ScdPlan.BusinessKeyColumn`/`BusinessKeyType` (singular) became
+`BusinessKeyColumns`/`BusinessKeyTypes` (`IReadOnlyList<...>`), threaded through
+`ScdCacheEmitter.Emit` (a composite key becomes `Dictionary<(T1,T2,...), object?[]>`, read via
+`keyOrdinal0`/`keyOrdinal1`/... instead of one `keyOrdinal`) and `PackageClassEmitter`'s Scd step
+case (`SlowlyChangingDimensionStep<TRow, (T1,T2,...)>`, `row => (row.Col1, row.Col2, ...)`) —
+every branch of every change is written so the single-key case stays byte-identical to before
+(same variable names, same generated text) whenever there is exactly one key column.
+
+**The real question — whether SSIS matches a composite key with AND-of-equality, OR, or something
+else — was measured, not assumed**, via a new `Ssis.Extract.FixtureBuilder` mode
+(`scd-composite-key`, `SyntheticScdCompositeKey.dtsx`): an SCD with a 2-column key (RegionCode,
+StoreCode), one current dimension row (`EAST`/`001`), and THREE seeded source rows designed to
+distinguish four hypotheses at once, not just confirm one — an exact match (control, must be
+Unchanged), a row sharing ONLY RegionCode with the dimension row (tests "first-key-only"), and a
+row sharing ONLY StoreCode (tests "second-key-only"). Run for real via `DTExec.exe` against
+`.\SQLFORPOC_2022`: **both partial-match rows correctly classified as New**, never wrongly matched
+— confirming true AND-of-equality across every declared key column, exactly what a `ValueTuple`'s
+own structural equality already gives for free, and ruling out both single-key-only hypotheses and
+OR-of-either in one run.
+
+**Both phases verified to the strongest evidence tier this project's own philosophy asks for** —
+generated, built against a copy of `Etl.Core` (0 warnings/0 errors, both fixtures, first attempt
+after the `usesSql` fix), and actually RUN against `.\SQLFORPOC_2022`, with the real dtexec probe's
+own target tables reset first so the comparison is apples-to-apples:
+- Phase 3 (`SyntheticLookupNoMatchIsLive.dtsx`): dtexec landed `Bob`/`Dave` (IDs 2/4), excluding
+  the two already-existing names (`Alice`/`Carol`); the generated exe run against the same reset
+  tables landed the **exact same two rows** in `SyntheticLookupNoMatchIsLiveTarget`.
+- Phase 4 (`SyntheticScdCompositeKey.dtsx`): dtexec routed 1 row to Unchanged
+  (`EAST`/`001`/`Original`) and 2 to New (`EAST`/`999`/`SharesRegionOnly`,
+  `ZZZZ`/`001`/`SharesStoreOnly`); the generated exe run against the same reset tables produced
+  the **exact same routing and row content**.
+
+New unit tests pinning both generated shapes directly (`LookupFlowTests.
+Generate_WiresALookupFlow_WhereTheNoMatchOutputIsTheLiveRoute`, `PackageGeneratorTests.
+Generate_WiresAnScdFlow_WithACompositeBusinessKey`), plus the pre-existing
+`Plan_ResolvesAScd_WithAllFiveTrackedOutputsWiredToTheirOwnDestination_...` test updated for the
+new `BusinessKeyColumns`/`BusinessKeyTypes` plural shape. Regression: 410/412 in
+`Ssis.Extract.Codegen.Tests` (was 408/410 — the same 2 pre-existing unrelated
+`GenerateGoldenFileTests` golden-string failures, +2 new passing tests), 173/173 in
+`Ssis.Extract.Tests`, 165/165 in `Ssis.Runtime.Expressions.Tests`, 25/25 in
+`Ssis.Extract.Cli.Tests`, `GeneratedSolutionBuildTests`' own real generate+build cycle across 10
+fixtures still green (10/10, 57s). No `Etl.Core` changes needed for either phase.
+
+**Remaining from the plan, in priority order per its own re-survey finding**: Phase 5
+(cross-database Data Flow source) — now the highest-leverage remaining phase by a wide margin (15
+confirmed instances vs. Phase 3's 2 and Phase 4's 2, both now closed) — and Phase 6 (`DATEADD
+("Millisecond", ...)`, one real instance, smallest remaining piece).
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

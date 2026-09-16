@@ -31,6 +31,13 @@ namespace Ssis.Extract.Codegen;
 /// behaviour of a full-cache Lookup against this same SQL Server -- see
 /// <see cref="LookupCacheEmitter"/>'s own note on that measurement. A dimension with two rows
 /// satisfying <c>CurrentRowWhere</c> for one business key is malformed regardless.</para>
+///
+/// <para><b>A composite business key</b> (more than one declared column, Phase 4 of the gap-audit
+/// plan concurrent-whistling-turing.md, 2026-09-16) becomes a plain, unnamed C# tuple -- measured
+/// via a real dtexec probe (2 key columns, seeded rows sharing one column but differing on the
+/// other) to confirm SSIS matches on AND-of-equality across every declared key column, exactly
+/// what a <c>ValueTuple</c>'s own structural equality already gives for free. Byte-identical to
+/// the original single-column shape whenever there is exactly one key column.</para>
 /// </summary>
 public static class ScdCacheEmitter
 {
@@ -38,14 +45,19 @@ public static class ScdCacheEmitter
         string ns,
         string cacheClassName,
         string referenceSql,
-        string businessKeyColumn,
-        SsisPipelineType businessKeyType,
+        IReadOnlyList<string> businessKeyColumns,
+        IReadOnlyList<SsisPipelineType> businessKeyTypes,
         IReadOnlyList<string> attributeColumns)
     {
         if (attributeColumns.Count == 0)
         {
             return new EmitResult([], [new GenerationGap(cacheClassName, "no compared attribute columns -- nothing to cache")]);
         }
+
+        var isComposite = businessKeyColumns.Count > 1;
+        var keyClrType = isComposite
+            ? $"({string.Join(", ", businessKeyTypes.Select(t => t.ClrTypeName))})"
+            : businessKeyTypes[0].ClrTypeName;
 
         var lines = new List<string>
         {
@@ -61,17 +73,26 @@ public static class ScdCacheEmitter
             "/// columns.</summary>",
             $"public static class {cacheClassName}",
             "{",
-            $"    public static async Task<Dictionary<{businessKeyType.ClrTypeName}, object?[]>> LoadAsync(string connectionString, CancellationToken ct)",
+            $"    public static async Task<Dictionary<{keyClrType}, object?[]>> LoadAsync(string connectionString, CancellationToken ct)",
             "    {",
-            $"        var result = new Dictionary<{businessKeyType.ClrTypeName}, object?[]>();",
+            $"        var result = new Dictionary<{keyClrType}, object?[]>();",
             "        await using var connection = new SqlConnection(connectionString);",
             "        await connection.OpenAsync(ct);",
             "        await using var command = connection.CreateCommand();",
             $"        command.CommandText = {ProgramEmitter.CSharpStringLiteral(referenceSql)};",
             "        await using var reader = await command.ExecuteReaderAsync(ct);",
             "",
-            $"        var keyOrdinal = reader.GetOrdinal({ProgramEmitter.CSharpStringLiteral(businessKeyColumn)});",
         };
+
+        if (isComposite)
+        {
+            for (var i = 0; i < businessKeyColumns.Count; i++)
+                lines.Add($"        var keyOrdinal{i} = reader.GetOrdinal({ProgramEmitter.CSharpStringLiteral(businessKeyColumns[i])});");
+        }
+        else
+        {
+            lines.Add($"        var keyOrdinal = reader.GetOrdinal({ProgramEmitter.CSharpStringLiteral(businessKeyColumns[0])});");
+        }
 
         for (var i = 0; i < attributeColumns.Count; i++)
             lines.Add($"        var ordinal{i} = reader.GetOrdinal({ProgramEmitter.CSharpStringLiteral(attributeColumns[i])});");
@@ -79,7 +100,9 @@ public static class ScdCacheEmitter
         lines.Add("");
         lines.Add("        while (await reader.ReadAsync(ct))");
         lines.Add("        {");
-        lines.Add($"            var key = reader.GetFieldValue<{businessKeyType.ClrTypeName}>(keyOrdinal);");
+        lines.Add(isComposite
+            ? $"            var key = ({string.Join(", ", businessKeyTypes.Select((t, i) => $"reader.GetFieldValue<{t.ClrTypeName}>(keyOrdinal{i})"))});"
+            : $"            var key = reader.GetFieldValue<{businessKeyTypes[0].ClrTypeName}>(keyOrdinal);");
         // A NULL dimension attribute is a real possibility, and the classifier's own equality rule
         // already handles null on either side -- so it must reach it as null, not as DBNull.Value
         // (which would compare unequal to a genuinely null incoming value and misclassify the row).

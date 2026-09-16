@@ -1730,6 +1730,40 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WiresAnScdFlow_WithACompositeBusinessKey()
+    {
+        // SyntheticScdCompositeKey.dtsx (Phase 4 of the gap-audit plan,
+        // concurrent-whistling-turing.md, 2026-09-16): a Microsoft.SCD declaring TWO business-key
+        // columns (RegionCode, StoreCode). Verified end-to-end against a real dtexec run and a
+        // real generated run -- exact match: a row sharing only ONE of the two key columns with
+        // the existing dimension row is New, never wrongly matched (AND-of-equality, confirmed
+        // real, not guessed). See CLAUDE.md's own account. This test pins the generated tuple-key
+        // wiring.
+        var package = LoadSyntheticFixture("SyntheticScdCompositeKey.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
+
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticScdCompositeKey.cs");
+        // A composite key becomes a plain, unnamed C# tuple -- byte-identical to the single-key
+        // shape's own `int`/`row => row.EmpId` whenever there is exactly one key column (see
+        // Generate_WiresARealShapedScdFlow_WithACommandOnlyBranchAndAConvergedInsertBranch above).
+        Assert.Contains("var step = new SlowlyChangingDimensionStep<DFT_ScdCompositeSqlRow, (string, string)>(", classFile.Content);
+        Assert.Contains("row => (row.RegionCode, row.StoreCode),", classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+
+        var cache = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SCD_DimStoreCache.cs");
+        Assert.Contains("public static async Task<Dictionary<(string, string), object?[]>> LoadAsync(string connectionString, CancellationToken ct)", cache.Content);
+        Assert.Contains("var keyOrdinal0 = reader.GetOrdinal(\"RegionCode\");", cache.Content);
+        Assert.Contains("var keyOrdinal1 = reader.GetOrdinal(\"StoreCode\");", cache.Content);
+        Assert.Contains(
+            "var key = (reader.GetFieldValue<string>(keyOrdinal0), reader.GetFieldValue<string>(keyOrdinal1));",
+            cache.Content);
+        CodeAssertions.AssertNoSyntaxErrors(cache.Content);
+    }
+
+    [Fact]
     public void Generate_WrapsTheRowSourceInSortingRowSource_ForAStandaloneSort()
     {
         // SyntheticStandaloneSort.dtsx (gap-audit Phase 3.5, 2026-09-02): OLE DB Source (seed

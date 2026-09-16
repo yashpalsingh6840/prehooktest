@@ -2561,7 +2561,7 @@ public static partial class PackageGenerator
         var rowColumnNames = PipelineResolver.Resolve(sourceOutput).Columns
             .Select(c => c.PipelineColumnName).ToHashSet(StringComparer.Ordinal);
 
-        var required = new List<string> { scd.BusinessKeyColumn };
+        var required = new List<string>(scd.BusinessKeyColumns);
         required.AddRange(scd.Attributes.Select(a => a.ColumnName));
         var missing = required.Where(c => !rowColumnNames.Contains(c)).ToList();
         if (missing.Count > 0)
@@ -2595,7 +2595,7 @@ public static partial class PackageGenerator
 
         var cacheClassName = $"{SanitizeIdentifier(scd.Component.Name)}Cache";
         Merge(branchFiles, gaps, ScdCacheEmitter.Emit(
-            $"{ns}.Mapping", cacheClassName, scd.ReferenceSql, scd.BusinessKeyColumn, scd.BusinessKeyType,
+            $"{ns}.Mapping", cacheClassName, scd.ReferenceSql, scd.BusinessKeyColumns, scd.BusinessKeyTypes,
             scd.Attributes.Select(a => a.ColumnName).ToList()));
 
         foreach (var branchPlan in liveBranches)
@@ -2702,7 +2702,7 @@ public static partial class PackageGenerator
 
         return new ProgramScdStep(
             flow.TaskName, programSource, rowTypeName, cacheClassName,
-            scd.BusinessKeyColumn, scd.BusinessKeyType.ClrTypeName,
+            scd.BusinessKeyColumns, scd.BusinessKeyTypes.Select(t => t.ClrTypeName).ToList(),
             scd.Attributes.Select(a => a.ColumnName).ToList(),
             scd.Attributes.Select(a => a.Role.ToString()).ToList(),
             scd.FailOnFixedAttributeChange, scd.UpdateChangingAttributeHistory,
@@ -2910,6 +2910,15 @@ public static partial class PackageGenerator
             return null;
         }
 
+        // Phase 3 (gap-audit plan concurrent-whistling-turing.md, 2026-09-16): the "no-match is
+        // the live route" shape -- the classic "insert-if-new" dimension pattern (author_dim.dtsx/
+        // address_dim.dtsx, both real, both identical in shape). Match is the discarded/unrouted
+        // side, No-Match is the one live output. Detected by NAME, not by which side happened to
+        // survive the discard loop above -- a Match output with literally no path at all (never
+        // even routed to a dead-end RowCount) is simply never iterated, so matchOutput here can
+        // legitimately BE the No-Match output.
+        var liveOutputIsNoMatch = matchOutput.Name is not null && matchOutput.Name == lookup.Lookup?.NoMatchOutputName;
+
         // What the generated code does on a lookup MISS is decided entirely by needsFiltering:
         // with it, FilteringRowSource drops the row before the transform ever sees it; without
         // it, the transform indexes the cache (lookup[key]) and therefore THROWS. Neither is
@@ -2936,6 +2945,13 @@ public static partial class PackageGenerator
 
             case 0:
                 break; // throwing indexer == SSIS failing the component
+
+            case 1 when liveOutputIsNoMatch:
+                // Phase 3: no-match is the live route. Filtering is required regardless of
+                // whether Match happened to be a discarded RowCount dead end or entirely
+                // unrouted -- every row reaching the destination must be a genuine miss.
+                needsFiltering = true;
+                break;
 
             case 1 when needsFiltering:
                 break; // misses provably excluded from the stream
@@ -3031,12 +3047,13 @@ public static partial class PackageGenerator
             return null;
         }
 
-        if (needsFiltering)
+        if (needsFiltering && !liveOutputIsNoMatch)
         {
             // A Lookup that redirects its no-match rows away, but whose live output goes
             // straight to the destination with no Multicast at all, is also not evidenced --
             // gapped rather than guessed at wiring a FilteringRowSource wrap for a shape nothing
-            // has ever exercised.
+            // has ever exercised. (The liveOutputIsNoMatch case -- Phase 3's own "no-match is
+            // live" shape -- is handled below, straight to the destination, no Multicast needed.)
             gaps.Add(new GenerationGap(flow.TaskName,
                 $"Lookup '{lookup.Name}' redirects its no-match output away, but its live output goes straight to the destination with no Multicast/Aggregate downstream -- this shape is not evidenced and not supported yet"));
             return null;
@@ -3045,7 +3062,15 @@ public static partial class PackageGenerator
         var nullableColumnNames = ResolveNullableColumnNames(flow);
         var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
         if (sourceResult is null) return null; // ResolveFlowSource already added the reason
-        var (rowTypeName, programSource) = sourceResult.Value;
+        var (rowTypeName, rawProgramSource) = sourceResult.Value;
+
+        // Phase 3: wrap the raw source in a filter keeping only genuine misses (see
+        // LookupNoMatchFilteredFlowSource's own doc comment) -- every row reaching the
+        // destination in this shape must be one the Lookup did NOT find a reference row for.
+        var cacheVariableName = LowerFirst(cacheClassName);
+        var programSource = liveOutputIsNoMatch
+            ? new LookupNoMatchFilteredFlowSource(lookup.Name, rawProgramSource, cacheVariableName, joinKey.InputColumn)
+            : rawProgramSource;
 
         Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, nullableColumnNames));
 
@@ -3064,7 +3089,12 @@ public static partial class PackageGenerator
             DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
             DestinationComponent: flow.DestinationComponent,
             NullableColumnNames: nullableColumnNames,
-            LookupJoin: new LookupJoinSpec(cacheClassName, "lookup", joinKey.InputColumn, keyType.ClrTypeName, outputToReference),
+            // Phase 3's own no-match-is-live shape never copies a reference column (a miss has no
+            // reference row to copy from -- outputToReference is empty by construction for this
+            // shape), so the transform needs no cache parameter at all; passing LookupJoin: null
+            // here (rather than an empty-mapping LookupJoinSpec) is what lets
+            // TransformNeedsLookupCache: false below actually match the generated constructor.
+            LookupJoin: liveOutputIsNoMatch ? null : new LookupJoinSpec(cacheClassName, "lookup", joinKey.InputColumn, keyType.ClrTypeName, outputToReference),
             Holders: componentHolders));
         Merge(files, gaps, transformResult.Result);
         foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
@@ -3093,12 +3123,16 @@ public static partial class PackageGenerator
             (authMode, userId, targetServer, targetDatabase) = auth;
 
         var preload = new LookupPreload(
-            VariableName: LowerFirst(cacheClassName),
+            VariableName: cacheVariableName,
             CacheClassName: cacheClassName,
             KeyClrType: keyType.ClrTypeName,
             ReferenceKeyColumn: joinKey.ReferenceColumn);
 
-        return new ProgramFlowSpec(flow.TaskName, programSource, rowTypeName, entityName, transformClassName, new SqlFlowSink(flow.DestinationComponent.Name), preload);
+        // Phase 3: the no-match-is-live shape's transform takes no cache parameter at all (see
+        // the LookupJoin: null comment above) -- the cache is still preloaded (needed by the
+        // FilteringRowSource wrap around programSource), just never passed into the transform.
+        return new ProgramFlowSpec(flow.TaskName, programSource, rowTypeName, entityName, transformClassName,
+            new SqlFlowSink(flow.DestinationComponent.Name), preload, TransformNeedsLookupCache: !liveOutputIsNoMatch);
     }
 
     // internal, not private -- reused by TransformEmitter for a Script-Component combined-seam

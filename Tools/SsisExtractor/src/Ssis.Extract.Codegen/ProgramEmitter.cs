@@ -128,6 +128,22 @@ public sealed record AggregateFlowSource(
     AggregateLookupKeySpec? LookupKey = null,
     (string LookupVariableName, string JoinInputPropertyName)? LookupFilter = null) : FlowSourceSpec(ComponentName);
 
+/// <summary>The "no-match is the live route" Lookup shape (Phase 3, gap-audit plan
+/// concurrent-whistling-turing.md, 2026-09-16) -- the classic "insert-if-new" dimension load
+/// pattern: NoMatchBehavior=1, the Match output left unrouted (or itself a discarded RowCount
+/// dead end), and the No-Match output wired straight to a destination. Every row reaching the
+/// destination is, by definition, one the Lookup did NOT find a reference row for, so
+/// <see cref="InnerSource"/> is wrapped in a <c>FilteringRowSource&lt;TRow&gt;</c> keeping only
+/// rows whose join key is ABSENT from the cache -- the mirror image of
+/// <see cref="AggregateFlowSource.LookupFilter"/>'s own <c>ContainsKey</c> check (which keeps
+/// matches). No reference columns are ever copied for this shape (a miss has no reference row to
+/// copy from), so the owning flow's own transform needs no cache parameter at all --
+/// <c>ProgramFlowSpec.TransformNeedsLookupCache</c> is false whenever this type is used, even
+/// though <c>ProgramFlowSpec.Lookup</c> (the preload) is still populated, since the cache is
+/// still needed here, in the filter, just not in the transform.</summary>
+public sealed record LookupNoMatchFilteredFlowSource(
+    string ComponentName, FlowSourceSpec InnerSource, string LookupVariableName, string JoinInputPropertyName) : FlowSourceSpec(ComponentName);
+
 /// <summary>One column's write-time layout, mirroring Etl.Core.Data.FlatFileColumnFormat's own
 /// constructor shape verbatim -- this project never references the Etl.Core assembly (it emits
 /// TEXT, not types), so this is codegen's own plain DTO for the same three values.</summary>
@@ -418,8 +434,8 @@ public sealed record ProgramScdStep(
     FlowSourceSpec Source,
     string RowTypeName,
     string CacheClassName,
-    string BusinessKeyColumn,
-    string BusinessKeyClrType,
+    IReadOnlyList<string> BusinessKeyColumns,
+    IReadOnlyList<string> BusinessKeyClrTypes,
     IReadOnlyList<string> AttributeColumns,
     IReadOnlyList<string> AttributeRoles,
     bool FailOnFixedAttributeChange,

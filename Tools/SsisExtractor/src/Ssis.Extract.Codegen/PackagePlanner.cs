@@ -386,8 +386,8 @@ public sealed record ScdAttributePlan(string ColumnName, ScdColumnRoleRaw Role);
 /// </summary>
 public sealed record ScdPlan(
     PipelineComponentSpec Component,
-    string BusinessKeyColumn,
-    SsisPipelineType BusinessKeyType,
+    IReadOnlyList<string> BusinessKeyColumns,
+    IReadOnlyList<SsisPipelineType> BusinessKeyTypes,
     IReadOnlyList<ScdAttributePlan> Attributes,
     string ReferenceSql,
     bool FailOnFixedAttributeChange,
@@ -3434,10 +3434,15 @@ public static class PackagePlanner
     /// that all rows in the input are new OR the transformation detects the change type") says the
     /// other value skips detection entirely. The enum is not resolvable by reflection, so anything
     /// else gaps.</item>
-    /// <item><b>A composite business key</b> -- every evidenced SCD declares exactly one
-    /// <c>ColumnType</c> 1 column, and nothing measured says how SSIS matches on several.</item>
     /// <item><b>No <c>SqlCommand</c></b> -- there is nothing to read the dimension with.</item>
     /// </list>
+    ///
+    /// <para><b>A composite business key IS supported</b> (Phase 4, gap-audit plan
+    /// concurrent-whistling-turing.md, 2026-09-16) -- measured via a real dtexec probe (2 key
+    /// columns, seeded rows sharing one column but differing on the other, to distinguish "AND of
+    /// both" from any other rule): confirmed AND-of-equality across every declared key column,
+    /// exactly what a C# <c>ValueTuple</c>'s own structural equality already gives for free. See
+    /// <c>ScdCacheEmitter</c>/<c>PackageClassEmitter</c>'s own composite-key handling.</para>
     /// </summary>
     private static ScdPlan? PlanScd(string taskName, PipelineSpec pipeline, PipelineComponentSpec scdComponent, List<GenerationGap> gaps)
     {
@@ -3469,21 +3474,31 @@ public static class PackagePlanner
             return null;
         }
 
+        // Phase 4 (gap-audit plan concurrent-whistling-turing.md, 2026-09-16): a composite
+        // business key is now supported, measured via a real dtexec probe (2 key columns, seeded
+        // rows sharing one column but differing on the other, to distinguish "AND of both" from
+        // any other rule -- confirmed AND-of-equality, matching a ValueTuple's own structural
+        // equality with zero new runtime code, see ScdCacheEmitter/PackageClassEmitter). Only the
+        // count-zero case remains a gap -- there is nothing to match a dimension row on at all.
         var keyColumns = payload.Columns.Where(c => c.ColumnTypeRaw == (int)ScdColumnRoleRaw.BusinessKey).ToList();
-        if (keyColumns.Count != 1)
+        if (keyColumns.Count == 0)
         {
             gaps.Add(new GenerationGap(taskName,
-                $"Slowly Changing Dimension '{scdComponent.Name}' declares {keyColumns.Count} business-key column(s) ({(keyColumns.Count == 0 ? "none" : string.Join(", ", keyColumns.Select(c => $"'{c.ColumnName}'")))}) -- exactly one is supported; how SSIS matches on a composite key is unevidenced and unmeasured"));
+                $"Slowly Changing Dimension '{scdComponent.Name}' declares no business-key column -- at least one is required to match a dimension row"));
             return null;
         }
 
-        var businessKey = keyColumns[0];
-        var keyType = SsisPipelineTypeMap.Resolve(businessKey.DataType);
-        if (keyType is null)
+        var businessKeyTypes = new List<SsisPipelineType>();
+        foreach (var businessKey in keyColumns)
         {
-            gaps.Add(new GenerationGap(taskName,
-                $"Slowly Changing Dimension '{scdComponent.Name}' business key '{businessKey.ColumnName}' has unmapped pipeline data type '{businessKey.DataType}'"));
-            return null;
+            var keyType = SsisPipelineTypeMap.Resolve(businessKey.DataType);
+            if (keyType is null)
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"Slowly Changing Dimension '{scdComponent.Name}' business key '{businessKey.ColumnName}' has unmapped pipeline data type '{businessKey.DataType}'"));
+                return null;
+            }
+            businessKeyTypes.Add(keyType);
         }
 
         // Only the three COMPARED roles -- the key itself is matched on, never compared, and a
@@ -3577,7 +3592,7 @@ public static class PackagePlanner
             return null; // Resolve/ResolveOleDbCommand already added the gap
 
         return new ScdPlan(
-            scdComponent, businessKey.ColumnName, keyType, attributes, referenceSql,
+            scdComponent, keyColumns.Select(k => k.ColumnName).ToList(), businessKeyTypes, attributes, referenceSql,
             FailOnFixedAttributeChange: payload.FailOnFixedAttributeChange ?? true,
             UpdateChangingAttributeHistory: payload.UpdateChangingAttributeHistory ?? false,
             unchanged, @new, fixedAttribute, changing, historical);

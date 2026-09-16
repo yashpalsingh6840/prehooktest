@@ -1037,8 +1037,8 @@ public class PackagePlannerTests
         Assert.NotNull(flow.Scd);
         var scd = flow.Scd!;
 
-        Assert.Equal("EmpId", scd.BusinessKeyColumn);
-        Assert.Equal("int", scd.BusinessKeyType.ClrTypeName);
+        Assert.Equal(["EmpId"], scd.BusinessKeyColumns);
+        Assert.Equal("int", scd.BusinessKeyTypes[0].ClrTypeName);
         Assert.False(scd.FailOnFixedAttributeChange);
         Assert.False(scd.UpdateChangingAttributeHistory);
         Assert.Contains("[StartDate] IS NOT NULL AND [EndDate] IS NULL", scd.ReferenceSql);

@@ -80,7 +80,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources|union-plus-extra-source|aggregate-then-oledb-command|event-handler-probe|error-redirect|expression-task|expression-task-coercion-probe|for-loop|xml-source]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|lookup-no-match-is-live|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources|union-plus-extra-source|aggregate-then-oledb-command|event-handler-probe|error-redirect|expression-task|expression-task-coercion-probe|for-loop|xml-source|scd-composite-key]");
             return 2;
         }
 
@@ -96,6 +96,10 @@ internal static class Program
         if (fixtureName == "lookup-single")
         {
             return BuildLookupSingleFixture(args[0]);
+        }
+        if (fixtureName == "lookup-no-match-is-live")
+        {
+            return BuildLookupNoMatchIsLiveFixture(args[0]);
         }
         if (fixtureName == "oledb-source-transform")
         {
@@ -348,6 +352,10 @@ internal static class Program
         if (fixtureName == "scd")
         {
             return BuildScdRealShapeFixture(args[0]);
+        }
+        if (fixtureName == "scd-composite-key")
+        {
+            return BuildScdCompositeKeyFixture(args[0]);
         }
         if (fixtureName != "parallel-shapes")
         {
@@ -723,6 +731,84 @@ internal static class Program
         var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
             accessMode: 3, openRowset: "[dbo].[SyntheticLookupSingleTarget]");
         AttachPath(pipe, matchOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Phase 3 of the gap-audit plan (concurrent-whistling-turing.md, 2026-09-16): the "no-match is
+    /// the live route" Lookup shape -- the classic "insert-if-new" dimension load pattern, confirmed
+    /// real from two real GitHub portfolio packages read directly (<c>author_dim.dtsx</c>/
+    /// <c>address_dim.dtsx</c>, both identical in shape): <c>Lookup Match Output</c> is left
+    /// COMPLETELY UNROUTED (a match means "already loaded, skip it"); <c>Lookup No Match Output</c>
+    /// is the one output wired straight to the destination (a miss means "this row needs to be
+    /// inserted"). The mirror image of <c>BuildLookupSingleFixture</c>'s own shape (Match routed,
+    /// No-Match left alone).
+    ///
+    /// <para>OLE DB Source (ID, Name) -> Lookup (full cache, NoMatchBehavior=1/REDIRECT, joining on
+    /// Name -> ExistingName, no reference columns copied -- a miss has no reference row to copy
+    /// from) -> No-Match Output -> OLE DB Destination. Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-lookup-no-match-is-live-tables.sql</c>.</para>
+    /// </summary>
+    private static int BuildLookupNoMatchIsLiveFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticLookupNoMatchIsLive" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_InsertIfNew";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, Name FROM dbo.SyntheticLookupNoMatchIsLiveSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        // --- the Lookup itself, NoMatchBehavior=1 (redirect, not fail) ---
+        var lookupMeta = pipe.ComponentMetaDataCollection.New();
+        lookupMeta.ComponentClassID = "Microsoft.Lookup";
+        var lookupInst = lookupMeta.Instantiate();
+        lookupInst.ProvideComponentProperties();
+        lookupMeta.Name = "LKP_ExistingNames";
+
+        var lookupConn = lookupMeta.RuntimeConnectionCollection[0];
+        lookupConn.ConnectionManagerID = sqlCm.ID;
+        lookupConn.ConnectionManager = DtsConvert.GetExtendedInterface(sqlCm);
+
+        lookupInst.SetComponentProperty("CacheType", 0);        // full cache
+        lookupInst.SetComponentProperty("NoMatchBehavior", 1);  // redirect to no-match output
+        lookupInst.SetComponentProperty("SqlCommand",
+            "SELECT ExistingName FROM dbo.SyntheticLookupNoMatchIsLiveReference");
+
+        AttachPath(pipe, srcOutput, lookupMeta.InputCollection[0]);
+        lookupInst.AcquireConnections(null);
+        lookupInst.ReinitializeMetaData();
+        lookupInst.ReleaseConnections();
+
+        var lookupInput = lookupMeta.InputCollection[0];
+        var virtualInput = lookupInput.GetVirtualInput();
+        var virtualName = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>()
+            .First(c => c.Name == "Name");
+        var mappedName = lookupInst.SetUsageType(
+            lookupInput.ID, virtualInput, virtualName.LineageID, DTSUsageType.UT_READONLY);
+        lookupInst.SetInputColumnProperty(lookupInput.ID, mappedName.ID, "JoinToReferenceColumn", "ExistingName");
+
+        // Match output left COMPLETELY UNROUTED -- no AttachPath call at all, matching the real
+        // evidenced shape exactly (never even a dead-end RowCount).
+        var noMatchOutput = lookupMeta.OutputCollection.Cast<IDTSOutput100>().First(o => o.Name == "Lookup No Match Output");
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticLookupNoMatchIsLiveTarget]");
+        AttachPath(pipe, noMatchOutput, destMeta.InputCollection[0]);
         ResolveOleDbMetadata(destMeta, isDestination: true);
 
         pkg.SaveToXML(out var xml, null);
@@ -5325,6 +5411,117 @@ internal static class Program
         }
 
         inst.ReleaseConnections();
+    }
+
+    /// <summary>
+    /// Phase 4 of the gap-audit plan (concurrent-whistling-turing.md, 2026-09-16): a
+    /// <c>Microsoft.SCD</c> declaring a COMPOSITE business key (2 columns: RegionCode, StoreCode),
+    /// built specifically to measure -- not guess -- how SSIS matches on several key columns.
+    ///
+    /// <para>Seed data is deliberately chosen to distinguish four hypotheses at once, not just
+    /// confirm one: the dimension has exactly one current row (RegionCode='EAST',
+    /// StoreCode='001'). The source carries three rows: (1) an EXACT match on both key columns
+    /// with an unchanged attribute (the control -- must classify Unchanged); (2) the SAME
+    /// RegionCode ('EAST') but a DIFFERENT StoreCode ('999') -- if SSIS matched on the FIRST key
+    /// column alone, this would wrongly match the existing row; (3) a DIFFERENT RegionCode
+    /// ('ZZZZ') but the SAME StoreCode ('001') -- if SSIS matched on the SECOND key column alone,
+    /// or used OR-of-either, this would wrongly match too. Under true AND-of-equality across both
+    /// declared key columns, rows 2 and 3 must BOTH classify as New -- only row 1 as Unchanged.
+    /// </para>
+    ///
+    /// <para>Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-scd-composite-key-tables.sql</c>.</para>
+    /// </summary>
+    private static int BuildScdCompositeKeyFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticScdCompositeKey" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_ScdComposite";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT RegionCode, StoreCode, StoreName FROM dbo.SyntheticScdCompositeSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var scdMeta = pipe.ComponentMetaDataCollection.New();
+        scdMeta.ComponentClassID = "Microsoft.SCD";
+        var scdInst = scdMeta.Instantiate();
+        scdInst.ProvideComponentProperties(); // resets Name -- set it after, same as every other component here
+        scdMeta.Name = "SCD_DimStore";
+
+        var scdConn = scdMeta.RuntimeConnectionCollection[0];
+        scdConn.ConnectionManagerID = sqlCm.ID;
+        scdConn.ConnectionManager = DtsConvert.GetExtendedInterface(sqlCm);
+
+        scdInst.SetComponentProperty("SqlCommand",
+            "SELECT [RegionCode], [StoreCode], [StoreName], [StartDate], [EndDate] FROM [dbo].[SyntheticScdCompositeDim]");
+        scdInst.SetComponentProperty("CurrentRowWhere", "[StartDate] IS NOT NULL AND [EndDate] IS NULL");
+        scdInst.SetComponentProperty("UpdateChangingAttributeHistory", false);
+        scdInst.SetComponentProperty("FailOnFixedAttributeChange", false);
+        scdInst.SetComponentProperty("EnableInferredMember", false);
+        scdInst.SetComponentProperty("FailOnLookupFailure", false);
+        scdInst.SetComponentProperty("IncomingRowChangeType", 1);
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, scdMeta.InputCollection[0]);
+
+        var columnTypes = new System.Collections.Generic.Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["RegionCode"] = 1, // business key
+            ["StoreCode"] = 1,  // business key -- COMPOSITE with RegionCode above
+            ["StoreName"] = 2,  // changing
+        };
+
+        var scdInputInst = scdMeta.Instantiate();
+        scdInputInst.AcquireConnections(null);
+        scdInputInst.ReinitializeMetaData();
+
+        var scdInput = scdMeta.InputCollection[0];
+        var scdVirtualInput = scdInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in scdVirtualInput.VirtualInputColumnCollection)
+        {
+            if (!columnTypes.ContainsKey(vcol.Name)) continue;
+            scdInputInst.SetUsageType(scdInput.ID, scdVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+        foreach (IDTSInputColumn100 col in scdInput.InputColumnCollection)
+        {
+            if (!columnTypes.TryGetValue(col.Name, out var columnType)) continue;
+            scdInputInst.SetInputColumnProperty(scdInput.ID, col.ID, "ColumnType", columnType);
+            var ext = scdInput.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>()
+                .FirstOrDefault(e => e.Name == col.Name);
+            if (ext is not null) scdInputInst.MapInputColumn(scdInput.ID, col.ID, ext.ID);
+        }
+        scdInputInst.ReleaseConnections();
+
+        // Only Unchanged/New are wired -- the two outputs this fixture's own seed data is designed
+        // to distinguish. Fixed Attribute/Changing Attribute Updates/Historical Attribute
+        // Inserts/Inferred Member Updates are left unrouted, matching this project's own
+        // "an unwired SCD output is a non-fatal discard" convention (BuildScdRealShapeFixture's
+        // own precedent).
+        var unchangedOutput = scdMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.Name == "Unchanged Output");
+        var newOutput = scdMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.Name == "New Output");
+
+        var unchangedDest = AddOleDbComponent(pipe, "DST_Unchanged", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticScdCompositeOutUnchanged]");
+        AttachPath(pipe, unchangedOutput, unchangedDest.InputCollection[0]);
+        ResolveOleDbMetadata(unchangedDest, isDestination: true);
+
+        var newDest = AddOleDbComponent(pipe, "DST_New", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticScdCompositeOutNew]");
+        AttachPath(pipe, newOutput, newDest.InputCollection[0]);
+        ResolveOleDbMetadata(newDest, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
     }
 
     private static int BuildPctSamplingFixture(string outputPath)

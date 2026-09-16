@@ -239,4 +239,43 @@ public class LookupFlowTests
         Assert.Equal("GONE", orphan.GapId);
         Assert.Equal(GapDecisionStatus.Orphaned, orphan.Status);
     }
+
+    [Fact]
+    public void Generate_WiresALookupFlow_WhereTheNoMatchOutputIsTheLiveRoute()
+    {
+        // SyntheticLookupNoMatchIsLive.dtsx (Phase 3 of the gap-audit plan,
+        // concurrent-whistling-turing.md, 2026-09-16) -- the classic "insert-if-new" dimension
+        // pattern, confirmed real from two GitHub portfolio packages (author_dim.dtsx/
+        // address_dim.dtsx): Lookup Match Output left completely unrouted, Lookup No Match Output
+        // wired straight to the destination. Verified end-to-end against a real dtexec run and a
+        // real generated run, exact row-for-row match (Bob/Dave inserted, Alice/Carol excluded) --
+        // see CLAUDE.md's own account. This test pins the exact generated wiring.
+        var package = LoadSyntheticFixture("SyntheticLookupNoMatchIsLive.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        // Every gap is advisory (the unavoidable SqlCommand-column-naming and Notification
+        // advisories, plus the "no direct-invocation starter test" advisory for a flow whose
+        // source reads a Lookup cache populated only by RunAsync's own bootstrap) -- nothing
+        // blocks generation.
+        Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
+
+        var classFile = result.Files.Single(f => f.RelativePath == "SyntheticLookupNoMatchIsLive.cs").Content;
+        // The cache is still preloaded (needed by the filter), even though the transform itself
+        // never receives it.
+        Assert.Contains("lKP_ExistingNamesCache = await LKP_ExistingNamesCache.LoadAsync<string>(SqlConnectionStringFactory.Build(Db()), r => r.ExistingName, ct);", classFile);
+        // Every row reaching the destination must be a genuine MISS -- the mirror image of the
+        // plain single-output Lookup shape's own ContainsKey check.
+        Assert.Contains("return new FilteringRowSource<SyntheticLookupNoMatchIsLiveTargetSqlRow>(\"LKP_ExistingNames\", BuildRawSource(), row => !lKP_ExistingNamesCache.ContainsKey(row.Name));", classFile);
+        // The transform is constructed with NO argument -- no reference column is ever copied for
+        // this shape (a miss has no reference row to copy from), so a constructor argument here
+        // would be a build error (no such constructor exists).
+        Assert.Contains("var transform = new SyntheticLookupNoMatchIsLiveTargetTransform();", classFile);
+
+        var transform = result.Files.Single(f => f.RelativePath == "Mapping/SyntheticLookupNoMatchIsLiveTargetTransform.cs").Content;
+        // A plain passthrough transform -- no reference-column assignment anywhere, and no cache
+        // constructor parameter.
+        Assert.DoesNotContain("Dictionary<", transform);
+        Assert.Contains("Name = row.Name,", transform);
+    }
 }
