@@ -8012,6 +8012,58 @@ TransferSqlServerObjectsTask pile's own internal design decisions — this entry
 pile was found, verified, and committed, not a re-derivation of how each of those seven component
 types was actually built (that work predates this session and its author/history is unknown).
 
+### Step D — re-running the 3 affected portfolios for real, `-Quiet`, and a third real bug found (2026-09-16, same day)
+
+The round above fixed and committed Fix A/Fix B/the SCD pile but never actually re-ran the 3
+portfolios those fixes were meant to unblock, and `BATCH-SUMMARY.md` (referenced above as if it
+already existed) had in fact never been written. Closed the same day: built a `-Quiet` switch on
+`Run-Pipeline.ps1` first (needed because re-running a portfolio through an agent captures the
+*entire* `dotnet restore`/`build`/`test` transcript as tool-call context regardless of what the
+agent is told to read afterward — tens of thousands of tokens per re-run otherwise), then ran it
+for real against all 3 portfolios and wrote `D:\PoC\SSIS_Packages_From_GitHub\Output\
+BATCH-SUMMARY.md` (a first-time write, not an update) with the results. Full detail in that file;
+the two headline confirmations:
+
+- **Fix A confirmed on two independent real cases**: both `SSIS-Data-Warehouse-ETL-Pipeline` and
+  `Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline` previously never reached `generate`
+  at all (a benign duplicate-`ObjectName` skip made `ssisx extract` exit 2, which the old script
+  treated as fatal) — both now correctly warn and proceed through `generate`/`build`.
+- **Fix B confirmed on its real motivating case, to the strongest evidence tier this project asks
+  for**: `E-Commerce-Datawarehouse-implementation`'s whole regenerated solution now builds 0
+  warnings/0 errors (previously `CS0029` in `stgCustomerDemographicsTransform.cs`), and the exact
+  flow the fix targeted (`Source_to_Stage_Sales_all_dimensions`, 12 files/11 starter tests) not
+  only builds but its own `dotnet test` genuinely **PASSes**, 90.6% own-generated-code coverage.
+- **The SCD pile confirmed on real (not synthetic) packages for the first time**: across all 3
+  portfolios, every real `Microsoft.SCD` instance correctly produced either a non-blocking Advisory
+  gap (an unconnected output) or a precisely-named Tier-3 gap (a composite business key — a real,
+  previously-unexercised SCD shape, distinct from the unconnected-output case, correctly reported
+  as "unevidenced and unmeasured" rather than guessed at) — never a crash, never a silent guess, on
+  a portfolio the pile's own author never saw.
+
+**A third, real, pre-existing bug was found running this — not fixed this round, named instead.**
+`Run-Coverage.ps1`'s own `Write-Error "No {Package}.Tests.csproj found..." -ErrorAction Stop` is a
+*terminating* error that, called via `& $coverageScript ...` from inside `Run-Pipeline.ps1`,
+unwinds all the way out and kills the ENTIRE calling script the instant a portfolio has zero fully-
+generatable packages (so no `{Package}.Tests.csproj` exists anywhere) — before `Run-Pipeline.ps1`
+ever reaches its own final summary/gap-by-tier block. Hit on 2 of the 3 portfolios re-run this
+round (both landed at 0/N generatable, for reasons unrelated to either fix). Independent of
+`-Quiet` and of Fix A/B/the SCD pile — it would have happened on the old script too, for any
+portfolio with 0 generatable packages; this round's own gap-tier numbers for those two portfolios
+were read directly from `gaps.json`/`generate-report.md` instead of the crashed script's own
+summary. Left unfixed and stated plainly in `BATCH-SUMMARY.md` rather than silently worked around
+— Step D's own scope was "run and report," not "fix a third bug."
+
+`ClientMigration/gap_report.py`/`gap_report_csv.py` (plus their own output,
+`gap_report.txt`/`unsupported_components_report.csv`, and the underlying `github_scan.csv`) were
+also committed this round — real component-type-gap analysis tooling against the 9 GitHub
+portfolios, found sitting untracked in the working tree alongside the rest of this round's work,
+reviewed and kept on the user's explicit instruction rather than assumed disposable.
+
+**Not done, deliberately out of scope**: re-running the other 6 of the original 9 portfolios (Step
+D's own scope was specifically the 3 portfolios Fix A/B were built to unblock); fixing the
+`Run-Coverage.ps1` termination bug just found; Phase B (AI-assisted gap filling) against any of the
+3 — still explicitly held per the user's own standing instruction.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,
