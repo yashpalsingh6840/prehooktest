@@ -71,9 +71,9 @@ public static class AiPacketEmitter
 
     /// <summary>The real <c>TestData/</c> file name this gap's fill must use -- see
     /// <see cref="GapSpec.ExpectedFileName"/>'s own doc comment for why this is NOT the Tier-A
-    /// sample's own name. Mirrors <see cref="LocalFileSourceDataEvidence"/>'s own two-way
-    /// resolution (by connection manager RefId for CSV/fixed-width, by component name for Excel)
-    /// rather than sharing code with it -- each resolution is a few lines and returns a
+    /// sample's own name. Mirrors <see cref="LocalFileSourceDataEvidence"/>'s own three-way
+    /// resolution (by connection manager RefId for CSV/fixed-width, by component name for Excel/
+    /// XML) rather than sharing code with it -- each resolution is a few lines and returns a
     /// differently-shaped result (evidence text vs. a bare file name).</summary>
     private static string? LocalFileSourceDataExpectedFileName(PackageSpec package, GenerationGap gap)
     {
@@ -87,7 +87,14 @@ public static class AiPacketEmitter
             .Select(e => e.DataFlowTask?.Pipeline)
             .Where(p => p is not null)
             .SelectMany(p => p!.Components)
-            .FirstOrDefault(c => c.Name == gap.Location && c.ExcelSource is not null);
+            .FirstOrDefault(c => c.Name == gap.Location && (c.ExcelSource is not null || c.XmlSource is not null));
+
+        // An XML Source has no connection manager at all (see XmlSourcePayload's own doc
+        // comment) -- its own literal XMLData path IS the file name to resolve, no connection
+        // manager lookup needed.
+        if (component?.XmlSource is { } xml)
+            return xml.XmlDataPath is { Length: > 0 } xmlPath ? Path.GetFileName(xmlPath) : null;
+
         var cmName = component?.ExcelSource?.ConnectionName;
         var excelCm = cmName is null ? null : package.ConnectionManagers.FirstOrDefault(c => c.ObjectName == cmName);
         return excelCm?.Parsed?.FilePath is { Length: > 0 } excelPath ? Path.GetFileName(excelPath) : null;
@@ -639,11 +646,13 @@ public static class AiPacketEmitter
     /// <summary>
     /// Resolved differently depending on which source kind reported it: a CSV/fixed-width source
     /// carries its connection manager's own RefId (<see cref="GapSpec.EvidenceRefId"/>), so the
-    /// schema comes straight from <c>FlatFileFormatSpec</c>; an Excel source carries none (there is
-    /// no per-package-generation connection-manager thread for it -- see the call site's own
-    /// comment), so it is instead resolved by NAME: <c>PackageGenerator.BuildExcelFlowSource</c>
-    /// derives a Flow's own FileSourceKey directly from the Excel Source component's <c>Name</c>
-    /// (<c>gap.Location</c>), so searching for a component with that exact name is enough.
+    /// schema comes straight from <c>FlatFileFormatSpec</c>; an Excel or XML source carries none
+    /// (neither has a per-package-generation connection-manager thread -- an XML Source has no
+    /// connection manager reference AT ALL, see <c>XmlSourcePayload</c>'s own doc comment), so
+    /// each is instead resolved by NAME: <c>PackageGenerator.BuildExcelFlowSource</c>/
+    /// <c>BuildXmlFlowSource</c> both derive a Flow's own FileSourceKey directly from the
+    /// component's own <c>Name</c> (<c>gap.Location</c>), so searching for a component with that
+    /// exact name is enough.
     /// </summary>
     private static string LocalFileSourceDataEvidence(PackageSpec package, GenerationGap gap)
     {
@@ -676,9 +685,23 @@ public static class AiPacketEmitter
             .Select(e => e.DataFlowTask?.Pipeline)
             .Where(p => p is not null)
             .SelectMany(p => p!.Components)
-            .FirstOrDefault(c => c.Name == gap.Location && c.ExcelSource is not null);
+            .FirstOrDefault(c => c.Name == gap.Location && (c.ExcelSource is not null || c.XmlSource is not null));
+
+        if (component?.XmlSource is { } xml)
+        {
+            var xsb = new StringBuilder();
+            xsb.Append(saveAsLine);
+            xsb.Append($"- **XML Source:** `{component.Name}`\n");
+            xsb.Append($"- **Row (repeating) element:** `{component.Outputs.FirstOrDefault(o => o.IsErrorOut != true)?.Name ?? "(unknown)"}`\n");
+            xsb.Append($"- **Design-time XMLData path:** `{xml.XmlDataPath ?? "(not set)"}`\n\n");
+            xsb.Append("### Columns (direct children of the row element), in order\n\n");
+            xsb.Append(ColumnTable(component.Outputs.Where(o => o.IsErrorOut != true).SelectMany(o => o.Columns)
+                .Select(c => (c.Name, c.DataType, c.Length))));
+            return xsb.ToString();
+        }
+
         if (component?.ExcelSource is not { } excel)
-            return $"_Could not resolve the Excel Source component named '{gap.Location}' -- report this, it is a bug in AiPacketEmitter._\n";
+            return $"_Could not resolve the Excel Source or XML Source component named '{gap.Location}' -- report this, it is a bug in AiPacketEmitter._\n";
 
         var esb = new StringBuilder();
         esb.Append(saveAsLine);

@@ -89,6 +89,10 @@ internal static class PipelineReader
         OleDbCommandPayload? oleDbCommand = null;
         AggregatePayload? aggregate = null;
         RowCountPayload? rowCount = null;
+        CopyMapPayload? copyMap = null;
+        PctSamplingPayload? pctSampling = null;
+        XmlSourcePayload? xmlSource = null;
+        ScdPayload? scd = null;
 
         // Script Component's own componentClassID is the generic "Microsoft.ManagedComponentHost"
         // -- not a Script-Component-specific ID the way every other bespoke type here is --
@@ -142,6 +146,26 @@ internal static class PipelineReader
                 SqlCommand = NullIfEmpty(GetProperty(properties, "SqlCommand")),
                 AccessMode = ParseInt(GetProperty(properties, "AccessMode")),
                 CommandTimeout = ParseInt(GetProperty(properties, "CommandTimeout")),
+                ColumnMappings = mainOutput is null ? [] : BuildColumnMappings(
+                    mainOutput.Columns.Select(c => (c.Name, c.ExternalMetadataColumnId)),
+                    mainOutput.ExternalMetadataColumns),
+            };
+        }
+        // XML Source shares Script Component/ADO NET's own discrimination shape --
+        // componentClassID is the generic "Microsoft.ManagedComponentHost", UserComponentTypeName
+        // is what actually says which one -- confirmed real via ETL-SSIS-Real-Scenarios' own
+        // UseCase_73 Package.dtsx ("XML Source" reading Sellers.xml). No <connections> element at
+        // all is present on the real evidenced component (unlike every other bespoke source here)
+        // -- XMLData is a plain literal property, not a connection-manager reference.
+        else if (GetProperty(properties, "UserComponentTypeName") == "Microsoft.XmlSourceAdapter")
+        {
+            var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            xmlSource = new XmlSourcePayload
+            {
+                XmlDataPath = NullIfEmpty(GetProperty(properties, "XMLData")),
+                XmlDataVariable = NullIfEmpty(GetProperty(properties, "XMLDataVariable")),
+                AccessModeRaw = ParseInt(GetProperty(properties, "AccessMode")),
+                XmlIntegerMappingRaw = ParseInt(GetProperty(properties, "XMLIntegerMapping")),
                 ColumnMappings = mainOutput is null ? [] : BuildColumnMappings(
                     mainOutput.Columns.Select(c => (c.Name, c.ExternalMetadataColumnId)),
                     mainOutput.ExternalMetadataColumns),
@@ -383,6 +407,75 @@ internal static class PipelineReader
                 VariableName = NullIfEmpty(GetProperty(properties, "VariableName")),
             };
         }
+        else if (componentClassId == "Microsoft.CopyMap")
+        {
+            // Same reading shape as Microsoft.DataConvert (ComponentPayloads.cs's own doc
+            // comment) -- every field except SourceColumnLineageId is a direct promotion of the
+            // generic PipelineOutputColumnSpec; the one bespoke property is "copyColumnId"
+            // (lowercase, confirmed via a real live object-model round trip -- NOT
+            // "SourceInputColumnLineageID", Data Conversion's own distinct property name).
+            var mainOutput = outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            copyMap = new CopyMapPayload
+            {
+                Columns = (mainOutput?.Columns ?? []).Select(c => new CopyMapColumnSpec
+                {
+                    OutputColumnName = c.Name,
+                    SourceColumnLineageId = StripLineageRef(GetProperty(c.Properties, "copyColumnId")),
+                    TargetDataType = c.DataType,
+                    Length = c.Length,
+                    Precision = c.Precision,
+                    Scale = c.Scale,
+                    CodePage = c.CodePage,
+                }).ToList(),
+            };
+        }
+        else if (componentClassId == "Microsoft.PctSampling")
+        {
+            // A pure row router -- no column mapping needed at all (confirmed real: both real
+            // evidenced outputs' own externalMetadataColumns are empty). SamplingValue/
+            // SamplingSeed are plain System.Int32 custom properties, confirmed via a live
+            // object-model probe (Ssis.Extract.FixtureBuilder's own ProbePctSampling).
+            pctSampling = new PctSamplingPayload
+            {
+                SamplingValue = ParseInt(GetProperty(properties, "SamplingValue")) ?? 0,
+                SamplingSeed = ParseInt(GetProperty(properties, "SamplingSeed")) ?? 0,
+            };
+        }
+        else if (componentClassId == "Microsoft.SCD")
+        {
+            // Every property is read verbatim, with NO schema-default substitution -- an absent
+            // property stays null here, which is the honest reading, and matters more for this
+            // component than most: FailOnFixedAttributeChange's own schema default is TRUE while
+            // every other boolean's is false (probe-confirmed, see ScdPayload's doc comment), so
+            // a reader that quietly folded absence into `false` would invert exactly one setting.
+            // The connection is resolved from the component's own single runtime connection rather
+            // than by name -- SCD calls it "LookupConnection", not the "OleDbConnection" name every
+            // other component in this file uses, and `connectionName` above is already whatever
+            // that single connection resolved to.
+            scd = new ScdPayload
+            {
+                ConnectionName = connectionName,
+                SqlCommand = NullIfEmpty(GetProperty(properties, "SqlCommand")),
+                CurrentRowWhere = NullIfEmpty(GetProperty(properties, "CurrentRowWhere")),
+                UpdateChangingAttributeHistory = ParseBool(GetProperty(properties, "UpdateChangingAttributeHistory")),
+                FailOnFixedAttributeChange = ParseBool(GetProperty(properties, "FailOnFixedAttributeChange")),
+                InferredMemberIndicator = NullIfEmpty(GetProperty(properties, "InferredMemberIndicator")),
+                EnableInferredMember = ParseBool(GetProperty(properties, "EnableInferredMember")),
+                FailOnLookupFailure = ParseBool(GetProperty(properties, "FailOnLookupFailure")),
+                IncomingRowChangeTypeRaw = ParseInt(GetProperty(properties, "IncomingRowChangeType")),
+                DefaultCodePage = ParseInt(GetProperty(properties, "DefaultCodePage")),
+                Columns = (inputs.FirstOrDefault()?.Columns ?? []).Select(c => new ScdColumnSpec
+                {
+                    ColumnName = c.CachedName,
+                    ColumnTypeRaw = ParseInt(GetProperty(c.Properties, "ColumnType")),
+                    DataType = c.CachedDataType,
+                    Length = c.CachedLength,
+                    Precision = c.CachedPrecision,
+                    Scale = c.CachedScale,
+                    CodePage = c.CachedCodePage,
+                }).ToList(),
+            };
+        }
 
         return new PipelineComponentSpec
         {
@@ -417,6 +510,10 @@ internal static class PipelineReader
             OleDbCommand = oleDbCommand,
             Aggregate = aggregate,
             RowCount = rowCount,
+            CopyMap = copyMap,
+            PctSampling = pctSampling,
+            XmlSource = xmlSource,
+            Scd = scd,
         };
     }
 

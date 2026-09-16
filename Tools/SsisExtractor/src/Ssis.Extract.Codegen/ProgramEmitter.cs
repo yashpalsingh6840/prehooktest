@@ -26,6 +26,13 @@ public sealed record SqlFlowSource(string ComponentName, string CommandText) : F
 /// rather than given any query capability of its own, since it never had one.</summary>
 public sealed record ExcelFlowSource(string ComponentName, string FileSourceKey, string WorksheetName, bool HasHeaderRow, string? WhereFilter = null) : FlowSourceSpec(ComponentName);
 
+/// <summary>An XML Source (<c>Microsoft.XmlSourceAdapter</c>), added for Phase 5 of the
+/// unsupported-component-types plan. Uses the same <see cref="FileSourceOptions"/>/FileSourceKey
+/// mechanism a <see cref="CsvFlowSource"/>/<see cref="ExcelFlowSource"/> does for its file path,
+/// plus the repeating row element's own local name (<see cref="RowElementName"/>) -- see
+/// <c>Etl.Core.Xml.XmlRowSource</c>'s own doc comment for exactly how that's matched.</summary>
+public sealed record XmlFlowSource(string ComponentName, string FileSourceKey, string RowElementName) : FlowSourceSpec(ComponentName);
+
 /// <summary>A Merge Join: two independent underlying sources (each itself a
 /// <see cref="CsvFlowSource"/>/<see cref="SqlFlowSource"/>, resolved exactly like a
 /// single-source flow's own), combined by a generated <c>Etl.Core.Data.MergeJoinRowSource</c>
@@ -258,6 +265,12 @@ public sealed record ProgramFlowStep(ProgramFlowSpec Flow) : ProgramStep;
 /// anonymous string literal (see that emitter's own doc comment for why).</summary>
 public sealed record ProgramSqlStep(string StepName, string StatementClassName) : ProgramStep;
 
+/// <summary>A resolved Microsoft.ExpressionTask assignment -- see
+/// <c>PackagePlanner.ExpressionStep</c>/<c>ExpressionTaskEmitter</c> for how
+/// <see cref="CSharpValueExpression"/> was translated. <see cref="SsisVariableName"/> is passed
+/// straight through to <c>packageVariables.Set</c> at run time.</summary>
+public sealed record ProgramExpressionStep(string StepName, string SsisVariableName, string CSharpValueExpression) : ProgramStep;
+
 /// <summary>An Execute SQL Task whose own connection manager resolves to a DIFFERENT server/
 /// database than this package's primary one (see <c>PackageGenerator.ResolveSqlStep</c>'s own
 /// doc comment for the real motivating case and why this needs its own step kind rather than
@@ -323,6 +336,32 @@ public sealed record ProgramForEachDataFlowLoopStep(
     string SourceComponentName, string RowTypeName, string EntityName, string TransformClassName,
     string FileSourceKey) : ProgramStep;
 
+/// <summary>A <c>STOCK:FORLOOP</c> whose body is a Data Flow Task -- Phase 3 of the
+/// unsupported-component-types plan, structurally the counter-driven sibling of
+/// <see cref="ProgramForEachDataFlowLoopStep"/>. <see cref="CounterVariableName"/> is the
+/// namespace-qualified package variable name (e.g. "User::Part") every emitted
+/// <c>packageVariables.GetRequired&lt;{CounterClrTypeName}&gt;(...)</c>/<c>.Set(...)</c> call
+/// reads/writes directly; <see cref="InitCSharpExpression"/> is null exactly when the container
+/// declared no <c>InitExpression</c> at all, in which case the generated method emits no Init
+/// call whatsoever (the counter's own design-time default, already seeded onto
+/// <c>packageVariables</c> the same way a conditional-constraint guard's own variables are,
+/// stands as-is). <see cref="EvalCSharpPredicate"/>/<see cref="AssignCSharpValueExpression"/> are
+/// already-translated C# (<see cref="ForLoopEmitter"/>) reading/producing a value of
+/// <see cref="CounterClrTypeName"/>.
+///
+/// <see cref="FilePathExpression"/>/<see cref="SourceComponentName"/>/<see cref="RowTypeName"/>/
+/// <see cref="EntityName"/>/<see cref="TransformClassName"/> mirror
+/// <see cref="ProgramForEachDataFlowLoopStep"/>'s own fields exactly -- the loop body is generated
+/// the same way an ordinary single-destination CSV flow is, only the per-iteration source
+/// construction (reading the counter directly off <c>packageVariables</c>, not a lambda
+/// parameter -- see <c>Etl.Core.Pipeline.ForLoopStep{TRow,TEntity}</c>'s own doc comment for why)
+/// differs.</summary>
+public sealed record ProgramForLoopStep(
+    string StepName, string CounterVariableName, string CounterClrTypeName,
+    string? InitCSharpExpression, string EvalCSharpPredicate, string AssignCSharpValueExpression,
+    string FilePathExpression,
+    string SourceComponentName, string RowTypeName, string EntityName, string TransformClassName) : ProgramStep;
+
 public sealed record ProgramConditionalSplitStep(
     string StepName,
     FlowSourceSpec Source,
@@ -344,6 +383,48 @@ public sealed record ProgramMulticastStep(
     FlowSourceSpec Source,
     string RowTypeName,
     List<ProgramMulticastBranch> Branches) : ProgramStep;
+
+/// <summary>
+/// One <c>Microsoft.SCD</c> output's downstream chain, as generated. Exactly one of the three shapes
+/// the real evidenced package uses, distinguished by which fields are populated:
+/// insert-only (<see cref="EntityName"/>/<see cref="TransformClassName"/>/<see cref="Sink"/> set),
+/// command-only (<see cref="SqlTemplate"/> set), or both.
+/// <see cref="Slot"/> is the <c>Etl.Core.Pipeline.ScdBranches{TRow}</c> property this branch fills.
+/// </summary>
+public sealed record ProgramScdBranch(
+    string Slot,
+    string OutputName,
+    string? EntityName,
+    string? TransformClassName,
+    FlowSinkSpec? Sink,
+    string? SqlTemplate,
+    IReadOnlyList<string> CommandParameterColumns);
+
+/// <summary>
+/// A Slowly Changing Dimension flow (Phase 7 of the unsupported-component-types plan) -- one source,
+/// a full-cache read of the dimension's current rows, and up to five routed branches. Unlike every
+/// other multi-branch step here, a branch may run a per-row SQL command instead of (or as well as)
+/// inserting, and the branches run in two ordered phases -- see
+/// <c>Etl.Core.Pipeline.SlowlyChangingDimensionStep{TRow,TKey}</c>'s own doc comment for why that
+/// ordering is a correctness requirement.
+///
+/// <para><see cref="AttributeRoles"/> and <see cref="AttributeColumns"/> are index-aligned, and both
+/// align with the <c>object?[]</c> <see cref="CacheClassName"/> produces -- that three-way alignment
+/// is the whole contract between the emitted cache, the emitted value selector, and the runtime
+/// classifier.</para>
+/// </summary>
+public sealed record ProgramScdStep(
+    string StepName,
+    FlowSourceSpec Source,
+    string RowTypeName,
+    string CacheClassName,
+    string BusinessKeyColumn,
+    string BusinessKeyClrType,
+    IReadOnlyList<string> AttributeColumns,
+    IReadOnlyList<string> AttributeRoles,
+    bool FailOnFixedAttributeChange,
+    bool UpdateChangingAttributeHistory,
+    IReadOnlyList<ProgramScdBranch> Branches) : ProgramStep;
 
 /// <summary>An OLE DB Command flow -- no destination table, no EF entity, no IBulkSink at all;
 /// the command itself is the flow's sink, run once per source row via

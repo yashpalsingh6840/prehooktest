@@ -23,6 +23,12 @@ public sealed record TransformRequest(
     PipelineComponentSpec DestinationComponent,
     IReadOnlySet<string>? NullableColumnNames = null,
     IReadOnlyList<PipelineComponentSpec>? DataConversions = null,
+    // Phase 1 of the unsupported-component-types plan: Microsoft.CopyMap ("Copy Column"). Kept
+    // as its own list, parallel to DataConversions, rather than folded into it -- a CopyMap
+    // column resolves to a plain `row.{SourceColumnName}` passthrough with no SsisFn.* wrapper
+    // (no conversion/cast involved at all, unlike Data Conversion), so it needs its own
+    // resolution dictionary (copiedByName) even though the wiring shape is identical.
+    IReadOnlyList<PipelineComponentSpec>? CopyMaps = null,
     // True only for a Merge Join flow's own call (GenerateMergeJoinFlow): MergeJoinEmitter
     // builds RowTypeName as its OWN combined row type, already resolving every output column's
     // true value itself (including through a Data Conversion, via its own SourceColumnLineageId
@@ -165,6 +171,17 @@ public static class TransformEmitter
         {
             foreach (var column in dataConversion.DataConvert?.Columns ?? [])
                 convertedByName.TryAdd(column.OutputColumnName, column);
+        }
+
+        // A Copy Column output column has no Expression either (see CopyMapPayload's own doc
+        // comment) -- keyed separately here, same shape as convertedByName above, but resolved
+        // via TranslateCopyMap (a plain passthrough, no SsisFn.* wrapper) rather than
+        // TranslateDataConversion.
+        var copiedByName = new Dictionary<string, CopyMapColumnSpec>();
+        foreach (var copyMap in request.CopyMaps ?? [])
+        {
+            foreach (var column in copyMap.CopyMap?.Columns ?? [])
+                copiedByName.TryAdd(column.OutputColumnName, column);
         }
 
         var resolved = PipelineResolver.ResolveDestinationInput(request.DestinationComponent);
@@ -345,7 +362,7 @@ public static class TransformEmitter
             if (computedByName.TryGetValue(column.PipelineColumnName, out var derivedColumn) ||
                 replacedByName.TryGetValue(column.PipelineColumnName, out derivedColumn))
             {
-                var translated = TranslateDerivedColumn(derivedColumn, request.EntityName, column.ExternalColumnName, lineage, columnTypes, request.NullableColumnNames, convertedByName);
+                var translated = TranslateDerivedColumn(derivedColumn, request.EntityName, column.ExternalColumnName, lineage, columnTypes, request.NullableColumnNames, convertedByName, copiedByName);
                 if (translated is NotTranslatable notTranslatable)
                 {
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}", notTranslatable.Reason));
@@ -389,6 +406,18 @@ public static class TransformEmitter
 
                 var expr = ((TranslatedOk)converted).CSharpExpression;
                 CollectSsisFunctions(expr, functionsUsed);
+                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+            }
+            else if (copiedByName.TryGetValue(column.PipelineColumnName, out var copyMapColumn))
+            {
+                var copied = TranslateCopyMap(copyMapColumn, column.PipelineColumnName, lineage);
+                if (copied is NotTranslatable notTranslatable)
+                {
+                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}", notTranslatable.Reason));
+                    continue;
+                }
+
+                var expr = ((TranslatedOk)copied).CSharpExpression;
                 assignments.Add($"        {column.ExternalColumnName} = {expr},");
             }
             else if (request.LookupJoin is { } join
@@ -752,7 +781,8 @@ public static class TransformEmitter
     private static TranslatedExpression TranslateDerivedColumn(
         DerivedExpression derivedColumn, string entityName, string destinationColumnName,
         LineageSpec lineage, Dictionary<string, PipelineOutputColumnSpec> columnTypes,
-        IReadOnlySet<string>? nullableColumnNames, Dictionary<string, DataConversionColumnSpec> convertedByName)
+        IReadOnlySet<string>? nullableColumnNames, Dictionary<string, DataConversionColumnSpec> convertedByName,
+        Dictionary<string, CopyMapColumnSpec>? copiedByName = null)
     {
         var expressionText = derivedColumn.FriendlyExpression ?? derivedColumn.Expression;
         if (expressionText is null)
@@ -787,6 +817,28 @@ public static class TransformEmitter
                 var convertedType = MapPipelineTypeToSsisType(conversion.TargetDataType)
                     ?? throw new InvalidOperationException($"Data Conversion column '{edge.FromColumnName}' translated successfully but its target type '{conversion.TargetDataType}' has no SsisType mapping -- TranslateDataConversion and MapPipelineTypeToSsisType have drifted out of sync.");
                 references[edge.FromColumnName] = new ColumnReference(((TranslatedOk)convertedExpr).CSharpExpression, convertedType, IsNullable: true);
+                continue;
+            }
+
+            // A reference to a Copy Column output column (e.g. a later Derived Column reading
+            // the copy rather than the original) resolves to the same plain `row.{source}`
+            // passthrough TranslateCopyMap emits for the direct-to-destination case -- there is
+            // no SsisFn.* wrapper to carry nullability the way Data Conversion's does, so this
+            // just reuses whichever type/nullability the TRUE source column already has.
+            if (copiedByName is not null && copiedByName.TryGetValue(edge.FromColumnName, out var copyMapColumn))
+            {
+                var copiedExpr = TranslateCopyMap(copyMapColumn, edge.FromColumnName, lineage);
+                if (copiedExpr is NotTranslatable copiedGap) return copiedGap;
+
+                var copySourceEdge = lineage.Edges.FirstOrDefault(e => e.Kind == "CopyMap" && e.ToColumnName == edge.FromColumnName);
+                var copiedType = copySourceEdge is not null && columnTypes.TryGetValue(copySourceEdge.FromColumnRefId, out var copySourceCol)
+                    ? MapPipelineTypeToSsisType(copySourceCol.DataType)
+                    : null;
+                if (copiedType is null)
+                    return new NotTranslatable($"referenced column '{edge.FromColumnName}' (a Copy Column output) has unmapped pipeline data type");
+
+                var copiedIsNullable = nullableColumnNames?.Contains(copySourceEdge!.FromColumnName) ?? false;
+                references[edge.FromColumnName] = new ColumnReference(((TranslatedOk)copiedExpr).CSharpExpression, copiedType.Value, copiedIsNullable);
                 continue;
             }
 
@@ -837,6 +889,27 @@ public static class TransformEmitter
     /// there is no need to re-derive it through the shared, name-only lineage edge search.</summary>
     internal static TranslatedExpression TranslateDataConversionFromRawExpression(DataConversionColumnSpec conversion, string rawColumnExpression) =>
         WrapDataConversion(conversion, rawColumnExpression);
+
+    /// <summary>
+    /// Resolves a Copy Column output column's own RAW source column (via the "CopyMap" lineage
+    /// edge <c>LineageBuilder</c> emits) and returns it as a PLAIN passthrough reference -- no
+    /// <c>SsisFn.*</c> wrapper at all, unlike <see cref="TranslateDataConversion(DataConversionColumnSpec,string,LineageSpec)"/>,
+    /// since a Copy Column component performs no conversion/cast whatsoever (the new column is
+    /// identically typed to its source, confirmed via a real object-model round trip -- see
+    /// <see cref="Ssis.Extract.Model.Pipeline.CopyMapPayload"/>'s own doc comment). Internal (not
+    /// private) so <c>RouterEmitter</c> can reuse it for a Conditional Split condition
+    /// referencing a Copy Column column -- same sharing precedent as
+    /// <see cref="TranslateDataConversion(DataConversionColumnSpec,string,LineageSpec)"/> itself.
+    /// </summary>
+    internal static TranslatedExpression TranslateCopyMap(
+        CopyMapColumnSpec copyMap, string outputColumnName, LineageSpec lineage)
+    {
+        var edge = lineage.Edges.FirstOrDefault(e => e.Kind == "CopyMap" && e.ToColumnName == outputColumnName);
+        if (edge is null)
+            return new NotTranslatable($"Copy Column column '{outputColumnName}' has no resolvable source column");
+
+        return new TranslatedOk($"row.{edge.FromColumnName}");
+    }
 
     private static TranslatedExpression WrapDataConversion(DataConversionColumnSpec conversion, string sourceRef) =>
         conversion.TargetDataType?.ToLowerInvariant() switch
@@ -890,7 +963,12 @@ public static class TransformEmitter
     private static bool IsRecognizedPassthroughComponent(PipelineComponentSpec component) =>
         RecognizedPassthroughComponentClassIds.Contains(component.ComponentClassId)
         || SourceInfo.IsSqlSource(component)
-        || component.AdoNetDestination is not null;
+        || component.AdoNetDestination is not null
+        // XML Source (Phase 5 of the unsupported-component-types plan) shares Script Component's
+        // own generic "Microsoft.ManagedComponentHost" ComponentClassId, so it can never be
+        // recognized by class id alone -- checked by payload presence instead, the same
+        // discrimination XmlSourcePayload's own doc comment establishes everywhere else.
+        || component.XmlSource is not null;
 
     /// <summary>Internal (not private) so PackageGenerator's ResolveNullableColumnNames can
     /// detect the same string(wstr)-source/int(i4)-destination passthrough mismatch BEFORE

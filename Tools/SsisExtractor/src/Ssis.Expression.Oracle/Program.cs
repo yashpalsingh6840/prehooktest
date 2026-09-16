@@ -286,6 +286,31 @@ internal static class Program
         "DATEDIFF(\"dd\",(DT_DBDATE)\"2020-01-01\",(DT_DBTIMESTAMP)\"2020-01-01 23:59:00\")",
         "DATEDIFF(\"dd\",(DT_DBDATE)\"2020-01-01\",(DT_DBTIMESTAMP)\"2020-01-02 00:00:01\")",
 
+        // --- DATEADD(datepart, number, date): the real evidenced call, Phase 2 of the
+        // unsupported-component-types plan (Microsoft.ExpressionTask), is
+        // DATEADD("Minute", -5, GETUTCDATE()). Questions this block resolves: whether the
+        // datepart literal matches T-SQL's own full-word spelling ("Minute", not "mi"/"n"),
+        // sign convention (a negative number subtracts), NULL propagation, whether DT_DBDATE
+        // and DT_DBTIMESTAMP mix freely as the base date the same way DATEDIFF's own two date
+        // arguments do, and the returned type/precision (does adding minutes to a DT_DBDATE
+        // promote it to a timestamp).
+        "DATEADD(\"Minute\",-5,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"Minute\",5,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"Day\",1,(DT_DBDATE)\"2020-01-01\")",
+        "DATEADD(\"Day\",-1,(DT_DBDATE)\"2020-01-01\")",
+        "DATEADD(\"Hour\",25,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"Month\",1,(DT_DBDATE)\"2020-01-31\")",
+        "DATEADD(\"Year\",1,(DT_DBDATE)\"2020-02-29\")",
+        "DATEADD(\"Second\",90,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"Minute\",0,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"Minute\",-5,NULL(DT_DBTIMESTAMP))",
+        "(DT_WSTR,30)DATEADD(\"Minute\",-5,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "(DT_WSTR,30)DATEADD(\"Day\",1,(DT_DBDATE)\"2020-01-01\")",
+        "DATEADD(\"minute\",-5,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"mi\",-5,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "(DT_WSTR,30)(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.000\"",
+        "(DT_WSTR,30)(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.500\"",
+
         // --- arithmetic typing: integer division truncates, mixed int/float promotes,
         // there is no implicit string<->number coercion in either direction ---
         "5/2",

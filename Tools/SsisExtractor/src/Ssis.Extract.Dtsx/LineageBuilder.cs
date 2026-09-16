@@ -106,6 +106,26 @@ public static partial class LineageBuilder
                 }
             }
 
+            // A Copy Column (Microsoft.CopyMap) output column has no Expression either -- same
+            // reasoning as Data Conversion above, just a different property name (copyColumnId,
+            // promoted onto CopyMapPayload -- see that type's own doc comment). Added for Phase 1
+            // of the unsupported-component-types plan.
+            if (comp.CopyMap is { } copyMap)
+            {
+                foreach (var ccol in copyMap.Columns)
+                {
+                    if (ccol.SourceColumnLineageId is not { } refLineageId) continue;
+                    var outputCol = comp.Outputs
+                        .SelectMany(o => o.Columns)
+                        .FirstOrDefault(c => c.Name == ccol.OutputColumnName);
+                    if (outputCol is null) continue;
+
+                    var to = new ColumnRef(comp.RefId, comp.Name, outputCol.RefId, outputCol.Name, outputCol.LineageId);
+                    consumedLineageIds.Add(refLineageId);
+                    edges.Add(MakeEdge(producers, refLineageId, to, kind: "CopyMap", expression: null));
+                }
+            }
+
             // An Aggregate output column (GroupBy key or Count) has no Expression either --
             // same reasoning as Data Conversion above, just a different payload/property name
             // (AggregationColumnId, promoted onto AggregatePayload -- see that type's own doc

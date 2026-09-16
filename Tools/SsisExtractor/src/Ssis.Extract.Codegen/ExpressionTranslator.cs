@@ -208,6 +208,13 @@ public static class ExpressionTranslator
         // DER_Enrich.TenureDays). Any other datepart literal degrades rather than guesses.
         FunctionCall { Name: "DATEDIFF", Args.Count: 3 } datediff => TranslateDateDiff(datediff, references),
 
+        // DATEADD(datepart, number, date) -- oracle-verified 2026-09-15 (Phase 2 of the
+        // unsupported-component-types plan, for Microsoft.ExpressionTask's own real evidenced
+        // call, DATEADD("Minute",-5,GETUTCDATE())). Added here too (not just in the dedicated
+        // ExpressionTask translator) since a Derived Column could plausibly need it as well --
+        // see TranslateDateAdd's own comment for the exact measured datepart set.
+        FunctionCall { Name: "DATEADD", Args.Count: 3 } dateadd => TranslateDateAdd(dateadd, references),
+
         Cast { Type: SsisType.WStr or SsisType.Str } cast => TranslateIntToStringCast(cast, references),
 
         // Ternary (cond ? whenTrue : whenFalse) -- the AST/evaluator already exist and are
@@ -351,6 +358,7 @@ public static class ExpressionTranslator
         ["SUBSTRING"] = SsisType.WStr,
         ["FINDSTRING"] = SsisType.I4,
         ["DATEDIFF"] = SsisType.I4,
+        ["DATEADD"] = SsisType.DbTimeStamp,
     };
 
     private static SsisType? TryResolveOperandType(
@@ -403,6 +411,50 @@ public static class ExpressionTranslator
         if (end is NotTranslatable) return end;
 
         return new TranslatedOk($"SsisFn.DateDiffDays({((TranslatedOk)start).CSharpExpression}, {((TranslatedOk)end).CSharpExpression})");
+    }
+
+    /// <summary>Datepart literal (case-insensitive) -&gt; the .NET <c>DateTime</c> method that
+    /// reproduces it exactly, per <c>Ssis.Runtime.Expressions.Functions.DateAdd</c>'s own oracle-
+    /// verified mapping (2026-09-15) -- every measured datepart, including .NET's own
+    /// day/month-clamping edge cases (Jan 31 + 1 month -&gt; Feb 29 in a leap year), matches SSIS's
+    /// real evaluator exactly, so no separate SsisFn helper is needed: the BCL method IS the
+    /// correct translation. Only the full word plus the one abbreviation ("mi") individually
+    /// measured are here -- unlike DatePart's own table, no other abbreviation is guessed.</summary>
+    /// <summary>Internal (not private) so <see cref="ExpressionTaskEmitter"/> can reuse the same
+    /// measured mapping for Microsoft.ExpressionTask's own assignment RHS, rather than a second
+    /// copy that could drift out of sync with what's actually oracle-verified.</summary>
+    internal static readonly Dictionary<string, string> DateAddMethodNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Minute"] = "AddMinutes",
+        ["mi"] = "AddMinutes",
+        ["Day"] = "AddDays",
+        ["Hour"] = "AddHours",
+        ["Month"] = "AddMonths",
+        ["Year"] = "AddYears",
+        ["Second"] = "AddSeconds",
+    };
+
+    /// <summary>DATEADD(datepart, number, date) -- the datepart argument must be a literal
+    /// string (SSIS's own syntax requires this, same as DATEDIFF/DATEPART); number/date
+    /// translated via TranslateValue so a nested GETUTCDATE()/GETDATE() (the real evidenced
+    /// date argument) resolves through the switch case above. Maps directly to
+    /// <c>date.AddX(number)</c> -- see <see cref="DateAddMethodNames"/>'s own comment for why
+    /// no SsisFn wrapper is needed.</summary>
+    private static TranslatedExpression TranslateDateAdd(
+        FunctionCall node, IReadOnlyDictionary<string, ColumnReference> references)
+    {
+        if (node.Args[0] is not StringLiteral { Value: var part } || !DateAddMethodNames.TryGetValue(part, out var method))
+            return new NotTranslatable(
+                "DATEADD is only supported with a literal date part of \"Minute\"/\"mi\", \"Day\", \"Hour\", " +
+                "\"Month\", \"Year\", or \"Second\" -- the only ones oracle-verified against the real evaluator");
+
+        var number = TranslateValue(node.Args[1], references);
+        if (number is NotTranslatable) return number;
+        var date = TranslateValue(node.Args[2], references);
+        if (date is NotTranslatable) return date;
+
+        return new TranslatedOk(
+            $"{((TranslatedOk)date).CSharpExpression}.{method}({((TranslatedOk)number).CSharpExpression})");
     }
 
     private static TranslatedExpression TranslateFunctionArgs(

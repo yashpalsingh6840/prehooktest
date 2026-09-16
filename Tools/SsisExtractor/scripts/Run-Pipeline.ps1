@@ -139,7 +139,37 @@ Write-Host "==================================================================="
 Write-Host " Step 1/5 -- extract"
 Write-Host "==================================================================="
 $extractExit = Invoke-Tool $ssisx (@('extract', '--input', $InputPath, '--out', $extractOut, '--recursive') + $packageArgs)
-if ($extractExit -ne 0) { Write-Error "ssisx extract failed with exit code $extractExit." -ErrorAction Stop }
+if ($extractExit -ne 0) {
+    # ssisx extract returns a non-zero exit whenever ANY load failure occurred, but
+    # load-failures.md's own Kind column distinguishes benign skips (duplicate-name --
+    # first package with a given ObjectName wins, the rest are just omitted from the report;
+    # package-not-found -- a --package filter miss) from a genuinely unreadable
+    # .dtsx/.dtproj/.ispac (Kind package/project/ispac, carrying the real exception message).
+    # Only the latter should abort the pipeline.
+    $loadFailuresPath = Join-Path $extractOut 'load-failures.md'
+    $benignKinds = @('duplicate-name', 'package-not-found')
+    $hardFailureRows = @()
+    if (Test-Path $loadFailuresPath) {
+        $rows = Get-Content $loadFailuresPath | Where-Object { $_ -match '^\|\s*(\S[^|]*?)\s*\|' -and $_ -notmatch '^\|\s*Kind\s*\|' -and $_ -notmatch '^\|\s*---' }
+        foreach ($row in $rows) {
+            if ($row -match '^\|\s*(?<kind>[^|]+?)\s*\|') {
+                $kind = $Matches['kind'].Trim()
+                if ($benignKinds -notcontains $kind) { $hardFailureRows += $row }
+            }
+        }
+    }
+    if ($hardFailureRows.Count -gt 0) {
+        Write-Error "ssisx extract failed with exit code $extractExit -- genuine load failure(s) in load-failures.md (not just duplicate-name/package-not-found skips):`n$($hardFailureRows -join "`n")" -ErrorAction Stop
+    }
+    elseif (Test-Path $loadFailuresPath) {
+        Write-Warning "ssisx extract exited $extractExit, but load-failures.md shows only benign duplicate-name/package-not-found skips -- continuing to Step 2 anyway. See $loadFailuresPath."
+    }
+    else {
+        # Non-zero exit with no load-failures.md at all is unexpected -- treat as fatal rather
+        # than silently continuing past an error this script doesn't understand.
+        Write-Error "ssisx extract failed with exit code $extractExit and no $loadFailuresPath was found to explain why." -ErrorAction Stop
+    }
+}
 
 Write-Host ""
 Write-Host "==================================================================="

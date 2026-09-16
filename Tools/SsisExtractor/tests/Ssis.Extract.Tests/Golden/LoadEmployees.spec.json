@@ -572,6 +572,7 @@
               "ConditionalSplit": null,
               "Connections": [],
               "ContactInfo": "Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0",
+              "CopyMap": null,
               "DataConvert": null,
               "Description": "Creates new column values by applying expressions to transformation input columns. Create new columns or overwrite existing ones. For example, concatenate the values from the \u0027first name\u0027 and \u0027last name\u0027 column to make a \u0027full name\u0027 column.",
               "ExcelSource": null,
@@ -901,15 +902,18 @@
                   "SynchronousInputId": "Package\\DFT_LoadEmployees\\DER_MergeColumns.Inputs[Derived Column Input]"
                 }
               ],
+              "PctSampling": null,
               "Properties": [],
               "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadEmployees\\DER_MergeColumns",
               "RowCount": null,
+              "Scd": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
-              "Version": null
+              "Version": null,
+              "XmlSource": null
             },
             {
               "AdoNetDestination": null,
@@ -927,6 +931,7 @@
                 }
               ],
               "ContactInfo": "Flat File Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;1",
+              "CopyMap": null,
               "DataConvert": null,
               "Description": "Flat File Source",
               "ExcelSource": null,
@@ -1424,6 +1429,7 @@
                   "SynchronousInputId": null
                 }
               ],
+              "PctSampling": null,
               "Properties": [
                 {
                   "ArrayElements": [],
@@ -1445,11 +1451,13 @@
               "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadEmployees\\FF_SRC_Employees",
               "RowCount": null,
+              "Scd": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
-              "Version": "1"
+              "Version": "1",
+              "XmlSource": null
             },
             {
               "AdoNetDestination": null,
@@ -1467,6 +1475,7 @@
                 }
               ],
               "ContactInfo": "OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4",
+              "CopyMap": null,
               "DataConvert": null,
               "Description": "OLE DB Destination",
               "ExcelSource": null,
@@ -1799,6 +1808,7 @@
                   "SynchronousInputId": "Package\\DFT_LoadEmployees\\OLEDST_Employee.Inputs[OLE DB Destination Input]"
                 }
               ],
+              "PctSampling": null,
               "Properties": [
                 {
                   "ArrayElements": [],
@@ -1892,11 +1902,13 @@
               "RawComponentClassId": null,
               "RefId": "Package\\DFT_LoadEmployees\\OLEDST_Employee",
               "RowCount": null,
+              "Scd": null,
               "ScriptComponent": null,
               "Sort": null,
               "UsesDispositions": true,
               "ValidateExternalMetadata": null,
-              "Version": "4"
+              "Version": "4",
+              "XmlSource": null
             }
           ],
           "Paths": [
@@ -1924,10 +1936,12 @@
       "ExecutableType": "Microsoft.Pipeline",
       "ExecutePackageTask": null,
       "ExecuteSqlTask": null,
+      "ExpressionTask": null,
       "FailPackageOnFailure": null,
       "FailParentOnFailure": null,
       "FileSystemTask": null,
       "ForEachLoop": null,
+      "ForLoop": null,
       "ForcedExecutionValue": null,
       "IsolationLevel": null,
       "MaximumErrorCount": null,
@@ -1938,6 +1952,7 @@
       "ScriptTask": null,
       "ThreadHint": null,
       "TransactionOption": null,
+      "TransferSqlServerObjectsTask": null,
       "UnmappedTask": null,
       "Variables": []
     },
@@ -1969,10 +1984,12 @@
         "SqlStatementSourceType": null,
         "TimeOut": null
       },
+      "ExpressionTask": null,
       "FailPackageOnFailure": null,
       "FailParentOnFailure": null,
       "FileSystemTask": null,
       "ForEachLoop": null,
+      "ForLoop": null,
       "ForcedExecutionValue": null,
       "IsolationLevel": null,
       "MaximumErrorCount": null,
@@ -1983,6 +2000,7 @@
       "ScriptTask": null,
       "ThreadHint": "0",
       "TransactionOption": null,
+      "TransferSqlServerObjectsTask": null,
       "UnmappedTask": null,
       "Variables": []
     }

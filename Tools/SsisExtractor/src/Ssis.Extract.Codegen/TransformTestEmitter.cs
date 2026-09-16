@@ -22,7 +22,13 @@ public sealed record TransformTestRequest(
     PipelineSpec Pipeline,
     IReadOnlyList<PipelineComponentSpec>? DerivedColumns,
     PipelineComponentSpec DestinationComponent,
-    IReadOnlyList<PipelineComponentSpec>? DataConversions = null);
+    IReadOnlyList<PipelineComponentSpec>? DataConversions = null,
+    // Phase 1 of the unsupported-component-types plan: Microsoft.CopyMap ("Copy Column"). Not
+    // part of this pilot's own coverage scope (see the class doc comment's "Pilot scope"
+    // section) -- passed through only so a Copy Column column reaching this destination is
+    // recognized and skipped with an explicit gap, rather than silently falling into the
+    // plain-passthrough branch below and asserting against a row property that does not exist.
+    IReadOnlyList<PipelineComponentSpec>? CopyMaps = null);
 
 /// <summary>
 /// Scaffolds ONE starter xUnit test class per Data Flow Task transform, asserting the exact
@@ -120,6 +126,11 @@ public static class TransformTestEmitter
         foreach (var dataConversion in dataConversions)
             foreach (var col in dataConversion.DataConvert?.Columns ?? [])
                 convertedByName.TryAdd(col.OutputColumnName, col);
+
+        var copiedByName = new Dictionary<string, CopyMapColumnSpec>();
+        foreach (var copyMap in request.CopyMaps ?? [])
+            foreach (var col in copyMap.CopyMap?.Columns ?? [])
+                copiedByName.TryAdd(col.OutputColumnName, col);
 
         var resolved = PipelineResolver.ResolveDestinationInput(request.DestinationComponent);
 
@@ -256,6 +267,17 @@ public static class TransformTestEmitter
 
                 assertions.Add($"        // {column.ExternalColumnName} <- Data Conversion ({edge.FromColumnName} -> {conversion.TargetDataType})");
                 assertions.Add($"        Assert.Equal({rep.ExpectedLiteral}, result.{column.ExternalColumnName});");
+            }
+            else if (copiedByName.ContainsKey(column.PipelineColumnName))
+            {
+                // A Copy Column ("Microsoft.CopyMap") output -- out of this pilot's own scope
+                // (see the class doc comment's "Pilot scope" section), reported explicitly rather
+                // than silently falling into the plain-passthrough branch below, which would
+                // otherwise assign a representative literal keyed by the COPIED column's own
+                // name (e.g. "EmployeeID_Copy") -- a row property that does not exist, since
+                // TransformEmitter resolves it as `row.{trueSourceColumn}`, not a same-named one.
+                gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                    "starter test not generated for this column -- it is produced by a Copy Column (Microsoft.CopyMap) component, which this pilot does not cover yet. Add an assertion by hand.", IsBlocking: false));
             }
             else
             {

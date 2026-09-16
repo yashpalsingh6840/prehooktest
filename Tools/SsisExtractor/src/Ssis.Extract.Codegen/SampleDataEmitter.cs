@@ -1,3 +1,4 @@
+using Ssis.Extract.Model.Pipeline;
 using Ssis.Extract.Model.Shared;
 
 namespace Ssis.Extract.Codegen;
@@ -25,15 +26,29 @@ public sealed record SampleDataResult(GeneratedFile File, string FileSourceKey, 
 /// </summary>
 public static class SampleDataEmitter
 {
-    public static SampleDataResult? EmitCsv(string fileSourceKey, ConnectionManagerSpec connectionManager)
+    public static SampleDataResult? EmitCsv(string fileSourceKey, ConnectionManagerSpec connectionManager, PipelineComponentSpec? sourceComponent = null)
     {
         var format = connectionManager.FlatFileFormat;
         if (format is null) return null;
 
+        // Same override resolution CsvRowEmitter itself applies -- a column whose real pipeline
+        // buffer type is overridden by the Flat File Source's own output column (e.g. DT_STR in
+        // the CM, DT_I4 in the source) must get a representative value matching THAT type, not
+        // the CM's declared one, or the starter test built from this sample fails to parse.
+        var sourceOutputTypeByName = CsvRowEmitter.ResolveSourceOutputTypesByName(sourceComponent);
+
         var resolvedColumns = new List<(FlatFileColumnSpec Column, SsisPipelineType Type)>();
         foreach (var column in format.Columns)
         {
-            if (SsisPipelineTypeMap.Resolve(CsvRowEmitter.ToPipelineTypeKey(column.DataTypeName)) is { } type)
+            var effectiveDataTypeName = column.DataTypeName;
+            if (sourceOutputTypeByName.TryGetValue(column.ObjectName, out var sourceDataType)
+                && sourceDataType is not null
+                && !string.Equals(sourceDataType, column.DataTypeName, StringComparison.OrdinalIgnoreCase))
+            {
+                effectiveDataTypeName = sourceDataType;
+            }
+
+            if (SsisPipelineTypeMap.Resolve(CsvRowEmitter.ToPipelineTypeKey(effectiveDataTypeName)) is { } type)
                 resolvedColumns.Add((column, type));
         }
         // A column CsvRowEmitter/ClassMapEmitter themselves skipped (unmapped data type) has no

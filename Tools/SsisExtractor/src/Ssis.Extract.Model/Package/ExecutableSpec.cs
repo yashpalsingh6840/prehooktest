@@ -70,4 +70,15 @@ public sealed class ExecutableSpec
     public FileSystemTaskPayload? FileSystemTask { get; init; }
 
     public ExecutePackageTaskPayload? ExecutePackageTask { get; init; }
+    public ExpressionTaskPayload? ExpressionTask { get; init; }
+
+    /// <summary>Non-null for a <c>Microsoft.TransferSqlServerObjectsTask</c> executable -- see
+    /// <see cref="TransferSqlServerObjectsTaskPayload"/>'s own doc comment. Extraction-only, same
+    /// deliberate documented-gap treatment as <see cref="ExecutePackageTask"/>.</summary>
+    public TransferSqlServerObjectsTaskPayload? TransferSqlServerObjectsTask { get; init; }
+
+    /// <summary>Non-null for a <c>STOCK:FORLOOP</c> executable -- see <see cref="ForLoopPayload"/>'s
+    /// own doc comment for why this, like <see cref="ForEachLoop"/>, is read directly off this
+    /// executable's own attributes rather than from a nested <c>&lt;ObjectData&gt;</c>.</summary>
+    public ForLoopPayload? ForLoop { get; init; }
 }

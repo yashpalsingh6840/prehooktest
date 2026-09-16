@@ -229,6 +229,51 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WiresTwoExpressionTaskAssignments_ForTheSyntheticExpressionTaskFixture()
+    {
+        // SyntheticExpressionTask.dtsx: Phase 2 of the unsupported-component-types plan
+        // (Microsoft.ExpressionTask). EXPR_SetCutoff computes a DateTime from DATEADD/GETUTCDATE
+        // (the real evidenced call from DailyETLMain.dtsx); EXPR_SetTableName assigns a plain
+        // string literal. A downstream Execute SQL Task is gated on the SECOND assignment's own
+        // effect, proving the ExpressionTask's Set() and the guard's own Get() resolve the exact
+        // same "packageVariables" field. Confirmed beyond this test by actually running the
+        // generated exe against .\SQLFORPOC_2022 and reading dbo.SyntheticExpressionTaskTarget/
+        // dbo.SyntheticExpressionTaskLog back afterward -- see Tools/SsisExtractor/CLAUDE.md.
+        var package = LoadSyntheticFixture("SyntheticExpressionTask.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticExpressionTask.cs");
+        Assert.Contains("internal async Task EXPR_SetCutoff(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains(
+            "var step = new ExpressionTaskStep(\"EXPR_SetCutoff\", () => packageVariables.Set(\"User::TargetETLCutoffTime\", DateTime.UtcNow.AddMinutes(-(5))), Log<ExpressionTaskStep>());",
+            classFile.Content);
+
+        Assert.Contains("internal async Task EXPR_SetTableName(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains(
+            "var step = new ExpressionTaskStep(\"EXPR_SetTableName\", () => packageVariables.Set(\"User::TableName\", \"City\"), Log<ExpressionTaskStep>());",
+            classFile.Content);
+
+        Assert.Contains("await EXPR_SetCutoff(uow, ct);", classFile.Content);
+        Assert.Contains("await EXPR_SetTableName(uow, ct);", classFile.Content);
+
+        // The guard reads back the same variable EXPR_SetTableName wrote -- proves the two
+        // features share one GuardVariable table, not two independently-derived namings.
+        Assert.Contains("packageVariables.GetRequired<string>(\"User::TableName\")", classFile.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+
+        // The only two real gaps: the unavoidable, non-blocking Notification one, and a
+        // LocalFileSourceData gap for the CSV source (Docs/Generated-Tests-Plan.md phase 3) --
+        // neither related to ExpressionTask at all.
+        Assert.Equal(2, result.Gaps.Count);
+        var notificationGap = Assert.Single(result.Gaps, g => g.Location == "SyntheticExpressionTask.Notification");
+        Assert.False(notificationGap.IsBlocking);
+        var localDataGap = Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
+        Assert.False(localDataGap.IsBlocking);
+    }
+
+    [Fact]
     public void Generate_WiresAnErrorRedirectDestination_WithBothSinksNamedAfterTheirOwnComponent()
     {
         // SyntheticErrorRedirect.dtsx: OLE DB Source -> OLEDST_Target (ErrorRowDisposition=
@@ -379,6 +424,48 @@ public class PackageGeneratorTests
         Assert.Equal(2, result.Gaps.Count);
         Assert.Contains(result.Gaps, g => g.Reason.Contains("assumes each result-set column is named/aliased"));
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticDataConversion.Notification");
+    }
+
+    [Fact]
+    public void Generate_ResolvesACopyMapColumn_AsAPlainPassthroughAgainstTheRawSourceColumn()
+    {
+        // Phase 1 of the unsupported-component-types plan: SyntheticCopyMap.dtsx -- OLE DB
+        // Source (SqlCommand: ID, FullName) -> Copy Column (CPY_FullName: FullName ->
+        // FullNameCopy, a pure duplicate, no cast/expression) -> OLE DB Destination. No Derived
+        // Column/Data Conversion anywhere -- proves the single-destination direct-copy path
+        // resolves a Copy Column column correctly (not just the pre-existing "no Derived Column
+        // found" gate widening those two components needed). Confirmed beyond this test by
+        // actually running the generated exe against .\SQLFORPOC_2022 and reading
+        // dbo.SyntheticCopyMapTarget back afterward -- see this project's own CLAUDE.md.
+        var package = LoadSyntheticFixture("SyntheticCopyMap.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var entityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticCopyMapTarget.cs");
+        Assert.Contains("public string FullName { get; set; }", entityFile.Content);
+        Assert.Contains("public string FullNameCopy { get; set; }", entityFile.Content);
+
+        var rowFile = Assert.Single(result.Files, f => f.RelativePath == "Sql/SyntheticCopyMapTargetSqlRow.cs");
+        Assert.Contains("public string FullName { get; set; }", rowFile.Content);
+        // The row type must NOT have a FullNameCopy property of its own -- it's resolved as a
+        // plain passthrough against the TRUE source column, not a same-named row property.
+        Assert.DoesNotContain("FullNameCopy", rowFile.Content);
+
+        var transformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticCopyMapTargetTransform.cs");
+        Assert.Contains("FullName = row.FullName,", transformFile.Content);
+        Assert.Contains("FullNameCopy = row.FullName,", transformFile.Content);
+
+        var programFile = Assert.Single(result.Files, f => f.RelativePath == "Program.cs");
+        CodeAssertions.AssertNoSyntaxErrors(programFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(entityFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(rowFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(transformFile.Content);
+
+        // Two expected gaps: the SqlCommand-mode column-name assumption, and the unavoidable
+        // Notification one -- same shape as every other SqlCommand-sourced flow's own test.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("assumes each result-set column is named/aliased"));
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticCopyMap.Notification");
     }
 
     [Fact]
@@ -1032,6 +1119,64 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WiresAForLoop_ConstructingAFreshCsvRowSourcePerIteration_DrivenByAPackageVariableCounter()
+    {
+        // SyntheticForLoop.dtsx -- Phase 3 of the unsupported-component-types plan (STOCK:FORLOOP
+        // / For Loop Container), confirmed real from a genuine SSDT-authored package (see
+        // ForLoopPayload's own doc comment). Init="@Part = 1", Eval="@Part < 4",
+        // Assign="@Part = @Part + 1" -> the loop body (Flat File Source, expression-driven off
+        // the loop's own counter -> Derived Column -> OLE DB Destination) re-runs 3 times.
+        // Confirmed beyond this test by actually building the generated exe against a copy of
+        // Etl.Core and running it against .\SQLFORPOC_2022: 3 rows landed, one per iteration,
+        // each sourced from the correct counter-named CSV file (part-1.csv/part-2.csv/part-3.csv
+        // -> "one"/"two"/"three"), read back from the table afterward -- not just a row count.
+        var package = LoadSyntheticFixture("SyntheticForLoop.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        Assert.Contains(result.Files, f => f.RelativePath == "Csv/SyntheticForLoopTargetCsvRow.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Csv/SyntheticForLoopTargetCsvRowMap.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Mapping/SyntheticForLoopTargetTransform.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Model/SyntheticForLoopTarget.cs");
+
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticForLoop.cs");
+        Assert.Contains("internal async Task ForLoopContainer(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains(
+            "var step = new ForLoopStep<SyntheticForLoopTargetCsvRow, SyntheticForLoopTarget>(",
+            classFile.Content);
+        // Init/Eval/Assign are plain parameterless delegates closing over packageVariables
+        // directly -- Init runs the literal "1" the fixture's own InitExpression assigns.
+        Assert.Contains("() => packageVariables.Set(\"User::Part\", 1),", classFile.Content);
+        Assert.Contains("() => (packageVariables.GetRequired<int>(\"User::Part\") < 4),", classFile.Content);
+        Assert.Contains(
+            "() => packageVariables.Set(\"User::Part\", (packageVariables.GetRequired<int>(\"User::Part\")) + (1)),",
+            classFile.Content);
+        // A fresh CsvRowSource per iteration, reading the counter's own LIVE value -- not a lambda
+        // parameter (unlike ForEachFileDataFlowStep's own "currentFile" -- see ForLoopStep<TRow,
+        // TEntity>'s own doc comment for why).
+        Assert.Contains("() => new CsvRowSource<SyntheticForLoopTargetCsvRow>(\"Flat File Source\", new CsvSourceOptions { FilePath =", classFile.Content);
+        Assert.Contains("packageVariables.GetRequired<int>(\"User::Part\")", classFile.Content);
+        Assert.Contains("new SyntheticForLoopTargetTransform(),", classFile.Content);
+        Assert.Contains("new SqlBulkSink<SyntheticForLoopTarget>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<SyntheticForLoopTarget>>()),", classFile.Content);
+        Assert.Contains("Log<DataFlowStep<SyntheticForLoopTargetCsvRow, SyntheticForLoopTarget>>());", classFile.Content);
+        Assert.Contains("await ForLoopContainer(uow, ct);", classFile.Content); // referenced in RunAsync
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+
+        // Two non-blocking gaps: the unavoidable Notification one, plus the same "no starter test
+        // coverage in this pilot" TestOracle advisory GenerateForEachDataFlowLoop's own identical
+        // loop-body shape gets (a For Loop Container has no Tier-A sample file to synthesize
+        // either -- the source path is computed per iteration, not a static location).
+        Assert.Equal(2, result.Gaps.Count);
+        var testOracleGap = Assert.Single(result.Gaps, g => g.Kind == GapKind.TestOracle);
+        Assert.False(testOracleGap.IsBlocking);
+        Assert.Contains("no starter test coverage in this pilot", testOracleGap.Reason);
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticForLoop.Notification");
+
+        Assert.DoesNotContain(result.SiblingFiles, f => f.RelativePath.EndsWith("SourceTests.cs"));
+        Assert.DoesNotContain(result.SiblingFiles, f => f.RelativePath.EndsWith("TransformTests.cs"));
+    }
+
+    [Fact]
     public void Generate_ResolvesTheThreeSpeculativeNumericToI4Pairings_I8NumericR4()
     {
         // SyntheticIntNumericCoercion.dtsx, built speculatively 2026-08-30 -- see
@@ -1183,6 +1328,45 @@ public class PackageGeneratorTests
         // RBC_Demo_ETL's own INT column).
         Assert.Equal(2, result.Gaps.Count);
         Assert.Single(result.Gaps, g => g.Location == "SyntheticExcelSource.Notification");
+        Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
+    }
+
+    [Fact]
+    public void Generate_WiresAnXmlSourcedFlow_IntoProgramCsViaXmlRowSource()
+    {
+        // SyntheticXmlSource.dtsx: Microsoft.XmlSourceAdapter (discriminated via
+        // UserComponentTypeName, ComponentClassId is the generic "Microsoft.ManagedComponentHost")
+        // reading the real, checked-in synthetic-xml-source.xml/.xsd pair -> OLE DB Destination, a
+        // genuine direct-copy pipeline with no Derived Column at all -- Phase 5 of the
+        // unsupported-component-types plan. Confirmed beyond this test by actually building the
+        // generated exe against a copy of Etl.Core and running it against .\SQLFORPOC_2022, and
+        // matching a real dtexec run of the same fixture row-for-row (see this project's own
+        // CLAUDE.md "XML Source" section).
+        var package = LoadSyntheticFixture("SyntheticXmlSource.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        Assert.Contains(result.Files, f => f.RelativePath == "Xml/SyntheticXmlSourceTargetXmlRow.cs");
+        Assert.Contains(result.Files, f => f.RelativePath == "Xml/SyntheticXmlSourceTargetXmlRowReader.cs");
+
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticXmlSource.cs");
+        Assert.Contains("using Etl.Core.Xml;", classFile.Content);
+        Assert.Contains("using SyntheticXmlSource.Xml;", classFile.Content);
+        // No `uow` parameter/argument -- an XML source never touches the package's transaction,
+        // the same shape Excel's own source method already has (see
+        // PackageClassEmitter.SourceNeedsUow's own doc comment).
+        Assert.Contains("var source = XMLSource();", classFile.Content);
+        Assert.Contains("internal IRowSource<SyntheticXmlSourceTargetXmlRow> XMLSource()", classFile.Content);
+        Assert.Contains(
+            "return new XmlRowSource<SyntheticXmlSourceTargetXmlRow>(\"XML Source\", new XmlSourceOptions { FilePath = File(\"XML Source\"), RowElementName = \"record\" }, SyntheticXmlSourceTargetXmlRowReader.Read);",
+            classFile.Content);
+        Assert.Contains("var step = new DataFlowStep<SyntheticXmlSourceTargetXmlRow, SyntheticXmlSourceTarget>(", classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+
+        // The unavoidable, non-blocking Notification gap plus a LocalFileSourceData gap (XML has
+        // no Tier-A synthesizer at all, same reason Excel doesn't) -- no Derived Column needed.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.Single(result.Gaps, g => g.Location == "SyntheticXmlSource.Notification");
         Assert.Single(result.Gaps, g => g.Kind == GapKind.LocalFileSourceData);
     }
 
@@ -1377,6 +1561,137 @@ public class PackageGeneratorTests
         // the unavoidable non-blocking gaps (SqlCommand-mode advisory, Notification).
         Assert.Equal(2, result.Gaps.Count);
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticMulticast.Notification");
+    }
+
+    [Fact]
+    public void Generate_WiresAPercentageSamplingFlow_AsAConditionalSplitStepWithASamplingRouter()
+    {
+        // SyntheticPctSampling.dtsx (Phase 4 of the unsupported-component-types plan): OLE DB
+        // Source -> Percentage Sampling -> {OLE DB Destination (sampled), OLE DB Destination (not
+        // sampled)}. Percentage Sampling is structurally a routing DECISION between two mutually
+        // exclusive branches (like Conditional Split), not an unconditional fan-out (like
+        // Multicast) -- so it reuses ConditionalSplitStep<TRow>/ProgramConditionalSplitStep
+        // verbatim, with a PctSamplingRouterEmitter-produced router class instead of an
+        // expression-translated one. Verified end-to-end (build + run against
+        // .\SQLFORPOC_2022, seed reproducibility measured via a real dtexec probe) -- see
+        // PctSamplingRouterEmitter's own doc comment and Tools/SsisExtractor/CLAUDE.md.
+        var package = LoadSyntheticFixture("SyntheticPctSampling.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticPctSampling.cs");
+        Assert.Contains("internal async Task DFT_Sample(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains("var step = new ConditionalSplitStep<DFT_SampleSqlRow>(", classFile.Content);
+        Assert.Contains("new PCTSAMP_TenPercentSamplingRouter(),", classFile.Content);
+        Assert.Contains("new ConditionalSplitBranch<DFT_SampleSqlRow, SyntheticPctSamplingSampled>(", classFile.Content);
+        Assert.Contains("new ConditionalSplitBranch<DFT_SampleSqlRow, SyntheticPctSamplingNotSampled>(", classFile.Content);
+        Assert.Contains("new SqlBulkSink<SyntheticPctSamplingSampled>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<SyntheticPctSamplingSampled>>())", classFile.Content);
+        Assert.Contains("new SqlBulkSink<SyntheticPctSamplingNotSampled>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<SyntheticPctSamplingNotSampled>>())", classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+
+        var routerFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/PCTSAMP_TenPercentSamplingRouter.cs");
+        Assert.Contains("private readonly Random _random = new(424242);", routerFile.Content);
+        Assert.Contains("return _random.Next(100) < 30 ? 0 : 1;", routerFile.Content);
+        Assert.Contains(": IRowRouter<DFT_SampleSqlRow>", routerFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(routerFile.Content);
+
+        // A pure row router transforms no column at all -- both branch transforms are plain
+        // passthroughs, no gap about a missing Derived Column (unlike Conditional Split's own
+        // direct-copy restriction, deliberately not applied here -- see GeneratePctSamplingFlow's
+        // own doc comment for why a Derived-Column-less flow is NOT a gap for this component).
+        // Only the two unavoidable non-blocking gaps remain (SqlCommand-mode advisory,
+        // Notification).
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticPctSampling.Notification");
+    }
+
+    [Fact]
+    public void Generate_WiresARealShapedScdFlow_WithACommandOnlyBranchAndAConvergedInsertBranch()
+    {
+        // SyntheticScd.dtsx (Phase 7 of the unsupported-component-types plan): reproduces the one
+        // real evidenced SCD package's own chain shape link for link -- OLE DB Source -> SCD ->
+        // {Changing Attribute Updates Output -> bare OLE DB Command (Type 1 in-place UPDATE, no
+        // destination), Historical Attribute Inserts Output -> OLE DB Command (close the old row)
+        // -> Union All (converging with New Output) -> Derived Column (StartDate <- GETDATE()) ->
+        // OLE DB Destination}. Unchanged/Fixed Attribute/Inferred Member Updates all left unwired,
+        // exactly as in the real package. Verified end-to-end: generated, built against a copy of
+        // Etl.Core (0 warnings/0 errors), and actually RUN against .\SQLFORPOC_2022 -- an exact
+        // row-for-row match (business-key/attribute columns; timestamps necessarily differ by
+        // wall clock) against a real dtexec run of this identical fixture. See
+        // Tools/SsisExtractor/CLAUDE.md's own Phase 7 section for the full account.
+        var package = LoadSyntheticFixture("SyntheticScd.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticScd.cs");
+        Assert.Contains("internal async Task DFT_LoadDimEmployee(IUnitOfWork uow, CancellationToken ct)", classFile.Content);
+        Assert.Contains("var step = new SlowlyChangingDimensionStep<DFT_LoadDimEmployeeSqlRow, int>(", classFile.Content);
+        Assert.Contains("loadCt => SCD_DimEmployeeCache.LoadAsync(SqlConnectionStringFactory.Build(Db()), loadCt),", classFile.Content);
+        Assert.Contains("row => row.EmpId,", classFile.Content);
+        Assert.Contains("[ScdColumnRole.Fixed, ScdColumnRole.Changing, ScdColumnRole.Historical],", classFile.Content);
+        Assert.Contains("failOnFixedAttributeChange: false,", classFile.Content);
+        Assert.Contains("updateChangingAttributeHistory: false", classFile.Content);
+
+        // Changing Attribute Updates Output: command only, no sink -- the in-place UPDATE IS the
+        // whole effect (sink parameter is a bare `null`, not a ConditionalSplitBranch).
+        Assert.Contains(
+            "ChangingAttributeUpdates = new ScdBranch<DFT_LoadDimEmployeeSqlRow>(\n" +
+            "                    \"Changing Attribute Updates Output\",\n" +
+            "                    null,\n" +
+            "                    \"UPDATE [dbo].[SyntheticScdDim] SET [LastName] = {0} WHERE [EmpId] = {1} AND [EndDate] IS NULL\",",
+            classFile.Content);
+
+        // Historical Attribute Inserts Output: command AND sink -- close the old row, then insert
+        // through the same destination New Output feeds (the Union All convergence).
+        Assert.Contains(
+            "HistoricalAttributeInserts = new ScdBranch<DFT_LoadDimEmployeeSqlRow>(\n" +
+            "                    \"Historical Attribute Inserts Output\",\n" +
+            "                    new ConditionalSplitBranch<DFT_LoadDimEmployeeSqlRow, SyntheticScdDim>(\"Historical Attribute Inserts Output\", new SCD_DimEmployee_HistoricalAttributeInsertsOutput(), OLEDST_DimEmployee()),\n" +
+            "                    \"UPDATE [dbo].[SyntheticScdDim] SET [EndDate] = GETDATE() WHERE [EmpId] = {0} AND [EndDate] IS NULL\",",
+            classFile.Content);
+
+        // New Output: insert only, sharing the SAME OLEDST_DimEmployee() sink factory call as
+        // Historical's own insert half -- one shared destination, not two.
+        Assert.Contains(
+            "New = new ScdBranch<DFT_LoadDimEmployeeSqlRow>(\n" +
+            "                    \"New Output\",\n" +
+            "                    new ConditionalSplitBranch<DFT_LoadDimEmployeeSqlRow, SyntheticScdDim>(\"New Output\", new SCD_DimEmployee_NewOutput(), OLEDST_DimEmployee()),\n" +
+            "                    null,\n" +
+            "                    null),",
+            classFile.Content);
+
+        // Unchanged/Fixed Attribute/Inferred Member Updates are all absent entirely -- a null
+        // ScdBranches<T> property, not an empty/no-op branch object.
+        Assert.DoesNotContain("Unchanged =", classFile.Content);
+        Assert.DoesNotContain("FixedAttribute =", classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+
+        var newTransform = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SCD_DimEmployee_NewOutput.cs");
+        Assert.Contains("StartDate = DER_StartDate.StartDate(row, ctx),", newTransform.Content);
+        CodeAssertions.AssertNoSyntaxErrors(newTransform.Content);
+
+        var historicalTransform = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SCD_DimEmployee_HistoricalAttributeInsertsOutput.cs");
+        Assert.Contains("StartDate = DER_StartDate.StartDate(row, ctx),", historicalTransform.Content);
+        CodeAssertions.AssertNoSyntaxErrors(historicalTransform.Content);
+
+        var cache = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SCD_DimEmployeeCache.cs");
+        Assert.Contains("public static async Task<Dictionary<int, object?[]>> LoadAsync(string connectionString, CancellationToken ct)", cache.Content);
+        Assert.Contains(
+            "SELECT * FROM ( SELECT [Designation], [EmpId], [FirstName], [LastName],[StartDate],[EndDate] FROM [dbo].[SyntheticScdDim] ) AS scd_reference WHERE [StartDate] IS NOT NULL AND [EndDate] IS NULL",
+            cache.Content);
+        // Columns read by NAME, not position -- the dimension query's own SELECT list order does
+        // not match the input columns' order.
+        Assert.Contains("reader.GetOrdinal(\"FirstName\")", cache.Content);
+        Assert.Contains("reader.GetOrdinal(\"LastName\")", cache.Content);
+        Assert.Contains("reader.GetOrdinal(\"Designation\")", cache.Content);
+        CodeAssertions.AssertNoSyntaxErrors(cache.Content);
+
+        // Only the non-blocking advisories every real-shaped flow like this one gets (SqlCommand
+        // advisory, Notification) -- no blocking gap for the dangling third Union All input, and
+        // no gap at all for the two unwired outputs (they're simply absent, not reported).
+        Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
+        Assert.Contains(result.Gaps, g => g.Location == "SyntheticScd.Notification");
     }
 
     [Fact]

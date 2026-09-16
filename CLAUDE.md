@@ -7893,6 +7893,125 @@ rather than the script), and `Tools/README.md` (same merge). No `Ssis.Extract.Co
 changed this round — this was entirely a prompt/doc-level correction, so the full suite (681
 tests) is unaffected and was not re-run for this specific change.
 
+### `/ssisx-batch` run against 9 real third-party GitHub SSIS portfolios, two real generator bugs
+### fixed, and a large prior uncommitted feature pile verified and committed (2026-09-16)
+
+A new orchestration layer, `/ssisx-batch` + two agent types (`ssisx-batch-phase-a`,
+`ssisx-batch-phase-b`), was pointed at `D:\PoC\SSIS_Packages_From_GitHub\` — 10 real,
+independently-cloned GitHub SSIS repos, none of them this project's own PoC packages or the
+already-exercised `SSIS_From_Sandeep` portfolio. Phase A runs the mechanical half (extract → svk
+walkthrough/sampledata → generate → build → test → coverage) with no AI judgment; Phase B (not
+run this round, held explicitly per the user's own instruction) would write AI-assisted Tier-1/2
+fills. `ETL-SSIS-Real-Scenarios` (~40 unrelated tutorial folders, not a real portfolio) was
+excluded by explicit user choice; two deep, mostly-unrelated repos
+(`mssql-ssis-community-samples`, `sql-server-samples`) had their own `InputPath` narrowed to just
+the inner SSIS folder rather than walking the whole clone. Full per-project results are in
+`D:\PoC\SSIS_Packages_From_GitHub\Output\BATCH-SUMMARY.md`.
+
+**Two real, root-caused, previously-unknown generator bugs surfaced from this run, both fixed and
+verified end-to-end this session:**
+
+1. **`Run-Pipeline.ps1` treated a benign duplicate-package-`ObjectName` skip as fatal.** SSDT's
+   own designer default (`ObjectName="Package1"`, never renamed by the package's author) collided
+   across multiple `.dtsx` files in 4 of the 9 portfolios — `PackageLoader.DropDuplicateNames`
+   correctly keeps the first-loaded package and records the rest as a benign `"duplicate-name"`
+   skip in `load-failures.md`, but `ReportCommand.Run` (and so `ssisx extract`'s own exit code)
+   returns exit 2 for ANY non-empty `Failures` list, benign or not — and `Run-Pipeline.ps1:141-142`
+   treated any non-zero `ssisx extract` exit as an immediate, hard `Write-Error -ErrorAction Stop`,
+   aborting Steps 2-5 entirely. Two of the 9 batch portfolios
+   (`SSIS-Data-Warehouse-ETL-Pipeline`, `Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline`)
+   never got past extraction because of this alone. Fixed by having `Run-Pipeline.ps1` parse
+   `<extractOut>\load-failures.md`'s own `Kind` column (already the exact discriminator on disk —
+   `"duplicate-name"`/`"package-not-found"` are benign; `"package"`/`"project"`/`"ispac"` carry a
+   real exception message) and only abort on a genuine hard failure, warning and continuing
+   otherwise. **Verified for real**: both previously-halted portfolios now proceed cleanly through
+   generate/build (each correctly still produces zero runnable packages, since every flow in both
+   is independently blocked on its own Tier-3 gaps — Lookup redirect-no-match, unresolved OLE DB
+   connections, SCD, a cross-database source — but that is now visible instead of masked by a
+   Step-1 abort).
+2. **A Flat File Source component's own output-column type override was invisible to
+   `CsvRowEmitter`/`SampleDataEmitter`, producing a real `CS0029` build failure.** Confirmed real
+   in `E-Commerce-Datawarehouse-implementation`'s own `Source_to_Stage_Sales_all_dimensions.dtsx`:
+   the Flat File connection manager declares `BirthYear` as `DT_STR` (raw text), but the Flat File
+   **Source component**'s own output column for `BirthYear` independently overrides it to `DT_I4`
+   (`ErrorOrTruncationOperation="Conversion"`, the source's Advanced Editor performing the
+   conversion inline while reading, failing the component on bad data per its own
+   `TruncationRowDisposition`) — with **no** Data Conversion/Derived Column anywhere downstream.
+   `TransformEmitter`'s own mismatch/coercion gate was never at fault here — it already correctly
+   reads the DESTINATION side's `i4`, so from its own view nothing disagreed. The bug was entirely
+   in two OTHER emitters that resolve a flat-file column's type purely from the connection
+   manager's own declared type, with no visibility into the source component's own override:
+   `CsvRowEmitter.Emit` (generating `string BirthYear` while the Model/Transform correctly expect
+   `int`) and — a second, previously-latent instance of the *identical* bug, found only because
+   fixing the first one made a starter test start FAILING for a new reason (a synthesized "Sample"
+   placeholder value no longer parses as the now-correctly-typed `int`) —
+   `SampleDataEmitter.EmitCsv`'s own representative-value synthesis, which resolved a column's
+   type the same CM-only way. Fixed by threading the Flat File Source's own `PipelineComponentSpec`
+   into both (`CsvRowEmitter.Emit`'s new optional `sourceComponent` parameter, shared via a new
+   internal `ResolveSourceOutputTypesByName` helper reused by `SampleDataEmitter.EmitCsv` through
+   a new `CsvSampleCandidate.SourceComponent` field) and preferring the source's own output-column
+   type whenever it disagrees with the CM's declared type for that column name — an unmapped
+   override type is a named `GenerationGap`, never a silent fallback to the CM's type. Two new
+   regression tests in `CsvRowEmitterTests.cs` pin both the override-applied and
+   override-unmapped-degrades-to-gap cases against a hand-built `PipelineComponentSpec` (not a new
+   `.dtsx` fixture — a full object-model-built fixture was judged unnecessary for this fix's own
+   scope). `FixedWidthRowReaderEmitter`'s own sibling `SampleDataEmitter.EmitFixedWidth` needed no
+   change — a fixed-width column is ALWAYS read as a plain string regardless of its declared type
+   (already documented, evidenced against a real dtexec run in an earlier round), a genuinely
+   different, already-correct case. **Verified end to end, the strongest evidence tier this
+   project's own philosophy asks for**: regenerated `E-Commerce-Datawarehouse-implementation`'s
+   actual `Source_to_Stage_Sales_all_dimensions` package, confirmed `BirthYear` now generates as
+   `int` throughout (row/model/transform all agree) and the synthesized sample value is `7`, not
+   `"Sample"`; the whole regenerated portfolio (all 7 packages, plus a copy of `Tools/Etl.Core`)
+   builds **0 warnings/0 errors** and its one wired package's 7 generated tests all pass
+   (90.6% own-code coverage) — where before this fix, `dotnet build` failed outright.
+
+**A large body of prior work — `Microsoft.SCD` (Slowly Changing Dimension), ForLoop container,
+Expression Task, PCT Sampling router, XML Source, Copy Map, and TransferSqlServerObjectsTask
+component support — was discovered sitting UNCOMMITTED in the working tree while investigating
+why SCD (the batch run's own dominant Tier-3 blocker, appearing across 3 of the 9 portfolios) had
+no support at all.** It did — fully, evidenced against a real `.dtsx` (`ScdPayload`'s own doc
+comment cites a genuine SCD component's real saved-XML shape: exactly 6 fixed outputs across 2
+exclusion groups — `Unchanged`/`New`/`Fixed Attribute`/`Changing Attribute Updates` in one group,
+`Historical Attribute Inserts` deliberately its own — matching real evidence, not guessed) — it
+was simply never committed, and `CLAUDE.md` carried no history entry for any of it. Rather than
+trust or discard this pile blindly, it was verified this session, per the plan's own explicit
+gate, before touching it further:
+- `dotnet build`/`dotnet test` on `Tools/SsisExtractor/SsisExtractor.slnx`: builds 0/0, and
+  passes **415/417** — the 2 failures are pre-existing, unrelated to this pile or either fix above
+  (`GenerateGoldenFileTests.Generate_MatchesGoldenFiles` for both PoC packages, a stale golden
+  string in `FakeUnitOfWork.cs.txt` — "ported from\nD:\\PoC\\SSIS_Rewrite\..." — that no longer
+  matches `TestDoublesEmitter.cs`'s own current, already-committed emission; confirmed neither
+  file involved is touched by this pile or this session's two fixes, left unfixed as a separate,
+  named, pre-existing issue rather than folded into this round).
+- The sibling `D:\PoC\SSIS_Rewrite` repo (the hand-written `Etl.Core` this pile's own new
+  abstractions — `IScdBranch`, `ScdColumnRole`, `ScdBranch`, `ScdClassifier`, plus `ForLoopStep`,
+  `ExpressionTaskStep`, several new `IRowSource` variants — target) also carried the matching
+  uncommitted mirror of these changes: `dotnet build`/`dotnet test` there too, **139/139** in
+  `Etl.Core.Tests` plus `LoadEmployees.Tests`/`LoadReferenceData.Tests` unaffected, all green.
+- **The real motivating case**: regenerated `E-Commerce-Datawarehouse-implementation` (14 real
+  `Microsoft.SCD` instances across its packages, per the batch run's own earlier count) with this
+  code in place — confirmed SCD is recognized and its component correctly reasoned about (its own
+  unconnected `Unchanged`/`Fixed Attribute`/`Changing Attribute Updates`/`Inferred Member Updates`
+  outputs each report a precise, non-blocking advisory naming exactly which output SSIS itself
+  would silently discard rows into — not a crash, not a silent guess).
+
+Given the pile passed every check, it was committed together with the two fixes above as one
+round, per the user's own explicit choice once shown the verification results — Fix B's own call
+sites in `PackageGenerator.cs` were already interleaved with this pile's own edits to that same
+file before this session started, so a clean separate commit for "just the 2 fixes" was not
+practical without risky patch surgery.
+
+**Not built or investigated further this round** (named, not silently dropped): a
+`ssisx-batch`/Phase B run against any of these 9 portfolios (explicitly held by the user); a
+dedicated dtexec-verifiable `.dtsx` fixture for the Flat File Source override bug (the hand-built
+`PipelineComponentSpec` unit test was judged sufficient for this fix's own scope); the 2
+pre-existing unrelated `GenerateGoldenFileTests` golden-string failures named above; and a full
+narrative write-up of the SCD/ForLoop/ExpressionTask/PctSampling/XmlSource/CopyMap/
+TransferSqlServerObjectsTask pile's own internal design decisions — this entry documents that the
+pile was found, verified, and committed, not a re-derivation of how each of those seven component
+types was actually built (that work predates this session and its author/history is unknown).
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

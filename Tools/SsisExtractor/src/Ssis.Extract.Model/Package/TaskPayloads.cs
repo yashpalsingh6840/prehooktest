@@ -81,6 +81,47 @@ public sealed class FileSystemTaskPayload
 }
 
 /// <summary>
+/// <c>Microsoft.ExpressionTask</c> -- the "Expression Task" in the SSIS Toolbox. Its whole job
+/// is one control-flow-level ASSIGNMENT, e.g. <c>@[User::TargetETLCutoffTime] = DATEADD(
+/// "Minute",-5,GETUTCDATE())</c> -- confirmed real, verbatim (including the assignment shape),
+/// from <c>DailyETLMain.dtsx</c>'s own "Calculate ETL Cutoff Time backup" task
+/// (Phase 2 of the unsupported-component-types plan). <see cref="Expression"/> is the raw,
+/// unparsed attribute text; splitting it into a target variable plus a value expression, and
+/// translating the value expression, is <c>Ssis.Extract.Codegen.ExpressionTaskEmitter</c>'s job,
+/// not this model's.
+/// </summary>
+public sealed class ExpressionTaskPayload
+{
+    public string? Expression { get; init; }
+}
+
+/// <summary>
+/// <c>STOCK:FORLOOP</c> (For Loop Container) -- Phase 3 of the unsupported-component-types plan.
+/// Confirmed real from a genuine SSDT-authored package (not guessed/synthesized first, since one
+/// existed to read: <c>D:\PoC\SSIS_Packages_From_GitHub\ETL-SSIS-Real-Scenarios\UseCase_34\
+/// Integration Services Project1\Integration Services Project1\Package.dtsx</c>, "For Loop
+/// Container"): <c>DTS:InitExpression="@Part =1"</c>, <c>DTS:EvalExpression="@Part &lt;11"</c>,
+/// <c>DTS:AssignExpression="@Part = @Part + 1"</c>. Unlike <see cref="ForEachLoopPayload"/>'s own
+/// enumerator config (two sibling elements alongside <c>&lt;Executables&gt;</c>), all three
+/// expressions sit DIRECTLY as attributes on the container's own <c>&lt;DTS:Executable&gt;</c>
+/// element -- there is no <c>&lt;ObjectData&gt;</c> and no sibling wrapper element at all for
+/// this container type.
+///
+/// <para>A genuinely different, previously-undocumented lexical form was also confirmed from
+/// this same real package: these three attributes reference a package variable with a BARE
+/// <c>@Name</c> (e.g. <c>@Part</c>), not the <c>@[Namespace::Name]</c> form every other
+/// expression surface this model already captures uses. Splitting/translating this is
+/// <c>Ssis.Extract.Codegen.ForLoopEmitter</c>'s job, not this model's -- these three fields are
+/// carried completely raw and unparsed, exactly as persisted.</para>
+/// </summary>
+public sealed class ForLoopPayload
+{
+    public string? InitExpression { get; init; }
+    public string? EvalExpression { get; init; }
+    public string? AssignExpression { get; init; }
+}
+
+/// <summary>
 /// <c>Microsoft.ExecutePackageTask</c> -- runs another package (project-reference or legacy
 /// file/MSDB reference) as a child of the one being extracted. Extraction-only for now:
 /// <c>ssisx generate</c> reports a named, honest structural gap for this task type rather than
@@ -284,4 +325,71 @@ public sealed class ForEachVariableMappingSpec
 {
     public required string VariableName { get; init; }
     public int? ValueIndex { get; init; }
+}
+
+/// <summary>
+/// <c>Microsoft.TransferSqlServerObjectsTask</c> -- wraps SQL Server's own SMO <c>Transfer</c>
+/// object to copy schema/data for an explicit set of tables from one SQL Server
+/// instance/database to another. Documented-gap-only (Phase 6 of the unsupported-component-types
+/// plan, per the user's own explicit choice): extracted fully so a human sizing this can see
+/// exactly what it targets, but <c>ssisx generate</c> makes no attempt to translate it into C# --
+/// see <c>PackagePlanner</c>'s own handling, the same deliberate-architectural-deferral treatment
+/// already given <see cref="ExecutePackageTaskPayload"/> (composing generated output rather than
+/// attempting automated translation is a decision, not a gap this build slice merely hasn't
+/// gotten to).
+///
+/// <b>Confirmed real</b>, from a genuine SSDT-authored package (not guessed/synthesized first --
+/// same "ask the runtime, don't guess" discipline as trap 12, just against a real client-shaped
+/// package this time rather than a live object-model probe):
+/// <c>D:\PoC\SSIS_Packages_From_GitHub\ETL-SSIS-Real-Scenarios\UseCase_55\Integration Services
+/// Project1\Integration Services Project1\Package.dtsx</c>, "Transfer SQL Server Objects Task".
+/// The real saved shape: <c>&lt;TransferSqlServerObjectsTaskData&gt;</c> -- no <c>DTS:</c> prefix
+/// on the element or any of its attributes, the same convention already confirmed for
+/// <c>&lt;FileSystemData&gt;</c>/<c>&lt;ScriptProject&gt;</c> -- with <see cref="SourceConnectionRefRaw"/>/
+/// <see cref="DestinationConnectionRefRaw"/> as raw connection-manager DTSID references (resolved
+/// the same way <see cref="ExecuteSqlTaskPayload.ConnectionRefRaw"/>/<c>ConnectionName</c> already
+/// are -- in the real package both point at <c>SMOServer</c>-type connection managers, a
+/// connection-manager kind this tool has not otherwise modeled, not OLEDB/ADO.NET),
+/// <see cref="SourceDatabase"/>/<see cref="DestinationDatabase"/> as plain database-name strings,
+/// and six plain boolean attributes (<see cref="DropObjectsFirst"/>/
+/// <see cref="IncludeDependentObjects"/>/<see cref="CopyData"/>/<see cref="CopyIndexes"/>/
+/// <see cref="CopyPrimaryKeys"/>/<see cref="CopyForeignKeys"/>).
+///
+/// <para><see cref="TablesListRaw"/>'s own encoding is a real, previously-undocumented format,
+/// worked out from the one real evidenced value --
+/// <c>"4,15,[dbo].[Country],16,[dbo].[Currency],17,[dbo].[customer1],17,[dbo].[customer2],"</c> --
+/// rather than guessed: a leading table COUNT ("4"), then that many (name-length, name) pairs,
+/// each length counting the object name's own character count (<c>"[dbo].[Country]"</c> is 15
+/// characters, confirmed by counting it) rather than acting as a delimiter -- so an object name
+/// containing a literal comma would still parse correctly, unlike a naive comma split (which only
+/// happens to work on this one real example because no name in it contains a comma).
+/// <see cref="Tables"/> is the decoded object-name list, in declared order, produced by that
+/// length-prefix rule.</para>
+/// </summary>
+public sealed class TransferSqlServerObjectsTaskPayload
+{
+    /// <summary>Raw connection-manager DTSID reference (e.g. "{...}"), before resolution -- same shape as <see cref="ExecuteSqlTaskPayload.ConnectionRefRaw"/>.</summary>
+    public string? SourceConnectionRefRaw { get; init; }
+
+    /// <summary>Resolved from <see cref="SourceConnectionRefRaw"/> against this package's own connection managers by DtsId. Null if unresolvable.</summary>
+    public string? SourceConnectionName { get; init; }
+
+    public string? DestinationConnectionRefRaw { get; init; }
+    public string? DestinationConnectionName { get; init; }
+
+    public string? SourceDatabase { get; init; }
+    public string? DestinationDatabase { get; init; }
+
+    /// <summary>Raw, unparsed <c>TablesList</c> attribute text -- see this type's own doc comment for its length-prefixed encoding. Kept verbatim alongside <see cref="Tables"/> so a decode bug can never silently lose the underlying evidence.</summary>
+    public string? TablesListRaw { get; init; }
+
+    /// <summary>Parsed from <see cref="TablesListRaw"/> -- each entry a bracket-qualified object name (e.g. "[dbo].[Country]"), in declared order. Empty (not null) when the attribute is missing, empty, or doesn't match the expected length-prefixed shape, rather than throwing -- a task this tool only ever reports on, never executes, should never fail extraction over a decode quirk in one attribute.</summary>
+    public List<string> Tables { get; init; } = [];
+
+    public bool? DropObjectsFirst { get; init; }
+    public bool? IncludeDependentObjects { get; init; }
+    public bool? CopyData { get; init; }
+    public bool? CopyIndexes { get; init; }
+    public bool? CopyPrimaryKeys { get; init; }
+    public bool? CopyForeignKeys { get; init; }
 }

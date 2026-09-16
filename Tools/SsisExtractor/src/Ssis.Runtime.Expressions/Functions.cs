@@ -32,6 +32,7 @@ public static class Functions
         ["MONTH"] = SsisType.I4,
         ["DAY"] = SsisType.I4,
         ["DATEDIFF"] = SsisType.I4,
+        ["DATEADD"] = SsisType.DbTimeStamp,
     };
 
     public static SsisValue Call(string name, List<SsisValue> args)
@@ -75,6 +76,7 @@ public static class Functions
             "TOKENCOUNT" => Token(name, args, wantCount: true),
             "DATEPART" => DatePart(name, args),
             "DATEDIFF" => DateDiff(name, args),
+            "DATEADD" => DateAdd(name, args),
             "YEAR" => SsisValue.OfInt(Date(name, args, 0).Year),
             "MONTH" => SsisValue.OfInt(Date(name, args, 0).Month),
             "DAY" => SsisValue.OfInt(Date(name, args, 0).Day),
@@ -240,5 +242,44 @@ public static class Functions
         var start = Date(fn, args, 1);
         var end = Date(fn, args, 2);
         return SsisValue.OfInt((end.Date - start.Date).Days);
+    }
+
+    /// <summary>
+    /// DATEADD(datepart, number, date) -- measured against the real evaluator 2026-09-15, Phase
+    /// 2 of the unsupported-component-types plan (Microsoft.ExpressionTask, whose real evidenced
+    /// call is DATEADD("Minute", -5, GETUTCDATE())). Every measured datepart maps exactly onto
+    /// .NET's own DateTime.AddX methods, INCLUDING their day/month-clamping edge cases -- Jan 31
+    /// + 1 month lands on Feb 29 (2020, a leap year) and Feb 29 + 1 year lands on Feb 28 (2021,
+    /// not a leap year), both confirmed to match .NET's AddMonths/AddYears exactly, not
+    /// guessed by analogy. The datepart literal is matched case-insensitively against the FULL
+    /// WORD ("Minute"/"Day"/"Hour"/"Month"/"Year"/"Second") plus the one abbreviation ("mi")
+    /// individually measured -- unlike DatePart above, no other abbreviation (e.g. "dd", "hh",
+    /// "yy") has been measured for DATEADD specifically, so none is guessed here even though
+    /// DatePart's own table already has them for a different function.
+    ///
+    /// <b>Always returns DT_DBTIMESTAMP, never DT_DBDATE</b> -- measured directly: DATEADD over
+    /// a DT_DBDATE input still produces a full timestamp (confirmed via a (DT_WSTR,n) cast
+    /// showing "00:00:00" even when the input had no time component). SsisValue.OfDate's own
+    /// default type parameter already matches this, so no explicit type override is needed here.
+    /// </summary>
+    private static SsisValue DateAdd(string fn, List<SsisValue> args)
+    {
+        Arity(fn, args, 3);
+        var part = Str(fn, args, 0);
+        var number = (int)Int(fn, args, 1);
+        var date = Date(fn, args, 2);
+
+        return SsisValue.OfDate(part.ToUpperInvariant() switch
+        {
+            "MINUTE" or "MI" => date.AddMinutes(number),
+            "DAY" => date.AddDays(number),
+            "HOUR" => date.AddHours(number),
+            "MONTH" => date.AddMonths(number),
+            "YEAR" => date.AddYears(number),
+            "SECOND" => date.AddSeconds(number),
+            _ => throw new SsisExpressionError(
+                $"{fn}: date part '{part}' is not measured against the real evaluator -- only " +
+                "\"Minute\"/\"mi\", \"Day\", \"Hour\", \"Month\", \"Year\", \"Second\" are; add a corpus case before supporting it"),
+        });
     }
 }

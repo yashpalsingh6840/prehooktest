@@ -13,7 +13,7 @@ namespace Ssis.Extract.Codegen;
 /// method's own generated NAME is known (only <c>methodInventory</c>, returned by
 /// <see cref="PackageClassEmitter.Emit"/>, actually has that -- see
 /// <see cref="ComponentMethodEntry"/>'s own doc comment for why this can't be re-derived).</summary>
-public sealed record CsvSampleCandidate(string FileSourceKey, ConnectionManagerSpec ConnectionManager, string RowTypeName, string RowTypeNamespace, string ComponentName);
+public sealed record CsvSampleCandidate(string FileSourceKey, ConnectionManagerSpec ConnectionManager, string RowTypeName, string RowTypeNamespace, string ComponentName, PipelineComponentSpec? SourceComponent = null);
 
 /// <summary>An OLE DB Command flow's own row type/parameter facts, captured by
 /// <see cref="PackageGenerator.GenerateOleDbCommandFlow"/> once it has already resolved the
@@ -153,7 +153,7 @@ public static partial class PackageGenerator
         // convenience projection of ordinary FlowSteps), so this gate must also check for one
         // directly or a package whose ONLY real content is such a loop would be wrongly
         // reported as having nothing to generate at all.
-        if (plan.Flows.Count == 0 && !plan.Steps.Any(s => s is ForEachDataFlowLoopStep))
+        if (plan.Flows.Count == 0 && !plan.Steps.Any(s => s is ForEachDataFlowLoopStep or ForLoopStep))
         {
             gaps.Add(new GenerationGap(package.ObjectName, "no Data Flow Task could be planned for this package -- nothing to generate"));
             return new PackageGenerateResult(package.ObjectName, files, gaps);
@@ -168,7 +168,9 @@ public static partial class PackageGenerator
         var wiredSplits = new Dictionary<DataFlowPlan, ProgramConditionalSplitStep>();
         var wiredMulticasts = new Dictionary<DataFlowPlan, ProgramMulticastStep>();
         var wiredOleDbCommands = new Dictionary<DataFlowPlan, ProgramOleDbCommandStep>();
+        var wiredScds = new Dictionary<DataFlowPlan, ProgramScdStep>();
         var wiredDataFlowLoops = new Dictionary<ForEachFileDataFlowPlan, ProgramForEachDataFlowLoopStep>();
+        var wiredForLoops = new Dictionary<ForLoopPlan, ProgramForLoopStep>();
         var fileSourceEntries = new List<FileSourceEntryRequest>();
         // "File System Task" taxonomy row (Docs/Generated-Tests-Plan.md): every source/destination
         // connection-manager key a File System Task step actually resolved, collected here (where
@@ -308,6 +310,24 @@ public static partial class PackageGenerator
                 continue;
             }
 
+            // Same bug CLASS as the Multicast+Aggregate check immediately above, closed
+            // proactively rather than discovered by a real crash -- Phase 4 of the
+            // unsupported-component-types plan. flow.PctSampling and flow.Aggregate are resolved
+            // entirely independently by PackagePlanner (PctSampling is only mutually exclusive
+            // with ConditionalSplit/Multicast there, not with Aggregate), so an Aggregate
+            // downstream of one of Percentage Sampling's two branches would otherwise fall
+            // straight into GenerateAggregateFlow below, which never reads flow.PctSampling at
+            // all -- the OTHER branch would be silently dropped (no file, no gap) and the
+            // Aggregate's own row shape would be wired against whichever destination
+            // PackagePlanner happened to resolve first. Unevidenced anywhere in the tracked
+            // portfolio, so gapped explicitly rather than guessed at.
+            if (flow.Aggregate is not null && flow.PctSampling is not null)
+            {
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"Aggregate '{flow.Aggregate.Component.Name}' and Percentage Sampling '{flow.PctSampling.Component.Name}' both appear in the same Data Flow Task -- an Aggregate downstream of one of Percentage Sampling's two branches is not evidenced anywhere and not supported yet. The other branch would otherwise be silently dropped."));
+                continue;
+            }
+
             if (flow.Aggregate is { } aggregate)
             {
                 var aggregateFlow = GenerateAggregateFlow(
@@ -358,6 +378,36 @@ public static partial class PackageGenerator
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
                     multicastTestCandidates, csvSampleCandidates, componentHolders);
                 if (multicastStep is not null) wiredMulticasts[flow] = multicastStep;
+                continue;
+            }
+
+            // Phase 7 of the unsupported-component-types plan -- a fourth routing mechanism
+            // alongside Conditional Split/Multicast/Percentage Sampling, but the only one whose
+            // branches can run a per-row SQL command instead of (or as well as) inserting, so it
+            // gets its own dictionary and its own emission case rather than reusing one of theirs.
+            if (flow.Scd is { } scdPlan)
+            {
+                var scdStep = GenerateScdFlow(
+                    package, ns, flow, scdPlan, fileSourceEntries, files, testFiles, testCoverageNotes, tables, functionsUsed,
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
+                    csvSampleCandidates, componentHolders);
+                if (scdStep is not null) wiredScds[flow] = scdStep;
+                continue;
+            }
+
+            // Phase 4 of the unsupported-component-types plan. Structurally a routing DECISION
+            // between two mutually exclusive branches (like Conditional Split), not an
+            // unconditional fan-out (like Multicast) -- so this returns the SAME
+            // ProgramConditionalSplitStep shape GenerateConditionalSplitFlow produces, and is
+            // wired into the identical wiredSplits dictionary, needing no new dictionary or
+            // downstream emission case at all.
+            if (flow.PctSampling is { } pctSampling)
+            {
+                var pctSamplingStep = GeneratePctSamplingFlow(
+                    package, ns, flow, pctSampling, fileSourceEntries, files, testFiles, testCoverageNotes, tables, functionsUsed,
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
+                    csvSampleCandidates, componentHolders);
+                if (pctSamplingStep is not null) wiredSplits[flow] = pctSamplingStep;
                 continue;
             }
 
@@ -453,7 +503,7 @@ public static partial class PackageGenerator
                 EmitSeams: emitSeams,
                 MappingNamespace: $"{ns}.Mapping",
                 TransformClassName: transformClassName,
-                RowTypeNamespace: programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql",
+                RowTypeNamespace: programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : programSource is XmlFlowSource ? $"{ns}.Xml" : $"{ns}.Sql",
                 RowTypeName: rowTypeName,
                 EntityNamespace: $"{ns}.Model",
                 EntityName: entityName,
@@ -461,6 +511,7 @@ public static partial class PackageGenerator
                 Pipeline: flow.Pipeline,
                 DerivedColumns: flow.DerivedColumn is null ? [] : [flow.DerivedColumn],
                 DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+                CopyMaps: flow.CopyMap is null ? [] : [flow.CopyMap],
                 DestinationComponent: flow.DestinationComponent,
                 NullableColumnNames: nullableColumnNames,
                 Holders: componentHolders));
@@ -490,13 +541,14 @@ public static partial class PackageGenerator
                     TestNamespace: $"{package.ObjectName}.Tests",
                     TransformClassName: transformClassName,
                     MappingNamespace: $"{ns}.Mapping",
-                    RowTypeNamespace: programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql",
+                    RowTypeNamespace: programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : programSource is XmlFlowSource ? $"{ns}.Xml" : $"{ns}.Sql",
                     RowTypeName: rowTypeName,
                     EntityNamespace: $"{ns}.Model",
                     EntityName: entityName,
                     Pipeline: flow.Pipeline,
                     DerivedColumns: flow.DerivedColumn is null ? [] : [flow.DerivedColumn],
                     DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+                    CopyMaps: flow.CopyMap is null ? [] : [flow.CopyMap],
                     DestinationComponent: flow.DestinationComponent));
                 gaps.AddRange(testResult.Gaps);
                 foreach (var testFile in testResult.Files)
@@ -533,6 +585,17 @@ public static partial class PackageGenerator
             if (programLoop is not null) wiredDataFlowLoops[dataFlowLoopStep.Loop] = programLoop;
         }
 
+        // A For Loop Container's own inner flow is likewise not in plan.Flows -- same reason as
+        // the ForEach-Data-Flow-Loop case immediately above.
+        foreach (var forLoopStep in plan.Steps.OfType<ForLoopStep>())
+        {
+            var programForLoop = GenerateForLoop(
+                package, ns, forLoopStep.Loop, files, tables, functionsUsed,
+                primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
+                componentHolders);
+            if (programForLoop is not null) wiredForLoops[forLoopStep.Loop] = programForLoop;
+        }
+
         // A package whose only successfully-wired flows are Flat File Destinations has
         // tables.Count == 0 but still needs a (now possibly-empty) DbContext class -- Program.cs
         // always emits AddEtlDbContext<T>()/IUnitOfWork's own transaction wrapping needs a real
@@ -544,7 +607,7 @@ public static partial class PackageGenerator
         // connection/transaction as everything else in the package -- so a package whose ONLY
         // successfully-wired flow is an OLE DB Command still needs a (possibly table-less)
         // DbContext generated, same reasoning as the Flat File Destination case right above.
-        if (tables.Count > 0 || wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0 || wiredDataFlowLoops.Count > 0)
+        if (tables.Count > 0 || wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0 || wiredScds.Count > 0 || wiredDataFlowLoops.Count > 0 || wiredForLoops.Count > 0)
             Merge(files, gaps, DbContextEmitter.Emit($"{ns}.Model", $"{package.ObjectName}DbContext", tables));
 
         Merge(files, gaps, SsisFnEmitter.Emit($"{ns}.Ssis", functionsUsed));
@@ -571,8 +634,15 @@ public static partial class PackageGenerator
                 case FlowStep { Flow: var flow } when wiredOleDbCommands.TryGetValue(flow, out var programOleDbCommand):
                     programSteps.Add(programOleDbCommand);
                     break;
+                case FlowStep { Flow: var flow } when wiredScds.TryGetValue(flow, out var programScd):
+                    programSteps.Add(programScd);
+                    break;
                 case SqlStep sqlStep:
                     programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, testFiles, testCoverageNotes, ns, $"{ns}.Mapping", gaps));
+                    break;
+                case ExpressionStep expressionStep:
+                    programSteps.Add(new ProgramExpressionStep(
+                        expressionStep.TaskName, expressionStep.SsisVariableName, expressionStep.CSharpValueExpression));
                     break;
                 case ScriptTaskStep { Task: var scriptTask }:
                 {
@@ -608,6 +678,9 @@ public static partial class PackageGenerator
                 case ForEachDataFlowLoopStep { Loop: var dataFlowLoop } when wiredDataFlowLoops.TryGetValue(dataFlowLoop, out var programDataFlowLoop):
                     programSteps.Add(programDataFlowLoop);
                     break;
+                case ForLoopStep { Loop: var forLoop } when wiredForLoops.TryGetValue(forLoop, out var programForLoop):
+                    programSteps.Add(programForLoop);
+                    break;
             }
 
             // Carried across rather than re-derived, and applied here rather than in each case
@@ -626,7 +699,7 @@ public static partial class PackageGenerator
             }
         }
 
-        if (wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0 || wiredDataFlowLoops.Count > 0)
+        if (wiredFlows.Count > 0 || wiredSplits.Count > 0 || wiredMulticasts.Count > 0 || wiredOleDbCommands.Count > 0 || wiredScds.Count > 0 || wiredDataFlowLoops.Count > 0 || wiredForLoops.Count > 0)
         {
             // Named, testable statement class (SqlStatementBuilderEmitter) rather than an
             // anonymous string literal embedded in Program.cs -- same treatment ResolveSqlStep
@@ -708,7 +781,7 @@ public static partial class PackageGenerator
                 // anything: the real TestData/ file name is resolved independently, below.
                 var sample = FlatFileRuntimeShape.IsFixedWidthWithoutHeader(candidate.ConnectionManager.FlatFileFormat)
                     ? SampleDataEmitter.EmitFixedWidth(candidate.FileSourceKey, candidate.ConnectionManager)
-                    : SampleDataEmitter.EmitCsv(candidate.FileSourceKey, candidate.ConnectionManager);
+                    : SampleDataEmitter.EmitCsv(candidate.FileSourceKey, candidate.ConnectionManager, candidate.SourceComponent);
                 if (sample is not null)
                     sampleDataByKey[candidate.FileSourceKey] = sample;
 
@@ -766,6 +839,24 @@ public static partial class PackageGenerator
                 testDataFileEntries.Add((excel.FileSourceKey, realFileName));
                 gaps.Add(new GenerationGap(excel.FileSourceKey,
                     $"'{excel.FileSourceKey}' (worksheet '{excel.WorksheetName}') has no Tier-A synthetic sample at all -- this tool has no .xlsx writer. A real workbook matching the declared schema under `TestData/{realFileName}` is the only way its own Integration-tagged read test can run (see the LOCAL-DATA work packet).",
+                    IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: null));
+            }
+            // An XML Source has EAGER FileSourceOptions resolution too (XmlRowSource<TRow>'s own
+            // constructor takes the file path directly, same File(key) eagerness Excel's own
+            // ExcelSourceOptions already established) and, like Excel, no Tier-A synthesizer at
+            // all (no .xml writer either) -- same reasoning, same "no fallback exists" gap.
+            var xmlFlowSources = wiredFlows.Values.Select(f => f.Source)
+                .Concat(wiredMulticasts.Values.Select(m => m.Source))
+                .Concat(wiredOleDbCommands.Values.Select(c => c.Source))
+                .OfType<XmlFlowSource>().DistinctBy(s => s.FileSourceKey).ToList();
+            foreach (var xmlFlow in xmlFlowSources)
+            {
+                var connectionManager = fileSourceEntries.FirstOrDefault(e => e.Key == xmlFlow.FileSourceKey);
+                var realFileName = connectionManager?.SourceFileName;
+                if (string.IsNullOrEmpty(realFileName)) realFileName = $"{xmlFlow.FileSourceKey}.xml";
+                testDataFileEntries.Add((xmlFlow.FileSourceKey, realFileName));
+                gaps.Add(new GenerationGap(xmlFlow.FileSourceKey,
+                    $"'{xmlFlow.FileSourceKey}' (row element '{xmlFlow.RowElementName}') has no Tier-A synthetic sample at all -- this tool has no .xml writer. A real XML file matching the declared schema under `TestData/{realFileName}` is the only way its own Integration-tagged read test can run (see the LOCAL-DATA work packet).",
                     IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: null));
             }
             foreach (var f in TestDoublesEmitter.Emit(ns, className, dbContextTypeName, testDataFileEntries, sinkFileKeys, distinctFileSystemTaskKeys, forEachLoopKeys, secondaryConnections.Keys.ToList(), sampleDataFallbackEntries).Files)
@@ -885,6 +976,22 @@ public static partial class PackageGenerator
                     testFiles.Add(excelSourceTestFinal);
                     NoteTest(testCoverageNotes, excelSourceTestFinal, "Source-Excel",
                         "asserts `.Name` only; the real read is Integration-tagged (no .xlsx writer in this stack, needs a LOCAL-DATA fill).");
+                }
+                else if (source is XmlFlowSource)
+                {
+                    // XmlRowSource<TRow>'s own constructor is plain field assignment, exactly like
+                    // CsvRowSource<TRow>/FixedWidthRowSource<TRow> (lazy -- no file I/O until
+                    // ReadAsync, unlike ExcelRowSource<TRow>'s eager one) and it is never in
+                    // PackageClassEmitter.SourceNeedsUow's own true set, so EmitFileSourceTest's
+                    // existing shape (sourceNeedsUow: false) is reused verbatim rather than adding
+                    // a fourth, near-identical emitter method.
+                    var xmlSourceTest = ComponentTestEmitter.EmitFileSourceTest(
+                        $"{package.ObjectName}.Tests", ns, $"{ns}.Xml", rowTypeName,
+                        sourceEntry.MethodName, sourceNeedsUow: false, source.ComponentName);
+                    var xmlSourceTestFinal = xmlSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{xmlSourceTest.RelativePath}" };
+                    testFiles.Add(xmlSourceTestFinal);
+                    NoteTest(testCoverageNotes, xmlSourceTestFinal, "Source-Xml",
+                        "asserts `.Name` only; the real read is Integration-tagged (no .xml writer in this stack, needs a LOCAL-DATA fill).");
                 }
             }
 
@@ -1143,6 +1250,7 @@ public static partial class PackageGenerator
     {
         SqlFlowSource => true,
         ExcelFlowSource => true,
+        XmlFlowSource => true,
         MergeJoinFlowSource mj => RequiresIntegrationForDirectInvocation(mj.LeftSource) || RequiresIntegrationForDirectInvocation(mj.RightSource),
         UnionFlowSource union => union.Sides.Any(RequiresIntegrationForDirectInvocation),
         AggregateFlowSource agg => RequiresIntegrationForDirectInvocation(agg.InnerSource),
@@ -1171,6 +1279,7 @@ public static partial class PackageGenerator
     {
         CsvFlowSource or FixedWidthFlowSource => $"{ns}.Csv",
         ExcelFlowSource => $"{ns}.Excel",
+        XmlFlowSource => $"{ns}.Xml",
         _ => $"{ns}.Sql",
     };
 
@@ -1256,6 +1365,23 @@ public static partial class PackageGenerator
             }
         }
 
+        // An XML Source's own string columns are nullable BY CONSTRUCTION, the same reasoning as
+        // a Data Conversion column above -- measured via a real dtexec run (SyntheticXmlSource.dtsx):
+        // both an empty XML element and an entirely OMITTED optional element resolve to a genuine
+        // NULL, never an empty string (see XmlRowReaderEmitter's own doc comment). Only string
+        // columns -- a numeric/date column's own missing-element behavior was never measured.
+        if (flow.XmlSource is { } xmlSourceForNullability)
+        {
+            var xmlOutput = xmlSourceForNullability.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            if (xmlOutput is not null)
+            {
+                foreach (var column in PipelineResolver.Resolve(xmlOutput).Columns)
+                {
+                    if (column.Type?.ClrTypeName == "string") nullableColumnNames.Add(column.PipelineColumnName);
+                }
+            }
+        }
+
         // A string-source/int-destination passthrough column (SsisFn.ParseWstrToI4, 2026-08-30)
         // is nullable BY CONSTRUCTION, the same reasoning as a Data Conversion column above --
         // ParseWstrToI4 always returns int? (string and string? are the same runtime type, so
@@ -1292,7 +1418,7 @@ public static partial class PackageGenerator
             var fileSourceKey = rowTypeBaseName;
             var format = csvConnectionManager.FlatFileFormat;
 
-            Merge(files, gaps, CsvRowEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+            Merge(files, gaps, CsvRowEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager, flatFileSource));
             fileSourceEntries.Add(BuildFileSourceEntry(fileSourceKey, csvConnectionManager, gaps));
 
             if (FlatFileRuntimeShape.IsFixedWidthWithoutHeader(format))
@@ -1304,13 +1430,13 @@ public static partial class PackageGenerator
                 // is what actually writes the right shape of sample file; ComponentTestEmitter's
                 // own "Source -- CSV" test emitter needs no format-specific knowledge at all, it
                 // only ever reads SampleDataColumn's own PropertyName/ExpectedLiteral.
-                csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", flatFileSource.Name));
+                csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", flatFileSource.Name, flatFileSource));
                 return (rowTypeName, new FixedWidthFlowSource(flatFileSource.Name, fileSourceKey,
                     FlatFileRuntimeShape.BuildColumnPlans(format!), format!.HeaderRowsToSkip ?? 0));
             }
 
             Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
-            csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", flatFileSource.Name));
+            csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", flatFileSource.Name, flatFileSource));
             return (rowTypeName, new CsvFlowSource(flatFileSource.Name, fileSourceKey, format?.HeaderRowsToSkip ?? 0));
         }
 
@@ -1338,7 +1464,19 @@ public static partial class PackageGenerator
             return (rowTypeName, excelFlowSource);
         }
 
-        gaps.Add(new GenerationGap(flow.TaskName, "no Flat File Source, OLE DB Source, ADO NET Source, or Excel Source (with a resolvable connection manager) found -- only [Flat File Source|OLE DB Source|ADO NET Source|Excel Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination] is supported yet"));
+        if (flow.XmlSource is { } xmlSource)
+        {
+            var xmlFlowSource = BuildXmlFlowSource(flow.TaskName, xmlSource, fileSourceEntries, gaps);
+            if (xmlFlowSource is null) return null; // BuildXmlFlowSource already added the reason
+
+            var rowTypeName = rowTypeBaseName + "XmlRow";
+            Merge(files, gaps, XmlRowEmitter.Emit($"{ns}.Xml", rowTypeName, xmlSource));
+            Merge(files, gaps, XmlRowReaderEmitter.Emit($"{ns}.Xml", rowTypeName, xmlSource));
+
+            return (rowTypeName, xmlFlowSource);
+        }
+
+        gaps.Add(new GenerationGap(flow.TaskName, "no Flat File Source, OLE DB Source, ADO NET Source, Excel Source, or XML Source (with a resolvable connection manager) found -- only [Flat File Source|OLE DB Source|ADO NET Source|Excel Source|XML Source] -> [Derived Column] -> [OLE DB Destination|ADO NET Destination] is supported yet"));
         return null;
     }
 
@@ -1358,19 +1496,19 @@ public static partial class PackageGenerator
             var fileSourceKey = rowTypeBaseName;
             var format = csvConnectionManager.FlatFileFormat;
 
-            Merge(files, gaps, CsvRowEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+            Merge(files, gaps, CsvRowEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager, sourceComponent));
             fileSourceEntries.Add(BuildFileSourceEntry(fileSourceKey, csvConnectionManager, gaps));
 
             if (FlatFileRuntimeShape.IsFixedWidthWithoutHeader(format))
             {
                 Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
-                csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", sourceComponent.Name));
+                csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", sourceComponent.Name, sourceComponent));
                 return (rowTypeName, new FixedWidthFlowSource(sourceComponent.Name, fileSourceKey,
                     FlatFileRuntimeShape.BuildColumnPlans(format!), format!.HeaderRowsToSkip ?? 0));
             }
 
             Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
-            csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", sourceComponent.Name));
+            csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", sourceComponent.Name, sourceComponent));
             return (rowTypeName, new CsvFlowSource(sourceComponent.Name, fileSourceKey, format?.HeaderRowsToSkip ?? 0));
         }
 
@@ -1672,7 +1810,7 @@ public static partial class PackageGenerator
         var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow, defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
         if (sourceResult is null) return null;
         var (rowTypeName, programSource) = sourceResult.Value;
-        var rowTypeNamespace = programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql";
+        var rowTypeNamespace = programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : programSource is XmlFlowSource ? $"{ns}.Xml" : $"{ns}.Sql";
 
         // A split flow with neither a shared upstream Derived Column, a shared upstream Data
         // Conversion, nor any per-branch Derived Column (see ConditionalSplitBranchPlan.
@@ -1697,7 +1835,7 @@ public static partial class PackageGenerator
         }
 
         var routerClassName = SanitizeIdentifier(split.Component.Name) + "Router";
-        var routerResult = RouterEmitter.Emit($"{ns}.Mapping", routerClassName, rowTypeNamespace, rowTypeName, $"{ns}.Ssis", split, flow.Pipeline, flow.DataConversion);
+        var routerResult = RouterEmitter.Emit($"{ns}.Mapping", routerClassName, rowTypeNamespace, rowTypeName, $"{ns}.Ssis", split, flow.Pipeline, flow.DataConversion, flow.CopyMap);
         if (routerResult.Result.Files.Count == 0)
         {
             gaps.AddRange(routerResult.Result.Gaps);
@@ -1822,7 +1960,7 @@ public static partial class PackageGenerator
         // comment. Emitted here, not batched with the other Phase-2 starter tests further down in
         // Generate, because split/rowTypeName/routerClassName are only in scope inside this
         // method.
-        var routerTest = RouterTestEmitter.Emit($"{package.ObjectName}.Tests", $"{ns}.Mapping", routerClassName, rowTypeNamespace, rowTypeName, split, flow.DerivedColumn, flow.DataConversion);
+        var routerTest = RouterTestEmitter.Emit($"{package.ObjectName}.Tests", $"{ns}.Mapping", routerClassName, rowTypeNamespace, rowTypeName, split, flow.DerivedColumn, flow.DataConversion, flow.CopyMap);
         foreach (var f in routerTest.Files)
         {
             var routerTestFinal = f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" };
@@ -1888,7 +2026,7 @@ public static partial class PackageGenerator
             defaultIsFlatFile ? null : defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
         if (sourceResult is null) return null;
         var (rowTypeName, programSource) = sourceResult.Value;
-        var rowTypeNamespace = programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : $"{ns}.Sql";
+        var rowTypeNamespace = programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : programSource is XmlFlowSource ? $"{ns}.Xml" : $"{ns}.Sql";
 
         // Phase A: validate every branch and resolve its entity name, without emitting anything
         // yet -- same convergence-detection shape as GenerateConditionalSplitFlow's own Phase A.
@@ -2058,6 +2196,427 @@ public static partial class PackageGenerator
         }
 
         return new ProgramMulticastStep(flow.TaskName, programSource, rowTypeName, branches);
+    }
+
+    /// <summary>Phase 4 of the unsupported-component-types plan. Resolves a Percentage Sampling
+    /// flow -- structurally almost identical to <see cref="GenerateConditionalSplitFlow"/> (two
+    /// mutually exclusive branches, each its own SQL destination, wired via a real
+    /// <c>IRowRouter&lt;TRow&gt;</c> and <c>ConditionalSplitStep&lt;TRow&gt;</c>) rather than
+    /// <see cref="GenerateMulticastFlow"/>'s unconditional fan-out shape -- so this returns a
+    /// <see cref="ProgramConditionalSplitStep"/> too, and the caller wires it into the SAME
+    /// <c>wiredSplits</c> dictionary <see cref="GenerateConditionalSplitFlow"/>'s own result goes
+    /// into, needing no new dictionary/emission case at all
+    /// (<see cref="PackageClassEmitter"/>'s own <c>ProgramConditionalSplitStep</c> case already
+    /// constructs whatever <c>RouterClassName</c> names, with zero knowledge of which SSIS
+    /// component produced it).
+    ///
+    /// Unlike Conditional Split, there is no expression to translate and no per-branch Derived
+    /// Column chain restriction: Percentage Sampling adds/removes/transforms NO column at all
+    /// (confirmed real -- see <c>PctSamplingPayload</c>'s own doc comment), so a flow with no
+    /// Derived Column anywhere is not a gap here the way it is for Conditional Split's own
+    /// direct-copy restriction -- a random row split with no other transform is exactly this
+    /// component's real, intended behaviour, not an unevidenced shape to guess at.</summary>
+    private static ProgramConditionalSplitStep? GeneratePctSamplingFlow(
+        PackageSpec package, string ns, DataFlowPlan flow, PctSamplingPlan pctSampling,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GeneratedFile> testFiles,
+        List<TestCoverageNote> testCoverageNotes,
+        List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
+        Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
+        bool emitSeams, List<CsvSampleCandidate>? csvSampleCandidates = null, ComponentHolderRegistry? componentHolders = null)
+    {
+        var flowBaseName = SanitizeIdentifier(flow.TaskName);
+        // Never null -- PlanPctSampling requires both branches to resolve to a real destination
+        // (no discard/Aggregate pass-through widening the way Multicast's own ResolveBranch call
+        // gets, since neither is evidenced for this component).
+        var defaultDestination = pctSampling.Sampled.Destination!;
+
+        var nullableColumnNames = ResolveNullableColumnNames(flow);
+
+        var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow, defaultDestination, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
+        if (sourceResult is null) return null;
+        var (rowTypeName, programSource) = sourceResult.Value;
+        var rowTypeNamespace = programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv" : programSource is ExcelFlowSource ? $"{ns}.Excel" : programSource is XmlFlowSource ? $"{ns}.Xml" : $"{ns}.Sql";
+
+        var routerClassName = SanitizeIdentifier(pctSampling.Component.Name) + "SamplingRouter";
+        var routerResult = PctSamplingRouterEmitter.Emit($"{ns}.Mapping", routerClassName, rowTypeNamespace, rowTypeName,
+            pctSampling.Component.PctSampling?.SamplingValue ?? 0, pctSampling.Component.PctSampling?.SamplingSeed ?? 0);
+        files.Add(routerResult.Files[0]);
+
+        // Branch 0 = Sampled ("Sampling Selected Output"), branch 1 = NotSampled ("Sampling
+        // Unselected Output") -- matches PctSamplingRouterEmitter's own fixed SelectBranch
+        // convention exactly (0 when the random draw falls under SamplingValue, 1 otherwise).
+        var orderedBranches = new[] { pctSampling.Sampled, pctSampling.NotSampled };
+
+        // Phase A: validate every branch and resolve its entity name, without emitting anything
+        // yet -- same convergence-detection shape as GenerateConditionalSplitFlow's own Phase A.
+        var entityNames = new List<string>();
+        foreach (var branch in orderedBranches)
+        {
+            var branchDestination = branch.Destination!; // never null -- see defaultDestination's own comment above
+            if (!DestinationInfo.IsFastLoadConfigured(branchDestination))
+            {
+                gaps.Add(new GenerationGap(flow.TaskName, $"Percentage Sampling branch '{branch.OutputName}': destination '{branchDestination.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
+                return null;
+            }
+
+            var entityName = TryResolveEntityName(flow.TaskName, branchDestination, gaps);
+            if (entityName is null) return null;
+            entityNames.Add(entityName);
+        }
+
+        var branchFiles = new List<GeneratedFile>();
+        var branchTables = new List<DbContextEmitter.TableSpec>();
+        var branchFunctionsUsed = new HashSet<string>();
+        var branches = new List<ProgramConditionalSplitBranch>();
+        var branchTestFiles = new List<GeneratedFile>();
+        var emittedDestinationRefIds = new HashSet<string>(StringComparer.Ordinal);
+        (string AuthMode, string? UserId, string? Server, string? Database)? resolvedAuth = null;
+
+        for (var i = 0; i < orderedBranches.Length; i++)
+        {
+            var branch = orderedBranches[i];
+            var branchDestination = branch.Destination!; // never null -- see defaultDestination's own comment above
+            var entityName = entityNames[i];
+
+            // Same 1-to-1 component-to-function naming convention Conditional Split/Multicast
+            // branches already use: {PctSamplingComponent}_{OutputName}.
+            var branchTransformClassName = $"{SanitizeIdentifier(pctSampling.Component.Name)}_{SanitizeIdentifier(branch.OutputName)}";
+
+            if (emittedDestinationRefIds.Add(branchDestination.RefId))
+            {
+                Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branchDestination, nullableColumnNames));
+                primaryKeysByDestination.TryGetValue(branchDestination.RefId, out var primaryKey);
+                branchTables.Add(new DbContextEmitter.TableSpec(entityName, branchDestination, primaryKey));
+            }
+
+            // Percentage Sampling never computes a column of its own (see this method's own doc
+            // comment) -- a branch's own derivedColumns list here can only ever come from the
+            // flow's shared upstream Derived Column/Data Conversion (both threaded straight
+            // through, same as every other branch shape) or a per-branch chain
+            // ResolveBranch happened to walk through (e.g. a tag Derived Column between the
+            // sampling output and the destination) -- branch.DerivedColumns already carries
+            // whichever of those actually occurred.
+            var derivedColumns = new List<PipelineComponentSpec>();
+            if (flow.DerivedColumn is not null) derivedColumns.Add(flow.DerivedColumn);
+            derivedColumns.AddRange(branch.DerivedColumns);
+
+            var transformResult = TransformEmitter.Emit(new TransformRequest(
+                EmitSeams: emitSeams,
+                MappingNamespace: $"{ns}.Mapping",
+                TransformClassName: branchTransformClassName,
+                RowTypeNamespace: rowTypeNamespace,
+                RowTypeName: rowTypeName,
+                EntityNamespace: $"{ns}.Model",
+                EntityName: entityName,
+                SsisFnNamespace: $"{ns}.Ssis",
+                Pipeline: flow.Pipeline,
+                DerivedColumns: derivedColumns,
+                DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+                DestinationComponent: branchDestination,
+                NullableColumnNames: nullableColumnNames,
+                Holders: componentHolders));
+            Merge(branchFiles, gaps, transformResult.Result);
+            foreach (var fn in transformResult.SsisFunctionsUsed) branchFunctionsUsed.Add(fn);
+
+            if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
+
+            var branchTestResult = TransformTestEmitter.Emit(new TransformTestRequest(
+                TestNamespace: $"{package.ObjectName}.Tests",
+                TransformClassName: branchTransformClassName,
+                MappingNamespace: $"{ns}.Mapping",
+                RowTypeNamespace: rowTypeNamespace,
+                RowTypeName: rowTypeName,
+                EntityNamespace: $"{ns}.Model",
+                EntityName: entityName,
+                Pipeline: flow.Pipeline,
+                DerivedColumns: derivedColumns,
+                DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+                DestinationComponent: branchDestination));
+            gaps.AddRange(branchTestResult.Gaps);
+            branchTestFiles.AddRange(branchTestResult.Files);
+
+            branches.Add(new ProgramConditionalSplitBranch(branch.OutputName, entityName, branchTransformClassName));
+
+            if (resolvedAuth is null && ResolveDatabaseAuth(package, branchDestination) is { } auth)
+                resolvedAuth = auth;
+        }
+
+        // Every branch succeeded -- commit the buffered output for real.
+        files.AddRange(branchFiles);
+        tables.AddRange(branchTables);
+        foreach (var fn in branchFunctionsUsed) functionsUsed.Add(fn);
+        foreach (var f in branchTestFiles)
+        {
+            var branchTestFinal = f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" };
+            testFiles.Add(branchTestFinal);
+            NoteTest(testCoverageNotes, branchTestFinal, "Transform",
+                "asserts each output column for one representative row; does not exercise NULL/boundary inputs beyond the chosen representative value.");
+        }
+
+        if (authMode is null && resolvedAuth is { } resolved)
+            (authMode, userId, targetServer, targetDatabase) = resolved;
+
+        // No RouterTestEmitter call, unlike Conditional Split -- that emitter is tightly coupled
+        // to ConditionalSplitPlan's own expression-based branches (RouterTestEmitter picks a
+        // representative literal per condition to assert against). Percentage Sampling's own
+        // routing decision is a random draw, not a literal-resolvable condition, so no starter
+        // test is generated for the router itself -- a deliberate, named simplification, not a
+        // silent omission: the branch transform tests above still cover every column each branch
+        // produces, and this flow's own reproducibility (same seed -> same split across repeated
+        // runs) is verified at the tool level via PctSamplingRouterEmitterTests, not per-package.
+
+        return new ProgramConditionalSplitStep(flow.TaskName, programSource, rowTypeName, routerClassName, branches);
+    }
+
+    /// <summary>
+    /// Generates a <c>Microsoft.SCD</c> ("Slowly Changing Dimension") flow -- Phase 7 of the
+    /// unsupported-component-types plan, and the largest single generator method here.
+    ///
+    /// <para>Structurally closest to <see cref="GenerateMulticastFlow"/> -- the same Phase A/Phase B
+    /// shape (validate and name every branch first, emit second, commit only if every branch
+    /// succeeded) and the same per-destination deduplication, so two branches converging on one
+    /// destination through a Union All emit its entity/table/sink exactly once. Two things are
+    /// genuinely new:</para>
+    /// <list type="bullet">
+    /// <item>A branch may have <b>no destination at all</b>, its whole effect being a per-row
+    /// <c>UPDATE</c> -- the real evidenced <c>Changing Attribute Updates Output</c> shape. Such a
+    /// branch emits no entity, no table, no transform and no sink.</item>
+    /// <item>The dimension's own current rows are read up front through a generated cache
+    /// (<see cref="ScdCacheEmitter"/>), the same mechanism a full-cache Lookup already uses.</item>
+    /// </list>
+    ///
+    /// <para><b>Scope, named rather than implied.</b> A command parameter must resolve to a column on
+    /// the flow's own SOURCE row type. The real evidenced package's own historical branch computes its
+    /// <c>EndDate</c> parameter in a Derived Column (<c>(DT_DBTIMESTAMP)(@[System::StartTime])</c>)
+    /// rather than reading it from the source, and that is reported as a gap rather than guessed at:
+    /// resolving it would mean evaluating a branch Derived Column's expression inside a command
+    /// parameter lambda, where the transform's own <c>ctx</c> does not exist, AND teaching
+    /// <see cref="ExpressionTranslator"/> about <c>System::</c> variables -- two separate features,
+    /// neither measured. A dimension that closes out its old row with SQL rather than a pipeline
+    /// expression (<c>SET [EndDate] = GETDATE() WHERE [EmpId] = ?</c>) is fully supported today.</para>
+    /// </summary>
+    private static ProgramScdStep? GenerateScdFlow(
+        PackageSpec package, string ns, DataFlowPlan flow, ScdPlan scd,
+        List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GeneratedFile> testFiles,
+        List<TestCoverageNote> testCoverageNotes,
+        List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
+        Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
+        bool emitSeams, List<CsvSampleCandidate>? csvSampleCandidates = null,
+        ComponentHolderRegistry? componentHolders = null)
+    {
+        var liveBranches = scd.LiveBranches().ToList();
+        if (liveBranches.Count == 0)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Slowly Changing Dimension '{scd.Component.Name}' has no connected outputs at all -- nothing downstream to generate"));
+            return null;
+        }
+
+        // Phase A -- validate every branch before emitting anything.
+        var firstSqlDestination = liveBranches.Select(b => b.Branch.Destination).FirstOrDefault(d => d is not null);
+        foreach (var branchPlan in liveBranches)
+        {
+            var destination = branchPlan.Branch.Destination;
+            if (destination is null)
+            {
+                if (branchPlan.Command is null)
+                {
+                    gaps.Add(new GenerationGap(flow.TaskName,
+                        $"Slowly Changing Dimension branch '{branchPlan.Branch.OutputName}' reaches neither a destination nor an OLE DB Command -- not supported"));
+                    return null;
+                }
+                continue;
+            }
+
+            if (destination.ComponentClassId == "Microsoft.FlatFileDestination")
+            {
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"Slowly Changing Dimension branch '{branchPlan.Branch.OutputName}' feeds Flat File Destination '{destination.Name}' -- only a SQL destination is supported for a dimension load"));
+                return null;
+            }
+
+            if (!DestinationInfo.IsFastLoadConfigured(destination))
+            {
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"Slowly Changing Dimension branch '{branchPlan.Branch.OutputName}': destination '{destination.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
+                return null;
+            }
+        }
+
+        var flowBaseName = SanitizeIdentifier(flow.TaskName);
+        var nullableColumnNames = ResolveNullableColumnNames(flow);
+        var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow,
+            firstSqlDestination, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
+        if (sourceResult is null) return null; // ResolveFlowSource already added the reason
+        var (rowTypeName, programSource) = sourceResult.Value;
+        var rowTypeNamespace = programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv"
+            : programSource is ExcelFlowSource ? $"{ns}.Excel"
+            : programSource is XmlFlowSource ? $"{ns}.Xml"
+            : $"{ns}.Sql";
+
+        // Every column the classifier reads -- the business key and each compared attribute -- has
+        // to exist on the resolved row type, or the generated selector would not compile. Checked
+        // here, once, against the source's own resolved buffer columns rather than discovered at
+        // build time.
+        var sourceComponent = flow.OleDbSource ?? flow.ExcelSource ?? flow.FlatFileSource ?? flow.XmlSource;
+        var sourceOutput = sourceComponent?.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+        if (sourceOutput is null)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Slowly Changing Dimension '{scd.Component.Name}' has no resolvable upstream source output -- not supported"));
+            return null;
+        }
+        var rowColumnNames = PipelineResolver.Resolve(sourceOutput).Columns
+            .Select(c => c.PipelineColumnName).ToHashSet(StringComparer.Ordinal);
+
+        var required = new List<string> { scd.BusinessKeyColumn };
+        required.AddRange(scd.Attributes.Select(a => a.ColumnName));
+        var missing = required.Where(c => !rowColumnNames.Contains(c)).ToList();
+        if (missing.Count > 0)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Slowly Changing Dimension '{scd.Component.Name}' compares column(s) not present on its own source's output ({string.Join(", ", missing)}) -- a column produced by an intervening transform is not supported here yet"));
+            return null;
+        }
+
+        // Same restriction, for every branch's own command parameters -- see this method's own doc
+        // comment for exactly which real shape this excludes and why it is a gap rather than a guess.
+        foreach (var branchPlan in liveBranches)
+        {
+            if (branchPlan.Command is null) continue;
+            var unresolved = branchPlan.Command.ParameterColumnNames.Where(p => !rowColumnNames.Contains(p)).ToList();
+            if (unresolved.Count == 0) continue;
+
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Slowly Changing Dimension branch '{branchPlan.Branch.OutputName}': OLE DB Command '{branchPlan.Command.Component.Name}' binds column(s) that are not on this flow's own source row ({string.Join(", ", unresolved)}) -- a parameter computed by a Derived Column on the branch (e.g. an EndDate stamped from a package variable) is not supported yet; computing it in the statement itself (SET [EndDate] = GETDATE()) is"));
+            return null;
+        }
+
+        // Phase B -- emit, buffering everything so a later branch's failure leaves nothing behind.
+        var branchFiles = new List<GeneratedFile>();
+        var branchTables = new List<DbContextEmitter.TableSpec>();
+        var branchFunctionsUsed = new HashSet<string>();
+        var branchTestFiles = new List<GeneratedFile>();
+        var emittedDestinationRefIds = new HashSet<string>(StringComparer.Ordinal);
+        var programBranches = new List<ProgramScdBranch>();
+        (string AuthMode, string? UserId, string? Server, string? Database)? resolvedAuth = null;
+
+        var cacheClassName = $"{SanitizeIdentifier(scd.Component.Name)}Cache";
+        Merge(branchFiles, gaps, ScdCacheEmitter.Emit(
+            $"{ns}.Mapping", cacheClassName, scd.ReferenceSql, scd.BusinessKeyColumn, scd.BusinessKeyType,
+            scd.Attributes.Select(a => a.ColumnName).ToList()));
+
+        foreach (var branchPlan in liveBranches)
+        {
+            var destination = branchPlan.Branch.Destination;
+            string? entityName = null;
+            string? transformClassName = null;
+            FlowSinkSpec? sink = null;
+
+            if (destination is not null)
+            {
+                entityName = TryResolveEntityName(flow.TaskName, destination, gaps);
+                if (entityName is null) return null;
+
+                // Named after the SCD component and its own output, matching the 1-to-1
+                // component-to-function convention Multicast's own branch transforms already use --
+                // an SCD's output names are distinct by construction, so no collision counting.
+                transformClassName = $"{SanitizeIdentifier(scd.Component.Name)}_{SanitizeIdentifier(branchPlan.Branch.OutputName)}";
+
+                if (emittedDestinationRefIds.Add(destination.RefId))
+                {
+                    Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, destination, nullableColumnNames));
+                    primaryKeysByDestination.TryGetValue(destination.RefId, out var primaryKey);
+                    branchTables.Add(new DbContextEmitter.TableSpec(entityName, destination, primaryKey));
+                    sink = new SqlFlowSink(destination.Name);
+                }
+                else
+                {
+                    // A convergence (two branches through one Union All to one destination) -- the
+                    // earlier branch already emitted the entity/table/sink. Same type-correct
+                    // placeholder GenerateMulticastFlow uses; PackageClassEmitter emits one sink
+                    // method per distinct destination component regardless.
+                    sink = new SqlFlowSink(destination.Name);
+                }
+
+                var derivedColumns = new List<PipelineComponentSpec>();
+                if (flow.DerivedColumn is not null) derivedColumns.Add(flow.DerivedColumn);
+                derivedColumns.AddRange(branchPlan.Branch.DerivedColumns);
+
+                var transformResult = TransformEmitter.Emit(new TransformRequest(
+                    EmitSeams: emitSeams,
+                    MappingNamespace: $"{ns}.Mapping",
+                    TransformClassName: transformClassName,
+                    RowTypeNamespace: rowTypeNamespace,
+                    RowTypeName: rowTypeName,
+                    EntityNamespace: $"{ns}.Model",
+                    EntityName: entityName,
+                    SsisFnNamespace: $"{ns}.Ssis",
+                    Pipeline: flow.Pipeline,
+                    DerivedColumns: derivedColumns,
+                    DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+                    DestinationComponent: destination,
+                    NullableColumnNames: nullableColumnNames,
+                    Holders: componentHolders));
+                Merge(branchFiles, gaps, transformResult.Result);
+                foreach (var fn in transformResult.SsisFunctionsUsed) branchFunctionsUsed.Add(fn);
+                if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
+
+                var branchTestResult = TransformTestEmitter.Emit(new TransformTestRequest(
+                    TestNamespace: $"{package.ObjectName}.Tests",
+                    TransformClassName: transformClassName,
+                    MappingNamespace: $"{ns}.Mapping",
+                    RowTypeNamespace: rowTypeNamespace,
+                    RowTypeName: rowTypeName,
+                    EntityNamespace: $"{ns}.Model",
+                    EntityName: entityName,
+                    Pipeline: flow.Pipeline,
+                    DerivedColumns: derivedColumns,
+                    DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+                    DestinationComponent: destination));
+                gaps.AddRange(branchTestResult.Gaps);
+                branchTestFiles.AddRange(branchTestResult.Files);
+
+                if (resolvedAuth is null && ResolveDatabaseAuth(package, destination) is { } auth) resolvedAuth = auth;
+            }
+
+            programBranches.Add(new ProgramScdBranch(
+                branchPlan.Slot, branchPlan.Branch.OutputName, entityName, transformClassName, sink,
+                branchPlan.Command?.SqlTemplate, branchPlan.Command?.ParameterColumnNames ?? []));
+        }
+
+        files.AddRange(branchFiles);
+        tables.AddRange(branchTables);
+        foreach (var fn in branchFunctionsUsed) functionsUsed.Add(fn);
+        foreach (var f in branchTestFiles)
+        {
+            var final = f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" };
+            testFiles.Add(final);
+            NoteTest(testCoverageNotes, final, "Transform",
+                "asserts each output column for one representative row; does not exercise NULL/boundary inputs beyond the chosen representative value.");
+        }
+
+        if (authMode is null && resolvedAuth is { } resolved)
+            (authMode, userId, targetServer, targetDatabase) = resolved;
+
+        // The routing decision itself is deliberately NOT given a generated starter test, for the
+        // same reason Percentage Sampling's own router isn't: it is not a per-package expression to
+        // assert, it is a fixed algorithm shared by every generated SCD, and its rules are pinned
+        // independently (and far more thoroughly) by Etl.Core.Tests' own ScdClassifierTests -- one
+        // test per measured rule, against no database at all.
+        testCoverageNotes.Add(new TestCoverageNote(
+            $"(none -- {scd.Component.Name})", scd.Component.Name, "Slowly Changing Dimension routing",
+            "no generated starter test -- the classification rules are fixed, shared, and pinned by Etl.Core.Tests.ScdClassifierTests (one test per measured SSIS rule) rather than per package."));
+
+        return new ProgramScdStep(
+            flow.TaskName, programSource, rowTypeName, cacheClassName,
+            scd.BusinessKeyColumn, scd.BusinessKeyType.ClrTypeName,
+            scd.Attributes.Select(a => a.ColumnName).ToList(),
+            scd.Attributes.Select(a => a.Role.ToString()).ToList(),
+            scd.FailOnFixedAttributeChange, scd.UpdateChangingAttributeHistory,
+            programBranches);
     }
 
     /// <summary>Resolves an OLE DB Command flow -- no destination component, no EF entity, no
@@ -2991,6 +3550,42 @@ public static partial class PackageGenerator
         return new ExcelFlowSource(source.Name, fileSourceKey, worksheetName, hasHeaderRow, whereFilter);
     }
 
+    /// <summary>Resolves an XML Source into an <see cref="XmlFlowSource"/> -- Phase 5 of the
+    /// unsupported-component-types plan. Both preconditions
+    /// (<see cref="PackagePlanner"/> already validates them before ever populating
+    /// <see cref="DataFlowPlan.XmlSource"/>) are re-checked here defensively, not because either
+    /// is reachable via any evidenced path.
+    ///
+    /// Unlike <see cref="BuildExcelFlowSource"/>, there is no connection manager to resolve at
+    /// all (see <see cref="XmlSourcePayload"/>'s own doc comment) -- <see cref="BuildFileSourceEntry"/>
+    /// cannot be reused as-is (it splits a resolved <c>ConnectionManagerSpec</c>'s own
+    /// <c>Parsed.FilePath</c>), so the literal <c>XMLData</c> path is split directly into the same
+    /// folder/filename shape instead, the identical config-driven `File(key)` mechanism CSV/Excel
+    /// already use.</summary>
+    private static XmlFlowSource? BuildXmlFlowSource(
+        string taskName, PipelineComponentSpec source, List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps)
+    {
+        var payload = source.XmlSource!;
+        if (string.IsNullOrEmpty(payload.XmlDataPath))
+        {
+            gaps.Add(new GenerationGap(taskName, $"XML Source '{source.Name}' has no XMLData (literal file path) to read from"));
+            return null;
+        }
+
+        var output = source.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+        if (string.IsNullOrEmpty(output?.Name))
+        {
+            gaps.Add(new GenerationGap(taskName, $"XML Source '{source.Name}' has no main (non-error) output to determine its own repeating row element name from"));
+            return null;
+        }
+
+        var fileSourceKey = source.Name;
+        fileSourceEntries.Add(new FileSourceEntryRequest(fileSourceKey,
+            Path.GetDirectoryName(payload.XmlDataPath) ?? "", Path.GetFileName(payload.XmlDataPath)));
+
+        return new XmlFlowSource(source.Name, fileSourceKey, output.Name);
+    }
+
     /// <summary>ADO NET Source's own AccessMode enum is not reverse-engineered (see
     /// AdoNetSourcePayload's own doc comment for why) -- branches on which of
     /// <see cref="AdoNetSourcePayload.SqlCommand"/>/<see cref="AdoNetSourcePayload.TableOrViewName"/>
@@ -3496,7 +4091,7 @@ public static partial class PackageGenerator
         var nullableColumnNames = ResolveNullableColumnNames(flow);
 
         var rowTypeName = entityName + "CsvRow";
-        Merge(files, gaps, CsvRowEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+        Merge(files, gaps, CsvRowEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager, flow.FlatFileSource));
         Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
 
         Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, nullableColumnNames));
@@ -3553,5 +4148,121 @@ public static partial class PackageGenerator
             loop.TaskName, loop.Folder, loop.FileSpec, loop.Recurse, nameMode,
             "currentFile", ((TranslatedOk)translated).CSharpExpression,
             flow.FlatFileSource.Name, rowTypeName, entityName, transformClassName, fileSourceKey);
+    }
+
+    /// <summary>
+    /// Generates a <c>STOCK:FORLOOP</c> whose body is a Data Flow Task -- Phase 3 of the
+    /// unsupported-component-types plan. Mirrors <see cref="GenerateForEachDataFlowLoop"/>'s own
+    /// generation almost exactly (same gates, same EntityEmitter/TransformEmitter/
+    /// DbContextEmitter.TableSpec resolution -- a per-iteration Data Flow Task is structurally the
+    /// same flow, just re-run for as long as EvalExpression holds), with two real differences:
+    /// there is no enumerator/folder to register a <see cref="FileSourceEntryRequest"/> for at all
+    /// (the counter is an ordinary package variable, never backed by a connection manager), and
+    /// the per-iteration source construction references the counter DIRECTLY off
+    /// <c>packageVariables</c> rather than a lambda parameter -- see
+    /// <c>Etl.Core.Pipeline.ForLoopStep{TRow,TEntity}</c>'s own doc comment for why.
+    /// </summary>
+    private static ProgramForLoopStep? GenerateForLoop(
+        PackageSpec package, string ns, ForLoopPlan loop,
+        List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
+        Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination,
+        List<GenerationGap> gaps,
+        ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
+        bool emitSeams, ComponentHolderRegistry? componentHolders = null)
+    {
+        var flow = loop.Flow;
+
+        if (flow.Lookup is not null || flow.ConditionalSplit is not null || flow.MergeJoin is not null
+            || flow.Multicast is not null || flow.OleDbCommand is not null || flow.Union is not null)
+        {
+            gaps.Add(new GenerationGap(loop.TaskName,
+                $"{flow.TaskName}: For Loop Container's own Data Flow Task body uses a Lookup/Conditional Split/Merge Join/Multicast/OLE DB Command/multi-source Merge-UnionAll -- only a plain single-destination flow is supported inside a loop body yet"));
+            return null;
+        }
+
+        if (flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination")
+        {
+            gaps.Add(new GenerationGap(loop.TaskName,
+                $"{flow.TaskName}: For Loop Container's own Data Flow Task body writes to a Flat File Destination -- only a SQL destination is supported inside a loop body yet"));
+            return null;
+        }
+
+        if (!DestinationInfo.IsFastLoadConfigured(flow.DestinationComponent))
+        {
+            gaps.Add(new GenerationGap(loop.TaskName,
+                $"{flow.TaskName}: destination '{flow.DestinationComponent.Name}' is not configured for fast load -- row-by-row insert generation is not supported yet"));
+            return null;
+        }
+
+        var entityName = TryResolveEntityName(flow.TaskName, flow.DestinationComponent, gaps);
+        if (entityName is null) return null;
+
+        // PlanForLoop already required a Flat File Source with a resolvable connection manager
+        // before a ForLoopPlan was ever built.
+        var csvCmName = flow.FlatFileSource!.FlatFileSource!.ConnectionName!;
+        var csvConnectionManager = FindConnectionManager(package, csvCmName)!;
+
+        // Unlike ProgramForEachDataFlowLoopStep (a lambda parameter substituted for the current
+        // file), the counter is substituted as a LIVE read straight off packageVariables -- the
+        // generated source-construction method has no per-iteration parameter of its own (see
+        // ForLoopStep<TRow,TEntity>'s own doc comment), so every iteration's file path expression
+        // must re-read the counter's own current value each time it runs, not close over a value
+        // captured once.
+        var counterAccessExpression = $"packageVariables.GetRequired<{loop.CounterClrTypeName}>({ProgramEmitter.CSharpStringLiteral(loop.CounterVariableName)})";
+        var translated = ForEachLoopEmitter.TranslateSqlTemplate(loop.FilePathExpression, loop.CounterVariableName, counterAccessExpression);
+        if (translated is NotTranslatable notTranslatable)
+        {
+            gaps.Add(new GenerationGap(loop.TaskName, $"{csvCmName}'s own ConnectionString expression: {notTranslatable.Reason}"));
+            return null;
+        }
+
+        var nullableColumnNames = ResolveNullableColumnNames(flow);
+
+        var rowTypeName = entityName + "CsvRow";
+        Merge(files, gaps, CsvRowEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager, flow.FlatFileSource));
+        Merge(files, gaps, ClassMapEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+
+        Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, flow.DestinationComponent, nullableColumnNames));
+
+        var transformClassName = entityName + "Transform";
+        var transformResult = TransformEmitter.Emit(new TransformRequest(
+            EmitSeams: emitSeams,
+            MappingNamespace: $"{ns}.Mapping",
+            TransformClassName: transformClassName,
+            RowTypeNamespace: $"{ns}.Csv",
+            RowTypeName: rowTypeName,
+            EntityNamespace: $"{ns}.Model",
+            EntityName: entityName,
+            SsisFnNamespace: $"{ns}.Ssis",
+            Pipeline: flow.Pipeline,
+            DerivedColumns: flow.DerivedColumn is null ? [] : [flow.DerivedColumn],
+            DataConversions: flow.DataConversion is null ? [] : [flow.DataConversion],
+            DestinationComponent: flow.DestinationComponent,
+            NullableColumnNames: nullableColumnNames,
+            Holders: componentHolders));
+        Merge(files, gaps, transformResult.Result);
+        foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
+
+        if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already recorded why
+
+        // Same taxonomy gap GenerateForEachDataFlowLoop reports for its own loop-body shape (see
+        // that method's own doc comment): no Tier-A sample file/dedicated test shape exists yet
+        // for a loop body whose own source path is computed per iteration rather than a static
+        // location.
+        gaps.Add(new GenerationGap(loop.TaskName,
+            $"{flow.TaskName}: this loop body's own generated methods (the per-iteration CSV source, '{transformClassName}', and the SQL sink) have no starter test coverage in this pilot -- a For Loop Container has no Tier-A sample file to synthesize (the source path is computed per iteration, not a static location) and no dedicated test shape yet. Verify by hand.",
+            IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: flow.DestinationComponent.RefId));
+
+        primaryKeysByDestination.TryGetValue(flow.DestinationComponent.RefId, out var primaryKey);
+        tables.Add(new DbContextEmitter.TableSpec(entityName, flow.DestinationComponent, primaryKey));
+
+        if (authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
+            (authMode, userId, targetServer, targetDatabase) = auth;
+
+        return new ProgramForLoopStep(
+            loop.TaskName, loop.CounterVariableName, loop.CounterClrTypeName,
+            loop.InitCSharpExpression, loop.EvalCSharpPredicate, loop.AssignCSharpValueExpression,
+            ((TranslatedOk)translated).CSharpExpression,
+            flow.FlatFileSource.Name, rowTypeName, entityName, transformClassName);
     }
 }

@@ -28,6 +28,12 @@ public sealed record DataFlowPlan(
     ConditionalSplitPlan? ConditionalSplit,
     PipelineComponentSpec DestinationComponent,
     PipelineComponentSpec? DataConversion = null,
+    /// <summary>Added for Phase 1 of the unsupported-component-types plan -- a
+    /// <c>Microsoft.CopyMap</c> ("Copy Column") in this flow's own pipeline, resolved the same
+    /// way <see cref="DataConversion"/> is (single-destination shape only; a Conditional
+    /// Split/Multicast branch's own Copy Column is out of scope for this round, same reasoning
+    /// as every other single-destination-only field here).</summary>
+    PipelineComponentSpec? CopyMap = null,
     MergeJoinPlan? MergeJoin = null,
     /// <summary>Added 2026-08-28 testing this tool against a real third-party portfolio
     /// (SSIS_From_Sandeep's Package_Advanced.dtsx, DFT_ExcelImport) -- a
@@ -105,7 +111,34 @@ public sealed record DataFlowPlan(
     /// pipeline. Scoped to the plain single-source/single-destination shape only (Conditional
     /// Split/Multicast branch + error-redirect combined is unevidenced and stays a named gap if
     /// ever encountered, not guessed at).</summary>
-    ErrorRedirectPlan? ErrorRedirect = null);
+    ErrorRedirectPlan? ErrorRedirect = null,
+    /// <summary>Added for Phase 4 of the unsupported-component-types plan --
+    /// <c>Microsoft.PctSampling</c> ("Percentage Sampling"), see <see cref="PctSamplingPlan"/>'s
+    /// own doc comment. Mutually exclusive with <see cref="ConditionalSplit"/>/
+    /// <see cref="Multicast"/> the same way those two are mutually exclusive with each other --
+    /// no real evidenced package has more than one of the three in a single flow.
+    /// <see cref="DestinationComponent"/> points at the Sampled branch's destination, same
+    /// non-authoritative-placeholder convention <see cref="ConditionalSplit"/>/
+    /// <see cref="Multicast"/> already established.</summary>
+    PctSamplingPlan? PctSampling = null,
+    /// <summary>Added for Phase 5 of the unsupported-component-types plan (ETL-SSIS-Real-Scenarios'
+    /// own UseCase_73, "XML Source") -- a <c>Microsoft.XmlSourceAdapter</c>, kept as its own field
+    /// rather than folded into <see cref="OleDbSource"/>/<see cref="ExcelSource"/> since it needs
+    /// its own runtime read path (<c>Etl.Core.Xml.XmlRowSource</c>, no connection manager or SQL
+    /// query involved at all) and so its own dispatch in
+    /// <see cref="PackageGenerator.ResolveFlowSource"/>.</summary>
+    PipelineComponentSpec? XmlSource = null,
+    /// <summary>Added for Phase 7 of the unsupported-component-types plan --
+    /// <c>Microsoft.SCD</c> ("Slowly Changing Dimension"), see <see cref="ScdPlan"/>'s own doc
+    /// comment. Mutually exclusive with <see cref="ConditionalSplit"/>/<see cref="Multicast"/>/
+    /// <see cref="PctSampling"/> the same way those three already are with each other -- an SCD is
+    /// a fourth routing mechanism, and no evidenced flow carries two.
+    /// <see cref="DestinationComponent"/> points at whichever live branch destination resolved
+    /// first (or, for an update-only SCD, at the component itself), the same
+    /// non-authoritative-placeholder convention <see cref="ConditionalSplit"/>/
+    /// <see cref="Multicast"/>/<see cref="OleDbCommand"/> already established --
+    /// <see cref="PackageGenerator"/> branches on this field long before consulting it.</summary>
+    ScdPlan? Scd = null);
 
 /// <summary>Resolved once <see cref="PackagePlanner.ResolveErrorRedirect"/> confirms
 /// <see cref="DataFlowPlan.DestinationComponent"/>'s own error output leads somewhere real.</summary>
@@ -264,7 +297,20 @@ public sealed record UnionPlan(
 /// a package variable nothing else in the package ever reads. A discarded branch generates no
 /// code at all -- ResolveBranch already recorded a non-blocking advisory naming the variable
 /// being dropped, so this is never silent.</summary>
-public sealed record ConditionalSplitBranchPlan(string OutputName, string? FriendlyExpression, List<PipelineComponentSpec> DerivedColumns, PipelineComponentSpec? Destination, bool Discarded = false);
+public sealed record ConditionalSplitBranchPlan(string OutputName, string? FriendlyExpression, List<PipelineComponentSpec> DerivedColumns, PipelineComponentSpec? Destination, bool Discarded = false,
+    /// <summary>Added for Phase 7 of the unsupported-component-types plan (<c>Microsoft.SCD</c>).
+    /// Every <c>Microsoft.OLEDBCommand</c> found on this branch's own chain, in walk order -- a
+    /// per-row parameterized statement the branch runs BEFORE its destination insert (if it has
+    /// one). Only ever populated for <c>componentKind: "SCD"</c>; empty for every other caller,
+    /// whose own <see cref="PackagePlanner.ResolveBranch"/> walk still treats an OLE DB Command
+    /// mid-chain as an unsupported component exactly as before.
+    ///
+    /// <para>Both real evidenced SCD shapes need it: <c>Changing Attribute Updates Output</c>
+    /// terminates in one (a Type 1 in-place <c>UPDATE</c>, <see cref="Destination"/> null), and
+    /// <c>Historical Attribute Inserts Output</c> passes THROUGH one (closing the outgoing
+    /// dimension row) before reaching the shared destination its <c>New Output</c> sibling also
+    /// feeds.</para></summary>
+    List<PipelineComponentSpec>? Commands = null);
 
 /// <summary>One Conditional Split, fully resolved: every case in EvaluationOrder, THEN the
 /// default branch last (<see cref="Branches"/>[^1]) -- this ordering is what RouterEmitter and
@@ -285,6 +331,95 @@ public sealed record ConditionalSplitPlan(PipelineComponentSpec Component, List<
 /// <see cref="DataFlowPlan.Lookup"/>'s own doc comment) is what actually generates the one real
 /// evidenced shape (a live branch through an Aggregate).</summary>
 public sealed record MulticastPlan(PipelineComponentSpec Component, List<ConditionalSplitBranchPlan> Branches);
+
+/// <summary>Phase 4 of the unsupported-component-types plan. One <c>Microsoft.PctSampling</c>
+/// ("Percentage Sampling"), fully resolved -- structurally the mutually-exclusive-branch sibling
+/// of Conditional Split, not the unconditional-fan-out sibling of Multicast: exactly two
+/// branches, resolved via the SAME <c>ResolveBranch</c> walker (<c>componentKind: "PctSampling"</c>,
+/// no <c>FriendlyExpression</c> -- there is nothing to translate, since the routing decision is a
+/// random percentage, not a value comparison). <see cref="Sampled"/> is always the "Sampling
+/// Selected Output" branch, <see cref="NotSampled"/> the "Sampling Unselected Output" branch --
+/// confirmed via a live object-model probe (<c>Ssis.Extract.FixtureBuilder</c>'s own
+/// <c>ProbePctSampling</c>) that the component always declares its two outputs in exactly this
+/// order, right after <c>ProvideComponentProperties()</c>, with no dangling/spare-output quirk
+/// the way Multicast/Merge have. <see cref="PackageGenerator"/>'s own PctSampling emission
+/// reuses <c>ProgramConditionalSplitStep</c>/<c>ConditionalSplitStep&lt;TRow&gt;</c> verbatim,
+/// with branch 0 = Sampled and branch 1 = NotSampled -- the router class
+/// (<see cref="PctSamplingRouterEmitter"/>) decides the branch index directly from
+/// <see cref="Component"/>'s own <c>PctSampling</c> payload, with no expression translation at
+/// all.</summary>
+public sealed record PctSamplingPlan(PipelineComponentSpec Component, ConditionalSplitBranchPlan Sampled, ConditionalSplitBranchPlan NotSampled);
+
+/// <summary>The raw <c>ColumnType</c> integers <c>Microsoft.SCD</c> persists on each of its input
+/// columns. Mirrors <c>Etl.Core.Abstractions.ScdColumnRole</c> exactly, and is declared separately
+/// only because this project deliberately does not reference the runtime library (nothing in
+/// <c>Ssis.Extract.Codegen</c> does -- it EMITS code that references it). The meanings were measured
+/// via a real dtexec run, not reflected or read from documentation; see that type's own doc comment
+/// and <c>ScdPayload</c>'s for the evidence.</summary>
+public enum ScdColumnRoleRaw
+{
+    BusinessKey = 1,
+    Changing = 2,
+    Historical = 3,
+    Fixed = 4,
+}
+
+/// <summary>One compared (non-business-key) <c>Microsoft.SCD</c> input column and its measured
+/// role.</summary>
+public sealed record ScdAttributePlan(string ColumnName, ScdColumnRoleRaw Role);
+
+/// <summary>
+/// A resolved <c>Microsoft.SCD</c> ("Slowly Changing Dimension") flow -- Phase 7 of the
+/// unsupported-component-types plan. See <see cref="PackagePlanner"/>'s own <c>PlanScd</c> for what
+/// is supported and, just as importantly, which unmeasured shapes are named gaps instead.
+///
+/// <para><see cref="ReferenceSql"/> is the package's own dimension query composed with its own
+/// current-row filter (a wrapping subquery, never an edit to the author's SQL text). Its result set
+/// must expose the business key and every compared attribute under their SSIS column names -- the
+/// same stated assumption an OLE DB Source in SqlCommand mode already carries.</para>
+///
+/// <para>Each branch is an ordinary <see cref="ConditionalSplitBranchPlan"/>, resolved by the shared
+/// <see cref="PackagePlanner.ResolveBranch"/> walker. A branch may carry a destination
+/// (insert-shaped), one or more <see cref="ConditionalSplitBranchPlan.Commands"/> (per-row
+/// update-shaped), both, or be <see cref="ConditionalSplitBranchPlan.Discarded"/> (the output is
+/// unwired -- the normal case for at least one of the six).</para>
+/// </summary>
+public sealed record ScdPlan(
+    PipelineComponentSpec Component,
+    string BusinessKeyColumn,
+    SsisPipelineType BusinessKeyType,
+    IReadOnlyList<ScdAttributePlan> Attributes,
+    string ReferenceSql,
+    bool FailOnFixedAttributeChange,
+    bool UpdateChangingAttributeHistory,
+    ScdBranchPlan Unchanged,
+    ScdBranchPlan New,
+    ScdBranchPlan FixedAttribute,
+    ScdBranchPlan ChangingAttributeUpdates,
+    ScdBranchPlan HistoricalAttributeInserts)
+{
+    /// <summary>Every branch that actually generates something, in the order the generated code
+    /// declares them -- a discarded (unwired) output contributes nothing at all.</summary>
+    public IEnumerable<ScdBranchPlan> LiveBranches()
+    {
+        if (!Unchanged.Branch.Discarded) yield return Unchanged;
+        if (!New.Branch.Discarded) yield return New;
+        if (!FixedAttribute.Branch.Discarded) yield return FixedAttribute;
+        if (!ChangingAttributeUpdates.Branch.Discarded) yield return ChangingAttributeUpdates;
+        if (!HistoricalAttributeInserts.Branch.Discarded) yield return HistoricalAttributeInserts;
+    }
+}
+
+/// <summary>
+/// One <c>Microsoft.SCD</c> output's fully-resolved chain: the shared
+/// <see cref="ConditionalSplitBranchPlan"/> <see cref="PackagePlanner.ResolveBranch"/> produced, plus
+/// its own per-row <see cref="Command"/> already resolved through the SAME
+/// <c>ResolveOleDbCommand</c> a standalone OLE DB Command flow uses (so placeholder binding order is
+/// derived identically, from each bound external column's own position, never guessed).
+/// <see cref="Slot"/> names which of the five routable outputs this is, in
+/// <c>Etl.Core.Pipeline.ScdBranches{TRow}</c>'s own property terms.
+/// </summary>
+public sealed record ScdBranchPlan(string Slot, ConditionalSplitBranchPlan Branch, OleDbCommandPlan? Command);
 
 /// <summary>One resolved File System Task action -- <see cref="Operation"/> is one of the
 /// <c>Etl.Core.Abstractions.FileSystemOperation</c> enum names this generator supports
@@ -354,6 +489,38 @@ public sealed record ForEachFileDataFlowPlan(
     bool Recurse,
     int? NameRetrievalTypeRaw,
     string VariableName,
+    DataFlowPlan Flow,
+    string FilePathExpression);
+
+/// <summary>One <c>STOCK:FORLOOP</c> (For Loop Container) whose body is a single Data Flow Task,
+/// re-run once per iteration -- Phase 3 of the unsupported-component-types plan, deliberately the
+/// smallest evidenced/verifiable shape (mirroring <see cref="ForEachFileDataFlowPlan"/>'s own
+/// narrowing precedent). <see cref="InitCSharpExpression"/>/<see cref="EvalCSharpPredicate"/>/
+/// <see cref="AssignCSharpValueExpression"/> are already-translated C# (see
+/// <see cref="ForLoopEmitter"/>); <see cref="InitCSharpExpression"/> is null exactly when the
+/// container declared no <c>InitExpression</c> at all (the counter's own design-time default is
+/// used as-is, matching what SSIS itself does when Init is omitted). <see cref="CounterVariableName"/>
+/// is the namespace-qualified name (e.g. "User::Part") every generated
+/// <c>packageVariables.Get/Set</c> call reads/writes; <see cref="CounterClrTypeName"/> is its
+/// resolved CLR type (only <c>int</c>/<c>short</c>/<c>long</c> are evidenced/supported, via the
+/// same <see cref="MapVariantType"/> table a conditional-constraint guard already uses).
+///
+/// <see cref="Flow"/>/<see cref="FilePathExpression"/> reuse the EXACT same "a Flat File Source
+/// whose own connection manager's ConnectionString carries a PropertyExpression referencing the
+/// loop's own variable" shape <see cref="ForEachFileDataFlowPlan"/> already established for
+/// ForEach Loop -- generalized here from "the enumerator's current file" to "the For Loop's own
+/// counter", translated by the SAME <see cref="ForEachLoopEmitter.TranslateSqlTemplate"/> (a
+/// plain string substitution, so it works unchanged whether the substituted C# expression reads a
+/// <c>string</c> or an <c>int</c>). Every other loop-body shape (Lookup/Conditional Split/Merge
+/// Join/Multicast/OLE DB Command/a non-Flat-File source, more than one child, a nested container)
+/// is a named generation gap, never guessed -- see <see cref="PlanForLoop"/>.</summary>
+public sealed record ForLoopPlan(
+    string TaskName,
+    string CounterVariableName,
+    string CounterClrTypeName,
+    string? InitCSharpExpression,
+    string EvalCSharpPredicate,
+    string AssignCSharpValueExpression,
     DataFlowPlan Flow,
     string FilePathExpression);
 
@@ -491,7 +658,15 @@ public sealed record SqlStep(string TaskName, string Sql, string? ConnectionMana
 public sealed record FileSystemStep(string TaskName, FileSystemActionPlan Action) : PackageStep;
 public sealed record ForEachFileLoopStep(ForEachFileLoopPlan Loop) : PackageStep;
 public sealed record ForEachDataFlowLoopStep(ForEachFileDataFlowPlan Loop) : PackageStep;
+public sealed record ForLoopStep(ForLoopPlan Loop) : PackageStep;
 public sealed record ScriptTaskStep(ExecutableSpec Task) : PackageStep;
+
+/// <summary>One resolved <c>Microsoft.ExpressionTask</c> assignment -- <paramref name="TaskName"/>
+/// for the generated method's own name/logging, <paramref name="SsisVariableName"/> the raw
+/// target variable (e.g. "User::TargetETLCutoffTime", passed straight to
+/// <c>PackageVariables.Set</c> at run time), and <paramref name="CSharpValueExpression"/> the
+/// already-translated RHS (see <see cref="ExpressionTaskEmitter"/>).</summary>
+public sealed record ExpressionStep(string TaskName, string SsisVariableName, string CSharpValueExpression) : PackageStep;
 
 /// <summary><see cref="Flows"/> is kept alongside <see cref="Steps"/>, duplicating every
 /// FlowStep's own DataFlowPlan, purely so callers that only ever cared about "all the flows,
@@ -596,6 +771,12 @@ public static class PackagePlanner
         var guards = resolved.Guards;
         var guardsApplied = new HashSet<string>();
 
+        // Reused for Microsoft.ExpressionTask's own assignment RHS (a bare reference to ANOTHER
+        // package variable resolves the identical "packageVariables.GetRequired<T>" way a
+        // conditional-constraint guard already reads one -- see ResolveExpressionTask) -- built
+        // once here rather than per-executable, same as the guard table above.
+        var variableTable = BuildGuardVariableTable(package);
+
         WalkContainer(package.Executables, package.Dag, package.PrecedenceConstraints, package.ConnectionManagers,
             flows, steps, gaps, containerPath: [], emitSeams: emitSeams,
             guards: guards, guardsApplied: guardsApplied,
@@ -606,7 +787,8 @@ public static class PackagePlanner
                 .Where(kv => !kv.Value.IsDualPosition)
                 .Select(kv => kv.Key)
                 .ToHashSet(),
-            inheritedFlowGroup: null);
+            inheritedFlowGroup: null,
+            variables: variableTable);
 
         // Resolved separately from precedence-constraint failure handlers above (an event handler
         // lives in a wholly different part of the model, package.EventHandlers, never inside the
@@ -1449,6 +1631,7 @@ public static class PackagePlanner
         Dictionary<string, StepGuard> guards, HashSet<string> guardsApplied,
         HashSet<string> failureHandlerRefIds,
         int? inheritedFlowGroup,
+        Dictionary<string, GuardVariable> variables,
         int? inheritedWave = null)
     {
         var byRefId = children.ToDictionary(e => e.RefId);
@@ -1519,7 +1702,7 @@ public static class PackagePlanner
                 WalkContainer(executable.Children, executable.Dag, executable.PrecedenceConstraints, connectionManagers,
                     flows, steps, gaps, containerPath: [.. containerPath, executable.ObjectName ?? refId], emitSeams: emitSeams,
                     guards: guards, guardsApplied: guardsApplied, failureHandlerRefIds: failureHandlerRefIds,
-                    inheritedFlowGroup: FlowGroupFor(refId), inheritedWave: WaveFor(refId));
+                    inheritedFlowGroup: FlowGroupFor(refId), variables: variables, inheritedWave: WaveFor(refId));
                 continue;
             }
 
@@ -1527,6 +1710,13 @@ public static class PackagePlanner
             {
                 var loopStep = PlanForEachFileLoop(executable, connectionManagers, gaps);
                 if (loopStep is not null) steps.Add(Gated(refId, loopStep));
+                continue;
+            }
+
+            if (executable.ExecutableType == "STOCK:FORLOOP")
+            {
+                var forLoopStep = PlanForLoop(executable, connectionManagers, variables, gaps);
+                if (forLoopStep is not null) steps.Add(Gated(refId, forLoopStep));
                 continue;
             }
 
@@ -1553,6 +1743,15 @@ public static class PackagePlanner
                 if (action is null) continue; // ResolveFileSystemAction already added the gap
 
                 steps.Add(Gated(refId, new FileSystemStep(executable.ObjectName ?? refId, action)));
+                continue;
+            }
+
+            if (executable.ExpressionTask is { } exprTask)
+            {
+                var expressionStep = ResolveExpressionTask(executable, exprTask, variables, gaps);
+                if (expressionStep is null) continue; // ResolveExpressionTask already added the gap
+
+                steps.Add(Gated(refId, expressionStep));
                 continue;
             }
 
@@ -1591,6 +1790,41 @@ public static class PackagePlanner
                     : "";
                 gaps.Add(new GenerationGap(executable.ObjectName ?? refId,
                     $"Execute Package Task ({mode}) targets {target}{connectionDetail} -- running one generated package from inside another is a deferred architectural decision (in-process reference vs. shell-out vs. macro-flatten), not yet implemented by this tool. The child package is extracted independently; nothing here composes the two.",
+                    Kind: GapKind.Unclassified));
+                continue;
+            }
+
+            // Recognized explicitly, same treatment as ExecutePackageTask immediately above and
+            // for the same reason: this is a documented, deliberate scope boundary, not a
+            // translation this planner merely hasn't gotten to. A Transfer SQL Server Objects
+            // Task wraps SQL Server's own SMO Transfer object -- copying schema/data for an
+            // explicit table list between two SQL Server instances/databases is a job for a real
+            // DDL/DACPAC/SMO script (or the DBA tooling already used for that purpose), not
+            // something this tool attempts to reproduce as generated C#. See
+            // TransferSqlServerObjectsTaskPayload's own doc comment for the real evidenced shape
+            // this is built against.
+            if (executable.TransferSqlServerObjectsTask is { } transferTask)
+            {
+                var sourceDb = transferTask.SourceDatabase is { Length: > 0 } sdb ? sdb : "(unknown source database)";
+                var sourceServer = transferTask.SourceConnectionName is { Length: > 0 } scn ? $" on '{scn}'" : "";
+                var destDb = transferTask.DestinationDatabase is { Length: > 0 } ddb ? ddb : "(unknown destination database)";
+                var destServer = transferTask.DestinationConnectionName is { Length: > 0 } dcn ? $" on '{dcn}'" : "";
+                var tableList = transferTask.Tables.Count > 0
+                    ? string.Join(", ", transferTask.Tables)
+                    : (transferTask.TablesListRaw is { Length: > 0 } ? "(TablesList present but not decoded)" : "(no TablesList recorded -- transfers every object in the source database)");
+                var flags = string.Join(", ", new[]
+                {
+                    transferTask.DropObjectsFirst == true ? "DropObjectsFirst" : null,
+                    transferTask.IncludeDependentObjects == true ? "IncludeDependentObjects" : null,
+                    transferTask.CopyData == true ? "CopyData" : null,
+                    transferTask.CopyIndexes == true ? "CopyIndexes" : null,
+                    transferTask.CopyPrimaryKeys == true ? "CopyPrimaryKeys" : null,
+                    transferTask.CopyForeignKeys == true ? "CopyForeignKeys" : null,
+                }.Where(f => f is not null));
+                var flagsDetail = flags.Length > 0 ? flags : "(no flags set)";
+
+                gaps.Add(new GenerationGap(executable.ObjectName ?? refId,
+                    $"Transfer SQL Server Objects Task copies {tableList} from database '{sourceDb}'{sourceServer} to '{destDb}'{destServer} (flags: {flagsDetail}) -- this wraps SQL Server's own SMO Transfer object and is not translated by this tool. Reproduce it with a hand-written DDL/DACPAC/SMO script instead; this task is extracted for visibility only, never composed into generated code.",
                     Kind: GapKind.Unclassified));
                 continue;
             }
@@ -1731,6 +1965,172 @@ public static class PackagePlanner
     }
 
     /// <summary>
+    /// Resolves a <c>STOCK:FORLOOP</c> executable into a <see cref="ForLoopStep"/>, or reports
+    /// exactly why it can't be generated -- fatal for just this loop, matching every other
+    /// single-executable gap in <see cref="WalkContainer"/>. Deliberately narrow, mirroring
+    /// <see cref="PlanForEachDataFlowLoop"/>'s own scoping precedent: only a body of EXACTLY one
+    /// Data Flow Task, sourced from a Flat File Source whose own connection manager's
+    /// ConnectionString carries a PropertyExpression referencing the SAME counter variable this
+    /// container's own Init/Eval/Assign expressions declare, is supported. <paramref name="variables"/>
+    /// is the same <c>Dictionary&lt;string, GuardVariable&gt;</c> a conditional-constraint guard
+    /// and <see cref="ResolveExpressionTask"/> already read from -- the loop's own counter is an
+    /// ordinary <c>User::</c> package variable, resolved identically.
+    /// </summary>
+    private static ForLoopStep? PlanForLoop(
+        ExecutableSpec loop, List<ConnectionManagerSpec> connectionManagers,
+        Dictionary<string, GuardVariable> variables, List<GenerationGap> gaps)
+    {
+        var taskName = loop.ObjectName ?? loop.RefId;
+        var payload = loop.ForLoop;
+
+        if (string.IsNullOrWhiteSpace(payload?.EvalExpression))
+        {
+            gaps.Add(new GenerationGap(taskName, "For Loop Container has no EvalExpression -- not supported"));
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(payload.AssignExpression))
+        {
+            gaps.Add(new GenerationGap(taskName, "For Loop Container has no AssignExpression -- not supported"));
+            return null;
+        }
+
+        if (loop.Children.Count != 1)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"For Loop Container has {loop.Children.Count} child executable(s) -- only a single Data Flow Task body is supported"));
+            return null;
+        }
+
+        var inner = loop.Children[0];
+
+        // The loop would iterate correctly and do nothing useful on each pass. Not evidenced in
+        // any real package, but the identical check ForEach Loop already makes for its own body.
+        if (inner.Disabled == true)
+        {
+            ReportDisabledSkip(inner, gaps);
+            return null;
+        }
+
+        if (inner.DataFlowTask is not { } dataFlowTask)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"For Loop Container's own body is '{inner.ExecutableType}', not a Data Flow Task -- not supported"));
+            return null;
+        }
+
+        var references = variables.ToDictionary(
+            kv => kv.Key, kv => new ColumnReference(GuardVariableAccess(kv.Key, kv.Value), kv.Value.Type));
+
+        var evalTranslated = ForLoopEmitter.TranslateCondition(payload.EvalExpression, references);
+        if (evalTranslated is not TranslatedOk evalOk)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"For Loop Container's own EvalExpression (`{payload.EvalExpression}`) {((NotTranslatable)evalTranslated).Reason}"));
+            return null;
+        }
+
+        string? initCSharpExpression = null;
+        string? initVariableName = null;
+        if (!string.IsNullOrWhiteSpace(payload.InitExpression))
+        {
+            var initTranslated = ForLoopEmitter.TranslateAssignment(payload.InitExpression, references, out initVariableName);
+            if (initTranslated is not TranslatedOk initOk)
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"For Loop Container's own InitExpression (`{payload.InitExpression}`) {((NotTranslatable)initTranslated).Reason}"));
+                return null;
+            }
+            initCSharpExpression = initOk.CSharpExpression;
+        }
+
+        var assignTranslated = ForLoopEmitter.TranslateAssignment(payload.AssignExpression, references, out var assignVariableName);
+        if (assignTranslated is not TranslatedOk assignOk)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"For Loop Container's own AssignExpression (`{payload.AssignExpression}`) {((NotTranslatable)assignTranslated).Reason}"));
+            return null;
+        }
+
+        // InitExpression and AssignExpression must agree on which variable they're driving --
+        // not evidenced to ever disagree, but a real For Loop Container has exactly one counter,
+        // and silently trusting whichever one happened to translate would risk generating a loop
+        // that assigns one variable while a DIFFERENT one is what EvalExpression actually reads.
+        if (initVariableName is not null && !string.Equals(initVariableName, assignVariableName, StringComparison.Ordinal))
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"For Loop Container's own InitExpression assigns '{initVariableName}' but AssignExpression assigns '{assignVariableName}' -- not supported"));
+            return null;
+        }
+
+        var counterVariableName = assignVariableName!;
+        if (!variables.TryGetValue(counterVariableName, out var counterVariable))
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"For Loop Container's own counter variable '@[{counterVariableName}]' has no resolvable declared type"));
+            return null;
+        }
+
+        var innerTaskName = inner.ObjectName ?? inner.RefId;
+        var flow = PlanDataFlow(innerTaskName, dataFlowTask.Pipeline, gaps);
+        if (flow is null) return null; // PlanDataFlow already added the reason
+
+        if (flow.FlatFileSource is not { } flatFileSource || flatFileSource.FlatFileSource?.ConnectionName is not { } csvCmName)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"{innerTaskName}: For Loop Container's own Data Flow Task body has no Flat File Source with a resolvable connection manager -- only a per-iteration Flat File Source is supported inside a loop body"));
+            return null;
+        }
+
+        var connectionManager = connectionManagers.FirstOrDefault(cm => cm.ObjectName == csvCmName);
+        var filePathExpression = connectionManager?.PropertyExpressions.FirstOrDefault(p => p.PropertyName == "ConnectionString")?.Expression;
+        if (string.IsNullOrEmpty(filePathExpression))
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"{innerTaskName}: connection manager '{csvCmName}' has a static ConnectionString with no per-iteration expression referencing the loop's own counter -- every iteration would read the identical file, which is very likely not intended; not supported"));
+            return null;
+        }
+
+        return new ForLoopStep(new ForLoopPlan(taskName, counterVariableName, counterVariable.ClrTypeName,
+            initCSharpExpression, evalOk.CSharpExpression, assignOk.CSharpExpression, flow, filePathExpression));
+    }
+
+    /// <summary>
+    /// Resolves one <c>Microsoft.ExpressionTask</c> executable into an <see cref="ExpressionStep"/>,
+    /// or reports why it can't be generated. <paramref name="variables"/> is the SAME
+    /// <c>Dictionary&lt;string, GuardVariable&gt;</c> a conditional-constraint guard already reads
+    /// from (<see cref="BuildGuardVariableTable"/>) -- reused here purely so a bare reference to
+    /// ANOTHER package variable on the assignment's RHS resolves identically, not because this task
+    /// has anything to do with a precedence constraint.
+    /// </summary>
+    private static ExpressionStep? ResolveExpressionTask(
+        ExecutableSpec executable, ExpressionTaskPayload payload,
+        IReadOnlyDictionary<string, GuardVariable> variables, List<GenerationGap> gaps)
+    {
+        var name = executable.ObjectName ?? executable.RefId;
+
+        if (string.IsNullOrWhiteSpace(payload.Expression))
+        {
+            gaps.Add(new GenerationGap(name, "Expression Task has no Expression"));
+            return null;
+        }
+
+        var references = variables.ToDictionary(
+            kv => kv.Key,
+            kv => new ColumnReference(GuardVariableAccess(kv.Key, kv.Value), kv.Value.Type));
+
+        var translated = ExpressionTaskEmitter.TranslateAssignment(payload.Expression, references, out var ssisVariableName);
+        if (translated is not TranslatedOk ok)
+        {
+            gaps.Add(new GenerationGap(name,
+                $"Expression Task's own Expression (`{payload.Expression}`) {((NotTranslatable)translated).Reason}"));
+            return null;
+        }
+
+        return new ExpressionStep(name, ssisVariableName!, ok.CSharpExpression);
+    }
+
+    /// <summary>
     /// Resolves one File System Task's operation and paths, or reports why it can't be
     /// generated. <see cref="FileSystemTaskPayload.SourceIsVariable"/>/<c>DestinationIsVariable</c>
     /// is always fatal -- no runtime-config mapping exists for an SSIS variable's value. A path
@@ -1817,7 +2217,8 @@ public static class PackagePlanner
         // separate, unconnected OLE DB Source -> OLE DB Destination pair in one Data Flow Task):
         // the extra pair never appeared anywhere, not even in gaps.json.
         var sourceComponents = pipeline.Components
-            .Where(c => c.ComponentClassId == "Microsoft.FlatFileSource" || c.ComponentClassId == "Microsoft.ExcelSource" || SourceInfo.IsSqlSource(c))
+            .Where(c => c.ComponentClassId == "Microsoft.FlatFileSource" || c.ComponentClassId == "Microsoft.ExcelSource"
+                || c.XmlSource is not null || SourceInfo.IsSqlSource(c))
             .ToList();
 
         // Checked before the multi-source gate below -- a Merge Join is EXACTLY the "something
@@ -1841,17 +2242,25 @@ public static class PackagePlanner
         }
 
         // Same carve-out, for a genuinely multi-independent-source Microsoft.Merge/UnionAll --
-        // gap-audit Phase 3.6 (2026-09-02). Gated on there being NO Conditional Split/Multicast
-        // anywhere in this pipeline: every already-closed "diverge-then-reconverge from one
-        // shared upstream source" UnionAll shape (2026-08-27/28) always has one of those feeding
-        // it, and is already fully handled by ResolveBranch's own forward pass-through walk
-        // (reached later, via PlanConditionalSplit/Multicast below) -- letting THIS check fire
+        // gap-audit Phase 3.6 (2026-09-02), widened in Phase 7 (2026-09-16) to also exclude an
+        // SCD upstream: the one real evidenced SCD package's own Union All converges its New and
+        // (post-command) Historical branches -- a "diverge-then-reconverge from one shared
+        // upstream source" shape exactly like Conditional Split/Multicast's own, just with SCD as
+        // the diverging component -- and is fully handled by PlanScd/ResolveBranch's own forward
+        // walk (reached later, below). Missing this originally made a real SCD flow's Union All
+        // get wrongly intercepted here instead of ever reaching PlanScd, caught only by actually
+        // generating the real-shape SCD fixture end to end, not by any gap-count report. Gated on
+        // there being NO Conditional Split/Multicast/SCD anywhere in this pipeline: every
+        // already-closed "diverge-then-reconverge from one shared upstream source" UnionAll shape
+        // (2026-08-27/28) always has one of those feeding it, and is already fully handled by
+        // ResolveBranch's own forward pass-through walk (reached later, via
+        // PlanConditionalSplit/Multicast/PlanScd below) -- letting THIS check fire
         // for that shape too would wrongly intercept it: ResolveUnionSide's own backward walk
         // expects a real source/Sort/Data-Conversion feeding each input, not a Conditional
         // Split's own per-branch output, and would report a confusing, wrong gap instead of
         // falling through to the already-working resolution.
         var unionComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId is "Microsoft.Merge" or "Microsoft.UnionAll");
-        var hasSplitOrMulticastUpstream = pipeline.Components.Any(c => c.ComponentClassId is "Microsoft.ConditionalSplit" or "Microsoft.Multicast");
+        var hasSplitOrMulticastUpstream = pipeline.Components.Any(c => c.ComponentClassId is "Microsoft.ConditionalSplit" or "Microsoft.Multicast" or "Microsoft.SCD");
         if (unionComponent is not null && !hasSplitOrMulticastUpstream)
         {
             var unionPlan = PlanUnion(taskName, pipeline, unionComponent, gaps);
@@ -1893,12 +2302,40 @@ public static class PackagePlanner
 
         var flatFileSource = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.FlatFileSource");
         var excelSource = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.ExcelSource");
+        var xmlSourceComponent = pipeline.Components.FirstOrDefault(c => c.XmlSource is not null);
+        if (xmlSourceComponent is not null)
+        {
+            // Deliberately scoped to the one evidenced flat, single-rowset shape (see
+            // XmlSourcePayload's own doc comment) -- more than one non-error output means a
+            // hierarchical/multi-rowset XML schema this tool's own XmlRowSource has no way to
+            // represent (it reads exactly one repeating element into exactly one row type).
+            var nonErrorOutputs = xmlSourceComponent.Outputs.Where(o => o.IsErrorOut != true).ToList();
+            if (nonErrorOutputs.Count > 1)
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"XML Source '{xmlSourceComponent.Name}' declares {nonErrorOutputs.Count} non-error outputs -- a hierarchical/multi-rowset XML schema is not supported yet, only one flat, single-repeating-element rowset"));
+                return null;
+            }
+            if (xmlSourceComponent.XmlSource!.AccessModeRaw is not (null or 0))
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"XML Source '{xmlSourceComponent.Name}' has AccessMode={xmlSourceComponent.XmlSource!.AccessModeRaw} -- only a literal design-time XMLData path (AccessMode=0/Default) is supported yet, not a variable-driven path/document"));
+                return null;
+            }
+            if (string.IsNullOrEmpty(xmlSourceComponent.XmlSource!.XmlDataPath))
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"XML Source '{xmlSourceComponent.Name}' has no XMLData (literal file path) to read from -- XMLDataVariable ('{xmlSourceComponent.XmlSource!.XmlDataVariable}') is driven by a variable, which has no runtime-config mapping yet"));
+                return null;
+            }
+        }
         // OLE DB Source or ADO NET Source (Microsoft.DataReaderSourceAdapter, discriminated by
         // payload not ComponentClassId -- see AdoNetSourcePayload's own doc comment) -- either
         // way, a SQL-based source BuildSqlFlowSource resolves generically from here.
         var oleDbSource = pipeline.Components.FirstOrDefault(SourceInfo.IsSqlSource);
         var derivedColumn = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.DerivedColumn");
         var dataConversion = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.DataConvert");
+        var copyMap = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.CopyMap");
         var lookup = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.Lookup");
         var conditionalSplitComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.ConditionalSplit");
 
@@ -1930,18 +2367,53 @@ public static class PackagePlanner
             }
         }
 
-        // Scoped to the plain single-source/single-destination shape only -- a Conditional
-        // Split/Multicast branch's own mid-chain RowCount (as opposed to the already-handled
-        // discarded-dead-end case) is left to ResolveBranch's existing generic "not supported"
-        // fallthrough, unevidenced and unchanged by this round.
-        List<RowCountPlan>? rowCounts = null;
+        // Phase 7 of the unsupported-component-types plan. Mutually exclusive with Conditional
+        // Split/Multicast the same way they are with each other -- an SCD is a fourth routing
+        // mechanism, and no evidenced flow carries two. Resolved BEFORE PctSampling purely to keep
+        // this chain in the order the fields are declared; the three never co-occur anyway.
+        ScdPlan? scd = null;
         if (conditionalSplit is null && multicast is null)
+        {
+            var scdComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.SCD");
+            if (scdComponent is not null)
+            {
+                scd = PlanScd(taskName, pipeline, scdComponent, gaps);
+                if (scd is null) return null; // PlanScd already added the gap
+            }
+        }
+
+        // Mutually exclusive with both Conditional Split and Multicast, same reasoning -- no real
+        // evidenced package has more than one of the three routing mechanisms in a single flow.
+        PctSamplingPlan? pctSampling = null;
+        if (conditionalSplit is null && multicast is null && scd is null)
+        {
+            var pctSamplingComponent = pipeline.Components.FirstOrDefault(c => c.ComponentClassId == "Microsoft.PctSampling");
+            if (pctSamplingComponent is not null)
+            {
+                pctSampling = PlanPctSampling(taskName, pipeline, pctSamplingComponent, gaps);
+                if (pctSampling is null) return null; // PlanPctSampling already added the gap
+            }
+        }
+
+        // Scoped to the plain single-source/single-destination shape only -- a Conditional
+        // Split/Multicast/PctSampling branch's own mid-chain RowCount (as opposed to the
+        // already-handled discarded-dead-end case) is left to ResolveBranch's existing generic
+        // "not supported" fallthrough, unevidenced and unchanged by this round.
+        List<RowCountPlan>? rowCounts = null;
+        if (conditionalSplit is null && multicast is null && pctSampling is null && scd is null)
         {
             rowCounts = ResolveRowCounts(taskName, pipeline, gaps);
             if (rowCounts is null) return null; // ResolveRowCounts already added the gap
         }
 
-        var destination = conditionalSplit is not null
+        var destination = scd is not null
+            // The first live branch that actually has one. An SCD whose every live branch is
+            // update-only (all OLE DB Commands, no destination at all -- legal, and exactly what a
+            // pure Type-1 dimension load looks like) leaves this null and falls through to the
+            // placeholder below, the same convention an OLE DB Command flow already uses.
+            ? scd.LiveBranches().Select(b => b.Branch.Destination).FirstOrDefault(d => d is not null) ?? scd.Component
+
+            : conditionalSplit is not null
             ? conditionalSplit.Branches[^1].Destination // the default branch, resolved last
             : multicast is not null
                 // Not simply [^1] any more -- a discarded (RowCount-dead-end) branch's own
@@ -1950,9 +2422,11 @@ public static class PackagePlanner
                 // NON-null destination is behaviorally identical to [^1] for every flow that
                 // predates discard support (every branch there already had a real destination).
                 ? multicast.Branches.Select(b => b.Destination).FirstOrDefault(d => d is not null)
-                : SelectPrimaryDestination(pipeline, pipeline.Components.Where(c => c.ComponentClassId == "Microsoft.OLEDBDestination").ToList())
-                    ?? SelectPrimaryDestination(pipeline, pipeline.Components.Where(c => c.AdoNetDestination is not null).ToList())
-                    ?? SelectPrimaryDestination(pipeline, pipeline.Components.Where(c => c.ComponentClassId == "Microsoft.FlatFileDestination").ToList());
+                : pctSampling is not null
+                    ? pctSampling.Sampled.Destination // never null -- PlanPctSampling requires a real destination for both branches
+                    : SelectPrimaryDestination(pipeline, pipeline.Components.Where(c => c.ComponentClassId == "Microsoft.OLEDBDestination").ToList())
+                        ?? SelectPrimaryDestination(pipeline, pipeline.Components.Where(c => c.AdoNetDestination is not null).ToList())
+                        ?? SelectPrimaryDestination(pipeline, pipeline.Components.Where(c => c.ComponentClassId == "Microsoft.FlatFileDestination").ToList());
 
         if (destination is null)
         {
@@ -1964,7 +2438,11 @@ public static class PackagePlanner
             var commandComponents = pipeline.Components.Where(c => c.ComponentClassId == "Microsoft.OLEDBCommand").ToList();
             // multicast must also be checked null here now -- a Multicast whose every branch is
             // discarded (no live branch at all) leaves `destination` null without implying no
-            // Multicast was found, unlike before discard support existed.
+            // Multicast was found, unlike before discard support existed. pctSampling is checked
+            // for the identical reason, added Phase 4 of the unsupported-component-types plan --
+            // though a PctSampling flow never leaves `destination` null in practice (both its
+            // branches always resolve to a real destination, unlike Multicast's discard case),
+            // this keeps the guard symmetric rather than relying on that.
             //
             // aggregate is null was added 2026-09-06 by the same third independent review that
             // found the Merge Join/Union bug above -- without it, an Aggregate co-present with a
@@ -1976,14 +2454,19 @@ public static class PackagePlanner
             // destination side at all) -- confirmed via a disposable fixture reproducing this
             // exact shape. Explicit now, not relying on that incidental behavior: this shape
             // falls through to the generic "no destination found" gap below instead.
-            if (commandComponents.Count == 1 && conditionalSplit is null && multicast is null && aggregate is null)
+            // scd is null added Phase 7: an SCD flow's own branches routinely terminate in OLE DB
+            // Commands (a Type 1 in-place UPDATE has no destination table at all), and those are
+            // already fully accounted for by PlanScd's own branch resolution -- letting them also
+            // be picked up here as a standalone command-only flow would build a DataFlowPlan
+            // carrying both, and PackageGenerator's dispatch would generate the wrong one.
+            if (commandComponents.Count == 1 && conditionalSplit is null && multicast is null && pctSampling is null && aggregate is null && scd is null)
             {
                 var oleDbCommandPlan = ResolveOleDbCommand(taskName, commandComponents[0], gaps);
                 if (oleDbCommandPlan is null) return null; // ResolveOleDbCommand already added the gap
-                // Multicast is never populated here -- destination being null already implies no
-                // multicast was found either, per the mutual-exclusion check above.
+                // Multicast/PctSampling are never populated here -- destination being null
+                // already implies neither was found, per the mutual-exclusion checks above.
                 return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup,
-                    conditionalSplit, commandComponents[0], dataConversion, ExcelSource: excelSource, OleDbCommand: oleDbCommandPlan, Aggregate: aggregate, RowCounts: rowCounts);
+                    conditionalSplit, commandComponents[0], dataConversion, CopyMap: copyMap, ExcelSource: excelSource, OleDbCommand: oleDbCommandPlan, Aggregate: aggregate, RowCounts: rowCounts, XmlSource: xmlSourceComponent);
             }
 
             gaps.Add(new GenerationGap(taskName,
@@ -1998,7 +2481,7 @@ public static class PackagePlanner
         // Lookup/Aggregate+Sort combination) that a stray Sort there is left alone rather than
         // guessed at.
         SortKeyPlan? sortKey = null;
-        if (conditionalSplit is null && multicast is null && aggregate is null && lookup is null)
+        if (conditionalSplit is null && multicast is null && pctSampling is null && aggregate is null && lookup is null && scd is null)
         {
             var (hasGap, resolvedSort) = ResolveStandaloneSort(taskName, pipeline, destination, gaps);
             if (hasGap) return null; // ResolveStandaloneSort already added the gap
@@ -2009,7 +2492,7 @@ public static class PackagePlanner
         // SortKey above -- a Conditional Split/Multicast branch's own error-redirect destination
         // is unevidenced and left alone rather than guessed at.
         ErrorRedirectPlan? errorRedirect = null;
-        if (conditionalSplit is null && multicast is null)
+        if (conditionalSplit is null && multicast is null && pctSampling is null && scd is null)
         {
             var (hasGap, resolved) = ResolveErrorRedirect(taskName, pipeline, destination, gaps);
             if (hasGap) return null; // ResolveErrorRedirect already added the gap
@@ -2022,9 +2505,9 @@ public static class PackagePlanner
         // silently vanish with no file and no gap -- exactly what happened to the real
         // OLEDST_StagingErrors before this round existed. Mirrors the wording/placement of the
         // existing multi-SOURCE gates earlier in this method. Scoped the same way as the two
-        // checks above -- Conditional Split/Multicast already account for every one of their own
-        // branch destinations individually.
-        if (conditionalSplit is null && multicast is null)
+        // checks above -- Conditional Split/Multicast/PctSampling already account for every one
+        // of their own branch destinations individually.
+        if (conditionalSplit is null && multicast is null && pctSampling is null && scd is null)
         {
             var allDestinations = pipeline.Components.Where(c =>
                 c.ComponentClassId is "Microsoft.OLEDBDestination" or "Microsoft.FlatFileDestination"
@@ -2042,7 +2525,7 @@ public static class PackagePlanner
             }
         }
 
-        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, ExcelSource: excelSource, Multicast: multicast, Aggregate: aggregate, RowCounts: rowCounts, SortKey: sortKey, ErrorRedirect: errorRedirect);
+        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, CopyMap: copyMap, ExcelSource: excelSource, Multicast: multicast, Aggregate: aggregate, RowCounts: rowCounts, SortKey: sortKey, ErrorRedirect: errorRedirect, PctSampling: pctSampling, XmlSource: xmlSourceComponent, Scd: scd);
     }
 
     /// <summary>Picks the primary destination among candidates of the SAME destination type --
@@ -2426,14 +2909,28 @@ public static class PackagePlanner
     }
 
     /// <summary>Resolves a genuinely multi-independent-source <c>Microsoft.Merge</c>/
-    /// <c>Microsoft.UnionAll</c> -- gap-audit Phase 3.6 (2026-09-02). Every input is walked
-    /// BACKWARD via <see cref="ResolveUnionSide"/> (Sort required only for Merge); fatal for the
-    /// whole flow if any side or the destination fails to resolve, same "no half-finished
-    /// implementations" rule <see cref="PlanMergeJoin"/> already follows.</summary>
+    /// <c>Microsoft.UnionAll</c> -- gap-audit Phase 3.6 (2026-09-02). Every CONNECTED input is
+    /// walked BACKWARD via <see cref="ResolveUnionSide"/> (Sort required only for Merge); fatal
+    /// for the whole flow if any side or the destination fails to resolve, same "no half-finished
+    /// implementations" rule <see cref="PlanMergeJoin"/> already follows.
+    ///
+    /// <para><b>A dangling, unconnected input is filtered out here, not treated as a gap</b> --
+    /// found in Phase 7 of the unsupported-component-types plan (Microsoft.SCD): the one real
+    /// evidenced package's own <c>Union All</c> declares a genuine THIRD input
+    /// ("Union All Input 3") with zero columns and no incoming path at all, confirmed real by
+    /// grepping the saved XML directly (no <c>&lt;path endId="...Union All Input 3"&gt;</c>
+    /// anywhere) -- the exact same "component auto-provisions a permanently spare, unconnected
+    /// slot" quirk this project already documented for <c>Microsoft.Multicast</c>'s own trailing
+    /// output. A synthetic fixture built the same way via the object model reproduces the
+    /// identical shape. Filtering by "has an incoming path" (rather than "has columns", which a
+    /// genuinely connected-but-empty input could theoretically also have) is what distinguishes a
+    /// permanently-unused slot from a real, malformed side.</para>
+    /// </summary>
     private static DataFlowPlan? PlanUnion(string taskName, PipelineSpec pipeline, PipelineComponentSpec unionComponent, List<GenerationGap> gaps)
     {
         var isMerge = unionComponent.ComponentClassId == "Microsoft.Merge";
-        var inputs = unionComponent.Inputs;
+        var connectedInputIds = new HashSet<string>(pipeline.Paths.Select(p => p.EndId), StringComparer.Ordinal);
+        var inputs = unionComponent.Inputs.Where(i => connectedInputIds.Contains(i.RefId)).ToList();
         if (inputs.Count < 2)
         {
             gaps.Add(new GenerationGap(taskName,
@@ -2870,6 +3367,222 @@ public static class PackagePlanner
         return new MulticastPlan(multicastComponent, branches);
     }
 
+    /// <summary>Resolves a Percentage Sampling component: exactly two mutually exclusive
+    /// branches ("Sampling Selected Output"/"Sampling Unselected Output", confirmed via a live
+    /// object-model probe to always exist in that order right after
+    /// <c>ProvideComponentProperties()</c> -- no dangling/spare-output quirk the way
+    /// Multicast/Merge have, so no filtering needed here), resolved via the SAME forward
+    /// chain-walk <see cref="ResolveBranch"/> already provides for Conditional Split/Multicast --
+    /// see <see cref="PctSamplingPlan"/>'s own doc comment for why this is closer to Conditional
+    /// Split's shape (a routing DECISION between mutually exclusive branches) than Multicast's
+    /// (an unconditional fan-out to every branch).</summary>
+    private static PctSamplingPlan? PlanPctSampling(string taskName, PipelineSpec pipeline, PipelineComponentSpec pctSamplingComponent, List<GenerationGap> gaps)
+    {
+        var selectedOutput = pctSamplingComponent.Outputs.FirstOrDefault(o => o.Name == "Sampling Selected Output");
+        var unselectedOutput = pctSamplingComponent.Outputs.FirstOrDefault(o => o.Name == "Sampling Unselected Output");
+        if (selectedOutput is null || unselectedOutput is null)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Percentage Sampling '{pctSamplingComponent.Name}' does not declare both its 'Sampling Selected Output' and 'Sampling Unselected Output' outputs -- not supported"));
+            return null;
+        }
+
+        var sampled = ResolveBranch(pipeline, pctSamplingComponent, selectedOutput.Name, friendlyExpression: null, taskName, gaps, componentKind: "PctSampling");
+        if (sampled is null) return null; // ResolveBranch already added the gap
+
+        var notSampled = ResolveBranch(pipeline, pctSamplingComponent, unselectedOutput.Name, friendlyExpression: null, taskName, gaps, componentKind: "PctSampling");
+        if (notSampled is null) return null; // ResolveBranch already added the gap
+
+        return new PctSamplingPlan(pctSamplingComponent, sampled, notSampled);
+    }
+
+    /// <summary>SSIS's own fixed output names for <c>Microsoft.SCD</c> -- probe-confirmed to exist,
+    /// in this exact order and with these exact names, immediately after
+    /// <c>ProvideComponentProperties()</c> (see <c>ScdPayload</c>'s own doc comment). Not
+    /// user-renamable the way a Conditional Split case is, so matching by name is safe here in the
+    /// same way it already is for a Lookup's own Match/No-Match outputs.</summary>
+    internal const string ScdUnchangedOutput = "Unchanged Output";
+    internal const string ScdNewOutput = "New Output";
+    internal const string ScdFixedAttributeOutput = "Fixed Attribute Output";
+    internal const string ScdChangingAttributeUpdatesOutput = "Changing Attribute Updates Output";
+    internal const string ScdHistoricalAttributeInsertsOutput = "Historical Attribute Inserts Output";
+    internal const string ScdInferredMemberUpdatesOutput = "Inferred Member Updates Output";
+
+    /// <summary>
+    /// Resolves a <c>Microsoft.SCD</c> ("Slowly Changing Dimension") flow -- Phase 7 of the
+    /// unsupported-component-types plan, and the largest component this planner models.
+    ///
+    /// <para>Each of the five routable outputs is resolved by the SAME forward chain-walk
+    /// <see cref="ResolveBranch"/> already provides for Conditional Split/Multicast/Percentage
+    /// Sampling, called once per output with <c>componentKind: "SCD"</c> -- which is what enables
+    /// that walk's two SCD-only widenings (an unwired output is a non-fatal discard; an OLE DB
+    /// Command is a valid terminus or a valid mid-chain hop). Two branches that converge on the same
+    /// Union All resolve to the same destination instance with no special-casing, exactly as they
+    /// already do for a Conditional Split -- which is precisely the real evidenced package's own
+    /// shape, where <c>New Output</c> and <c>Historical Attribute Inserts Output</c> share one
+    /// destination through a Union All.</para>
+    ///
+    /// <para><b>Scope, stated rather than implied.</b> Everything generated here reproduces a
+    /// MEASURED rule (see <c>Etl.Core.Pipeline.ScdClassifier</c> for the rule set and its per-rule
+    /// dtexec evidence). Everything unmeasured is a named gap:</para>
+    /// <list type="bullet">
+    /// <item><b>Inferred members</b> (<c>EnableInferredMember</c>) -- off on the one real evidenced
+    /// package, so its <c>Inferred Member Updates Output</c> is unreachable and was never exercised
+    /// by any run. Turning it on is a blocking gap rather than a guess at an unmeasured code path.</item>
+    /// <item><b><c>IncomingRowChangeType</c> other than 1</b> -- 1 is both the schema default
+    /// (probe-confirmed) and the only evidenced value, and the property's own description ("Specifies
+    /// that all rows in the input are new OR the transformation detects the change type") says the
+    /// other value skips detection entirely. The enum is not resolvable by reflection, so anything
+    /// else gaps.</item>
+    /// <item><b>A composite business key</b> -- every evidenced SCD declares exactly one
+    /// <c>ColumnType</c> 1 column, and nothing measured says how SSIS matches on several.</item>
+    /// <item><b>No <c>SqlCommand</c></b> -- there is nothing to read the dimension with.</item>
+    /// </list>
+    /// </summary>
+    private static ScdPlan? PlanScd(string taskName, PipelineSpec pipeline, PipelineComponentSpec scdComponent, List<GenerationGap> gaps)
+    {
+        var payload = scdComponent.Scd;
+        if (payload is null)
+        {
+            gaps.Add(new GenerationGap(taskName, $"Slowly Changing Dimension '{scdComponent.Name}' has no SCD payload -- not supported"));
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(payload.SqlCommand))
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Slowly Changing Dimension '{scdComponent.Name}' declares no SqlCommand -- there is no dimension query to read the current rows with"));
+            return null;
+        }
+
+        if (payload.IncomingRowChangeTypeRaw is not (null or 1))
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Slowly Changing Dimension '{scdComponent.Name}' has IncomingRowChangeType={payload.IncomingRowChangeTypeRaw} -- only 1 (the schema default, and the only value evidenced or measured, meaning 'detect the change type per row') is supported; the other value's behaviour has never been measured against real SSIS"));
+            return null;
+        }
+
+        if (payload.EnableInferredMember == true)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Slowly Changing Dimension '{scdComponent.Name}' has EnableInferredMember=true (InferredMemberIndicator='{payload.InferredMemberIndicator ?? "(none)"}') -- inferred-member detection is off on every evidenced package, so its own Inferred Member Updates Output has never been exercised by a real run and none of its behaviour is measured"));
+            return null;
+        }
+
+        var keyColumns = payload.Columns.Where(c => c.ColumnTypeRaw == (int)ScdColumnRoleRaw.BusinessKey).ToList();
+        if (keyColumns.Count != 1)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Slowly Changing Dimension '{scdComponent.Name}' declares {keyColumns.Count} business-key column(s) ({(keyColumns.Count == 0 ? "none" : string.Join(", ", keyColumns.Select(c => $"'{c.ColumnName}'")))}) -- exactly one is supported; how SSIS matches on a composite key is unevidenced and unmeasured"));
+            return null;
+        }
+
+        var businessKey = keyColumns[0];
+        var keyType = SsisPipelineTypeMap.Resolve(businessKey.DataType);
+        if (keyType is null)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Slowly Changing Dimension '{scdComponent.Name}' business key '{businessKey.ColumnName}' has unmapped pipeline data type '{businessKey.DataType}'"));
+            return null;
+        }
+
+        // Only the three COMPARED roles -- the key itself is matched on, never compared, and a
+        // column declaring no ColumnType at all takes no part in the comparison (see
+        // ScdColumnSpec.ColumnTypeRaw's own doc comment for why absence is kept distinct).
+        var attributes = new List<ScdAttributePlan>();
+        foreach (var column in payload.Columns)
+        {
+            if (column.ColumnTypeRaw is null || column.ColumnTypeRaw == (int)ScdColumnRoleRaw.BusinessKey) continue;
+
+            if (column.ColumnTypeRaw is not ((int)ScdColumnRoleRaw.Changing or (int)ScdColumnRoleRaw.Historical or (int)ScdColumnRoleRaw.Fixed))
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"Slowly Changing Dimension '{scdComponent.Name}' column '{column.ColumnName}' declares ColumnType={column.ColumnTypeRaw} -- only 1 (business key), 2 (changing), 3 (historical) and 4 (fixed) have been measured against real SSIS"));
+                return null;
+            }
+
+            attributes.Add(new ScdAttributePlan(column.ColumnName, (ScdColumnRoleRaw)column.ColumnTypeRaw.Value));
+        }
+
+        if (attributes.Count == 0)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Slowly Changing Dimension '{scdComponent.Name}' declares a business key but no compared attribute columns -- every incoming row would be either New or Unchanged, which is very unlikely to be what the package means"));
+            return null;
+        }
+
+        // The reference query composes the package's own SqlCommand with its own CurrentRowWhere,
+        // as a wrapping subquery rather than by editing the author's SQL text -- this tool never
+        // rewrites recorded SQL (the same rule an OLE DB Source's own SqlCommand already follows).
+        // Wrapping also works regardless of whether the author's own query already has a WHERE,
+        // ORDER BY or anything else, which appending could not. CurrentRowWhere's columns are by
+        // construction in that query's own SELECT list (the real evidenced package selects
+        // [StartDate]/[EndDate] purely to satisfy its own filter), so the wrapper resolves them.
+        var referenceSql = string.IsNullOrWhiteSpace(payload.CurrentRowWhere)
+            ? payload.SqlCommand!
+            : $"SELECT * FROM ( {payload.SqlCommand} ) AS scd_reference WHERE {payload.CurrentRowWhere}";
+
+        var branches = new Dictionary<string, ConditionalSplitBranchPlan>(StringComparer.Ordinal);
+        foreach (var outputName in new[]
+        {
+            ScdUnchangedOutput, ScdNewOutput, ScdFixedAttributeOutput,
+            ScdChangingAttributeUpdatesOutput, ScdHistoricalAttributeInsertsOutput, ScdInferredMemberUpdatesOutput,
+        })
+        {
+            if (scdComponent.Outputs.All(o => o.Name != outputName))
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"Slowly Changing Dimension '{scdComponent.Name}' does not declare its own '{outputName}' output -- every Microsoft.SCD component declares all six from construction, so this package's shape is not one this tool recognizes"));
+                return null;
+            }
+
+            var branch = ResolveBranch(pipeline, scdComponent, outputName, friendlyExpression: null, taskName, gaps, componentKind: "SCD");
+            if (branch is null) return null; // ResolveBranch already added the gap
+            branches[outputName] = branch;
+        }
+
+        // EnableInferredMember is false (checked above), so SSIS can never route a row to this
+        // output -- wiring it anyway is legal but dead. Said out loud rather than silently ignored.
+        if (!branches[ScdInferredMemberUpdatesOutput].Discarded)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Slowly Changing Dimension '{scdComponent.Name}' wires its Inferred Member Updates Output, but EnableInferredMember is off -- SSIS can never route a row there, so the generated code does not wire it either",
+                IsBlocking: false));
+        }
+
+        ScdBranchPlan? Resolve(string slot, string outputName)
+        {
+            var branch = branches[outputName];
+            var commandComponents = branch.Commands ?? [];
+
+            if (commandComponents.Count > 1)
+            {
+                gaps.Add(new GenerationGap(taskName,
+                    $"Slowly Changing Dimension '{scdComponent.Name}' output '{outputName}' passes through {commandComponents.Count} OLE DB Commands ({string.Join(", ", commandComponents.Select(c => $"'{c.Name}'"))}) -- only one per branch is evidenced, and nothing measured says what order SSIS runs several in"));
+                return null;
+            }
+
+            if (commandComponents.Count == 0) return new ScdBranchPlan(slot, branch, Command: null);
+
+            var commandPlan = ResolveOleDbCommand(taskName, commandComponents[0], gaps);
+            return commandPlan is null ? null : new ScdBranchPlan(slot, branch, commandPlan);
+        }
+
+        var unchanged = Resolve(nameof(ScdPlan.Unchanged), ScdUnchangedOutput);
+        var @new = Resolve(nameof(ScdPlan.New), ScdNewOutput);
+        var fixedAttribute = Resolve(nameof(ScdPlan.FixedAttribute), ScdFixedAttributeOutput);
+        var changing = Resolve(nameof(ScdPlan.ChangingAttributeUpdates), ScdChangingAttributeUpdatesOutput);
+        var historical = Resolve(nameof(ScdPlan.HistoricalAttributeInserts), ScdHistoricalAttributeInsertsOutput);
+        if (unchanged is null || @new is null || fixedAttribute is null || changing is null || historical is null)
+            return null; // Resolve/ResolveOleDbCommand already added the gap
+
+        return new ScdPlan(
+            scdComponent, businessKey.ColumnName, keyType, attributes, referenceSql,
+            FailOnFixedAttributeChange: payload.FailOnFixedAttributeChange ?? true,
+            UpdateChangingAttributeHistory: payload.UpdateChangingAttributeHistory ?? false,
+            unchanged, @new, fixedAttribute, changing, historical);
+    }
+
     /// <summary>A branch's own chain to its destination is capped at this many hops so a
     /// malformed/cyclic pipeline graph degrades to a gap instead of an infinite loop -- no real
     /// package evidenced here needs more than 2 (one tag Derived Column, one Union All).</summary>
@@ -2901,6 +3614,7 @@ public static class PackagePlanner
         // ("Merge Input 1"/"Merge Input 2") both belong to the identical component instance, so
         // whichever branch's path ends at either one still resolves `next` to that same instance.
         var derivedColumns = new List<PipelineComponentSpec>();
+        var commands = new List<PipelineComponentSpec>();
         var currentOutputRefId = output.RefId;
 
         for (var hop = 0; hop < MaxBranchChainHops; hop++)
@@ -2908,6 +3622,24 @@ public static class PackagePlanner
             var path = pipeline.Paths.FirstOrDefault(p => p.StartId == currentOutputRefId);
             if (path is null)
             {
+                // Gated to SCD only (Phase 7). A Slowly Changing Dimension component ALWAYS
+                // declares all six of its outputs -- probe-confirmed, they exist immediately after
+                // ProvideComponentProperties() with no way to remove one -- so an unwired output is
+                // the normal case, not a defect: the one real evidenced package wires four of six
+                // and leaves Unchanged/Fixed Attribute/Inferred Member Updates unconnected.
+                // Treated exactly like a Multicast's own discarded RowCount dead end: a
+                // non-blocking advisory naming what SSIS does with those rows (nothing), and a
+                // Discarded branch the generator then skips. Deliberately NOT extended to
+                // Conditional Split/Multicast/PctSampling, where an unconnected output genuinely is
+                // a flow this tool cannot reproduce.
+                if (componentKind == "SCD" && hop == 0)
+                {
+                    gaps.Add(new GenerationGap(taskName,
+                        $"{componentKind} '{splitComponent.Name}' output '{outputName}' is not connected to anything -- SSIS discards the rows routed there, and so does the generated code",
+                        IsBlocking: false));
+                    return new ConditionalSplitBranchPlan(outputName, friendlyExpression, derivedColumns, Destination: null, Discarded: true);
+                }
+
                 gaps.Add(new GenerationGap(taskName,
                     $"{componentKind} output '{outputName}' on '{splitComponent.Name}' does not connect to anything downstream -- not supported"));
                 return null;
@@ -2947,7 +3679,29 @@ public static class PackagePlanner
             // Conditional Split fixture ever needed this branch target before, but the check is a
             // strict widening (adds an acceptance case, restricts nothing), so it's safe here too.
             if (next.ComponentClassId is "Microsoft.OLEDBDestination" or "Microsoft.FlatFileDestination" || next.AdoNetDestination is not null)
-                return new ConditionalSplitBranchPlan(outputName, friendlyExpression, derivedColumns, next);
+                return new ConditionalSplitBranchPlan(outputName, friendlyExpression, derivedColumns, next, Commands: commands);
+
+            // Gated to SCD only (Phase 7). An OLE DB Command is a per-row parameterized statement,
+            // and a dimension load routinely needs one on a branch: the real evidenced package's
+            // own Changing Attribute Updates Output TERMINATES in one (a Type 1 in-place UPDATE,
+            // no destination at all) while its Historical Attribute Inserts Output passes THROUGH
+            // one (closing the outgoing dimension row) before reaching a destination. Both shapes
+            // are handled here by the presence or absence of an outgoing path -- terminal means
+            // this branch has no sink; mid-chain means record it and keep walking. Left untouched
+            // for every other componentKind, where an OLE DB Command mid-chain remains the
+            // unsupported component it has always been.
+            if (componentKind == "SCD" && next.ComponentClassId == "Microsoft.OLEDBCommand")
+            {
+                commands.Add(next);
+
+                var commandOutput = next.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+                var commandOnward = commandOutput is null ? null : pipeline.Paths.FirstOrDefault(p => p.StartId == commandOutput.RefId);
+                if (commandOnward is null)
+                    return new ConditionalSplitBranchPlan(outputName, friendlyExpression, derivedColumns, Destination: null, Commands: commands);
+
+                currentOutputRefId = commandOutput!.RefId;
+                continue;
+            }
 
             // "Microsoft.Aggregate" is gated to Multicast only, added 2026-09-02 alongside the
             // discard recognition above -- purely structural (this walk doesn't inspect column

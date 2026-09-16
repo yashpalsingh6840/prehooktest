@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<dataset>
+<record><id>1</id><first_name>Alice</first_name><last_name>Smith</last_name><email>alice@example.com</email><gender>Female</gender><country>USA</country></record>
+<record><id>2</id><first_name>Bob</first_name><last_name>Jones</last_name><email></email><country>Canada</country></record>
+<record><id>3</id><first_name>  Carol  </first_name><last_name>Diaz</last_name><email>carol@example.com</email><gender>Unknown</gender><country>Mexico</country></record>
+</dataset>

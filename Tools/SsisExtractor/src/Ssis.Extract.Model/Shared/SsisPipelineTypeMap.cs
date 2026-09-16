@@ -81,6 +81,16 @@ public static class SsisPipelineTypeMap
         ["i8"] = new("DT_I8", "long", SsisFacetKind.None, null, Evidenced: false),
         ["ui1"] = new("DT_UI1", "byte", SsisFacetKind.None, null, Evidenced: false),
 
+        // DT_UI2 (unsigned 2-byte int) -- confirmed real 2026-09 building Phase 5 of the
+        // unsupported-component-types plan: an XML Source's own real evidenced "id" column
+        // (ETL-SSIS-Real-Scenarios' own UseCase_73, backed by an xs:unsignedShort in the XSD)
+        // resolves to this. Mapped to `int`, not `ushort` -- same reasoning as DT_UI8/DT_UI4
+        // below: `int` fully represents every DT_UI2 value (0-65535) and avoids the identical
+        // "no native EF Core SqlServer mapping for an unsigned integer wider than byte" failure
+        // those two already document, so a DT_UI2 column reaching a real destination table stays
+        // safe with zero new coercion code.
+        ["ui2"] = new("DT_UI2", "int", SsisFacetKind.None, null, Evidenced: true),
+
         // DT_UI8 (unsigned 8-byte int) is the type Microsoft.Aggregate's own Count function
         // always produces (confirmed real from RBC_Demo_ETL's own AGG_ByRegion, and via the
         // object model: an Aggregate output column's data type resolves to this automatically,
