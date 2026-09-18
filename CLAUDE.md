@@ -8766,6 +8766,106 @@ invisible gap (no prior fixture or real package ever had a genuinely non-nullabl
 scope for this round. Left as a named, precisely-scoped follow-up rather than silently worked
 around or guessed at.
 
+### `int -> decimal` numeric-passthrough coercion, the one pairing that needed no dtexec probe (2026-09-18)
+
+The next gap picked off the "remaining known gaps" list, found the same way most of the real
+gaps in this family were found: a real, evidenced instance in a third-party GitHub portfolio.
+`sql-server-samples`' own `wwi-ssis/DailyETLMain.dtsx` (`Extract All Stock Holding Data to
+Staging`, destination `StockHolding_Staging`) has a `Last Cost Price` column whose OLE DB Source
+buffers it as `i4` (its own `SqlCommand`'s result set declares it `int`), but the real
+destination table's column is `decimal(18,2)` -- a plain passthrough with no Data Conversion
+component, the same shape every other pairing in this family (`NarrowR8ToI4`, `NarrowI8ToI4`,
+`NarrowNumericToI4`, `NarrowR4ToI4`, `ParseWstrToI4`) already closes.
+
+**The one thing that makes this pairing different from every sibling in the family: it needed NO
+real dtexec probe at all.** Every other pairing exists because SSIS's own OLE DB provider
+performs an implicit NARROWING conversion at insert time whose exact rounding/truncation/
+overflow rule this tool has no evidence for without measuring it. `int -> decimal` is the
+opposite direction -- a strictly WIDENING, lossless C#-native implicit conversion (a `decimal`
+has far more precision than a 32-bit `int` could ever need), so there is no rounding question, no
+truncation question, and no overflow question to measure. Reasoned from first principles rather
+than guessed, and still verified end-to-end (below) with the same rigor as every measured
+pairing -- the "gaps not guesses" discipline is about not inventing an unmeasured RULE, not about
+refusing a provably-safe mechanical conversion.
+
+**What was built**, mirroring the existing family's own shape exactly, in
+`Tools/SsisExtractor/src/Ssis.Extract.Codegen/`:
+- `ColumnExpressionBuilders.cs`: `NumericCoercionKind` gained `WidenI4ToNumeric` -- the generic
+  `NumericCoercionExpressionBuilder.Build` dispatcher needed no change at all (it already emits
+  `SsisFn.{kind}(row.{columnName})` generically).
+- `TransformEmitter.cs`: a new `widenedI4ToNumericColumns` HashSet, populated in the existing
+  mismatch-detection loop by a new `sourceType.ClrTypeName == "int" && column.Type.ClrTypeName ==
+  "decimal"` branch (checked before the general `mismatchedTypeColumns` gap fallthrough, same
+  ordering as every sibling pairing), a matching emission branch, and a `CollectSsisFunctions`
+  entry for the `using`/helper-emission wiring.
+- `SsisFnEmitter.cs`: `WidenI4ToNumeric(int value) => value;` / `WidenI4ToNumeric(int? value) =>
+  value is null ? null : value.Value;` -- a plain implicit conversion, deliberately NOT `checked`
+  (unlike every narrowing sibling), since there is no overflow case for this pairing to guard
+  against at all.
+- `SsisPipelineTypeMap`/`i4`->`int`, `numeric`->`decimal` were already mapped (used by every
+  other feature in this codegen layer) -- confirmed by reading the map directly, no changes
+  needed there.
+
+**Verified four ways, the same tiers this project's philosophy asks for, minus the probe step
+that would have been pointless here:**
+1. **The real motivating package.** Regenerating `DailyETLMain.dtsx`: the `Last Cost Price` gap
+   is gone entirely (grepped `generate-report.md`/`gaps.json` for both the raw column name and
+   its sanitized form -- zero matches). Confirmed by DIFFERENCE against a clean, unmodified
+   baseline build of the same HEAD commit (`d70034a`, archived into a scratch directory via `git
+   archive` rather than touching the working tree): baseline reports **15** gaps for this
+   package, this round's own build reports **14** -- exactly one fewer, and the missing one is
+   the `Last Cost Price` mismatch. The emitted `Mapping/StockHolding_StagingTransform.cs` shows
+   `LastCostPrice = SsisFn.WidenI4ToNumeric(row.LastCostPrice),` directly.
+2. **A new dedicated fixture**, `Fixtures/SyntheticIntNumericWiden.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `int-numeric-widen` mode): OLE DB Source (SqlCommand, an
+   `int` "Val" column) -> OLE DB Destination (a `decimal(18,2)` "Val" column), no Data Conversion/
+   Derived Column in between. **Generated, built against a copy of `Etl.Core` (0 warnings/0
+   errors), and actually RUN against `.\SQLFORPOC_2022`**: three seeded rows (`42`, `-17`, `0`)
+   landed as `42.00`, `-17.00`, `.00` -- read back from the table directly, not trusted from the
+   exit code, an exact round-trip with zero precision loss. Backing tables:
+   `Fixtures/synthetic-int-numeric-widen-tables.sql` -- deliberately `NOT NULL` on both sides
+   (unlike most fixtures in this family), to avoid tripping a SEPARATE, already-documented,
+   pre-existing limitation (`SqlRowReaderEmitter` only guards a column with `IsDBNull(...)` when
+   it is "nullable-inferred" via `ISNULL` usage or Data Conversion's own structural nullability --
+   a plain numeric-passthrough-coercion column, in ANY of the six pairings in this family
+   including `WidenI4ToNumeric`, is never added to that set, so a genuinely nullable source column
+   would throw `SqlNullValueException` regardless of which coercion pairing is involved; this
+   exact exclusion was already made for `NarrowR8ToI4`'s own original probe row -- see the
+   "Numeric-passthrough-coercion for OLE DB/ADO NET destinations" section above -- not
+   reintroduced here).
+3. **New unit tests**, mirroring the family's own established shape: a `TransformEmitterTests`
+   case (`Emit_ResolvesAPlainPassthroughColumn_WhenSourceIsIntAndDestinationIsDecimal`) resolving
+   the pairing correctly with zero gaps; an `SsisFnEmitterTests` case
+   (`Emit_ProducesWidenI4ToNumeric_WithBothOverloads`) asserting both emitted overloads; a
+   `PackageGeneratorTests` case
+   (`Generate_ResolvesAnIntSourceDecimalDestinationPassthroughColumn_ViaWidenI4ToNumeric`) reading
+   the new fixture end to end.
+4. **Full regression suite**, `dotnet test SsisExtractor.slnx --no-build`: `181/181`
+   `Ssis.Runtime.Expressions.Tests`, `173/173` `Ssis.Extract.Tests`, `25/25`
+   `Ssis.Extract.Cli.Tests`, `453/455` `Ssis.Extract.Codegen.Tests` (was `450/452` before this
+   round -- the 2 unaffected pre-existing `GenerateGoldenFileTests` golden-string failures for
+   `LoadEmployees.dtsx`/`LoadReferenceData.dtsx`, unrelated to this pairing, confirmed identical
+   before and after).
+
+**A real, but entirely UNRELATED finding surfaced building the DailyETLMain-vs-baseline
+comparison above, worth recording precisely rather than glossed over: `DailyETLMain`'s own WHOLE
+regenerated solution does NOT currently build 0 warnings/0 errors**, on this round's own code OR
+on the unmodified baseline -- both fail identically with the exact same 6 `CS8618`s
+(`Employee.Photo`, `StockItem.Photo`, `City.Location`) this file's own immediately-preceding
+section ("identifier sanitization") already named and deliberately left unfixed as its own
+follow-up. Confirmed by diffing the baseline's own build output against this round's -- byte-for-
+byte the same 6 errors, same files, same line numbers, proving this round's own change neither
+caused nor fixed that pre-existing, unrelated gap. The `Last Cost Price` gap itself is fully
+closed and independently verified (both via the real package's own gap-count delta and the
+dedicated fixture's real end-to-end run above); the whole-solution build failure is a SEPARATE,
+already-named, out-of-scope issue, not something this round's own "0 warnings/0 errors" claim
+should be read as covering.
+
+**Remaining known gaps, updated:** Data Conversion target types other than the eight already
+closed, and the numeric-passthrough-coercion gap for every pairing other than the six now closed
+(`r8`/`i8`/`numeric`/`r4`/`wstr`/`i4` -> `i4`/`decimal`). The `int -> decimal` pairing, named
+above, is now closed.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

@@ -146,4 +146,21 @@ public class SsisFnEmitterTests
 
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }
+
+    [Fact]
+    public void Emit_ProducesWidenI4ToNumeric_WithBothOverloads()
+    {
+        // Added 2026-09-18 -- the one pairing in this whole family that needed no dtexec probe
+        // at all (int -> decimal is a strictly widening, lossless C#-native implicit
+        // conversion), so unlike every sibling test in this file there is no rounding-rule
+        // assertion to make here, only that both overloads exist and are plain, unchecked
+        // widenings.
+        var result = SsisFnEmitter.Emit("Package.Ssis", new HashSet<string> { "WidenI4ToNumeric" });
+
+        var file = Assert.Single(result.Files);
+        Assert.Contains("public static decimal WidenI4ToNumeric(int value) => value;", file.Content);
+        Assert.Contains("public static decimal? WidenI4ToNumeric(int? value)", file.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
 }

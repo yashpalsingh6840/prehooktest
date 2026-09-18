@@ -238,8 +238,16 @@ public static class TransformEmitter
         // speculatively 2026-08-30 (synthetic-int-numeric-coercion-tables.sql): a real dtexec run
         // confirmed the SAME round-to-nearest-ties-to-even rule as r8->i4/wstr->i4 for both
         // float-shaped pairings (numeric, r4); i8->i4 has no rounding question at all (both sides
-        // are already integers). Any OTHER numeric pairing still gaps rather than guessing the
-        // same rule applies -- a wrong guess would silently corrupt data instead of failing loudly.
+        // are already integers). A sixth pairing, int source -> decimal destination
+        // (i4 -> numeric), was added 2026-09-18 with NO dtexec probe at all -- unlike every
+        // pairing above, it is a strictly WIDENING, lossless C#-native implicit conversion (a
+        // decimal has far more precision than a 32-bit int could ever need), so there is no
+        // rounding/truncation/overflow question to measure. Real, evidenced instance:
+        // sql-server-samples' DailyETLMain.dtsx, StockHolding_Staging's own "Last Cost Price"
+        // (an OLE DB Source buffers it as i4 from a SqlCommand's own `int` result-set column,
+        // the real destination table's column is decimal(18,2)). Any OTHER numeric pairing still
+        // gaps rather than guessing the same rule applies -- a wrong guess would silently corrupt
+        // data instead of failing loudly.
         var isFlatFileDestination = request.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination";
         var inputColumnsByRefId = request.DestinationComponent.Inputs.FirstOrDefault()?.Columns
             .ToDictionary(c => c.RefId) ?? [];
@@ -249,6 +257,7 @@ public static class TransformEmitter
         var narrowedI8ToI4Columns = new HashSet<string>();
         var narrowedNumericToI4Columns = new HashSet<string>();
         var narrowedR4ToI4Columns = new HashSet<string>();
+        var widenedI4ToNumericColumns = new HashSet<string>();
         // Precomputed via the shared detector (not inline) because PackageGenerator's
         // ResolveNullableColumnNames needs the SAME answer before EntityEmitter runs --
         // ParseWstrToI4 always returns int? (string/string? are the same runtime type, unlike
@@ -290,6 +299,17 @@ public static class TransformEmitter
             if (sourceType.ClrTypeName == "float" && column.Type.ClrTypeName == "int")
             {
                 narrowedR4ToI4Columns.Add(column.PipelineColumnName);
+                continue;
+            }
+
+            if (sourceType.ClrTypeName == "int" && column.Type.ClrTypeName == "decimal")
+            {
+                // Strictly widening, lossless -- no dtexec probe was needed (see
+                // ColumnExpressionBuilders' own NumericCoercionKind doc comment). Real, evidenced
+                // instance: sql-server-samples' DailyETLMain.dtsx, StockHolding_Staging's own
+                // "Last Cost Price" (buffered i4 from a SqlCommand result set, decimal(18,2) at
+                // the real destination table).
+                widenedI4ToNumericColumns.Add(column.PipelineColumnName);
                 continue;
             }
 
@@ -480,6 +500,15 @@ public static class TransformEmitter
             else if (narrowedR4ToI4Columns.Contains(column.PipelineColumnName))
             {
                 var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowR4ToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
+                CollectSsisFunctions(expr, functionsUsed);
+                assignments.Add($"        {destId} = {expr},");
+            }
+            else if (widenedI4ToNumericColumns.Contains(column.PipelineColumnName))
+            {
+                // SsisFn.WidenI4ToNumeric has both an int and an int? overload -- the same call
+                // shape works whether or not this column is nullable-inferred, same reasoning as
+                // every other coercion helper above.
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.WidenI4ToNumeric, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {destId} = {expr},");
             }
@@ -1033,6 +1062,7 @@ public static class TransformEmitter
         if (csharpExpression.Contains("SsisFn.NarrowNumericToI4(")) functionsUsed.Add("NarrowNumericToI4");
         if (csharpExpression.Contains("SsisFn.NarrowR4ToI4(")) functionsUsed.Add("NarrowR4ToI4");
         if (csharpExpression.Contains("SsisFn.ParseWstrToI4(")) functionsUsed.Add("ParseWstrToI4");
+        if (csharpExpression.Contains("SsisFn.WidenI4ToNumeric(")) functionsUsed.Add("WidenI4ToNumeric");
         if (csharpExpression.Contains("SsisFn.ToNullableR8(")) functionsUsed.Add("ToNullableR8");
         if (csharpExpression.Contains("SsisFn.ToNullableBool(")) functionsUsed.Add("ToNullableBool");
         if (csharpExpression.Contains("SsisFn.ToWstr(")) functionsUsed.Add("ToWstr");

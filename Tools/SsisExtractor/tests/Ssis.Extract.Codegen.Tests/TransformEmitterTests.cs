@@ -145,6 +145,74 @@ public class TransformEmitterTests
     }
 
     [Fact]
+    public void Emit_ResolvesAPlainPassthroughColumn_WhenSourceIsIntAndDestinationIsDecimal()
+    {
+        // Added 2026-09-18 -- the real shape sql-server-samples' own DailyETLMain.dtsx has
+        // (StockHolding_Staging's own "Last Cost Price": buffered i4 from a SqlCommand's own
+        // `int` result-set column, decimal(18,2) at the real destination table). Unlike every
+        // other pairing in this file, this needed NO dtexec probe -- int -> decimal is a
+        // strictly widening, lossless C#-native implicit conversion, so there's no rounding/
+        // truncation/overflow rule to measure.
+        var destination = new PipelineComponentSpec
+        {
+            RefId = "DST_Test",
+            Name = "OLE DB Destination",
+            ComponentClassId = "Microsoft.OLEDBDestination",
+            Inputs =
+            [
+                new PipelineInputSpec
+                {
+                    RefId = "DST_Test.Inputs[OLE DB Destination Input]",
+                    Name = "OLE DB Destination Input",
+                    Columns =
+                    [
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[LastCostPrice]",
+                            CachedName = "LastCostPrice",
+                            CachedDataType = "i4",
+                            LineageId = "SRC.Outputs[Output].Columns[LastCostPrice]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[LastCostPrice]",
+                        },
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[Name]",
+                            CachedName = "Name",
+                            CachedDataType = "wstr",
+                            LineageId = "SRC.Outputs[Output].Columns[Name]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Name]",
+                        },
+                    ],
+                    ExternalMetadataColumns =
+                    [
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[LastCostPrice]", Name = "LastCostPrice", DataType = "numeric", Precision = 18, Scale = 2 },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Name]", Name = "Name", DataType = "wstr", Length = 50 },
+                    ],
+                },
+            ],
+        };
+        var pipeline = new PipelineSpec { Components = [destination] };
+
+        var request = new TransformRequest(
+            "Generated.Mapping", "StockHoldingStagingTransform",
+            "Generated.Sql", "StockHoldingStagingRow",
+            "Generated.Model", "StockHoldingStaging",
+            "Generated.Ssis",
+            pipeline, [], destination);
+
+        var result = TransformEmitter.Emit(request);
+
+        Assert.Empty(result.Result.Gaps);
+        Assert.Equal(["WidenI4ToNumeric"], result.SsisFunctionsUsed);
+
+        var file = Assert.Single(result.Result.Files);
+        Assert.Contains("LastCostPrice = SsisFn.WidenI4ToNumeric(row.LastCostPrice),", file.Content);
+        Assert.Contains("Name = row.Name,", file.Content);
+        Assert.Contains("using Generated.Ssis;", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+    [Fact]
     public void Emit_ReportsAGap_ForAPlainPassthroughColumn_WithAnUnevidencedNumericMismatch()
     {
         // i2 (smallint) -> i4 (int) has never been measured against a real dtexec run -- unlike

@@ -80,7 +80,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|lookup-no-match-is-live|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources|union-plus-extra-source|aggregate-then-oledb-command|event-handler-probe|error-redirect|expression-task|expression-task-coercion-probe|expression-task-millisecond|for-loop|xml-source|scd-composite-key|cross-database-source|identifier-sanitization]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|int-numeric-widen|data-conversion-types2|lookup-single|lookup-no-match-is-live|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources|union-plus-extra-source|aggregate-then-oledb-command|event-handler-probe|error-redirect|expression-task|expression-task-coercion-probe|expression-task-millisecond|for-loop|xml-source|scd-composite-key|cross-database-source|identifier-sanitization]");
             return 2;
         }
 
@@ -196,6 +196,10 @@ internal static class Program
         if (fixtureName == "int-numeric-coercion")
         {
             return BuildIntNumericCoercionFixture(args[0]);
+        }
+        if (fixtureName == "int-numeric-widen")
+        {
+            return BuildIntNumericWidenFixture(args[0]);
         }
         if (fixtureName == "data-conversion-types2")
         {
@@ -371,7 +375,7 @@ internal static class Program
         }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', 'union-plus-extra-source', 'aggregate-then-oledb-command', 'event-handler-probe', 'error-redirect', 'expression-task', 'expression-task-coercion-probe', 'expression-task-millisecond', 'pct-sampling', or 'xml-source'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'int-numeric-widen', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', 'union-plus-extra-source', 'aggregate-then-oledb-command', 'event-handler-probe', 'error-redirect', 'expression-task', 'expression-task-coercion-probe', 'expression-task-millisecond', 'pct-sampling', or 'xml-source'.");
 
             return 2;
         }
@@ -3762,6 +3766,50 @@ internal static class Program
 
         var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
             accessMode: 3, openRowset: "[dbo].[SyntheticIntNumericCoercionTarget]");
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand, an int "Val" column) -> OLE DB Destination (a decimal(18,2)
+    /// "Val" column), a plain passthrough with NO Data Conversion and NO Derived Column in
+    /// between -- reproduces, in isolation, the exact real shape sql-server-samples' own
+    /// DailyETLMain.dtsx has (StockHolding_Staging's own "Last Cost Price": buffered i4 from a
+    /// SqlCommand's own `int` result-set column, decimal(18,2) at the real destination table).
+    /// Added 2026-09-18. Unlike every other numeric-coercion fixture in this file, this one is
+    /// NOT a dtexec probe -- int -> decimal is a strictly widening, lossless C#-native implicit
+    /// conversion, so there is no rounding/truncation/overflow rule to measure; this fixture
+    /// exists purely to prove the generated C# round-trips the value exactly.
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-int-numeric-widen-tables.sql</c> already
+    /// created on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildIntNumericWidenFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticIntNumericWiden" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Coerce";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Val FROM dbo.SyntheticIntNumericWidenInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticIntNumericWidenTarget]");
         var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
         AttachPath(pipe, srcOutput, destMeta.InputCollection[0]);
         ResolveOleDbMetadata(destMeta, isDestination: true);

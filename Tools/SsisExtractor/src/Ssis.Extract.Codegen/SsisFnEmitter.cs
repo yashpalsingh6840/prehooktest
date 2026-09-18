@@ -36,6 +36,7 @@ public static class SsisFnEmitter
         if (functionsUsed.Contains("NarrowNumericToI4")) bodies.Add(NarrowNumericToI4Body());
         if (functionsUsed.Contains("NarrowR4ToI4")) bodies.Add(NarrowR4ToI4Body());
         if (functionsUsed.Contains("ParseWstrToI4")) bodies.Add(ParseWstrToI4Body());
+        if (functionsUsed.Contains("WidenI4ToNumeric")) bodies.Add(WidenI4ToNumericBody());
         if (functionsUsed.Contains("ToNullableR8")) bodies.Add(ToNullableR8Body());
         if (functionsUsed.Contains("ToNullableBool")) bodies.Add(ToNullableBoolBody());
         if (functionsUsed.Contains("ToNullableI2")) bodies.Add(ToNullableI2Body());
@@ -288,6 +289,26 @@ public static class SsisFnEmitter
         "    /// </summary>",
         "    public static int? ParseWstrToI4(string? value) =>",
         "        value is null ? null : checked((int)Math.Round(double.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture)));",
+    ];
+
+    private static List<string> WidenI4ToNumericBody() =>
+    [
+        "    /// <summary>",
+        "    /// A plain passthrough column whose source buffer is int (DT_I4) but whose destination",
+        "    /// column is decimal (DT_NUMERIC), with no explicit Data Conversion component -- added",
+        "    /// 2026-09-18, the real shape sql-server-samples' own DailyETLMain.dtsx has",
+        "    /// (StockHolding_Staging's own \"Last Cost Price\": buffered i4 from a SqlCommand's own",
+        "    /// `int` result-set column, decimal(18,2) at the real destination table). UNLIKE every",
+        "    /// other coercion in this file, this one needed NO dtexec probe at all -- int -> decimal",
+        "    /// is a strictly WIDENING, lossless C#-native implicit conversion (a decimal has far",
+        "    /// more precision than a 32-bit int could ever need), so there is no rounding/",
+        "    /// truncation/overflow question to measure. A plain implicit conversion, not `checked`",
+        "    /// -- there is no overflow case for this pairing to guard against.",
+        "    /// </summary>",
+        "    public static decimal WidenI4ToNumeric(int value) => value;",
+        "",
+        "    /// <summary>Nullable-source overload -- a NULL source value passes through as NULL.</summary>",
+        "    public static decimal? WidenI4ToNumeric(int? value) => value is null ? null : value.Value;",
     ];
 
     private static List<string> ToNullableR8Body() =>

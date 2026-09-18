@@ -1301,6 +1301,34 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_ResolvesAnIntSourceDecimalDestinationPassthroughColumn_ViaWidenI4ToNumeric()
+    {
+        // SyntheticIntNumericWiden.dtsx, added 2026-09-18 -- the real shape sql-server-samples'
+        // own DailyETLMain.dtsx has (StockHolding_Staging's own "Last Cost Price": buffered i4
+        // from a SqlCommand's own `int` result-set column, decimal(18,2) at the real destination
+        // table). UNLIKE every other numeric-coercion pairing, this one needed no dtexec probe --
+        // int -> decimal is a strictly widening, lossless C#-native implicit conversion. Confirmed
+        // beyond this test by actually building the generated exe against a copy of Etl.Core and
+        // running it against .\SQLFORPOC_2022: 42/-17/0 landed as 42.00/-17.00/.00, an exact
+        // round-trip with no precision loss.
+        var package = LoadSyntheticFixture("SyntheticIntNumericWiden.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var transform = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticIntNumericWidenTargetTransform.cs");
+        Assert.Contains("Val = SsisFn.WidenI4ToNumeric(row.Val),", transform.Content);
+        CodeAssertions.AssertNoSyntaxErrors(transform.Content);
+
+        var ssisFn = Assert.Single(result.Files, f => f.RelativePath == "Ssis/SsisFn.cs");
+        Assert.Contains("WidenI4ToNumeric", ssisFn.Content);
+
+        // Only the two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption
+        // on the source, and Notification. No numeric-mismatch gap for the Val column.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+    }
+
+    [Fact]
     public void Generate_WiresAnAggregateFlow_ViaAggregateRowSourceWrappingTheRawSqlSource()
     {
         // SyntheticAggregate.dtsx, built speculatively 2026-08-30 (see PackagePlannerTests' own
