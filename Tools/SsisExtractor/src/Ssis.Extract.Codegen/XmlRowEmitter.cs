@@ -38,6 +38,10 @@ public static class XmlRowEmitter
             .Select(u => new GenerationGap($"{rowClassName}.{u.ColumnName}", u.Reason))
             .ToList();
 
+        // XmlRowReaderEmitter independently reproduces this exact mapping (same input list,
+        // same order) -- see PackageGenerator.MakeColumnIdentifierResolver's own doc comment.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var propertyLines = new List<string>();
         foreach (var column in resolved.Columns)
         {
@@ -51,7 +55,7 @@ public static class XmlRowEmitter
             if (propertyLines.Count > 0) propertyLines.Add("");
             var isString = column.Type.ClrTypeName == "string";
             var typeName = isString ? "string?" : column.Type.ClrTypeName;
-            propertyLines.Add($"    public {typeName} {column.PipelineColumnName} {{ get; set; }}");
+            propertyLines.Add($"    public {typeName} {identifierOf(column.PipelineColumnName)} {{ get; set; }}");
         }
 
         if (propertyLines.Count == 0)

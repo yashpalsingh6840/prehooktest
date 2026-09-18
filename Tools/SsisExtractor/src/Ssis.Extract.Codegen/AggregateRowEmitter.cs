@@ -40,6 +40,12 @@ public static class AggregateRowEmitter
         var nullableColumnNames = new HashSet<string>(
             aggregate.Functions.Where(f => NullableAggregationTypes.Contains(f.AggregationTypeRaw)).Select(f => f.OutputColumnName));
 
+        // ProgramEmitter's own (key, rows) => new {RowType} { ... } projection independently
+        // sanitizes the SAME raw output column names via bare PackageGenerator.SanitizeIdentifier
+        // -- see that method's own doc comment for why this agrees in the (only evidenced)
+        // non-collision case.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var gaps = new List<GenerationGap>();
         var propertyLines = new List<string>();
         foreach (var column in output.Columns)
@@ -56,7 +62,7 @@ public static class AggregateRowEmitter
             var isNullable = type.ClrTypeName != "string" && nullableColumnNames.Contains(column.Name);
             var clrTypeName = isNullable ? type.ClrTypeName + "?" : type.ClrTypeName;
             var initializer = !isNullable && type.ClrTypeName == "string" ? " = \"\";" : "";
-            propertyLines.Add($"    public {clrTypeName} {column.Name} {{ get; set; }}{initializer}");
+            propertyLines.Add($"    public {clrTypeName} {identifierOf(column.Name)} {{ get; set; }}{initializer}");
         }
 
         if (propertyLines.Count == 0)

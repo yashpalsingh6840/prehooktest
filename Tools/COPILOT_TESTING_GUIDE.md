@@ -145,6 +145,18 @@ a REAL server means editing that one line in the generated (but human-editable, 
 `generate/`'s main tree) `TestDoubles/PackageHarness.cs` for a local run, not something this
 guide automates for you.
 
+**A cross-database source (Phase 5, added 2026-09-17) needs the SAME edit, on the SEPARATE
+`secondaryConnectionConfig` dictionary a few lines below `_databaseOptions`** -- not that field
+itself, which is the package's PRIMARY connection. Its `Server`/`Database` default to
+`"(local)\NonexistentInstance12345"`/`"Fake"` for the same "unreachable by default" reason. Only
+`Server`/`Database`/`ConnectTimeoutSeconds` are wired by default; a real server needing
+`TrustServerCertificate`/`Encrypt`/a different `AuthMode` needs those keys ADDED to the same
+dictionary (`["SecondaryConnections:{name}:TrustServerCertificate"] = "true"`, etc.) -- confirmed
+necessary, not just plausible, verifying this feature end to end: a self-signed local instance
+failed with an SSL trust error until that key was added by hand, the exact same
+`TrustServerCertificate=True` requirement CLAUDE.md's own SMO-catalog-admin notes already
+document for a different tool in this repo.
+
 ## `RunAsync`'s two starter tests, and why they look different per package
 
 **Failure path -- always emittable, every package, no exceptions.** Sets

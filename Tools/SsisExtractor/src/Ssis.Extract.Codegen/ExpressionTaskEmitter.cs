@@ -25,8 +25,8 @@ namespace Ssis.Extract.Codegen;
 /// evaluated live at the moment the task actually runs -- arguably a MORE faithful translation
 /// of SSIS's own live per-execution evaluation than a per-row constant would be.</para>
 ///
-/// <para>Scoped deliberately to just the shapes evidenced across the two real packages this was
-/// built against (<c>DailyETLMain.dtsx</c>, Phase 2; <c>Package.dtsx</c>'s own "For Loop
+/// <para>Scoped deliberately to just the shapes evidenced across the packages this was built
+/// against (<c>DailyETLMain.dtsx</c>, Phases 2 and 6; <c>Package.dtsx</c>'s own "For Loop
 /// Container" AssignExpression, Phase 3 -- see <see cref="ForLoopEmitter"/>, which reuses this
 /// translator wholesale after rewriting its own bare-@ variable form): <see cref="StringLiteral"/>,
 /// <see cref="IntLiteral"/>, negation (<see cref="UnaryOp.Negate"/>), a bare <see cref="Reference"/>
@@ -34,13 +34,17 @@ namespace Ssis.Extract.Codegen;
 /// conditional precedence-constraint guard already reads one, see
 /// <c>PackagePlanner.TranslateGuardExpression</c> -- not evidenced in this specific task type, but
 /// the identical mechanism, so reusing it costs nothing new), <c>GETUTCDATE()</c>/<c>GETDATE()</c>,
-/// <c>DATEADD</c> (reusing <see cref="ExpressionTranslator.DateAddMethodNames"/> directly, the
-/// same oracle-verified mapping a Derived Column's own DATEADD usage would use, so the two can
-/// never disagree on what a given datepart means), and NUMERIC <c>+</c> (Phase 3's own real
-/// evidenced need: incrementing a loop counter, <c>@Part = @Part + 1</c> -- deliberately NOT
-/// string concatenation, which is unevidenced for a control-flow-level assignment and stays a
-/// named gap rather than a guess). Anything else degrades to <see cref="NotTranslatable"/> rather
-/// than a guess, the same "gaps not guesses" rule every other translator in this tool follows.</para>
+/// <c>DATEADD</c> (reusing <see cref="ExpressionTranslator.DateAddMethodNames"/> directly for every
+/// datepart except "Millisecond"/"ms", the same oracle-verified mapping a Derived Column's own
+/// DATEADD usage would use, so the two can never disagree on what a given datepart means),
+/// <c>DATEPART</c> (only "Millisecond"/"ms", added Phase 6 -- see <see cref="TranslateDatePart"/>),
+/// and NUMERIC <c>+</c>/<c>-</c> (Phase 3's own real evidenced need for '+': incrementing a loop
+/// counter, <c>@Part = @Part + 1</c>; Phase 6's own real evidenced need for '-':
+/// <c>0 - DATEPART("Millisecond", @X)</c>, DailyETLMain's own "Trim Any Milliseconds" task --
+/// deliberately NOT string concatenation for either operator, which is unevidenced for a
+/// control-flow-level assignment and stays a named gap rather than a guess). Anything else
+/// degrades to <see cref="NotTranslatable"/> rather than a guess, the same "gaps not guesses"
+/// rule every other translator in this tool follows.</para>
 /// </summary>
 public static class ExpressionTaskEmitter
 {
@@ -161,11 +165,26 @@ public static class ExpressionTaskEmitter
 
         FunctionCall { Name: "DATEADD", Args.Count: 3 } dateadd => TranslateDateAdd(dateadd, variables),
 
+        // DATEPART -- only "Millisecond"/"ms" is oracle-verified (2026-09-17, Phase 6 of the
+        // unsupported-component-types plan). Added here specifically for the real evidenced call
+        // this closes: DailyETLMain.dtsx's own "Trim Any Milliseconds" task,
+        // DATEADD("Millisecond", 0 - DATEPART("Millisecond", @X), @X). See TranslateDatePart's
+        // own comment for the measured quantization it reproduces.
+        FunctionCall { Name: "DATEPART", Args.Count: 2 } datepart => TranslateDatePart(datepart, variables),
+
         BinaryExpr { Op: BinaryOp.Add } add => TranslateNumericAdd(add, variables),
+
+        // Subtraction -- added 2026-09-17, Phase 6, specifically for the real evidenced call's
+        // own "0 - DATEPART(...)" shape. Scoped identically narrow to '+' above: only NUMERIC
+        // operands (at least one side unambiguously an int literal, a negation of one, a
+        // reference to an I2/I4/I8-typed variable, or DATEPART -- which always returns an int),
+        // never string concatenation (unevidenced for '-' at this level, same reasoning as '+').
+        BinaryExpr { Op: BinaryOp.Sub } sub => TranslateNumericSub(sub, variables),
 
         _ => new NotTranslatable(
             $"unsupported expression shape: {node.GetType().Name} -- only string/int literals, negation, a " +
-            "reference to another package variable, GETUTCDATE()/GETDATE(), DATEADD, and numeric '+' are supported"),
+            "reference to another package variable, GETUTCDATE()/GETDATE(), DATEADD, DATEPART, and numeric " +
+            "'+'/'-' are supported"),
     };
 
     /// <summary>Added for Phase 3 (STOCK:FORLOOP's own AssignExpression, e.g. <c>@Part = @Part + 1</c>
@@ -190,36 +209,86 @@ public static class ExpressionTaskEmitter
         return new TranslatedOk($"({((TranslatedOk)left).CSharpExpression}) + ({((TranslatedOk)right).CSharpExpression})");
     }
 
+    /// <summary>Added 2026-09-17, Phase 6, specifically for the real evidenced call's own
+    /// "0 - DATEPART(...)" shape (DailyETLMain.dtsx's "Trim Any Milliseconds" task). Scoped
+    /// identically to <see cref="TranslateNumericAdd"/> -- only NUMERIC operands, never string
+    /// concatenation (unevidenced for '-' at this level; SSIS's own expression grammar doesn't
+    /// even define '-' between strings the way '+' overloads to concatenation).</summary>
+    private static TranslatedExpression TranslateNumericSub(BinaryExpr sub, IReadOnlyDictionary<string, ColumnReference> variables)
+    {
+        var left = TranslateNode(sub.Left, variables);
+        if (left is NotTranslatable) return left;
+        var right = TranslateNode(sub.Right, variables);
+        if (right is NotTranslatable) return right;
+
+        if (IsNumeric(sub.Left, variables) != true && IsNumeric(sub.Right, variables) != true)
+            return new NotTranslatable(
+                "'-' is only supported between numeric operands (e.g. \"0 - DATEPART(...)\")");
+
+        return new TranslatedOk($"({((TranslatedOk)left).CSharpExpression}) - ({((TranslatedOk)right).CSharpExpression})");
+    }
+
     /// <summary>True/false when this node's own numeric-ness can be determined without evaluating
-    /// it (a literal, a negation, or a reference to a variable with a known declared type); null
-    /// when it can't be -- callers only need ONE side to resolve true to treat the whole
-    /// expression as numeric addition.</summary>
+    /// it (a literal, a negation, a reference to a variable with a known declared type, or a
+    /// DATEPART call -- which always returns an int); null when it can't be -- callers only need
+    /// ONE side to resolve true to treat the whole expression as numeric addition/subtraction.</summary>
     private static bool? IsNumeric(ExprNode node, IReadOnlyDictionary<string, ColumnReference> variables) => node switch
     {
         IntLiteral => true,
         StringLiteral => false,
         UnaryExpr { Op: UnaryOp.Negate } u => IsNumeric(u.Operand, variables),
         Reference r when variables.TryGetValue(r.Name, out var resolved) => resolved.Type is SsisType.I2 or SsisType.I4 or SsisType.I8,
+        FunctionCall { Name: "DATEPART" } => true,
         _ => null,
     };
 
     /// <summary>Mirrors <c>ExpressionTranslator.TranslateDateAdd</c> exactly (same measured
-    /// datepart-&gt;method mapping, same literal-datepart requirement), differing only in
-    /// resolving nested references/GETUTCDATE/GETDATE through THIS translator's own
+    /// datepart-&gt;method mapping, same literal-datepart requirement, same "Millisecond"/"ms"
+    /// special case routed to <c>SsisFn.DateAddMillisecond</c> instead of a plain BCL method --
+    /// see that translator's own comment for why), differing only in resolving nested
+    /// references/GETUTCDATE/GETDATE through THIS translator's own
     /// <see cref="TranslateNode"/> rather than the pipeline-row-coupled one.</summary>
     private static TranslatedExpression TranslateDateAdd(FunctionCall node, IReadOnlyDictionary<string, ColumnReference> variables)
     {
-        if (node.Args[0] is not StringLiteral { Value: var part } || !ExpressionTranslator.DateAddMethodNames.TryGetValue(part, out var method))
+        if (node.Args[0] is not StringLiteral { Value: var part })
             return new NotTranslatable(
                 "DATEADD is only supported with a literal date part of \"Minute\"/\"mi\", \"Day\", \"Hour\", " +
-                "\"Month\", \"Year\", or \"Second\" -- the only ones oracle-verified against the real evaluator");
+                "\"Month\", \"Year\", \"Second\", or \"Millisecond\"/\"ms\" -- the only ones oracle-verified against the real evaluator");
 
         var number = TranslateNode(node.Args[1], variables);
         if (number is NotTranslatable) return number;
         var date = TranslateNode(node.Args[2], variables);
         if (date is NotTranslatable) return date;
 
-        return new TranslatedOk(
-            $"{((TranslatedOk)date).CSharpExpression}.{method}({((TranslatedOk)number).CSharpExpression})");
+        var numberExpr = ((TranslatedOk)number).CSharpExpression;
+        var dateExpr = ((TranslatedOk)date).CSharpExpression;
+
+        if (string.Equals(part, "Millisecond", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(part, "ms", StringComparison.OrdinalIgnoreCase))
+            return new TranslatedOk($"SsisFn.DateAddMillisecond({dateExpr}, {numberExpr})");
+
+        if (!ExpressionTranslator.DateAddMethodNames.TryGetValue(part, out var method))
+            return new NotTranslatable(
+                "DATEADD is only supported with a literal date part of \"Minute\"/\"mi\", \"Day\", \"Hour\", " +
+                "\"Month\", \"Year\", \"Second\", or \"Millisecond\"/\"ms\" -- the only ones oracle-verified against the real evaluator");
+
+        return new TranslatedOk($"{dateExpr}.{method}({numberExpr})");
+    }
+
+    /// <summary>DATEPART -- only "Millisecond"/"ms" is oracle-verified (2026-09-17, Phase 6),
+    /// mirroring <c>ExpressionTranslator.TranslateDatePart</c>'s own reasoning and routing to the
+    /// SAME <c>SsisFn.DatePartMillisecond</c> helper, so the two can never disagree.</summary>
+    private static TranslatedExpression TranslateDatePart(FunctionCall node, IReadOnlyDictionary<string, ColumnReference> variables)
+    {
+        if (node.Args[0] is not StringLiteral { Value: var part }
+            || (!string.Equals(part, "Millisecond", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(part, "ms", StringComparison.OrdinalIgnoreCase)))
+            return new NotTranslatable(
+                "DATEPART is only supported with the literal date part \"Millisecond\"/\"ms\" -- the only one oracle-verified against the real evaluator");
+
+        var date = TranslateNode(node.Args[1], variables);
+        if (date is NotTranslatable) return date;
+
+        return new TranslatedOk($"SsisFn.DatePartMillisecond({((TranslatedOk)date).CSharpExpression})");
     }
 }

@@ -215,6 +215,12 @@ public static class ExpressionTranslator
         // see TranslateDateAdd's own comment for the exact measured datepart set.
         FunctionCall { Name: "DATEADD", Args.Count: 3 } dateadd => TranslateDateAdd(dateadd, references),
 
+        // DATEPART(datepart, date) -- only "Millisecond" is oracle-verified (2026-09-17, Phase
+        // 6 of the unsupported-component-types plan, for the real evidenced call this
+        // supports -- see TranslateDatePart's own comment). Any other datepart literal degrades
+        // rather than guesses, same discipline as DATEDIFF/DATEADD above.
+        FunctionCall { Name: "DATEPART", Args.Count: 2 } datepart => TranslateDatePart(datepart, references),
+
         Cast { Type: SsisType.WStr or SsisType.Str } cast => TranslateIntToStringCast(cast, references),
 
         // Ternary (cond ? whenTrue : whenFalse) -- the AST/evaluator already exist and are
@@ -439,22 +445,67 @@ public static class ExpressionTranslator
     /// translated via TranslateValue so a nested GETUTCDATE()/GETDATE() (the real evidenced
     /// date argument) resolves through the switch case above. Maps directly to
     /// <c>date.AddX(number)</c> -- see <see cref="DateAddMethodNames"/>'s own comment for why
-    /// no SsisFn wrapper is needed.</summary>
+    /// no SsisFn wrapper is needed for those dateparts.
+    ///
+    /// <b>"Millisecond"/"ms" is special-cased BEFORE consulting <see cref="DateAddMethodNames"/>,
+    /// not added to it</b> -- unlike every other datepart, DATEADD("Millisecond", ...) does NOT
+    /// map onto a plain BCL <c>DateTime.AddX</c> call: measured against the real SSIS 22
+    /// evaluator 2026-09-17 (Phase 6 of the unsupported-component-types plan), its own internal
+    /// arithmetic quantizes to the nearest 1/300-second tick (the legacy OLE Automation Date
+    /// time-resolution limit) rather than adding milliseconds exactly, so a plain
+    /// <c>date.AddMilliseconds(number)</c> would NOT reproduce it. Routed instead to
+    /// <c>SsisFn.DateAddMillisecond</c> -- see <c>SsisFnEmitter.DateAddMillisecondBody</c>'s own
+    /// doc comment for the full measured algorithm.</summary>
     private static TranslatedExpression TranslateDateAdd(
         FunctionCall node, IReadOnlyDictionary<string, ColumnReference> references)
     {
-        if (node.Args[0] is not StringLiteral { Value: var part } || !DateAddMethodNames.TryGetValue(part, out var method))
+        if (node.Args[0] is not StringLiteral { Value: var part })
             return new NotTranslatable(
                 "DATEADD is only supported with a literal date part of \"Minute\"/\"mi\", \"Day\", \"Hour\", " +
-                "\"Month\", \"Year\", or \"Second\" -- the only ones oracle-verified against the real evaluator");
+                "\"Month\", \"Year\", \"Second\", or \"Millisecond\"/\"ms\" -- the only ones oracle-verified against the real evaluator");
 
         var number = TranslateValue(node.Args[1], references);
         if (number is NotTranslatable) return number;
         var date = TranslateValue(node.Args[2], references);
         if (date is NotTranslatable) return date;
 
-        return new TranslatedOk(
-            $"{((TranslatedOk)date).CSharpExpression}.{method}({((TranslatedOk)number).CSharpExpression})");
+        var numberExpr = ((TranslatedOk)number).CSharpExpression;
+        var dateExpr = ((TranslatedOk)date).CSharpExpression;
+
+        if (string.Equals(part, "Millisecond", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(part, "ms", StringComparison.OrdinalIgnoreCase))
+            return new TranslatedOk($"SsisFn.DateAddMillisecond({dateExpr}, {numberExpr})");
+
+        if (!DateAddMethodNames.TryGetValue(part, out var method))
+            return new NotTranslatable(
+                "DATEADD is only supported with a literal date part of \"Minute\"/\"mi\", \"Day\", \"Hour\", " +
+                "\"Month\", \"Year\", \"Second\", or \"Millisecond\"/\"ms\" -- the only ones oracle-verified against the real evaluator");
+
+        return new TranslatedOk($"{dateExpr}.{method}({numberExpr})");
+    }
+
+    /// <summary>DATEPART(datepart, date) -- only "Millisecond"/"ms" is oracle-verified (2026-09-17,
+    /// Phase 6 of the unsupported-component-types plan, for the real evidenced call
+    /// DATEPART("Millisecond", @[User::TargetETLCutoffTime]) inside sql-server-samples'
+    /// DailyETLMain.dtsx's own "Trim Any Milliseconds" Expression Task -- see
+    /// <see cref="ExpressionTaskEmitter"/> for the control-flow half of this translation. Added
+    /// here too, mirroring DATEADD's own reasoning, since a Derived Column could plausibly need
+    /// it as well. Routes to <c>SsisFn.DatePartMillisecond</c> -- see
+    /// <c>SsisFnEmitter.DatePartMillisecondBody</c>'s own doc comment for the measured
+    /// quantization algorithm shared with DATEADD.</summary>
+    private static TranslatedExpression TranslateDatePart(
+        FunctionCall node, IReadOnlyDictionary<string, ColumnReference> references)
+    {
+        if (node.Args[0] is not StringLiteral { Value: var part }
+            || (!string.Equals(part, "Millisecond", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(part, "ms", StringComparison.OrdinalIgnoreCase)))
+            return new NotTranslatable(
+                "DATEPART is only supported with the literal date part \"Millisecond\"/\"ms\" -- the only one oracle-verified against the real evaluator");
+
+        var date = TranslateValue(node.Args[1], references);
+        if (date is NotTranslatable) return date;
+
+        return new TranslatedOk($"SsisFn.DatePartMillisecond({((TranslatedOk)date).CSharpExpression})");
     }
 
     private static TranslatedExpression TranslateFunctionArgs(

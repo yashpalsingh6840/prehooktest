@@ -146,8 +146,14 @@ public static class PackageClassEmitter
             || multicasts.Any(m => m.Branches.Any(b => b.Sink is SqlFlowSink)) || dataFlowLoops.Count > 0 || forLoops.Count > 0
             || scds.Any(s => s.Branches.Any(b => b.Sink is SqlFlowSink));
         usesLookupPreload = flows.Any(f => f.Lookup is not null);
+        // Phase 5 (2026-09-17): a Data Flow source can be secondary-connection too, not just an
+        // Execute SQL Task's own write side -- allSources is already flattened through Merge
+        // Join/Aggregate/Union's own nested sides, so this single check covers one hiding inside
+        // any of them too, the same reasoning supportsFakeHappyPath's own check below relies on.
         var secondaryConnectionNames = request.Steps.OfType<ProgramSecondaryConnectionSqlStep>()
-            .Select(s => s.ConnectionManagerName).Distinct().ToList();
+            .Select(s => s.ConnectionManagerName)
+            .Concat(allSources.OfType<SqlFlowSource>().Select(s => s.SecondaryConnectionManagerName).OfType<string>())
+            .Distinct().ToList();
         var usesFlatFileSink = flows.Any(f => f.Sink is FlatFileFlowSink) || multicasts.Any(m => m.Branches.Any(b => b.Sink is FlatFileFlowSink));
         var usesRowCount = flows.Any(f => f.RowCountVariableNames is { Count: > 0 });
         var usesExcelWhereFilter = allSources.Any(s => s is ExcelFlowSource { WhereFilter: not null });
@@ -202,17 +208,24 @@ public static class PackageClassEmitter
 
         // ----- shared source/sink construction, recursive for Merge Join/Union/Aggregate -----
 
-        string EmitAggregateFunctionExpression(AggregateFunctionFieldSpec fn) => fn.AggregationTypeRaw switch
+        // fn.SourcePropertyName is a raw source-row column name -- see
+        // PackageGenerator.SanitizeIdentifier's own doc comment (a SOURCE-side reference, sanitized
+        // bare at each use, same convention as every other row.{X}/r.{X} reference in this file).
+        string EmitAggregateFunctionExpression(AggregateFunctionFieldSpec fn)
         {
-            1 => $"rows.Count(r => r.{fn.SourcePropertyName} != null)",
-            2 => "rows.Count",
-            3 => $"rows.Select(r => r.{fn.SourcePropertyName}).Where(v => v != null).Distinct().Count()",
-            4 => $"rows.All(r => r.{fn.SourcePropertyName} == null) ? null : rows.Sum(r => r.{fn.SourcePropertyName})",
-            5 => $"rows.Average(r => r.{fn.SourcePropertyName})",
-            6 => $"rows.Min(r => r.{fn.SourcePropertyName})",
-            7 => $"rows.Max(r => r.{fn.SourcePropertyName})",
-            _ => throw new InvalidOperationException($"unsupported AggregationType {fn.AggregationTypeRaw} reached PackageClassEmitter -- PackagePlanner should have rejected this"),
-        };
+            var src = fn.SourcePropertyName is null ? null : PackageGenerator.SanitizeIdentifier(fn.SourcePropertyName);
+            return fn.AggregationTypeRaw switch
+            {
+                1 => $"rows.Count(r => r.{src} != null)",
+                2 => "rows.Count",
+                3 => $"rows.Select(r => r.{src}).Where(v => v != null).Distinct().Count()",
+                4 => $"rows.All(r => r.{src} == null) ? null : rows.Sum(r => r.{src})",
+                5 => $"rows.Average(r => r.{src})",
+                6 => $"rows.Min(r => r.{src})",
+                7 => $"rows.Max(r => r.{src})",
+                _ => throw new InvalidOperationException($"unsupported AggregationType {fn.AggregationTypeRaw} reached PackageClassEmitter -- PackagePlanner should have rejected this"),
+            };
+        }
 
         string BuildFlatFileSinkExpr(string entityName, FlatFileFlowSink sink)
         {
@@ -260,6 +273,19 @@ public static class PackageClassEmitter
                 }
                 case SqlFlowSource sql:
                 {
+                    if (sql.SecondaryConnectionManagerName is { } secondaryCm)
+                    {
+                        // Mirrors the ProgramSecondaryConnectionSqlStep case below exactly (same
+                        // config section, same "throw if missing" guard) -- see SqlFlowSource's
+                        // own doc comment for why no uow is passed (skip sp_bindsession, fall back
+                        // to READ UNCOMMITTED, the same already-accepted tradeoff as a Lookup
+                        // preload's own unbound read).
+                        w.Line($"var connectionString = SqlConnectionStringFactory.Build(Config().GetSection({Str($"SecondaryConnections:{secondaryCm}")}).Get<DatabaseOptions>()");
+                        w.Line($"    ?? throw new InvalidOperationException({Str($"The SecondaryConnections:{secondaryCm} configuration section is missing.")}));");
+                        var secondaryOpts = $"new SqlSourceOptions {{ ConnectionString = connectionString, CommandText = {Str(sql.CommandText)} }}";
+                        w.Line($"{assignPrefix}new SqlRowSource<{rowTypeName}>({Str(sql.ComponentName)}, {secondaryOpts}, {rowTypeName}Reader.Read);");
+                        break;
+                    }
                     var opts = $"new SqlSourceOptions {{ ConnectionString = SqlConnectionStringFactory.Build(Db()), CommandText = {Str(sql.CommandText)} }}";
                     // uow is passed through so this source can bind its own connection to the
                     // package's active transaction (see SqlRowSource's own doc comment) --
@@ -312,7 +338,7 @@ public static class PackageClassEmitter
                         w.Blank();
                     }
                     w.Line(union.IsSortedInterleave
-                        ? $"{assignPrefix}new MergeInterleaveRowSource<{union.RowTypeName}, {union.KeyClrType}>({Str(union.ComponentName)}, BuildSide0(), BuildSide1(), row => row.{union.KeyPropertyName}, Comparer<{union.KeyClrType}>.Default);"
+                        ? $"{assignPrefix}new MergeInterleaveRowSource<{union.RowTypeName}, {union.KeyClrType}>({Str(union.ComponentName)}, BuildSide0(), BuildSide1(), row => row.{PackageGenerator.SanitizeIdentifier(union.KeyPropertyName!)}, Comparer<{union.KeyClrType}>.Default);"
                         : $"{assignPrefix}new ConcatenatingRowSource<{union.RowTypeName}>({Str(union.ComponentName)}, [{string.Join(", ", Enumerable.Range(0, union.Sides.Count).Select(i => $"BuildSide{i}()"))}]);");
                     break;
                 }
@@ -325,7 +351,7 @@ public static class PackageClassEmitter
                         EmitSource(w, agg.SourceRowTypeName, agg.InnerSource, "return ");
                         w.CloseBlock();
                         w.Blank();
-                        w.Line($"return new FilteringRowSource<{agg.SourceRowTypeName}>({Str(agg.ComponentName)}, BuildRawSource(), row => {lookupFieldNames[lookupFilter.LookupVariableName]}.ContainsKey(row.{lookupFilter.JoinInputPropertyName}));");
+                        w.Line($"return new FilteringRowSource<{agg.SourceRowTypeName}>({Str(agg.ComponentName)}, BuildRawSource(), row => {lookupFieldNames[lookupFilter.LookupVariableName]}.ContainsKey(row.{PackageGenerator.SanitizeIdentifier(lookupFilter.JoinInputPropertyName)}));");
                         w.CloseBlock();
                     }
                     else
@@ -343,14 +369,21 @@ public static class PackageClassEmitter
                     // one uses a named C# tuple as TKey instead -- ValueTuple already implements
                     // structural equality/GetHashCode, so no new generated key type is needed.
                     var isCompositeKey = agg.GroupByColumns.Count > 1;
+                    // agg.GroupByColumns[].OutputPropertyName is a raw column name, used in TWO
+                    // roles here: a tuple ELEMENT name / this Aggregate row's own DECLARED
+                    // property (destination side, matching AggregateRowEmitter's own resolver in
+                    // the common non-collision case) and a SOURCE row reference (row.{X}, since a
+                    // GroupBy column keeps the same name through the aggregation -- see
+                    // AggregateGroupByFieldSpec's own construction). Both routes sanitize bare, at
+                    // each use, per PackageGenerator.SanitizeIdentifier's own doc comment.
                     var keyClrType = isCompositeKey
-                        ? $"({string.Join(", ", agg.GroupByColumns.Select(g => $"{g.ClrType} {g.OutputPropertyName}"))})"
+                        ? $"({string.Join(", ", agg.GroupByColumns.Select(g => $"{g.ClrType} {PackageGenerator.SanitizeIdentifier(g.OutputPropertyName)}"))})"
                         : agg.GroupByColumns[0].ClrType;
                     var keySelector = agg.LookupKey is { } lk
-                        ? $"{lookupFieldNames[lk.LookupVariableName]}[row.{lk.JoinInputPropertyName}].{lk.ReferenceColumnName}"
+                        ? $"{lookupFieldNames[lk.LookupVariableName]}[row.{PackageGenerator.SanitizeIdentifier(lk.JoinInputPropertyName)}].{PackageGenerator.SanitizeIdentifier(lk.ReferenceColumnName)}"
                         : isCompositeKey
-                            ? $"({string.Join(", ", agg.GroupByColumns.Select(g => $"row.{g.OutputPropertyName}"))})"
-                            : $"row.{agg.GroupByColumns[0].OutputPropertyName}";
+                            ? $"({string.Join(", ", agg.GroupByColumns.Select(g => $"row.{PackageGenerator.SanitizeIdentifier(g.OutputPropertyName)}"))})"
+                            : $"row.{PackageGenerator.SanitizeIdentifier(agg.GroupByColumns[0].OutputPropertyName)}";
                     w.Line($"{assignPrefix}new AggregateRowSource<{agg.SourceRowTypeName}, {keyClrType}, {rowTypeName}>(");
                     w.Indent();
                     w.Line($"{Str(agg.ComponentName)},");
@@ -360,14 +393,18 @@ public static class PackageClassEmitter
                     w.Line("{");
                     w.Indent();
                     if (isCompositeKey)
-                        foreach (var g in agg.GroupByColumns) w.Line($"{g.OutputPropertyName} = key.{g.OutputPropertyName},");
+                        foreach (var g in agg.GroupByColumns)
+                        {
+                            var id = PackageGenerator.SanitizeIdentifier(g.OutputPropertyName);
+                            w.Line($"{id} = key.{id},");
+                        }
                     else
-                        w.Line($"{agg.GroupByColumns[0].OutputPropertyName} = key,");
+                        w.Line($"{PackageGenerator.SanitizeIdentifier(agg.GroupByColumns[0].OutputPropertyName)} = key,");
                     for (var i = 0; i < agg.Functions.Count; i++)
                     {
                         var fn = agg.Functions[i];
                         var comma = i < agg.Functions.Count - 1 ? "," : "";
-                        w.Line($"{fn.OutputPropertyName} = {EmitAggregateFunctionExpression(fn)}{comma}");
+                        w.Line($"{PackageGenerator.SanitizeIdentifier(fn.OutputPropertyName)} = {EmitAggregateFunctionExpression(fn)}{comma}");
                     }
                     w.Dedent();
                     w.Line("});");
@@ -380,7 +417,7 @@ public static class PackageClassEmitter
                     EmitSource(w, rowTypeName, noMatch.InnerSource, "return ");
                     w.CloseBlock();
                     w.Blank();
-                    w.Line($"{assignPrefix}new FilteringRowSource<{rowTypeName}>({Str(noMatch.ComponentName)}, BuildRawSource(), row => !{lookupFieldNames[noMatch.LookupVariableName]}.ContainsKey(row.{noMatch.JoinInputPropertyName}));");
+                    w.Line($"{assignPrefix}new FilteringRowSource<{rowTypeName}>({Str(noMatch.ComponentName)}, BuildRawSource(), row => !{lookupFieldNames[noMatch.LookupVariableName]}.ContainsKey(row.{PackageGenerator.SanitizeIdentifier(noMatch.JoinInputPropertyName)}));");
                     break;
                 }
             }
@@ -435,7 +472,10 @@ public static class PackageClassEmitter
         // regardless would be a real, visible wart in generated code meant to be read and reviewed.
         bool SourceNeedsUow(FlowSourceSpec source) => source switch
         {
-            SqlFlowSource => true,
+            // A secondary-connection source never receives uow at all (see SqlFlowSource's own
+            // doc comment) -- declaring the parameter anyway would be the same unused-uow wart
+            // File/Excel/CSV sources are already spared.
+            SqlFlowSource sql => sql.SecondaryConnectionManagerName is null,
             MergeJoinFlowSource mj => SourceNeedsUow(mj.LeftSource) || SourceNeedsUow(mj.RightSource),
             UnionFlowSource union => union.Sides.Any(SourceNeedsUow),
             AggregateFlowSource agg => SourceNeedsUow(agg.InnerSource),
@@ -525,7 +565,7 @@ public static class PackageClassEmitter
                     var sourceMethodName = EmitSourceMethod(flow.RowTypeName, flow.Source);
                     methods.Line($"var source = {sourceMethodName}({SourceCallArgs(flow.Source)});");
                     if (flow.SortKey is { } sortKey)
-                        methods.Line($"source = new SortingRowSource<{flow.RowTypeName}, {sortKey.KeyClrType}>({Str(flow.StepName + ".Sort")}, source, row => row.{sortKey.KeyColumnName}, Comparer<{sortKey.KeyClrType}>.Default);");
+                        methods.Line($"source = new SortingRowSource<{flow.RowTypeName}, {sortKey.KeyClrType}>({Str(flow.StepName + ".Sort")}, source, row => row.{PackageGenerator.SanitizeIdentifier(sortKey.KeyColumnName)}, Comparer<{sortKey.KeyClrType}>.Default);");
                     foreach (var variableName in flow.RowCountVariableNames ?? [])
                         methods.Line($"source = new CountingRowSource<{flow.RowTypeName}>({Str(flow.StepName + ".RowCount")}, source, packageVariables, {Str(variableName)});");
                     var transformExpr = flow.Lookup is { } flowLookup && flow.TransformNeedsLookupCache
@@ -708,8 +748,8 @@ public static class PackageClassEmitter
                         ? $"({string.Join(", ", scdStep.BusinessKeyClrTypes)})"
                         : scdStep.BusinessKeyClrTypes[0];
                     var scdKeySelector = scdIsCompositeKey
-                        ? $"({string.Join(", ", scdStep.BusinessKeyColumns.Select(c => $"row.{c}"))})"
-                        : $"row.{scdStep.BusinessKeyColumns[0]}";
+                        ? $"({string.Join(", ", scdStep.BusinessKeyColumns.Select(c => $"row.{PackageGenerator.SanitizeIdentifier(c)}"))})"
+                        : $"row.{PackageGenerator.SanitizeIdentifier(scdStep.BusinessKeyColumns[0])}";
                     var scdStepType = $"SlowlyChangingDimensionStep<{scdStep.RowTypeName}, {scdKeyClrType}>";
                     methods.Line($"var step = new {scdStepType}(");
                     methods.Indent();
@@ -717,7 +757,7 @@ public static class PackageClassEmitter
                     methods.Line("source,");
                     methods.Line($"loadCt => {scdStep.CacheClassName}.LoadAsync(SqlConnectionStringFactory.Build(Db()), loadCt),");
                     methods.Line($"row => {scdKeySelector},");
-                    methods.Line($"row => new object?[] {{ {string.Join(", ", scdStep.AttributeColumns.Select(c => $"row.{c}"))} }},");
+                    methods.Line($"row => new object?[] {{ {string.Join(", ", scdStep.AttributeColumns.Select(c => $"row.{PackageGenerator.SanitizeIdentifier(c)}"))} }},");
                     methods.Line("new ScdClassifier(");
                     methods.Indent();
                     methods.Line($"[{string.Join(", ", scdStep.AttributeRoles.Select(r => $"ScdColumnRole.{r}"))}],");
@@ -741,7 +781,7 @@ public static class PackageClassEmitter
                         methods.Line(branch.SqlTemplate is null ? "null," : $"{Str(branch.SqlTemplate)},");
                         methods.Line(branch.SqlTemplate is null
                             ? $"null){comma}"
-                            : $"row => new object?[] {{ {string.Join(", ", branch.CommandParameterColumns.Select(c => $"row.{c}"))} }}){comma}");
+                            : $"row => new object?[] {{ {string.Join(", ", branch.CommandParameterColumns.Select(c => $"row.{PackageGenerator.SanitizeIdentifier(c)}"))} }}){comma}");
                         methods.Dedent();
                     }
                     methods.Dedent();
@@ -759,7 +799,7 @@ public static class PackageClassEmitter
                     methods.Line($"{Str(cmdStep.StepName)},");
                     methods.Line("source,");
                     methods.Line($"{Str(cmdStep.SqlTemplate)},");
-                    methods.Line($"row => new object?[] {{ {string.Join(", ", cmdStep.ParameterColumnNames.Select(c => $"row.{c}"))} }},");
+                    methods.Line($"row => new object?[] {{ {string.Join(", ", cmdStep.ParameterColumnNames.Select(c => $"row.{PackageGenerator.SanitizeIdentifier(c)}"))} }},");
                     methods.Line($"Log<OleDbCommandStep<{cmdStep.RowTypeName}>>());");
                     methods.Dedent();
                     methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
@@ -821,7 +861,7 @@ public static class PackageClassEmitter
                         if (child is StepNode csn) EmitGuardedCall(body, csn.Step, childName);
                         else body.Line($"await {childName}(uow, ct);");
                     }
-                    var name = Reserve(cn.Name);
+                    var name = Reserve(PackageGenerator.SanitizeIdentifier(cn.Name));
                     var signature = MethodSignatures.ForStepOrContainer(name);
                     methods.OpenBlock(signature);
                     foreach (var line in body.Lines) methods.RawLine(line);

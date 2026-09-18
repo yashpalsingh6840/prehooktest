@@ -53,6 +53,12 @@ public static class LookupCacheEmitter
                 $"Lookup '{lookupComponent.Name}' has CacheType={payload.CacheTypeRaw} -- only full cache (0) is supported yet; partial/no-cache Lookup needs per-row query semantics this tool doesn't generate")]);
         }
 
+        // See PackageGenerator.MakeColumnIdentifierResolver's own doc comment. The value side of
+        // PackageGenerator's own OutputToReferenceColumn map (consumed by
+        // LookupJoinExpressionBuilder.Build, via bare PackageGenerator.SanitizeIdentifier at the
+        // reference site) is the identical raw reference-column name resolved here.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var gaps = new List<GenerationGap>();
         var propertyLines = new List<string>();
         var readerLines = new List<string>();
@@ -66,10 +72,11 @@ public static class LookupCacheEmitter
                 continue;
             }
 
+            var identifier = identifierOf(col.Name);
             if (propertyLines.Count > 0) propertyLines.Add("");
             var initializer = type.ClrTypeName == "string" ? " = \"\";" : "";
-            propertyLines.Add($"        public {type.ClrTypeName} {col.Name} {{ get; set; }}{initializer}");
-            readerLines.Add($"                {col.Name} = reader.GetFieldValue<{type.ClrTypeName}>({ordinal}),");
+            propertyLines.Add($"        public {type.ClrTypeName} {identifier} {{ get; set; }}{initializer}");
+            readerLines.Add($"                {identifier} = reader.GetFieldValue<{type.ClrTypeName}>({ordinal}),");
             ordinal++;
         }
 

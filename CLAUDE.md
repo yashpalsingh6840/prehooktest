@@ -8332,6 +8332,440 @@ fixtures still green (10/10, 57s). No `Etl.Core` changes needed for either phase
 confirmed instances vs. Phase 3's 2 and Phase 4's 2, both now closed) — and Phase 6 (`DATEADD
 ("Millisecond", ...)`, one real instance, smallest remaining piece).
 
+### Phase 5 — cross-database Data Flow source, closed (2026-09-17)
+
+**Design, confirmed exactly as the plan predicted: `Etl.Core.Data.SqlRowSource<TRow>` already
+opens its own independent connection regardless of database** (see that type's own doc comment —
+it never reuses the package's shared connection even in the same-database case), so no runtime
+class changes were needed at all. `BuildSqlFlowSource`'s own unconditional "targets a different
+server/database... not supported yet" gate (`PackageGenerator.cs`) is now conditional: when a
+NEW optional `secondaryConnections` dictionary is threaded in, a resolvable-but-different-database
+source registers a `SecondaryConnectionRequest` (the exact same mechanism `ResolveSqlStep`
+already built for the write-side/Execute-SQL-Task case — same dictionary, same
+`appsettings.json` shape) and the resulting `SqlFlowSource` carries a new
+`SecondaryConnectionManagerName` field (default `null`, so every existing call site's behaviour
+is unchanged byte-for-byte). `PackageClassEmitter`'s `SqlFlowSource` case branches on that field:
+`null` builds the connection string from `Db()` and passes `uow` (binds to the package's own
+transaction, unchanged); non-null builds it from `Config().GetSection("SecondaryConnections:{name}")`
+and passes NO `uow` at all (a secondary-connection source is never bound to the package's own
+transaction — skip `sp_bindsession`, fall back to READ UNCOMMITTED, the same already-accepted
+tradeoff every other unbound `SqlRowSource` read in this codebase already uses, e.g. a Lookup
+preload).
+
+**Deliberately scoped to the THREE real, evidenced flow shapes found across the 15 confirmed
+instances, not every possible flow shape** — `secondaryConnections` is an optional parameter on
+`BuildSqlFlowSource`/`ResolveFlowSource`, defaulting to `null` (unconditional gap, unchanged) for
+every call site that doesn't explicitly thread it. Threaded through for:
+- the plain single-destination flow (the main per-flow loop in `Generate`) — `dimcustomer` and
+  all 13 of `DailyETLMain`'s own "Extract ... to Staging" flows are this shape;
+- `GenerateLookupFlow` — `fact_sales.dtsx`'s own source sits behind a chain of Lookups (confirmed
+  by reading its own extracted spec: 6 `Microsoft.Lookup` components between the OLE DB Source
+  and OLE DB Destination), so its flow only ever reaches `BuildSqlFlowSource` through this path;
+- `GenerateScdFlow` — `dimcustomer`'s own flow is an SCD, not a plain single-destination one.
+
+Conditional Split/Multicast/PctSampling/Aggregate/Merge Join's own two sides/Union's own sides/a
+ForEach-Data-Flow-Loop body are all left with the unconditional gap, unchanged — none has a real
+evidenced cross-database instance anywhere in the tracked corpus, and wiring an unevidenced shape
+would be exactly the guessed scaffolding this tool refuses to produce.
+
+**A real, previously-unknown finding, caught only by re-running the actual portfolios, not
+assumed from the plan's own text: `fact_sales.dtsx` was NOT a genuine cross-database case at
+all.** BATCH-SUMMARY.md's own Phase 1 section had characterized it as "package-embedded
+connection managers, already reporting this same gap... independently a real, pre-existing
+case." Reading its extracted spec directly told a different story: the package has exactly ONE
+embedded connection manager (`DESKTOP-G8R231P.gravity_books`, `Scope: Package`) — the OLE DB
+Destination's own connection reference is `Project.ConnectionManagers[dest.book_sales]`, which
+never resolves, because (per the already-documented Phase 1 finding for this SAME portfolio)
+`SSIS-Data-Warehouse-ETL-Pipeline`'s own GitHub repo never had a `.dtproj`/`.conmgr` checked in
+at all. So `fact_sales` is genuinely the SAME unfixable-without-the-missing-files problem as this
+portfolio's other two gapped packages (`auth_book_dim`/`Package2`), not a Phase 5 concern — it
+only LOOKED like a cross-database mismatch because `BuildSqlFlowSource`'s own gate reused the
+identical gap wording for two different root causes: "the destination's connection genuinely
+never resolves" and "both connections resolve, but disagree." **Split into two distinct
+messages** (`"Destination '{name}' has no resolvable connection manager -- cannot compare it
+against source '{name}''s own server/database"` vs. the original mismatch wording, now only
+reachable when both sides genuinely DO resolve) so a future reader is told the true cause rather
+than an inference. `fact_sales` is correctly, honestly still gapped after this round — nothing
+Phase 5 can or should do about a missing project file.
+
+**Two real, previously-latent bugs found verifying this against the real portfolios, neither
+caught by the dedicated fixture alone (both are shapes the fixture, built for the single-source
+case, never happened to exercise) — this project's own recurring lesson that a fixture proves
+what it exercises and nothing more:**
+1. **`PackageGenerator.FlowSourceNeedsUow`** — a duplicate of `PackageClassEmitter.SourceNeedsUow`
+   kept for the "Data Flow Task -- direct invocation"/"Source -- SQL" starter-test emitters,
+   documented in its own doc comment as needing to mirror the real one exactly — still returned
+   `true` unconditionally for ANY `SqlFlowSource`, producing a starter test calling
+   `package.OLEDBSource(uow)` against a generated method that (correctly) takes no `uow` argument
+   at all for a secondary-connection source: `CS1501`, caught only by actually building the
+   generated project, not by the gap-count report. Fixed to check
+   `sql.SecondaryConnectionManagerName is null`, matching the real emitter exactly.
+2. **`ComponentTestEmitter.EmitSqlSourceTest`** hardcoded `uow` into both its `.Name`-only and
+   `Integration`-tagged tests unconditionally. Given a new `isSecondaryConnection` parameter
+   (default `false`, every existing call site unchanged): when `true`, neither test constructs or
+   passes a `uow` at all, and the Integration test's own real-read attempt goes through
+   `Config()`'s own `SecondaryConnections:{name}` entry instead of `NewRealUnitOfWorkAsync()`.
+
+**A third real, but DELIBERATELY-not-fixed-here bug, found running the real `wwi-ssis`/
+`DailyETLMain` portfolio all the way to a full solution build (an extra verification step beyond
+what closing the 13 gaps itself required):** `SqlRowEmitter`/`SqlRowReaderEmitter`/
+`EntityEmitter`/`DbContextEmitter` use a SQL buffer column's own name VERBATIM as the generated
+C# property name, with zero identifier sanitization anywhere in that whole emission path
+(confirmed by grep — none of the four calls `SanitizeIdentifier`). `DailyETLMain`'s own real WWI
+schema has column names containing literal spaces (`"WWI Stock Item ID"`, `"Last Cost Price"`,
+...), so once its own 13 cross-database gaps were closed by this round, its generated
+`Sql/StockHolding_StagingSqlRowReader.cs`/`Model/DailyETLMainDbContext.cs` files (and others)
+failed to even PARSE as C# (`CS1003`, ~1181 errors from one root cause). This is a genuine,
+pre-existing, systemic generator defect — invisible until now purely because every real package
+with such column names was always blocked earlier by an unrelated gap (first "no resolvable
+connection manager", per Phase 1; now, for the ones Phase 1 fixed, this cross-database gate) —
+not something Phase 5 introduced or could reasonably be asked to fix as part of closing THIS
+gap. Left as a real, named follow-up: identifier sanitization is needed across the whole
+SQL-row/entity/DbContext emission path, its own body of work with its own dedicated fixture,
+deliberately out of scope here per this project's "don't let one fix become two" discipline.
+
+**Verified four ways, the strongest evidence tier this project's own philosophy asks for:**
+1. **A new dedicated fixture**, `tests/Ssis.Extract.Tests/Fixtures/SyntheticCrossDatabaseSource.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `cross-database-source` mode): OLE DB Source
+   (`CM_SourceSecondDb`, resolving to `SsisPoC_Secondary` — the same second database
+   `SyntheticSecondConnectionSql.dtsx`'s own write-side fixture already established, reused
+   rather than creating a third database) → Derived Column (`LoadedAtUtc`, present only to avoid
+   tripping the unrelated, pre-existing "no Derived Column found" direct-copy gate) → OLE DB
+   Destination (`CM_Sql`, the PRIMARY `SsisPoC`). **Generated, built against a copy of `Etl.Core`
+   (0 warnings/0 errors), and actually RUN against `.\SQLFORPOC_2022`**: 3 seeded rows
+   (Alice/Bob/Carol) in `SsisPoC_Secondary.dbo.SyntheticCrossDatabaseSourceInput`, read back from
+   `SsisPoC.dbo.SyntheticCrossDatabaseSourceTarget` afterward, not trusted from the exit code —
+   exact match, all 3 rows correct, each with its own `LoadedAtUtc` stamp. Both generated starter
+   tests (`.Name`-only and `Category=Integration` real-read) confirmed passing too, the latter
+   only after pointing the generated `PackageHarness.cs`'s own `SecondaryConnections` entry at
+   the real reachable server (`TrustServerCertificate` had to be added by hand for a self-signed
+   local instance — not wired by default, matching the existing "unreachable by default, edit
+   for a local run" pattern `Tools/COPILOT_TESTING_GUIDE.md` already documents, now extended with
+   a note for this exact case).
+2. **New unit test**, `PackageGeneratorTests.
+   Generate_WiresAnOleDbSource_WhoseConnectionManagerTargetsADifferentDatabase_ViaASecondaryConnection`
+   — asserts the exact generated method signature (no `uow` parameter), the `Config()`-based
+   connection-string construction, the `appsettings.json` `SecondaryConnections` entry, both
+   starter tests' own correct (uow-free) shape, and that no cross-database gap fires at all.
+3. **The real motivating portfolios, re-run end to end**: `dimcustomer` and all 13 of
+   `DailyETLMain`'s own gaps are gone entirely (replaced, for `dimcustomer`, by a separate,
+   pre-existing, now-newly-visible SCD limitation — "compares column(s) not present on its own
+   source's output" — exactly the "closing one gap reveals the next" pattern this project's own
+   history repeats; for `DailyETLMain`, replaced by its own two pre-existing, unrelated gaps, the
+   already-known `DATEADD("Millisecond",...)` one (Phase 6, not yet built) and a newly-visible
+   `int`-to-`decimal` numeric-coercion gap). `fact_sales`'s own gap message is now honest about
+   its true, unrelated root cause (see above).
+4. **Full regression suite**: `Run-Tests.ps1` — same 2 pre-existing, unrelated
+   `GenerateGoldenFileTests` golden-file CRLF-vs-LF failures (confirmed pre-existing by
+   reproducing them against a clean `git stash`-ed baseline before touching anything), 421/423 in
+   `Ssis.Extract.Codegen.Tests` (421 passing includes the one new unit test this round added; the
+   count is higher than the 410/412 recorded after the Phase 3/4 round above because several
+   other commits — the project-level `.conmgr` connection-manager fix and the statement/main-
+   project fixes that followed it — landed in between and are not re-tallied here), 173/173
+   `Ssis.Extract.Tests`, 165/165 `Ssis.Runtime.Expressions.Tests`, 25/25
+   `Ssis.Extract.Cli.Tests`, `Etl.Core.Tests`/`LoadEmployees.Tests`/`LoadReferenceData.Tests` all
+   green, no `Etl.Core` changes needed at all (confirming the plan's own prediction).
+
+Two small, real, additive fixes landed alongside the main feature, both found only by pushing
+the real portfolios all the way through `generate` (not by the dedicated fixture, which never
+happens to produce a `byte[]`-typed column): `TransformTestEmitter.RepresentativeLiteral` gained
+a `"byte[]" => "new byte[] { 1, 2, 3 }"` case (was an unconditional `NotSupportedException`,
+crashing the whole `generate` run the instant a real varbinary/image-typed destination column
+reached a starter-test emitter for the first time — `DailyETLMain`'s own `StockHolding_Staging`
+table has one).
+
+**Remaining from the plan**: Phase 6 (`DATEADD("Millisecond", ...)`, one real instance in
+`DailyETLMain`, smallest remaining piece, independent of everything else) — plus the newly-named
+identifier-sanitization defect above, a separate, real, and now precisely-scoped follow-up.
+
+### Phase 6 — `DATEADD("Millisecond", ...)`, closing `sql-server-samples`' `DailyETLMain.dtsx` (2026-09-17)
+
+The real evidenced call is a `Microsoft.ExpressionTask` (control-flow, not a Derived Column),
+`"Trim Any Milliseconds"`: `@[User::TargetETLCutoffTime] = DATEADD("Millisecond", 0 -
+DATEPART("Millisecond", @[User::TargetETLCutoffTime]), @[User::TargetETLCutoffTime])` — a
+composed idiom needing THREE separate new pieces (`DATEADD`'s own new datepart, `DATEPART` --
+never supported by codegen at all before this round -- and integer subtraction, also never
+supported by either control-flow translator), plus, discovered only by actually re-running
+`ssisx generate` against the real package, a FOURTH: `PackagePlanner`'s own `GuardVariable` table
+had no `DateTime` case, so the variable itself had "no resolvable declared type" even once every
+expression piece translated correctly.
+
+**A genuinely surprising real measurement, not assumed**: a new `Ssis.Expression.Oracle` probe
+block (`Millisecond` corpus rows, run against the real SSIS 22 evaluator on this machine) found
+that `DATEADD`/`DATEPART`'s own internal arithmetic for `"Millisecond"` does NOT operate at true
+1ms precision — it quantizes to the nearest **1/300 of a second** (~3.333ms per tick), the
+well-documented legacy OLE Automation Date (`VT_DATE`) time-resolution limit, a holdover from the
+original VB timer tick rate. Measured directly: `DATEPART("Millisecond", .456)` reports **457**
+(456ms quantizes to tick `round(456*0.3)=137`, i.e. 456.667ms, rounding to 457); `DATEPART
+("Millisecond", .999)` reports **0** (999ms quantizes to tick 300 = exactly 1000ms, rolling over
+to the next second with a 0ms remainder). A plain `(DT_WSTR,n)` cast of the same timestamp (no
+`DATEADD`/`DATEPART` involved) shows the value exactly, unquantized — confirming the quantization
+is specific to these two functions' own arithmetic, not how a value is stored or displayed.
+Crucially, `DATEPART` reads the SAME quantized representation `DATEADD`'s own arithmetic operates
+on, and `DATEADD`'s own delta is independently quantized too (measured: `DATEADD("Millisecond",
+1, .456)` reports the SAME `.457` as `DATEADD("Millisecond", 0, .456)`, since a 1ms delta
+quantizes to `round(1*0.3)=0` ticks) — together this is exactly why the real task's own idiom
+(subtract a value's own reported millisecond count from itself) still lands exactly on the second
+boundary regardless of the quantization, verified both via the oracle corpus and a real dtexec
+run (below). 16 new corpus rows added to `ssis-expression-oracle.tsv` (byte-preserving append,
+trap 18's own discipline — `git diff --stat` shows exactly 16 insertions, nothing else moved);
+`Ssis.Runtime.Expressions.Tests` now 181/181 (was 165), including a new `QuantizedMillisecond`/
+`AddQuantizedMilliseconds` implementation in `Functions.cs` reproducing the measured algorithm
+exactly (round-half-to-even throughout, matching this project's own established numeric-coercion
+convention elsewhere).
+
+**What was built, deliberately narrow, mirroring the exact datepart/function surface actually
+evidenced:**
+- `Ssis.Runtime.Expressions.Functions`: `DatePart`/`DateAdd` both gained a `"Millisecond"`/`"ms"`
+  case implementing the measured tick-quantization math (`QuantizedMillisecond`/
+  `AddQuantizedMilliseconds`).
+- `Ssis.Extract.Codegen.SsisFnEmitter`: two new package-scoped helpers,
+  `SsisFn.DatePartMillisecond(DateTime)`/`SsisFn.DateAddMillisecond(DateTime, int)`, mirroring
+  `Functions.cs`'s algorithm exactly (a plain `date.AddMilliseconds(n)` would NOT reproduce real
+  SSIS's own quantization, so — unlike every other supported datepart, which maps straight onto a
+  BCL `DateTime.AddX` call — this one genuinely needs its own helper). Wired into
+  `TransformEmitter.CollectSsisFunctions`'s existing `"SsisFn.X("` string-match convention.
+- `ExpressionTranslator` (pipeline/Derived Column path): a new `TranslateDatePart` (only
+  `"Millisecond"`/`"ms"`, routing to `SsisFn.DatePartMillisecond`); `TranslateDateAdd` now
+  special-cases `"Millisecond"`/`"ms"` BEFORE consulting the existing `DateAddMethodNames`
+  dictionary, routing to `SsisFn.DateAddMillisecond` instead of a BCL method call. Added here too
+  (not just the control-flow translator below) purely for parity — a Derived Column could
+  plausibly need it, mirroring the existing DATEDIFF/DATEADD precedent of supporting both paths.
+  Deliberately did NOT add general `BinaryOp.Sub` support to this translator — unevidenced for a
+  Derived Column, stays a gap there.
+- `ExpressionTaskEmitter` (the control-flow translator `Microsoft.ExpressionTask`'s own assignment
+  RHS goes through, a separate, much narrower translator than the pipeline one — see its own doc
+  comment): gained a `DATEPART` `FunctionCall` case (same routing as above), a new
+  `TranslateNumericSub` (`BinaryOp.Sub`, scoped identically to the pre-existing `TranslateNumericAdd`
+  — only numeric operands, at least one side an int literal/negation/an I2-I8-typed variable/a
+  `DATEPART` call, string subtraction stays a named gap not a guess), and the same
+  `DATEADD("Millisecond", ...)` special-case as `ExpressionTranslator`.
+- `PackagePlanner.MapVariantType`: gained a `"DateTime"` case (`DateTimeGuard`), the fourth real
+  gap this round found — a `DTS:VariableValue`'s own `DataType="7"` (`VT_DATE`, the classic OLE
+  Automation VARIANT code, already correctly mapped to the friendly name `"DateTime"` by
+  `SsisTypeCodeMaps.VariantDeclaredTypeName` since an earlier round) had NO case in the
+  control-flow guard-variable table at all, so a `DateTime`-typed package variable referenced
+  inside an `ExpressionTask`'s own RHS reported "has no resolvable declared type" even once
+  `DATEADD`/`DATEPART`/`-` themselves all translated correctly. The design-time default's own
+  round-trip format concern this type's doc comment used to cite (why it was deliberately left
+  unsupported) is resolved via `DateTime`'s own `"o"` (round-trip) format string, needing no
+  locale/culture decision at all.
+- `PackageGenerator.cs`: two small, narrowly-scoped additions, chosen specifically to avoid
+  touching the `using`-directive/`PackageClassEmitter.cs` machinery a CONCURRENT agent was
+  editing the same session for an unrelated feature (Phase 5, cross-database Data Flow source) —
+  (1) a pre-pass over `plan.Steps.OfType<ExpressionStep>()`, calling the existing
+  `TransformEmitter.CollectSsisFunctions` on each step's own `CSharpValueExpression` BEFORE
+  `SsisFnEmitter.Emit` runs, so a package with a control-flow-only `SsisFn` usage and zero Data
+  Flow Tasks still gets its `Ssis/SsisFn.cs` emitted correctly; (2) the `ExpressionStep` case in
+  the step-consumption switch now fully-qualifies any `"SsisFn."` reference to
+  `"{ns}.Ssis.SsisFn."` via a plain string replace, rather than adding a `using {ns}.Ssis;` to
+  `PackageClassEmitter`'s own generated file (an `ExpressionTaskStep`'s assignment lambda lives
+  directly on that class, which has no such using today) — a smaller, more isolated change for
+  the one real case (Phase 6's own `DATEADD("Millisecond",...)`) that needs it.
+- `PackagePlanner.Plan`: a second real, previously-latent gap found and fixed the same round — the
+  package-level `VariableSeeds` list (design-time defaults seeded into `packageVariables` before
+  anything runs) was computed ONLY from variables a conditional-constraint GUARD reads, never from
+  ones an `ExpressionStep`'s own RHS reads. The real idiom re-reads `TargetETLCutoffTime`'s OWN
+  prior value (needed to compute the amount to subtract), so without a seed the very first run
+  threw `"Package variable 'User::TargetETLCutoffTime' was never set"` — caught only by actually
+  running the generated exe, not by the gap-count report (which showed 0 gaps). Fixed by unioning
+  in a new `expressionStepSeeds` computation (same substring-match technique the guard-seeding
+  code already uses, applied to each `ExpressionStep`'s own translated text instead of a guard's
+  predicate).
+
+**Verified two ways, the strongest evidence tier this project's own philosophy asks for:**
+1. **The real motivating package.** Regenerating `sql-server-samples`' actual `DailyETLMain.dtsx`
+   (found under `D:\PoC\SSIS_Packages_From_GitHub\sql-server-samples\samples\databases\
+   wide-world-importers\wwi-ssis\wwi-ssis\`): the `"Trim Any Milliseconds"` gap is GONE entirely
+   (gap count 16 → 15; the package's remaining 13 gaps are all a single, unrelated, pre-existing
+   Tier-3 issue — every Data Flow Task's own linked-server-style OLE DB source has no resolvable
+   connection manager, out of this round's scope — now separately closed by Phase 5, see above).
+2. **A new dedicated fixture**, `tests/Ssis.Extract.Tests/Fixtures/SyntheticExpressionTaskMillisecond.dtsx`
+   (`Ssis.Extract.FixtureBuilder`'s new `expression-task-millisecond` mode, reusing the existing
+   `synthetic-expression-task-csv`/`synthetic-expression-task-tables.sql` fixtures rather than
+   adding new ones): `EXPR_SetMs789` (establishes a genuine nonzero-ms value AT RUNTIME via
+   `DATEADD`, since a `<DTS:VariableValue>`'s own text serialization has no sub-second component
+   at all — confirmed directly, `SaveToXML` rounds a millisecond-bearing DEFAULT value to the
+   nearest whole second, so a value baked into the variable's own design-time default would
+   already be an exact `.000` by the time anything read it, testing nothing) → `EXPR_TrimMilliseconds`
+   (the real evidenced call, verbatim) → `EXPR_ObserveMs` (reads the trimmed value's own
+   millisecond component back into a plain `Int32` variable via `DATEPART` alone — deliberately
+   avoiding both an untested DateTime-guard COMPARISON and an unsupported `(DT_WSTR,n)` CAST,
+   neither of which this round needed to build) → `DFT_Load` → a guarded `SQL_LogIfTrimmedToZero`
+   (its own precedence-constraint condition, `@[User::MsAfterTrim] == 0`, an ordinary
+   already-proven Int32 comparison). **Run for real via `DTExec.exe` against
+   `.\SQLFORPOC_2022`/`SsisPoC`**: `DTSER_SUCCESS`, `SQL_LogIfTrimmedToZero` genuinely ran (the
+   log table shows `ms-trimmed-to-zero`), confirming real SSIS's own `.789` value trims to exactly
+   `.000`. **Generated, built against a copy of `Etl.Core` (0 warnings/0 errors), and actually RUN
+   against the same reset tables**: exit 0, the identical `ms-trimmed-to-zero` marker landed —
+   an exact match against the real dtexec run, the strongest evidence tier this tool's own
+   philosophy asks for.
+
+Six new unit tests: `ExpressionTaskEmitterTests` (the real composed idiom translating exactly to
+`SsisFn.DateAddMillisecond(..., (0) - (SsisFn.DatePartMillisecond(...)))`; an unsupported DATEPART
+part degrading to a gap; string subtraction degrading to a gap), `ExpressionTranslatorTests`
+(DATEADD/DATEPART Millisecond both routing through the SsisFn helpers in the pipeline path; an
+unsupported DATEPART part degrading to a gap), and `PackagePlannerTests` (the real fixture's own
+`ExpressionStep`s resolving correctly and `VariableSeeds` correctly including the self-referenced
+`TargetETLCutoffTime`, not just the guard-read `MsAfterTrim`). Regression: 427/429 in
+`Ssis.Extract.Codegen.Tests` (was 420/422 — the same 2 pre-existing unrelated `GenerateGoldenFileTests`
+golden-string failures, +7 new passing tests), 181/181 in `Ssis.Runtime.Expressions.Tests` (was
+165), 173/173 in `Ssis.Extract.Tests`, 25/25 in `Ssis.Extract.Cli.Tests`. No `Etl.Core` changes
+needed this round — this is entirely an expression-translation/oracle feature.
+
+**This closes Phase 6.** Combined with Phase 5 (cross-database Data Flow source, closed the same
+week — see that section above), every phase of `concurrent-whistling-turing.md` is now done except
+the two follow-ups each round separately named (identifier sanitization; the SCD/Data-Conversion
+gap from `Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline`) and the `int`-to-`decimal`
+numeric-coercion gap Phase 5's own real-portfolio re-run newly surfaced on `DailyETLMain`.
+
+### Identifier sanitization — real SQL/pipeline column names used verbatim as C# identifiers, closed (2026-09-18)
+
+A real, systemic generator defect, first named (but deliberately left unfixed, out of that
+round's own scope) by the 2026-09-16 cross-database-source round above: every row/entity/reader/
+transform emitter in `Ssis.Extract.Codegen` used a raw external SQL/pipeline column name
+**verbatim** as a C# identifier — a property name, a `row.{X}` reference, a lambda member access,
+a tuple element name — with zero sanitization anywhere in that whole emission path. Real client
+schemas routinely have column names with literal spaces (confirmed live against a genuine
+third-party GitHub portfolio: `sql-server-samples`' own `wwi-ssis/DailyETLMain.dtsx`, a real WWI
+sample schema, has `"WWI Stock Item ID"`, `"Last Cost Price"`, `"Last Modifed When"` — that last
+one a genuine one-letter-different SIBLING of `"Last Modified When"`, not a duplicate, a real trap
+for any sanitizer that over-normalizes). This had been invisible for the entire life of the
+project: both PoC packages and every synthetic fixture built so far happen to use plain,
+space-free column names, so nothing had ever exercised the bug. Once Phase 5's cross-database fix
+let `DailyETLMain`'s own flows reach a row-type emitter for the first time, regenerating it
+produced ~1181 `CS1002`/`CS1003` parse errors from this one root cause.
+
+**The fix, `PackageGenerator.SanitizeIdentifier`, already existed** (component/task names have
+always gone through it) but was **never called for a column name anywhere**. Extended and reused
+as the one shared, deterministic sanitizer for every identifier-position column-name use in the
+whole codegen layer:
+- Added C# reserved-keyword escaping (`class` → `@class`, checked against the real reserved set,
+  not the contextual keywords like `var`/`async` which are already legal identifiers) — unevidenced
+  in the real corpus, but a general-purpose sanitizer must not silently emit an invalid identifier.
+- New `PackageGenerator.MakeColumnIdentifierResolver()` — a `Reserve()`-style closure (mirroring
+  `PackageClassEmitter`'s own established method-naming pattern exactly) that memoizes by RAW name
+  (so the same raw column referenced twice within one declaration resolves to the identical
+  identifier both times, not a second suffix slot) and disambiguates a genuine collision between
+  two DIFFERENT raw names that sanitize the same (`_2`, `_3`, ...). Used at every row/entity
+  **declaration** site (`SqlRowEmitter`, `SqlRowReaderEmitter`, `EntityEmitter`, `DbContextEmitter`,
+  `ExcelRowEmitter`, `ExcelRowReaderEmitter`, `XmlRowEmitter`, `XmlRowReaderEmitter`, `CsvRowEmitter`,
+  `ClassMapEmitter`, `LookupCacheEmitter`, `MergeJoinEmitter`, `UnionEmitter`, `AggregateRowEmitter`).
+- Every **reference** site (`TransformEmitter`'s `row.{X}`/`nameof()`/compute-method names,
+  `RouterEmitter`'s Conditional Split condition references, `ColumnExpressionBuilders`' Lookup-join/
+  numeric-coercion/Flat-File-string-conversion expression builders, `ExcelWhereClauseTranslator`'s
+  WHERE-clause predicate, `PackageClassEmitter`'s Union/Aggregate/SCD/OLE-DB-Command/Lookup-filter
+  key selectors and object initializers, and every "starter test" emitter —
+  `TransformTestEmitter`, `ComponentTestEmitter`, `RouterTestEmitter`) now routes the SAME raw name
+  through bare `SanitizeIdentifier` at the point of use — pure and deterministic, so it agrees with
+  the corresponding declaration site's own resolver output in the overwhelmingly common
+  (non-colliding) case with **no map threaded between files at all**.
+
+**A real, must-fix correctness question surfaced immediately, not cosmetic:** renaming an EF Core
+entity property changes the column EF writes to BY CONVENTION (property name → column name, absent
+an explicit override) — confirmed by reading `Etl.Core.Data.EntityTableMap.BuildColumn`, which
+reads `property.GetColumnName()` off EF's own resolved model metadata, honoring
+`.HasColumnName(...)`. So sanitizing `"Last Cost Price"` to `LastCostPrice` without also telling EF
+the real column name would have silently made `SqlBulkSink<TEntity>` try to write to a column named
+`LastCostPrice` that doesn't exist. Fixed in `DbContextEmitter.EmitOneTable`: whenever a column's
+sanitized identifier differs from its raw external name, an explicit
+`.HasColumnName("Last Cost Price")` is now appended to that column's own `entity.Property(...)`
+fluent chain.
+
+**A SECOND real, previously-invisible bug in the SAME bug class was found and fixed verifying this
+against the real, fully-unblocked `DailyETLMain` package** (built in a sibling worktree originally,
+merged into the main working tree together with Phase 5/6 for this verification — see the "Traps
+already hit once"-adjacent lesson below about that merge): `PackageClassEmitter`'s own Sequence
+Container naming, `Reserve(cn.Name)`, called `Reserve` directly on the raw container display name
+with **no `SanitizeIdentifier` at all** — every other `Reserve(...)` call site in that same file
+(source/sink/step method names) already wraps its argument in `SanitizeIdentifier` first; this one
+call site alone did not. Invisible until this round because no fixture or real package before
+`DailyETLMain` had ever had a Sequence Container with a space in its display name. Confirmed real:
+`DailyETLMain`'s own dimension/fact loads are each wrapped in their own Sequence Container
+(`"Load City Dimension"`, `"Load Transaction Fact"`, ...), and regenerating it produced both the
+method DECLARATION and every CALL SITE with the raw, space-containing text —
+`internal async Task Load City Dimension(IUnitOfWork uow, CancellationToken ct)` and
+`await Load City Dimension(uow, ct);` — a second class of `CS1002`/`CS1003` errors, invisible until
+the column-name fix above cleared the FIRST 1181 errors that had been masking it. Fixed with one
+line: `Reserve(PackageGenerator.SanitizeIdentifier(cn.Name))`, matching the other five call sites
+in the file exactly. Confirmed no other unsanitized `Reserve(...)` call site remains — grepped
+every occurrence in `PackageClassEmitter.cs` after the fix.
+
+**Verified four ways, the last two only possible once Phase 5's own cross-database fix was present
+in the same working tree (the identifier-sanitization work was originally built and unit-tested in
+isolation, without that fix — see the note below):**
+1. **A new dedicated fixture, `tests/Ssis.Extract.Tests/Fixtures/SyntheticIdentifierSanitization.dtsx`**
+   (`Ssis.Extract.FixtureBuilder`'s new `identifier-sanitization` mode, built via the real SSIS
+   object model): OLE DB Source → Derived Column → OLE DB Destination, both ends carrying a real
+   `"Last Cost Price"` column. Backing tables:
+   `tests/Ssis.Extract.Tests/Fixtures/synthetic-identifier-sanitization-tables.sql`. **Generated,
+   read by eye** (confirmed `public decimal LastCostPrice { get; set; }`,
+   `reader.GetOrdinal("Last Cost Price")` staying literal while the assignment target sanitizes,
+   `entity.Property(e => e.LastCostPrice).HasColumnName("Last Cost Price").HasColumnType(...)`,
+   `LastCostPrice = row.LastCostPrice,` in the transform) **, built against a copy of `Etl.Core`
+   (0 warnings/0 errors, production AND test project), and actually RUN against
+   `.\SQLFORPOC_2022`**: exit 0; read back afterward, not trusted from the exit code —
+   `dbo.SyntheticIdentifierSanitizationTarget` shows exactly the 3 seeded `[Last Cost Price]`
+   values (`100.50`, `250.75`, `999.00`) landed correctly in the real, space-containing column, via
+   the sanitized `LastCostPrice` C# identifier throughout.
+2. **New unit tests**, `tests/Ssis.Extract.Codegen.Tests/IdentifierSanitizationTests.cs` (22 cases):
+   `SanitizeIdentifier` itself (spaces/punctuation stripped, a leading-digit guard, the
+   empty/all-special fallback to `"Component"`, reserved-keyword escaping, contextual keywords and
+   differently-cased names correctly NOT escaped, and the real `"Last Modifed When"`/
+   `"Last Modified When"` sibling-not-duplicate case named above); `MakeColumnIdentifierResolver`
+   (determinism, memoization by raw name, two- and three-way collision disambiguation); a
+   hand-built `PipelineComponentSpec` round-trip through `TransformEmitter`; and an emitter-level
+   test reading the real checked-in fixture, asserting `SqlRowEmitter`/`SqlRowReaderEmitter`/
+   `EntityEmitter`/`DbContextEmitter` all independently agree on `LastCostPrice`.
+3. **The real motivating case, re-verified against a fully-unblocked `DailyETLMain.dtsx`** — once
+   merged into the same working tree as Phase 5's cross-database fix (the two were built in
+   parallel, in separate isolated worktrees, so this end-to-end check could only happen after
+   merging both plus this round together): `ssisx generate --package DailyETLMain` now writes
+   **263 files** (was 53 — the row/entity/transform emitters are now genuinely engaged, not just
+   the standalone-SQL-statement path) with **15 gaps**, and — after the Sequence Container fix
+   above — the whole regenerated solution (production AND generated `.Tests` project) builds
+   **0 warnings/0 errors**. This is the strongest evidence tier this project's own philosophy asks
+   for: the real, originally-motivating package, fully wired, genuinely compiling.
+4. **Full regression suite**, run in the fully-merged tree (Phase 5 + Phase 6 + this round):
+   `Ssis.Runtime.Expressions.Tests` 181/181, `Ssis.Extract.Tests` 173/173, `Ssis.Extract.Cli.Tests`
+   25/25, `Ssis.Extract.Codegen.Tests` 450/452 (the SAME 2 pre-existing, unrelated
+   `GenerateGoldenFileTests` CRLF-vs-LF failures already documented throughout this file, nothing
+   else moved). Re-ran `ssisx generate` against this PoC's own real
+   `LoadEmployees.dtsx`/`LoadReferenceData.dtsx`/`ScriptTest.dtsx`/`SyntheticParallelShapes.dtsx`
+   (none have a space-containing column) — unchanged, confirming the fix is a genuine no-op for
+   every column name this codebase had ever actually exercised before today.
+
+**A worth-recording operational note on how this round's own verification actually happened**:
+this feature, Phase 5, and Phase 6 were each built independently in three separate, isolated git
+worktrees (all branched from the same commit, `ead4923`) by three separate agents running roughly
+concurrently, then merged into one working tree by hand afterward — `git apply --3way` plus a
+handful of manual conflict resolutions, all trivial (two agents independently adding their own new
+entry to the SAME `FixtureBuilder` usage-string/dispatch list; one small, easily-relocated
+`ExpressionStep`-case edit). **A real, non-obvious trap hit doing this, worth remembering for next
+time**: every `git diff`/`git merge-file` invocation between a worktree's file and a `git show`-
+extracted blob showed the ENTIRE file as changed, even for files with only a handful of real
+edits — root cause was CRLF line endings in the worktree's own working-tree copy (Windows
+`core.autocrlf` checkout) against LF-only content from `git show` (which always emits the blob's
+stored form, never checkout-converted). Stripping `\r` from the working-tree side before diffing/
+merging (and re-adding it before writing the result back) turned every one of these into a small,
+reviewable, few-line diff — the exact same trap this file's own trap 18 already documents for a
+`sed -i` accidentally introducing CRLF, just encountered from the opposite direction (comparing an
+already-CRLF working file against an LF `git show` blob) this time.
+
+**A third, real, but genuinely UNRELATED gap was found continuing to push `DailyETLMain`'s own
+regenerated solution toward a clean build — named here, deliberately NOT fixed this round, per
+this project's own "don't let one fix become two" discipline.** Once both identifier-sanitization
+bugs above were fixed, the build failed on a different, unrelated class of error: 6 `CS8618`s
+("non-nullable property must contain a non-null value when exiting constructor") on `byte[]`-typed
+columns (`Employee.Photo`, `StockItem.Photo`, `City.Location` — a `geography` column) across
+`SqlRowEmitter`/`EntityEmitter`'s own generated row/entity types. Neither emitter gives a `byte[]`
+property a default initializer or a `?` annotation the way every OTHER CLR type in this codegen
+layer already gets nullable-inferred treatment when warranted — this is a real, previously-
+invisible gap (no prior fixture or real package ever had a genuinely non-nullable `byte[]`/
+`geography` column reach these two emitters), unrelated to identifier sanitization, and out of
+scope for this round. Left as a named, precisely-scoped follow-up rather than silently worked
+around or guessed at.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

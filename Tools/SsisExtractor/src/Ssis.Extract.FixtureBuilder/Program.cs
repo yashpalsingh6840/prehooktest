@@ -80,7 +80,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|lookup-no-match-is-live|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources|union-plus-extra-source|aggregate-then-oledb-command|event-handler-probe|error-redirect|expression-task|expression-task-coercion-probe|for-loop|xml-source|scd-composite-key]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|lookup-no-match-is-live|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources|union-plus-extra-source|aggregate-then-oledb-command|event-handler-probe|error-redirect|expression-task|expression-task-coercion-probe|expression-task-millisecond|for-loop|xml-source|scd-composite-key|cross-database-source|identifier-sanitization]");
             return 2;
         }
 
@@ -100,6 +100,10 @@ internal static class Program
         if (fixtureName == "lookup-no-match-is-live")
         {
             return BuildLookupNoMatchIsLiveFixture(args[0]);
+        }
+        if (fixtureName == "cross-database-source")
+        {
+            return BuildCrossDatabaseSourceFixture(args[0]);
         }
         if (fixtureName == "oledb-source-transform")
         {
@@ -317,6 +321,10 @@ internal static class Program
         {
             return BuildExpressionTaskCoercionProbeFixture(args[0]);
         }
+        if (fixtureName == "expression-task-millisecond")
+        {
+            return BuildExpressionTaskMillisecondFixture(args[0]);
+        }
         if (fixtureName == "pct-sampling-probe")
         {
             return ProbePctSampling();
@@ -357,9 +365,13 @@ internal static class Program
         {
             return BuildScdCompositeKeyFixture(args[0]);
         }
+        if (fixtureName == "identifier-sanitization")
+        {
+            return BuildIdentifierSanitizationFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', 'union-plus-extra-source', 'aggregate-then-oledb-command', 'event-handler-probe', 'error-redirect', 'expression-task', 'expression-task-coercion-probe', 'pct-sampling', or 'xml-source'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', 'union-plus-extra-source', 'aggregate-then-oledb-command', 'event-handler-probe', 'error-redirect', 'expression-task', 'expression-task-coercion-probe', 'expression-task-millisecond', 'pct-sampling', or 'xml-source'.");
 
             return 2;
         }
@@ -636,6 +648,67 @@ internal static class Program
 
         pkg.PrecedenceConstraints.Add(preLoadTask, dftHost);
         pkg.PrecedenceConstraints.Add(dftHost, secondDbTask);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Phase 5 of the gap-audit plan (concurrent-whistling-turing.md, 2026-09-17): a genuine
+    /// cross-database Data Flow -- an OLE DB Source whose OWN connection manager
+    /// (<c>CM_SourceSecondDb</c>) resolves to <c>SsisPoC_Secondary</c>, a DIFFERENT database on
+    /// the same <c>.\SQLFORPOC_2022</c> instance than the flow's own destination
+    /// (<c>CM_Sql</c>, <c>SsisPoC</c>) -- reproducing the real evidenced shape found across
+    /// three GitHub portfolios (<c>dimcustomer</c>, <c>fact_sales</c>, and all 13 of
+    /// <c>DailyETLMain</c>'s own "Extract ... to Staging" flows: a source's own connection
+    /// manager pointing at one database while the flow's destination lives in another).
+    ///
+    /// Unlike <see cref="BuildSecondConnectionSqlFixture"/> (a SECOND, unrelated Execute SQL
+    /// Task writing to a different database -- the write-side case this feature's own
+    /// SecondaryConnections mechanism was originally built for), this fixture exercises the
+    /// READ side: <c>Etl.Core.Data.SqlRowSource{TRow}</c> already opens its own independent
+    /// connection regardless of database (see that type's own doc comment), so the only new
+    /// codegen needed was resolving the CONNECTION STRING for that independent connection from
+    /// <c>SecondaryConnections:{name}</c> config instead of the package's primary
+    /// <c>Db()</c> -- see <see cref="Ssis.Extract.Codegen.SqlFlowSource"/>'s own doc comment.
+    ///
+    /// A Derived Column sits between source and destination (not a direct copy) purely to avoid
+    /// tripping the unrelated, pre-existing "no Derived Column found -> direct-copy pipeline is
+    /// not generated" gate for a SQL destination -- the same reason every other single-source-SQL
+    /// fixture in this file (<see cref="BuildOleDbSourceTransformFixture"/>, etc.) already
+    /// includes one; it proves nothing about the cross-database feature itself.
+    /// </summary>
+    private static int BuildCrossDatabaseSourceFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticCrossDatabaseSource" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var secondDbCm = pkg.Connections.Add("OLEDB");
+        secondDbCm.Name = "CM_SourceSecondDb";
+        secondDbCm.ConnectionString = SecondarySqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", secondDbCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, Name FROM dbo.SyntheticCrossDatabaseSourceInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnLoadedAtUtc(pipe, mainOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticCrossDatabaseSourceTarget]");
+        AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -1357,6 +1430,53 @@ internal static class Program
 
         var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
             accessMode: 3, openRowset: "[dbo].[SyntheticOleDbSourceTarget]");
+        AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand) -&gt; Derived Column (LoadedAtUtc &lt;- GETUTCDATE()) -&gt; OLE DB
+    /// Destination -- byte-for-byte the same shape as <see cref="BuildOleDbSourceTransformFixture"/>,
+    /// built 2026-09-18 specifically to prove the identifier-sanitization fix end to end: the
+    /// SOURCE SELECT's own column ("Last Cost Price", a real WWI-schema-style name with a
+    /// literal space, matching the real sql-server-samples/wwi-ssis/DailyETLMain.dtsx package's
+    /// own real "WWI Stock Item ID"/"Last Cost Price" columns exactly) and the DESTINATION
+    /// table's matching column both carry the space verbatim -- see
+    /// <c>synthetic-identifier-sanitization-tables.sql</c> for the exact schema. Before the fix
+    /// this shape produced raw C# identifiers containing a literal space (a hard CS1002/CS1003
+    /// parse failure); this fixture is what actually exercises SqlRowEmitter/SqlRowReaderEmitter/
+    /// EntityEmitter/DbContextEmitter/TransformEmitter's own sanitized-identifier path together,
+    /// end to end, since neither PoC package nor any prior fixture in this file has a
+    /// space-containing column name.
+    /// </summary>
+    private static int BuildIdentifierSanitizationFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticIdentifierSanitization" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, [Last Cost Price] FROM dbo.SyntheticIdentifierSanitizationInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnLoadedAtUtc(pipe, mainOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticIdentifierSanitizationTarget]");
         AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
         ResolveOleDbMetadata(destMeta, isDestination: true);
 
@@ -7065,6 +7185,102 @@ internal static class Program
         host.Name = name;
         host.Properties["Expression"].SetValue(host, expression);
         return host;
+    }
+
+    /// <summary>
+    /// Phase 6 of the unsupported-component-types plan: <c>DATEADD("Millisecond", ...)</c> /
+    /// <c>DATEPART("Millisecond", ...)</c>, closing sql-server-samples' DailyETLMain.dtsx's own
+    /// "Trim Any Milliseconds" Expression Task
+    /// (<c>@[User::TargetETLCutoffTime] = DATEADD("Millisecond", 0 - DATEPART("Millisecond",
+    /// @[User::TargetETLCutoffTime]), @[User::TargetETLCutoffTime])</c>, reproduced here
+    /// VERBATIM). DailyETLMain itself can't be run end to end in this environment -- every one
+    /// of its own Data Flow Tasks sources from a linked-server/project-level connection manager
+    /// this generator can't resolve, an unrelated gap -- so this isolates the ExpressionTask
+    /// translation on its own, observable without any pipeline machinery at all.
+    ///
+    /// <b>Observation design, deliberately avoiding two higher-risk paths:</b> neither a
+    /// DateTime-typed guard COMPARISON (untested -- <c>PackagePlanner</c>'s own conditional-
+    /// constraint translator has never needed to compare a DbTimeStamp variable against a date
+    /// literal) nor a <c>(DT_WSTR,n)</c> CAST of the trimmed value (unsupported --
+    /// <see cref="ExpressionTaskEmitter"/>'s own <c>TranslateNode</c> has no <c>Cast</c> case,
+    /// only <see cref="ExpressionTranslator"/>'s pipeline-row translator does) is used. Instead:
+    /// a SECOND ExpressionTask, <c>EXPR_ObserveMs</c>, reads the (now-trimmed) value's own
+    /// millisecond component back into a plain <c>Int32</c> variable via
+    /// <c>DATEPART("Millisecond", @[User::TargetETLCutoffTime])</c> -- itself a supported,
+    /// already-oracle-verified shape, no Cast needed -- and an Execute SQL Task's own
+    /// precedence-constraint guard compares THAT (an ordinary Int32 comparison, a shape already
+    /// proven working long before this round) against the literal <c>0</c>. A genuinely
+    /// different millisecond value from every oracle corpus row (789, not 456) is used
+    /// deliberately, for independent confirmation beyond what the corpus itself already pins.
+    ///
+    /// A small DFT_Load (CSV -> Derived Column LoadedAtUtc -> OLE DB Destination) is included
+    /// only because a package with zero Data Flow Tasks reports "nothing to generate" -- reuses
+    /// the exact same CSV/table shape <c>BuildExpressionTaskFixture</c> already established.
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-expression-task-tables.sql</c> (same file,
+    /// reused -- no new table needed, the existing <c>SyntheticExpressionTaskLog</c> table
+    /// carries this fixture's own marker too) and the CSV under
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-expression-task-csv/</c> present on disk.
+    /// </summary>
+    private static int BuildExpressionTaskMillisecondFixture(string outputPath)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-expression-task-csv", "SyntheticExpressionTask.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticExpressionTaskMillisecond" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_ExpressionTaskCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 50, 0, 0));
+
+        // The design-time DEFAULT itself is NOT where the nonzero-millisecond value under test
+        // comes from -- <DTS:VariableValue>'s own text serialization has no sub-second component
+        // at all (confirmed directly: SaveToXML rounds any millisecond-bearing default to the
+        // nearest whole second, e.g. 45.789 -> "46"), so a value baked in here would already be
+        // an exact .000 by the time either dtexec or the generated code ever reads it -- making
+        // the trim idiom a no-op and testing nothing interesting. Instead EXPR_SetMs789 (below)
+        // establishes a genuine, nonzero-ms value AT RUNTIME, via DATEADD itself -- .789,
+        // deliberately different from every oracle corpus row (.456/.123/.999/.000) so this run
+        // is independent confirmation, not a re-check of an already-measured value.
+        pkg.Variables.Add("TargetETLCutoffTime", false, "User", new DateTime(2020, 6, 15, 12, 30, 45));
+        pkg.Variables.Add("MsAfterTrim", false, "User", -1);
+
+        var setMs = AddExpressionTask(pkg, "EXPR_SetMs789",
+            "@[User::TargetETLCutoffTime] = DATEADD(\"Millisecond\", 789, @[User::TargetETLCutoffTime])");
+        // The real evidenced call, verbatim, from DailyETLMain.dtsx's own "Trim Any Milliseconds".
+        var trim = AddExpressionTask(pkg, "EXPR_TrimMilliseconds",
+            "@[User::TargetETLCutoffTime] = DATEADD(\"Millisecond\", 0 - DATEPART(\"Millisecond\", @[User::TargetETLCutoffTime]), @[User::TargetETLCutoffTime])");
+        var observe = AddExpressionTask(pkg, "EXPR_ObserveMs",
+            "@[User::MsAfterTrim] = DATEPART(\"Millisecond\", @[User::TargetETLCutoffTime])");
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        BuildFlatFileToOleDbLoad((MainPipe)dftHost.InnerObject, csvCm, sqlCm, "[dbo].[SyntheticExpressionTaskTarget]");
+
+        var logIfTrimmed = AddExecuteSql(pkg, "SQL_LogIfTrimmedToZero", sqlCm,
+            "INSERT dbo.SyntheticExpressionTaskLog (Marker) VALUES (N'ms-trimmed-to-zero');");
+
+        pkg.PrecedenceConstraints.Add((Executable)setMs, (Executable)trim);
+        pkg.PrecedenceConstraints.Add((Executable)trim, (Executable)observe);
+        pkg.PrecedenceConstraints.Add((Executable)observe, dftHost);
+        var gate = pkg.PrecedenceConstraints.Add(dftHost, (Executable)logIfTrimmed);
+        gate.EvalOp = Microsoft.SqlServer.Dts.Runtime.DTSPrecedenceEvalOp.ExpressionAndConstraint;
+        gate.Expression = "@[User::MsAfterTrim] == 0";
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
     }
 
     /// <summary>

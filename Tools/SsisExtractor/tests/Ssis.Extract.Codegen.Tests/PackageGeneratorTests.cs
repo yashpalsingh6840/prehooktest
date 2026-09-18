@@ -264,6 +264,66 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WiresAnOleDbSource_WhoseConnectionManagerTargetsADifferentDatabase_ViaASecondaryConnection()
+    {
+        // Phase 5 of the gap-audit plan (concurrent-whistling-turing.md, 2026-09-17):
+        // SyntheticCrossDatabaseSource.dtsx -- OLE DB Source (CM_SourceSecondDb, resolving to
+        // SsisPoC_Secondary) -> Derived Column -> OLE DB Destination (CM_Sql, resolving to
+        // SsisPoC). Before this, ANY server/database mismatch between a source and its flow's
+        // destination was an unconditional gap ("a separate source connection is not supported
+        // yet") -- reproducing the real shape found across three GitHub portfolios (`dimcustomer`,
+        // `fact_sales`, all 13 of `DailyETLMain`'s own "Extract ... to Staging" flows). Confirmed
+        // beyond this test by actually running the generated exe against .\SQLFORPOC_2022 (both
+        // SsisPoC and SsisPoC_Secondary) and reading dbo.SyntheticCrossDatabaseSourceTarget back
+        // afterward -- see Tools/SsisExtractor/CLAUDE.md.
+        var package = LoadSyntheticFixture("SyntheticCrossDatabaseSource.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticCrossDatabaseSource.cs");
+        // No uow argument at all -- a secondary-connection source is never bound to the package's
+        // own transaction (see SqlFlowSource's own doc comment).
+        Assert.Contains("internal IRowSource<SyntheticCrossDatabaseSourceTargetSqlRow> OLEDBSource()", classFile.Content);
+        Assert.Contains(
+            "var connectionString = SqlConnectionStringFactory.Build(Config().GetSection(\"SecondaryConnections:CM_SourceSecondDb\").Get<DatabaseOptions>()",
+            classFile.Content);
+        Assert.Contains(
+            "return new SqlRowSource<SyntheticCrossDatabaseSourceTargetSqlRow>(\"OLE DB Source\", "
+            + "new SqlSourceOptions { ConnectionString = connectionString, CommandText = \"SELECT ID, Name FROM dbo.SyntheticCrossDatabaseSourceInput\" }, "
+            + "SyntheticCrossDatabaseSourceTargetSqlRowReader.Read);",
+            classFile.Content);
+        // The call site passes no argument either -- SourceCallArgs mirrors SourceNeedsUow.
+        Assert.Contains("var source = OLEDBSource();", classFile.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+
+        var appSettingsFile = Assert.Single(result.Files, f => f.RelativePath == "appsettings.json");
+        Assert.Contains("\"SecondaryConnections\"", appSettingsFile.Content);
+        Assert.Contains("\"CM_SourceSecondDb\"", appSettingsFile.Content);
+        Assert.Contains("\"Database\": \"SsisPoC_Secondary\"", appSettingsFile.Content);
+
+        // Both generated starter-test call sites (the standalone "Source -- SQL" test and the
+        // "Data Flow Task -- direct invocation" test) must ALSO drop the uow argument -- a real,
+        // previously-latent bug this feature surfaced: PackageGenerator.FlowSourceNeedsUow (a
+        // duplicate of PackageClassEmitter.SourceNeedsUow for test-emission purposes) still
+        // returned true unconditionally for ANY SqlFlowSource, producing a starter test calling
+        // OLEDBSource(uow) against a method that takes no arguments at all (CS1501) -- caught only
+        // by actually building the generated project, not by this gap-count/report check alone.
+        var sourceTestFile = Assert.Single(result.SiblingFiles, f => f.RelativePath == "SyntheticCrossDatabaseSource.Tests/OLEDBSourceSourceTests.cs");
+        Assert.Contains("var source = package.OLEDBSource();", sourceTestFile.Content);
+        Assert.DoesNotContain("harness.NewUnitOfWork()", sourceTestFile.Content);
+        Assert.DoesNotContain("NewRealUnitOfWorkAsync", sourceTestFile.Content);
+
+        var dataFlowTestFile = Assert.Single(result.SiblingFiles, f => f.RelativePath == "SyntheticCrossDatabaseSource.Tests/DFT_LoadStepDataFlowTests.cs");
+        Assert.Contains("var source = package.OLEDBSource();", dataFlowTestFile.Content);
+
+        // Only the two unavoidable, non-blocking advisories -- no cross-database gap at all.
+        Assert.Equal(2, result.Gaps.Count);
+        Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+        Assert.DoesNotContain(result.Gaps, g => g.Reason.Contains("separate source connection is not supported"));
+    }
+
+    [Fact]
     public void Generate_WiresTwoExpressionTaskAssignments_ForTheSyntheticExpressionTaskFixture()
     {
         // SyntheticExpressionTask.dtsx: Phase 2 of the unsupported-component-types plan

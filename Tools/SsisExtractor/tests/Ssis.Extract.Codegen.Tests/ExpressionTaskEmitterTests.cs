@@ -22,6 +22,45 @@ public class ExpressionTaskEmitterTests
     }
 
     [Fact]
+    public void TranslateAssignment_TranslatesTheRealTrimMillisecondsExpression()
+    {
+        // sql-server-samples' DailyETLMain.dtsx's own "Trim Any Milliseconds" task, verbatim --
+        // Phase 6's own real evidenced call, the composed DATEADD/DATEPART/'-' idiom that zeroes
+        // a DateTime variable's own millisecond component by subtracting its own reported value.
+        var result = ExpressionTaskEmitter.TranslateAssignment(
+            "@[User::TargetETLCutoffTime] = DATEADD(\"Millisecond\", 0 - DATEPART(\"Millisecond\", @[User::TargetETLCutoffTime]), @[User::TargetETLCutoffTime])",
+            Vars(("User::TargetETLCutoffTime", "packageVariables.GetRequired<DateTime>(\"User::TargetETLCutoffTime\")", SsisType.DbTimeStamp)),
+            out var variableName);
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal("User::TargetETLCutoffTime", variableName);
+        Assert.Equal(
+            "SsisFn.DateAddMillisecond(packageVariables.GetRequired<DateTime>(\"User::TargetETLCutoffTime\"), " +
+            "(0) - (SsisFn.DatePartMillisecond(packageVariables.GetRequired<DateTime>(\"User::TargetETLCutoffTime\"))))",
+            ok.CSharpExpression);
+    }
+
+    [Fact]
+    public void TranslateAssignment_DegradesToAGap_ForAnUnsupportedDatePart_OnDatePart()
+    {
+        var result = ExpressionTaskEmitter.TranslateAssignment(
+            "@[User::X] = DATEPART(\"Quarter\", GETUTCDATE())", Vars(), out _);
+
+        var gap = Assert.IsType<NotTranslatable>(result);
+        Assert.Contains("Millisecond", gap.Reason);
+    }
+
+    [Fact]
+    public void TranslateAssignment_DegradesToAGap_ForStringSubtraction_NotJustSilentlyGuessingItsFine()
+    {
+        var result = ExpressionTaskEmitter.TranslateAssignment(
+            "@[User::Y] = \"a\" - \"b\"", Vars(), out _);
+
+        var gap = Assert.IsType<NotTranslatable>(result);
+        Assert.Contains("numeric operands", gap.Reason);
+    }
+
+    [Fact]
     public void TranslateAssignment_TranslatesAPlainStringLiteralAssignment()
     {
         // The real shape of every OTHER ExpressionTask in DailyETLMain.dtsx, e.g.

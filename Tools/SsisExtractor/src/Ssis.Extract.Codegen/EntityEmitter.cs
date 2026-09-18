@@ -34,6 +34,15 @@ public static class EntityEmitter
             .Select(u => new GenerationGap($"{entityName}.{u.ColumnName}", u.Reason))
             .ToList();
 
+        // DbContextEmitter independently resolves this SAME PipelineResolver.ResolveDestinationInput
+        // list, in the same order, so it reproduces this exact identifier mapping with no state
+        // shared between them (see PackageGenerator.MakeColumnIdentifierResolver's own doc
+        // comment) -- and, wherever a real column's raw external name differs from its sanitized
+        // identifier, DbContextEmitter emits an explicit .HasColumnName(...) so EF still writes
+        // to the column's true real name (e.g. "WWI Stock Item ID"), not its sanitized property
+        // name.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var propertyLines = new List<string>();
         foreach (var column in resolved.Columns)
         {
@@ -56,13 +65,16 @@ public static class EntityEmitter
             var isNullable = nullableColumnNames?.Contains(column.PipelineColumnName) ?? false;
             var typeName = isNullable ? column.Type.ClrTypeName + "?" : column.Type.ClrTypeName;
             var initializer = !isNullable && column.Type.ClrTypeName == "string" ? " = \"\";" : "";
-            propertyLines.Add($"    public {typeName} {column.ExternalColumnName} {{ get; set; }}{initializer}");
+            propertyLines.Add($"    public {typeName} {identifierOf(column.ExternalColumnName)} {{ get; set; }}{initializer}");
         }
 
         foreach (var (name, clrType) in extraProperties ?? [])
         {
             if (propertyLines.Count > 0) propertyLines.Add("");
-            propertyLines.Add($"    public {clrType} {name} {{ get; set; }}");
+            // Caller-supplied (e.g. "FailedAt"), never a raw external column name -- already a
+            // safe identifier, but still routed through the resolver so it can't collide with a
+            // real column's own sanitized name.
+            propertyLines.Add($"    public {clrType} {identifierOf(name)} {{ get; set; }}");
         }
 
         if (propertyLines.Count == 0)

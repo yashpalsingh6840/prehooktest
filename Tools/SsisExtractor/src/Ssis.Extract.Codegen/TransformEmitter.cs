@@ -188,6 +188,17 @@ public static class TransformEmitter
         foreach (var unresolved in resolved.Unresolved)
             gaps.Add(new GenerationGap($"{request.EntityName}.{unresolved.ColumnName}", unresolved.Reason));
 
+        // Independently reproduces EntityEmitter's own identifier mapping for THIS destination
+        // (same PipelineResolver.ResolveDestinationInput list, same order) -- see
+        // PackageGenerator.MakeColumnIdentifierResolver's own doc comment. Every DESTINATION-side
+        // identifier below (the LHS of each object-initializer assignment, a compute-method name
+        // keyed off the column, a Script Component seam's own record property) is resolved
+        // through this so it always agrees with the entity property EntityEmitter actually
+        // declared. A SOURCE-side reference (row.{X}) is a different list (the source row type's
+        // own declared columns) and uses bare PackageGenerator.SanitizeIdentifier instead -- see
+        // that method's own doc comment for the one accepted, unevidenced limitation this implies.
+        var destinationIdentifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         // The destination's own input column CACHES the SOURCE's buffer type (e.g. "r8"),
         // independent of the destination's own EXTERNAL (real table) column type resolved.Type
         // already carries (e.g. "i4") -- these normally agree, but an Excel Source's own output
@@ -357,12 +368,18 @@ public static class TransformEmitter
         var holderMethodsByRefId = new Dictionary<string, (string ClassName, List<string> Lines)>();
         foreach (var column in resolved.Columns)
         {
+            // The C# identifier EntityEmitter declared for this SAME raw external column name --
+            // every identifier-position use below routes through this, never the raw name
+            // directly; every diagnostic/gap-message use below keeps the raw name (more honest
+            // for a human reading it, and this project's own established convention).
+            var destId = destinationIdentifierOf(column.ExternalColumnName);
+
             // A replaced column has the SAME name as the upstream column it rewrites, whereas a
             // computed one introduces a new name, so these two lookups cannot collide.
             if (computedByName.TryGetValue(column.PipelineColumnName, out var derivedColumn) ||
                 replacedByName.TryGetValue(column.PipelineColumnName, out derivedColumn))
             {
-                var translated = TranslateDerivedColumn(derivedColumn, request.EntityName, column.ExternalColumnName, lineage, columnTypes, request.NullableColumnNames, convertedByName, copiedByName);
+                var translated = TranslateDerivedColumn(derivedColumn, request.EntityName, destId, lineage, columnTypes, request.NullableColumnNames, convertedByName, copiedByName);
                 if (translated is NotTranslatable notTranslatable)
                 {
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}", notTranslatable.Reason));
@@ -385,14 +402,14 @@ public static class TransformEmitter
                     var ownerClassName = holders.ReserveName(derivedColumn.OwnerComponentRefId, PackageGenerator.SanitizeIdentifier(derivedColumn.OwnerComponentName));
                     if (!holderMethodsByRefId.TryGetValue(derivedColumn.OwnerComponentRefId, out var holder))
                         holderMethodsByRefId[derivedColumn.OwnerComponentRefId] = holder = (ownerClassName, []);
-                    AddComputeMethod(holder.Lines, column.ExternalColumnName, returnType, request.RowTypeName, expr, friendlyComment);
-                    assignments.Add($"        {column.ExternalColumnName} = {ownerClassName}.{column.ExternalColumnName}(row, ctx),");
+                    AddComputeMethod(holder.Lines, destId, returnType, request.RowTypeName, expr, friendlyComment);
+                    assignments.Add($"        {destId} = {ownerClassName}.{destId}(row, ctx),");
                 }
                 else
                 {
-                    var methodName = $"Compute{column.ExternalColumnName}";
+                    var methodName = $"Compute{destId}";
                     AddComputeMethod(computeMethods, methodName, returnType, request.RowTypeName, expr, friendlyComment);
-                    assignments.Add($"        {column.ExternalColumnName} = {methodName}(row, ctx),");
+                    assignments.Add($"        {destId} = {methodName}(row, ctx),");
                 }
             }
             else if (convertedByName.TryGetValue(column.PipelineColumnName, out var conversion))
@@ -406,7 +423,7 @@ public static class TransformEmitter
 
                 var expr = ((TranslatedOk)converted).CSharpExpression;
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (copiedByName.TryGetValue(column.PipelineColumnName, out var copyMapColumn))
             {
@@ -418,7 +435,7 @@ public static class TransformEmitter
                 }
 
                 var expr = ((TranslatedOk)copied).CSharpExpression;
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (request.LookupJoin is { } join
                      && join.OutputToReferenceColumn.TryGetValue(column.PipelineColumnName, out var referenceColumn))
@@ -428,15 +445,15 @@ public static class TransformEmitter
                 // KeyNotFoundException is the faithful translation. A Lookup that redirects
                 // no-match rows is a different, unsupported shape -- PackageGenerator gaps it
                 // rather than reaching here.
-                assignments.Add($"        {column.ExternalColumnName} = {LookupJoinExpressionBuilder.Build(join, referenceColumn)},");
+                assignments.Add($"        {destId} = {LookupJoinExpressionBuilder.Build(join, referenceColumn)},");
             }
             else if (flatFileStringConversionColumns.Contains(column.PipelineColumnName))
             {
                 // A nullable-inferred source column needs a null-conditional ToString() (empty
                 // string for a genuine NULL) rather than a plain one, which would NullReferenceException.
                 var isNullable = request.NullableColumnNames?.Contains(column.PipelineColumnName) == true;
-                var expr = FlatFileStringConversionExpressionBuilder.Build(column.PipelineColumnName, isNullable);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                var expr = FlatFileStringConversionExpressionBuilder.Build(PackageGenerator.SanitizeIdentifier(column.PipelineColumnName), isNullable);
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (narrowedR8ToI4Columns.Contains(column.PipelineColumnName))
             {
@@ -444,33 +461,33 @@ public static class TransformEmitter
                 // shape works whether or not this column is nullable-inferred, unlike the Flat
                 // File string-conversion case above (which needs the null-conditional `?`
                 // operator itself, not just an overload).
-                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowR8ToI4, column.PipelineColumnName);
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowR8ToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (narrowedI8ToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowI8ToI4, column.PipelineColumnName);
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowI8ToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (narrowedNumericToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowNumericToI4, column.PipelineColumnName);
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowNumericToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (narrowedR4ToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowR4ToI4, column.PipelineColumnName);
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowR4ToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (parsedWstrToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.ParseWstrToI4, column.PipelineColumnName);
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.ParseWstrToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (unrecognizedComponentColumns.TryGetValue(column.PipelineColumnName, out var producer))
             {
@@ -504,7 +521,10 @@ public static class TransformEmitter
                 // Deferred, not emitted here -- every column this same Script Component produces
                 // (reaching this destination) needs to be known before its ONE combined seam/gap
                 // can be built. See the post-loop consolidation below and ScriptComponentGroup's
-                // own doc comment for why this replaced a per-column Fill_{Column} seam.
+                // own doc comment for why this replaced a per-column Fill_{Column} seam. Stores
+                // the RAW external name (human-readable text in the consolidated gap message) --
+                // the consolidation loop below independently sanitizes it into the same record
+                // property/method-call identifier this column's own LHS (destId) already uses.
                 if (!scriptComponentGroups.TryGetValue(producer.RefId, out var group))
                     scriptComponentGroups[producer.RefId] = group = new ScriptComponentGroup(producer);
                 group.Columns.Add(new ScriptComponentGroupColumn(column.ExternalColumnName, seamType));
@@ -512,14 +532,14 @@ public static class TransformEmitter
                 if (request.EmitSeams)
                 {
                     var localVar = PackageGenerator.LowerFirst(PackageGenerator.SanitizeIdentifier(producer.Name)) + "Result";
-                    assignments.Add($"        {column.ExternalColumnName} = {localVar}.{column.ExternalColumnName},");
+                    assignments.Add($"        {destId} = {localVar}.{PackageGenerator.SanitizeIdentifier(column.ExternalColumnName)},");
                 }
                 // else: EmitSeams off -- the column is simply omitted from the object initializer,
                 // same as today; the group's own consolidated gap below explains why.
             }
             else if (!mismatchedTypeColumns.Contains(column.PipelineColumnName))
             {
-                assignments.Add($"        {column.ExternalColumnName} = row.{column.PipelineColumnName},");
+                assignments.Add($"        {destId} = row.{PackageGenerator.SanitizeIdentifier(column.PipelineColumnName)},");
             }
         }
 
@@ -541,7 +561,11 @@ public static class TransformEmitter
                 var localVar = PackageGenerator.LowerFirst(sanitizedName) + "Result";
                 scriptComponentLocals.Add($"        var {localVar} = {sanitizedName}(row, ctx);");
 
-                var recordProps = string.Join(", ", group.Columns.Select(c => $"{c.SeamType} {c.ExternalColumnName}"));
+                // Own resolver, scoped to this one group's own column list -- guards against two
+                // columns THIS Script Component produces sanitizing to the same identifier
+                // (unevidenced, but a duplicate record-struct property would fail to compile).
+                var recordIdentifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+                var recordProps = string.Join(", ", group.Columns.Select(c => $"{c.SeamType} {recordIdentifierOf(c.ExternalColumnName)}"));
                 scriptComponentRecords.Add($"internal readonly record struct {resultTypeName}({recordProps});");
 
                 if (seams.Count > 0) seams.Add("");
@@ -850,7 +874,7 @@ public static class TransformEmitter
                 return new NotTranslatable($"referenced column '{edge.FromColumnName}' has unmapped pipeline data type '{producerColumn.DataType}'");
 
             var isNullable = nullableColumnNames?.Contains(edge.FromColumnName) ?? false;
-            references[edge.FromColumnName] = new ColumnReference($"row.{edge.FromColumnName}", mapped.Value, isNullable);
+            references[edge.FromColumnName] = new ColumnReference($"row.{PackageGenerator.SanitizeIdentifier(edge.FromColumnName)}", mapped.Value, isNullable);
         }
 
         return ExpressionTranslator.TranslateColumn(ast, entityName, destinationColumnName, references);
@@ -874,7 +898,7 @@ public static class TransformEmitter
         if (edge is null)
             return new NotTranslatable($"Data Conversion column '{outputColumnName}' has no resolvable source column");
 
-        return WrapDataConversion(conversion, $"row.{edge.FromColumnName}");
+        return WrapDataConversion(conversion, $"row.{PackageGenerator.SanitizeIdentifier(edge.FromColumnName)}");
     }
 
     /// <summary>Same wrapping as <see cref="TranslateDataConversion(DataConversionColumnSpec,string,LineageSpec)"/>,
@@ -908,7 +932,7 @@ public static class TransformEmitter
         if (edge is null)
             return new NotTranslatable($"Copy Column column '{outputColumnName}' has no resolvable source column");
 
-        return new TranslatedOk($"row.{edge.FromColumnName}");
+        return new TranslatedOk($"row.{PackageGenerator.SanitizeIdentifier(edge.FromColumnName)}");
     }
 
     private static TranslatedExpression WrapDataConversion(DataConversionColumnSpec conversion, string sourceRef) =>
@@ -1015,6 +1039,8 @@ public static class TransformEmitter
         if (csharpExpression.Contains("SsisFn.ToNullableI2(")) functionsUsed.Add("ToNullableI2");
         if (csharpExpression.Contains("SsisFn.ToNullableI8(")) functionsUsed.Add("ToNullableI8");
         if (csharpExpression.Contains("SsisFn.ToNullableDateTime(")) functionsUsed.Add("ToNullableDateTime");
+        if (csharpExpression.Contains("SsisFn.DatePartMillisecond(")) functionsUsed.Add("DatePartMillisecond");
+        if (csharpExpression.Contains("SsisFn.DateAddMillisecond(")) functionsUsed.Add("DateAddMillisecond");
     }
 
     /// <summary>Same evidenced surface as SsisPipelineTypeMap, mapped into the expression

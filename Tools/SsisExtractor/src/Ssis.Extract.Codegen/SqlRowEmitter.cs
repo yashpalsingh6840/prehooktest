@@ -28,6 +28,11 @@ public static class SqlRowEmitter
             .Select(u => new GenerationGap($"{rowClassName}.{u.ColumnName}", u.Reason))
             .ToList();
 
+        // See PackageGenerator.MakeColumnIdentifierResolver's own doc comment -- SqlRowReaderEmitter
+        // independently resolves the identical PipelineResolver.Resolve(output) list in the
+        // identical order, so it reproduces this exact mapping with no state shared between them.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var propertyLines = new List<string>();
         foreach (var column in resolved.Columns)
         {
@@ -51,7 +56,7 @@ public static class SqlRowEmitter
             var isNullable = nullableColumnNames?.Contains(column.PipelineColumnName) ?? false;
             var typeName = isNullable ? column.Type.ClrTypeName + "?" : column.Type.ClrTypeName;
             var initializer = !isNullable && column.Type.ClrTypeName == "string" ? " = \"\";" : "";
-            propertyLines.Add($"    public {typeName} {column.PipelineColumnName} {{ get; set; }}{initializer}");
+            propertyLines.Add($"    public {typeName} {identifierOf(column.PipelineColumnName)} {{ get; set; }}{initializer}");
         }
 
         if (propertyLines.Count == 0)

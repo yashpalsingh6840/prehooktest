@@ -117,6 +117,13 @@ public static class MergeJoinEmitter
 
             // A Data Conversion result is ALWAYS nullable too (IgnoreFailure's own guarantee,
             // same rule TransformEmitter's own Data Conversion handling already establishes).
+            // ResolvedOutputColumn.Name is kept as the RAW output column name here, not the
+            // sanitized C# identifier -- NullableColumnNames (below) is keyed by this same raw
+            // name, matching EntityEmitter's own PipelineColumnName-keyed lookup for a Merge Join
+            // flow's destination (see this method's own return value doc comment). Sanitizing
+            // happens only where the name is actually EMITTED as a C# identifier -- BuildRowTypeFile/
+            // BuildMapperFile, each independently applying PackageGenerator.MakeColumnIdentifierResolver
+            // to this SAME list in the SAME order, so they still agree with each other.
             resolvedColumns.Add(new ResolvedOutputColumn(outputCol.Name, value.Type, isRightSide || value.IsConversionDerived, value.Expression));
             testColumns.Add(new MergeJoinTestColumn(
                 outputCol.Name, MayBeAbsent: isRightSide, value.RawColumnName, value.Type.ClrTypeName,
@@ -208,7 +215,7 @@ public static class MergeJoinEmitter
                 return null;
             }
 
-            var translated = TransformEmitter.TranslateDataConversionFromRawExpression(conversion, $"{accessPrefix}.{rawColumn.Name}");
+            var translated = TransformEmitter.TranslateDataConversionFromRawExpression(conversion, $"{accessPrefix}.{PackageGenerator.SanitizeIdentifier(rawColumn.Name)}");
             if (translated is NotTranslatable notTranslatable)
             {
                 gaps.Add(new GenerationGap(gapLocation, notTranslatable.Reason));
@@ -229,7 +236,8 @@ public static class MergeJoinEmitter
             return null;
         }
 
-        var passthroughExpr = mayBeAbsent ? $"{sidePrefix}?.{rawPassthroughColumn.Name}" : $"{accessPrefix}.{rawPassthroughColumn.Name}";
+        var rawPassthroughIdentifier = PackageGenerator.SanitizeIdentifier(rawPassthroughColumn.Name);
+        var passthroughExpr = mayBeAbsent ? $"{sidePrefix}?.{rawPassthroughIdentifier}" : $"{accessPrefix}.{rawPassthroughIdentifier}";
         return new ResolvedValue(passthroughExpr, passthroughType, IsConversionDerived: false,
             RawColumnName: rawPassthroughColumn.Name, ConversionTargetType: null, ConversionLength: null);
     }
@@ -259,6 +267,9 @@ public static class MergeJoinEmitter
 
     private static GeneratedFile BuildRowTypeFile(string ns, string rowTypeName, List<ResolvedOutputColumn> columns)
     {
+        // Independently reproduces BuildMapperFile's own identifier mapping (same columns list,
+        // same order) -- see PackageGenerator.MakeColumnIdentifierResolver's own doc comment.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
         var lines = new List<string> { $"namespace {ns};", "", $"public sealed class {rowTypeName}", "{" };
         for (var i = 0; i < columns.Count; i++)
         {
@@ -266,7 +277,7 @@ public static class MergeJoinEmitter
             var c = columns[i];
             var typeName = c.Nullable ? c.Type.ClrTypeName + "?" : c.Type.ClrTypeName;
             var initializer = !c.Nullable && c.Type.ClrTypeName == "string" ? " = \"\";" : "";
-            lines.Add($"    public {typeName} {c.Name} {{ get; set; }}{initializer}");
+            lines.Add($"    public {typeName} {identifierOf(c.Name)} {{ get; set; }}{initializer}");
         }
         lines.Add("}");
         return new GeneratedFile($"Sql/{rowTypeName}.cs", Rendering.JoinLines(lines));
@@ -295,11 +306,14 @@ public static class MergeJoinEmitter
         lines.Add("");
         lines.Add($"    public static {rowTypeName} Map({leftRowTypeName}? left, {rightRowTypeName}? right) => new()");
         lines.Add("    {");
+        // Independently reproduces BuildRowTypeFile's own identifier mapping (same columns list,
+        // same order) -- see PackageGenerator.MakeColumnIdentifierResolver's own doc comment.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
         for (var i = 0; i < columns.Count; i++)
         {
             var c = columns[i];
             var comma = i < columns.Count - 1 ? "," : "";
-            lines.Add($"        {c.Name} = {c.ValueExpression}{comma}");
+            lines.Add($"        {identifierOf(c.Name)} = {c.ValueExpression}{comma}");
         }
         lines.Add("    };");
         lines.Add("}");

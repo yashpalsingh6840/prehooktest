@@ -59,6 +59,10 @@ public static class XmlRowReaderEmitter
 
         var resolved = PipelineResolver.Resolve(output);
 
+        // Independently reproduces XmlRowEmitter's own identifier mapping -- see
+        // PackageGenerator.MakeColumnIdentifierResolver's own doc comment.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var assignments = new List<string>();
         var gaps = new List<GenerationGap>();
         var usesNullableText = false;
@@ -68,11 +72,15 @@ public static class XmlRowReaderEmitter
             // same row type -- don't double-report the same fact from a second emitter.
             if (column.Type is null) continue;
 
+            // The real XML child ELEMENT name -- a LITERAL lookup, must stay the raw name
+            // verbatim (never sanitized): the source document has no idea this tool needs a C#
+            // identifier for it.
             var elementAccess = $"element.Element(\"{column.PipelineColumnName}\")";
+            var identifier = identifierOf(column.PipelineColumnName);
             if (column.Type.ClrTypeName == "string")
             {
                 usesNullableText = true;
-                assignments.Add($"        {column.PipelineColumnName} = ReadNullableText({elementAccess}),");
+                assignments.Add($"        {identifier} = ReadNullableText({elementAccess}),");
                 continue;
             }
 
@@ -83,7 +91,7 @@ public static class XmlRowReaderEmitter
                 continue;
             }
 
-            assignments.Add($"        {column.PipelineColumnName} = {buildExpr($"{elementAccess}!.Value")},");
+            assignments.Add($"        {identifier} = {buildExpr($"{elementAccess}!.Value")},");
         }
 
         if (assignments.Count == 0)

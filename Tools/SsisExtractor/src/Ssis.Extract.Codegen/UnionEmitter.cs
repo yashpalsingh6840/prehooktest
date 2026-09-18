@@ -42,6 +42,10 @@ public static class UnionEmitter
             return new EmitResult([], [new GenerationGap(rowClassName, $"'{unionComponent.Name}' has no main (non-error) output")]);
         }
 
+        // EmitReader independently reproduces this exact mapping (same output.Columns list, same
+        // order) -- see PackageGenerator.MakeColumnIdentifierResolver's own doc comment.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var gaps = new List<GenerationGap>();
         var propertyLines = new List<string>();
         foreach (var column in output.Columns)
@@ -56,7 +60,7 @@ public static class UnionEmitter
 
             if (propertyLines.Count > 0) propertyLines.Add("");
             var initializer = type.ClrTypeName == "string" ? " = \"\";" : "";
-            propertyLines.Add($"    public {type.ClrTypeName} {column.Name} {{ get; set; }}{initializer}");
+            propertyLines.Add($"    public {type.ClrTypeName} {identifierOf(column.Name)} {{ get; set; }}{initializer}");
         }
 
         if (propertyLines.Count == 0)
@@ -85,6 +89,10 @@ public static class UnionEmitter
             return new EmitResult([], [new GenerationGap($"{rowClassName}Reader", $"'{unionComponent.Name}' has no main (non-error) output")]);
         }
 
+        // Independently reproduces EmitRowType's own identifier mapping -- see
+        // PackageGenerator.MakeColumnIdentifierResolver's own doc comment.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var assignments = new List<string>();
         foreach (var column in output.Columns)
         {
@@ -93,8 +101,11 @@ public static class UnionEmitter
             // type -- don't double-report the same fact from a second emitter.
             if (type is null) continue;
 
+            // The union's own output column name is what SqlRowReaderEmitter-style OLE DB Source
+            // SELECT aliasing guarantees is really present in the result set -- a LITERAL lookup,
+            // stays raw. The assignment target is the sanitized identifier.
             var ordinalExpr = $"reader.GetOrdinal(\"{column.Name}\")";
-            assignments.Add($"        {column.Name} = reader.GetFieldValue<{type.ClrTypeName}>({ordinalExpr}),");
+            assignments.Add($"        {identifierOf(column.Name)} = reader.GetFieldValue<{type.ClrTypeName}>({ordinalExpr}),");
         }
 
         if (assignments.Count == 0)

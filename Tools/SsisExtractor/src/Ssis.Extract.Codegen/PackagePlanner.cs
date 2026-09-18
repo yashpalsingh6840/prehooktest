@@ -800,9 +800,23 @@ public static class PackagePlanner
         ReportEventHandlers(package, gaps, claimedRefIds: claimedHandlerRefIds);
         ReportUnappliedGuards(package, guards, guardsApplied, gaps);
 
+        // An ExpressionStep can READ a package variable in its own translated RHS (e.g. Phase 6's
+        // own "0 - DATEPART(...)" idiom re-reads the SAME variable it's about to overwrite) --
+        // that variable needs a design-time seed too, exactly like a guard-read one, or
+        // PackageVariables.GetRequired<T> throws "was never set" the first time this step runs
+        // before anything else has assigned it. Found the same way the guard-seeding code above
+        // already finds ITS OWN referenced variables: a substring match against the exact
+        // "packageVariables.GetRequired<T>(...)" text GuardVariableAccess would produce.
+        var expressionStepSeeds = steps
+            .OfType<ExpressionStep>()
+            .SelectMany(es => variableTable
+                .Where(kv => es.CSharpValueExpression.Contains(GuardVariableAccess(kv.Key, kv.Value), StringComparison.Ordinal))
+                .Select(kv => new PackageVariableSeed(kv.Key, kv.Value.ClrTypeName, kv.Value.CSharpLiteral)));
+
         var seeds = steps
             .Where(step => step.Guard is not null)
             .SelectMany(step => step.Guard!.Seeds)
+            .Concat(expressionStepSeeds)
             .DistinctBy(seed => seed.SsisName)
             .OrderBy(seed => seed.SsisName, StringComparer.Ordinal)
             .ToList();
@@ -1387,9 +1401,18 @@ public static class PackagePlanner
     /// A variable's declared variant type (<c>DTS:VariableValue/@DataType</c>, already resolved to a
     /// name by <c>SsisTypeCodeMaps.VariantDeclaredTypeName</c>) mapped to the CLR type
     /// <c>PackageVariables.Get&lt;T&gt;</c> is called with, the expression type the shared condition
-    /// translator dispatches on, and a C# literal for the design-time default. Deliberately only
-    /// the types whose literal form is unambiguous: a DateTime default would need a parse and a
-    /// round-trip format decision that nothing evidenced asks for.
+    /// translator dispatches on, and a C# literal for the design-time default.
+    ///
+    /// <b>"DateTime" (VT_DATE, code 7) added 2026-09-17, Phase 6 of the unsupported-component-types
+    /// plan</b> -- the real evidenced need, closing the ONLY reason DailyETLMain.dtsx's own "Trim
+    /// Any Milliseconds" Expression Task (<c>@[User::TargetETLCutoffTime] = DATEADD("Millisecond",
+    /// 0 - DATEPART("Millisecond", @[User::TargetETLCutoffTime]), @[User::TargetETLCutoffTime])</c>)
+    /// couldn't translate even once DATEADD/DATEPART/'-' themselves supported "Millisecond": the
+    /// variable it reads and writes has no resolvable declared type without this case. The design-
+    /// time default's own round-trip format concern this type's own doc comment used to cite is
+    /// resolved by round-tripping through DateTime's own "o" (round-trip) format string, which
+    /// needs no locale/culture decision at all -- every other type here (Int16/Int32/Int64/String/
+    /// Boolean) still has an unambiguous literal form, unchanged.
     /// </summary>
     private static GuardVariable? MapVariantType(string? declaredTypeName, string? designTimeValue) =>
         declaredTypeName switch
@@ -1401,12 +1424,20 @@ public static class PackagePlanner
                 ProgramEmitter.CSharpStringLiteral(designTimeValue ?? "")),
             "Boolean" => new GuardVariable(SsisType.Bool, "bool",
                 string.Equals(designTimeValue, "True", StringComparison.OrdinalIgnoreCase) ? "true" : "false"),
+            "DateTime" => DateTimeGuard(designTimeValue),
             _ => null,
         };
 
     private static GuardVariable? IntegralGuard(SsisType type, string clrTypeName, string? designTimeValue) =>
         long.TryParse(designTimeValue, out var parsed)
             ? new GuardVariable(type, clrTypeName, clrTypeName == "long" ? $"{parsed}L" : $"{parsed}")
+            : null;
+
+    private static GuardVariable? DateTimeGuard(string? designTimeValue) =>
+        DateTime.TryParse(designTimeValue, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var parsed)
+            ? new GuardVariable(SsisType.DbTimeStamp, "DateTime",
+                $"DateTime.Parse({ProgramEmitter.CSharpStringLiteral(parsed.ToString("o", System.Globalization.CultureInfo.InvariantCulture))}, System.Globalization.CultureInfo.InvariantCulture)")
             : null;
 
     /// <summary>"Package\DFT_LoadCustomers" -> "DFT_LoadCustomers". A constraint's From/To are

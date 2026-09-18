@@ -54,6 +54,10 @@ public static class ExcelRowReaderEmitter
 
         var resolved = PipelineResolver.Resolve(output);
 
+        // Independently reproduces ExcelRowEmitter's own identifier mapping -- see
+        // PackageGenerator.MakeColumnIdentifierResolver's own doc comment.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var assignments = new List<string>();
         var gaps = new List<GenerationGap>();
         for (var ordinal = 0; ordinal < resolved.Columns.Count; ordinal++)
@@ -70,7 +74,7 @@ public static class ExcelRowReaderEmitter
                 continue;
             }
 
-            assignments.Add($"        {column.PipelineColumnName} = reader.{accessor}({ordinal}),");
+            assignments.Add($"        {identifierOf(column.PipelineColumnName)} = reader.{accessor}({ordinal}),");
         }
 
         if (assignments.Count == 0)

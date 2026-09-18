@@ -10,7 +10,10 @@ internal static class LookupJoinExpressionBuilder
     /// KeyNotFoundException is the faithful translation. A Lookup that redirects no-match rows
     /// is a different, unsupported shape -- PackageGenerator gaps it rather than reaching here.</summary>
     public static string Build(LookupJoinSpec join, string referenceColumn) =>
-        $"{join.CacheParameterName}[row.{join.InputColumnName}].{referenceColumn}";
+        // join.InputColumnName (a SOURCE row property) and referenceColumn (a ReferenceRow
+        // property, see LookupCacheEmitter's own identifierOf) are both raw external/pipeline
+        // column names -- sanitized here, at the one place both are turned into C# identifiers.
+        $"{join.CacheParameterName}[row.{PackageGenerator.SanitizeIdentifier(join.InputColumnName)}].{PackageGenerator.SanitizeIdentifier(referenceColumn)}";
 }
 
 /// <summary>One evidenced numeric-passthrough-coercion pairing, each measured against a real

@@ -23,6 +23,11 @@ public static class ClassMapEmitter
                 $"connection manager '{connectionManager.ObjectName}' has no FlatFileFormat (CreationName='{connectionManager.CreationName}')")]);
         }
 
+        // Independently reproduces CsvRowEmitter's own identifier mapping (same format.Columns
+        // list, same order) -- see PackageGenerator.MakeColumnIdentifierResolver's own doc
+        // comment.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var gaps = new List<GenerationGap>();
         var mapLines = new List<string>();
 
@@ -38,7 +43,10 @@ public static class ClassMapEmitter
                 continue;
             }
 
-            mapLines.Add($"        Map(m => m.{column.ObjectName}).Name(\"{column.ObjectName}\");");
+            // .Name(...) is the real CSV HEADER text -- a literal CsvHelper matches against, must
+            // stay the raw column name verbatim (never sanitized). Only the m.{...} property
+            // reference (identifier position) routes through the sanitized identifier.
+            mapLines.Add($"        Map(m => m.{identifierOf(column.ObjectName)}).Name(\"{column.ObjectName}\");");
         }
 
         if (mapLines.Count == 0)

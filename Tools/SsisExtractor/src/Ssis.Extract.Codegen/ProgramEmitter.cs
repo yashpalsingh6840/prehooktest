@@ -14,7 +14,21 @@ public sealed record CsvFlowSource(string ComponentName, string FileSourceKey, i
 /// file's own physical layout, in the connection manager's own column order.</summary>
 public sealed record FixedWidthFlowSource(
     string ComponentName, string FileSourceKey, IReadOnlyList<FixedWidthColumnPlan> Columns, int SkipRows) : FlowSourceSpec(ComponentName);
-public sealed record SqlFlowSource(string ComponentName, string CommandText) : FlowSourceSpec(ComponentName);
+/// <summary><see cref="SecondaryConnectionManagerName"/>, when set (Phase 5, added 2026-09-17),
+/// means this source's own connection manager resolves to a DIFFERENT server/database than the
+/// flow's own destination -- <c>Etl.Core.Data.SqlRowSource{TRow}</c> already opens its own
+/// independent connection regardless of database (see that type's own doc comment), so the only
+/// thing that actually changes is where the connection STRING comes from: not the package's
+/// primary <c>Db()</c>, but a <c>SecondaryConnections:{name}</c> config entry -- the exact same
+/// mechanism <see cref="ProgramSecondaryConnectionSqlStep"/> already established for the
+/// write-side case (an Execute SQL Task against a second database). Null (the default) preserves
+/// every pre-existing call site's behaviour byte-for-byte. A secondary-connection source is never
+/// bound to the package's own transaction (no <c>uow</c> argument at its construction site) --
+/// skipping <c>sp_bindsession</c> and falling back to READ UNCOMMITTED, the same already-accepted
+/// tradeoff every other unbound <c>SqlRowSource</c> read in this codebase uses (a Lookup preload,
+/// for instance) -- there is no meaningful "this package's active transaction" to bind to on a
+/// different database anyway.</summary>
+public sealed record SqlFlowSource(string ComponentName, string CommandText, string? SecondaryConnectionManagerName = null) : FlowSourceSpec(ComponentName);
 
 /// <summary>An Excel Source, added 2026-08-28 testing this tool against a real third-party
 /// portfolio (SSIS_From_Sandeep). Uses the same <see cref="FileSourceOptions"/>/FileSourceKey

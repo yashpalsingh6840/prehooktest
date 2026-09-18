@@ -118,7 +118,11 @@ public static class RouterTestEmitter
             if (evaluated.AsBool) { expectedIndex = i; break; }
         }
 
-        var rowInitLines = rowLiteralOrder.Select(name => $"            {name} = {rowLiterals[name]},").ToList();
+        // rowLiterals/rowLiteralOrder/env are all keyed by the RAW buffer column name (matching
+        // the AST's own Reference nodes -- see PackageGenerator.SanitizeIdentifier's own doc
+        // comment); only this one emission point (the constructed row's own object initializer)
+        // needs the sanitized identifier.
+        var rowInitLines = rowLiteralOrder.Select(name => $"            {PackageGenerator.SanitizeIdentifier(name)} = {rowLiterals[name]},").ToList();
 
         var lines = new List<string>
         {

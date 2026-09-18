@@ -92,6 +92,11 @@ internal static partial class ExcelWhereClauseTranslator
                 return (null, $"has a WHERE clause referencing column '{columnName}', which is not one of this worksheet's own resolved output columns");
             }
 
+            // The real worksheet header text -- an identifier-position use (row.{X}) needs the
+            // sanitized C# name ExcelRowEmitter actually declared for this same column; the
+            // dictionary lookup above and every gap message keep the raw header text.
+            var columnIdentifier = PackageGenerator.SanitizeIdentifier(columnName);
+
             var op = match.Groups["op"].Value;
             var literal = match.Groups["lit"].Value;
             var isStringLiteral = literal.StartsWith('\'');
@@ -111,12 +116,12 @@ internal static partial class ExcelWhereClauseTranslator
                 // project today).
                 translated.Add(op switch
                 {
-                    "=" => $"string.Equals(row.{columnName}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase)",
-                    "<>" => $"!string.Equals(row.{columnName}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase)",
-                    "<" => $"string.Compare(row.{columnName}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase) < 0",
-                    ">" => $"string.Compare(row.{columnName}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase) > 0",
-                    "<=" => $"string.Compare(row.{columnName}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase) <= 0",
-                    ">=" => $"string.Compare(row.{columnName}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase) >= 0",
+                    "=" => $"string.Equals(row.{columnIdentifier}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase)",
+                    "<>" => $"!string.Equals(row.{columnIdentifier}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase)",
+                    "<" => $"string.Compare(row.{columnIdentifier}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase) < 0",
+                    ">" => $"string.Compare(row.{columnIdentifier}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase) > 0",
+                    "<=" => $"string.Compare(row.{columnIdentifier}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase) <= 0",
+                    ">=" => $"string.Compare(row.{columnIdentifier}, {csLiteral}, System.StringComparison.OrdinalIgnoreCase) >= 0",
                     _ => throw new InvalidOperationException($"unreachable: ConditionPattern only matches <>,<=,>=,=,<,> but got '{op}'"),
                 });
             }
@@ -128,7 +133,7 @@ internal static partial class ExcelWhereClauseTranslator
                 }
 
                 var csOp = op switch { "=" => "==", "<>" => "!=", _ => op };
-                translated.Add($"row.{columnName} {csOp} {literal}");
+                translated.Add($"row.{columnIdentifier} {csOp} {literal}");
             }
         }
 

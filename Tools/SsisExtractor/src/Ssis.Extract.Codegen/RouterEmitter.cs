@@ -102,7 +102,10 @@ public static class RouterEmitter
 
             var mapped = TransformEmitter.MapPipelineTypeToSsisType(inputColumn.CachedDataType);
             if (mapped is null) continue; // unmapped buffer type -- simply unavailable as a reference, not a gap on its own
-            references[inputColumn.CachedName] = new ColumnReference($"row.{inputColumn.CachedName}", mapped.Value);
+            // Dictionary KEY stays the raw name (matches the AST's own Reference node exactly, as
+            // written in the FriendlyExpression); the C# expression VALUE routes through the
+            // sanitized identifier -- see PackageGenerator.SanitizeIdentifier's own doc comment.
+            references[inputColumn.CachedName] = new ColumnReference($"row.{PackageGenerator.SanitizeIdentifier(inputColumn.CachedName)}", mapped.Value);
         }
 
         // split.Branches[^1] is always the default (no condition of its own, see

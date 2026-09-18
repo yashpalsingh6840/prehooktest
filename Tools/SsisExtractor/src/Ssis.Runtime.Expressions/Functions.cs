@@ -205,9 +205,11 @@ public static class Functions
         Arity(fn, args, 2);
         var part = Str(fn, args, 0);
         var date = Date(fn, args, 1);
-        // Only "yy" is in the oracle corpus (DATEPART("yy", ...) => year). The rest of this
-        // map follows T-SQL DATEPART's own codes by analogy and is NOT individually verified
-        // against the real SSIS evaluator -- add a corpus case before depending on one.
+        // Only "yy" and "Millisecond" are in the oracle corpus (DATEPART("yy", ...) => year;
+        // DATEPART("Millisecond", ...) measured 2026-09-17, Phase 6 of the
+        // unsupported-component-types plan). The rest of this map follows T-SQL DATEPART's own
+        // codes by analogy and is NOT individually verified against the real SSIS evaluator --
+        // add a corpus case before depending on one.
         return part.ToLowerInvariant() switch
         {
             "yy" or "yyyy" or "year" => SsisValue.OfInt(date.Year),
@@ -216,8 +218,31 @@ public static class Functions
             "hh" or "hour" => SsisValue.OfInt(date.Hour),
             "mi" or "n" or "minute" => SsisValue.OfInt(date.Minute),
             "ss" or "s" or "second" => SsisValue.OfInt(date.Second),
+            "millisecond" or "ms" => SsisValue.OfInt(QuantizedMillisecond(date)),
             _ => throw new SsisExpressionError($"{fn}: unrecognised date part '{part}'"),
         };
+    }
+
+    /// <summary>
+    /// DATEPART("Millisecond", date)'s own internal arithmetic engine does NOT read the exact
+    /// stored millisecond value -- measured directly against the real SSIS 22 evaluator
+    /// 2026-09-17 (sql-server-samples' DailyETLMain.dtsx, "Trim Any Milliseconds"): it quantizes
+    /// to the nearest 1/300 of a second (~3.333ms per tick) before reporting the millisecond
+    /// count. This is the well-documented legacy "OLE Automation Date" (VT_DATE) time
+    /// resolution limit -- its fractional-day component is only reliable to 1/300s, a holdover
+    /// from the original VB timer tick rate, not a guess. Measured: DATEPART("Millisecond",
+    /// .456) reports 457 (456ms quantizes to tick round(456*0.3)=137, which is 137*10/3 =
+    /// 456.667ms, rounding to 457); DATEPART("Millisecond", .999) reports 0 (999ms quantizes to
+    /// tick round(999*0.3)=300, i.e. exactly 1000ms, which rolls over to the NEXT second with a
+    /// 0ms remainder). A plain (DT_WSTR,n) cast of the same timestamp (no DATEPART/DATEADD
+    /// involved) shows the exact, unquantized value -- this quantization is specific to
+    /// DatePart/DateAdd's own arithmetic, not how a DT_DBTIMESTAMP is stored or displayed.
+    /// </summary>
+    private static int QuantizedMillisecond(DateTime date)
+    {
+        var ticks = Math.Round(date.Millisecond * 0.3, MidpointRounding.ToEven);
+        var quantizedMs = (int)Math.Round(ticks * (10.0 / 3.0), MidpointRounding.ToEven);
+        return quantizedMs % 1000;
     }
 
     /// <summary>
@@ -269,6 +294,10 @@ public static class Functions
         var number = (int)Int(fn, args, 1);
         var date = Date(fn, args, 2);
 
+        if (string.Equals(part, "MILLISECOND", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(part, "MS", StringComparison.OrdinalIgnoreCase))
+            return SsisValue.OfDate(AddQuantizedMilliseconds(date, number));
+
         return SsisValue.OfDate(part.ToUpperInvariant() switch
         {
             "MINUTE" or "MI" => date.AddMinutes(number),
@@ -279,7 +308,35 @@ public static class Functions
             "SECOND" => date.AddSeconds(number),
             _ => throw new SsisExpressionError(
                 $"{fn}: date part '{part}' is not measured against the real evaluator -- only " +
-                "\"Minute\"/\"mi\", \"Day\", \"Hour\", \"Month\", \"Year\", \"Second\" are; add a corpus case before supporting it"),
+                "\"Minute\"/\"mi\", \"Day\", \"Hour\", \"Month\", \"Year\", \"Second\", \"Millisecond\" are; add a corpus case before supporting it"),
         });
+    }
+
+    /// <summary>
+    /// DATEADD("Millisecond", number, date) -- measured against the real SSIS 22 evaluator
+    /// 2026-09-17 (see <see cref="QuantizedMillisecond"/>'s own doc comment for the shared
+    /// 1/300-second-tick discovery). DATEADD's own arithmetic operates entirely in TICKS (1 tick
+    /// = 1/300 second): both the base date's own millisecond remainder AND the delta being added
+    /// are independently quantized to the nearest tick BEFORE being summed, not added as plain
+    /// milliseconds and quantized afterward -- measured directly: DATEADD("Millisecond", 1,
+    /// .456) reports the SAME result as DATEADD("Millisecond", 0, .456) (.457), because a 1ms
+    /// delta quantizes to round(1*0.3)=0 ticks, i.e. no change at all. This is exactly why the
+    /// real motivating idiom (subtract a value's own reported millisecond count from itself)
+    /// still lands exactly on the second boundary regardless of the quantization: DATEPART
+    /// reports the base's own quantized tick count as milliseconds, and re-quantizing that exact
+    /// count as the delta always cancels the base's own ticks precisely.
+    /// </summary>
+    private static DateTime AddQuantizedMilliseconds(DateTime date, int number)
+    {
+        var baseTicks = Math.Round(date.Millisecond * 0.3, MidpointRounding.ToEven);
+        var deltaTicks = Math.Round(number * 0.3, MidpointRounding.ToEven);
+        var totalMs = (baseTicks + deltaTicks) * (10.0 / 3.0);
+
+        var wholeSeconds = (int)Math.Floor(totalMs / 1000.0);
+        var remainderMs = (int)Math.Round(totalMs - wholeSeconds * 1000.0, MidpointRounding.ToEven);
+        if (remainderMs >= 1000) { wholeSeconds++; remainderMs -= 1000; }
+        else if (remainderMs < 0) { wholeSeconds--; remainderMs += 1000; }
+
+        return date.AddMilliseconds(-date.Millisecond).AddSeconds(wholeSeconds).AddMilliseconds(remainderMs);
     }
 }

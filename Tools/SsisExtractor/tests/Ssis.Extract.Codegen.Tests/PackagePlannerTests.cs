@@ -396,6 +396,36 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ResolvesTheRealTrimMillisecondsExpression_AndSeedsTheSelfReferencedVariable()
+    {
+        // SyntheticExpressionTaskMillisecond.dtsx, Phase 6: EXPR_SetMs789 -> EXPR_TrimMilliseconds
+        // (the real evidenced DailyETLMain.dtsx "Trim Any Milliseconds" call, verbatim) ->
+        // EXPR_ObserveMs -> DFT_Load -> a guarded SQL_LogIfTrimmedToZero. Also proves the real bug
+        // this round found and fixed: TargetETLCutoffTime is read by its OWN assignment's RHS
+        // (never by any guard), so it needs a design-time seed of its own -- previously only a
+        // guard-read variable (MsAfterTrim here) ever got one, and this variable would otherwise
+        // throw "was never set" the first time EXPR_TrimMilliseconds actually ran.
+        var package = LoadSyntheticFixture("SyntheticExpressionTaskMillisecond.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+
+        var trim = Assert.Single(plan.Steps.OfType<ExpressionStep>(), s => s.TaskName == "EXPR_TrimMilliseconds");
+        Assert.Equal("User::TargetETLCutoffTime", trim.SsisVariableName);
+        Assert.Equal(
+            "SsisFn.DateAddMillisecond(packageVariables.GetRequired<DateTime>(\"User::TargetETLCutoffTime\"), " +
+            "(0) - (SsisFn.DatePartMillisecond(packageVariables.GetRequired<DateTime>(\"User::TargetETLCutoffTime\"))))",
+            trim.CSharpValueExpression);
+
+        var observe = Assert.Single(plan.Steps.OfType<ExpressionStep>(), s => s.TaskName == "EXPR_ObserveMs");
+        Assert.Equal("SsisFn.DatePartMillisecond(packageVariables.GetRequired<DateTime>(\"User::TargetETLCutoffTime\"))", observe.CSharpValueExpression);
+
+        Assert.Contains(plan.VariableSeeds, s => s.SsisName == "User::TargetETLCutoffTime" && s.ClrTypeName == "DateTime");
+        Assert.Contains(plan.VariableSeeds, s => s.SsisName == "User::MsAfterTrim");
+    }
+
+    [Fact]
     public void Plan_ResolvesAConditionalSplitsBranches_InEvaluationOrder_DefaultLast()
     {
         // SyntheticConditionalSplit.dtsx: OLE DB Source -> Derived Column (LoadedAtUtc) ->

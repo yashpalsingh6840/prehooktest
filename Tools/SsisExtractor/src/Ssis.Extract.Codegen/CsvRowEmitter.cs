@@ -36,6 +36,10 @@ public static class CsvRowEmitter
 
         var sourceOutputTypeByName = ResolveSourceOutputTypesByName(sourceComponent);
 
+        // ClassMapEmitter independently reproduces this exact mapping (same format.Columns list,
+        // same order) -- see PackageGenerator.MakeColumnIdentifierResolver's own doc comment.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var gaps = new List<GenerationGap>();
         var propertyLines = new List<string>();
         var usesSsisWidth = false;
@@ -69,7 +73,7 @@ public static class CsvRowEmitter
             }
 
             var initializer = type.ClrTypeName == "string" ? " = \"\";" : "";
-            propertyLines.Add($"    public {type.ClrTypeName} {column.ObjectName} {{ get; set; }}{initializer}");
+            propertyLines.Add($"    public {type.ClrTypeName} {identifierOf(column.ObjectName)} {{ get; set; }}{initializer}");
         }
 
         if (propertyLines.Count == 0)

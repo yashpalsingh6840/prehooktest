@@ -280,7 +280,7 @@ public static partial class PackageGenerator
                         package, ns, flow, lookup, cacheClassName, resolvedJoinKey, fileSourceEntries, files, tables,
                         functionsUsed, primaryKeysByDestination, gaps,
                         ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
-                        aggregateSourceTestCandidates, csvSampleCandidates, componentHolders);
+                        aggregateSourceTestCandidates, csvSampleCandidates, componentHolders, secondaryConnections);
                     if (lookupFlow is not null)
                     {
                         wiredFlows[flow] = lookupFlow;
@@ -416,7 +416,7 @@ public static partial class PackageGenerator
                 var scdStep = GenerateScdFlow(
                     package, ns, flow, scdPlan, fileSourceEntries, files, testFiles, testCoverageNotes, tables, functionsUsed,
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
-                    csvSampleCandidates, componentHolders);
+                    csvSampleCandidates, componentHolders, secondaryConnections);
                 if (scdStep is not null) wiredScds[flow] = scdStep;
                 continue;
             }
@@ -475,7 +475,7 @@ public static partial class PackageGenerator
 
             var nullableColumnNames = ResolveNullableColumnNames(flow);
 
-            var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
+            var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates, secondaryConnections);
             if (sourceResult is null) continue; // ResolveFlowSource already added the reason
             var (rowTypeName, programSource) = sourceResult.Value;
 
@@ -643,6 +643,15 @@ public static partial class PackageGenerator
         if (tables.Count > 0 || willWire)
             Merge(files, gaps, DbContextEmitter.Emit($"{ns}.Model", $"{package.ObjectName}DbContext", tables));
 
+        // A Microsoft.ExpressionTask's own translated assignment can call an SsisFn helper too
+        // (e.g. SsisFn.DateAddMillisecond/DatePartMillisecond, Phase 6) -- collected here, BEFORE
+        // SsisFnEmitter.Emit below, the same "SsisFn.X(" string-match convention
+        // TransformEmitter.CollectSsisFunctions already uses for a Derived Column, so this
+        // package's Ssis/SsisFn.cs gets emitted with the right bodies even for a package with no
+        // Data Flow Task of its own.
+        foreach (var expressionStep in plan.Steps.OfType<ExpressionStep>())
+            TransformEmitter.CollectSsisFunctions(expressionStep.CSharpValueExpression, functionsUsed);
+
         Merge(files, gaps, SsisFnEmitter.Emit($"{ns}.Ssis", functionsUsed));
 
         // Built by walking plan.Steps (not wiredFlows.Values) so a SqlStep between two flows
@@ -674,8 +683,16 @@ public static partial class PackageGenerator
                     programSteps.Add(ResolveSqlStep(package, sqlStep, targetServer, targetDatabase, secondaryConnections, files, testFiles, testCoverageNotes, ns, $"{ns}.Mapping", gaps, ReserveStatementIdentifier, willWire));
                     break;
                 case ExpressionStep expressionStep:
+                    // Fully-qualified rather than relying on a "using {ns}.Ssis;" in the
+                    // generated package class -- an ExpressionTaskStep's assignment lambda lives
+                    // directly on that class (see ExpressionTaskStep's own doc comment), which
+                    // has no such using today, and this is a smaller, more isolated change than
+                    // adding one purely for the rare case a control-flow assignment calls an
+                    // SsisFn helper (Phase 6's own DATEADD("Millisecond",...) is the only real
+                    // evidenced case so far).
                     programSteps.Add(new ProgramExpressionStep(
-                        expressionStep.TaskName, expressionStep.SsisVariableName, expressionStep.CSharpValueExpression));
+                        expressionStep.TaskName, expressionStep.SsisVariableName,
+                        expressionStep.CSharpValueExpression.Replace("SsisFn.", $"{ns}.Ssis.SsisFn.")));
                     break;
                 case ScriptTaskStep { Task: var scriptTask }:
                 {
@@ -1008,10 +1025,11 @@ public static partial class PackageGenerator
                     NoteTest(testCoverageNotes, fileSourceTestFinal, "Source-File",
                         "enumerates ReadAsync over the emitted Tier-A sample file; asserts row count and the first row's columns. A real-data Integration read needs its own LOCAL-DATA fill.");
                 }
-                else if (source is SqlFlowSource)
+                else if (source is SqlFlowSource sqlSource)
                 {
                     var sqlSourceTest = ComponentTestEmitter.EmitSqlSourceTest(
-                        $"{package.ObjectName}.Tests", ns, $"{ns}.Sql", rowTypeName, sourceEntry.MethodName, source.ComponentName);
+                        $"{package.ObjectName}.Tests", ns, $"{ns}.Sql", rowTypeName, sourceEntry.MethodName, source.ComponentName,
+                        isSecondaryConnection: sqlSource.SecondaryConnectionManagerName is not null);
                     var sqlSourceTestFinal = sqlSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{sqlSourceTest.RelativePath}" };
                     testFiles.Add(sqlSourceTestFinal);
                     NoteTest(testCoverageNotes, sqlSourceTestFinal, "Source-Sql",
@@ -1354,7 +1372,14 @@ public static partial class PackageGenerator
     /// needs a <c>uow</c> argument, exactly like the real generated call site does.</summary>
     private static bool FlowSourceNeedsUow(FlowSourceSpec source) => source switch
     {
-        SqlFlowSource => true,
+        // A secondary-connection source never receives uow (see SqlFlowSource's own doc
+        // comment and PackageClassEmitter.SourceNeedsUow's identical exclusion, added the same
+        // round, 2026-09-17) -- omitted here first, this mirror silently drifted out of sync
+        // with the real generated call site the instant a secondary-connection source became
+        // possible, producing a starter test that called package.{sourceMethodName}(uow) against
+        // a method that takes no arguments at all (CS1501), caught only by actually building the
+        // generated project, not by the gap-count report.
+        SqlFlowSource sql => sql.SecondaryConnectionManagerName is null,
         MergeJoinFlowSource mj => FlowSourceNeedsUow(mj.LeftSource) || FlowSourceNeedsUow(mj.RightSource),
         UnionFlowSource union => union.Sides.Any(FlowSourceNeedsUow),
         AggregateFlowSource agg => FlowSourceNeedsUow(agg.InnerSource),
@@ -1408,13 +1433,83 @@ public static partial class PackageGenerator
     /// free text a designer author can type anything into (spaces, punctuation), unlike
     /// entityName (always derived from a table's OpenRowset, already alphanumeric). Strips
     /// everything but letters/digits/underscore and guards against a leading digit, which C#
-    /// identifiers don't allow.</summary>
+    /// identifiers don't allow.
+    ///
+    /// Also used for a real, external SQL/pipeline COLUMN name (e.g. a real WWI schema column
+    /// literally named "WWI Stock Item ID") wherever that name is about to be emitted in an
+    /// IDENTIFIER position (a C# property/field/local name, or a <c>row.{X}</c>/
+    /// <c>entity.Property(e => e.{X})</c> reference) -- found 2026-09-18 regenerating a real
+    /// GitHub portfolio package (sql-server-samples' own DailyETLMain.dtsx) end to end: every
+    /// such name had been used VERBATIM as a C# identifier across ~10 emitter files, producing a
+    /// real ~1181-error CS1002/CS1003 parse failure the moment a real column name contained a
+    /// space. A LITERAL string use (an ordinal lookup by name, an XML element name, raw SQL
+    /// text) must never route through this -- only a declaration/reference site needs it.
+    ///
+    /// A C# reserved keyword (e.g. a column literally named "class") is escaped with a leading
+    /// <c>@</c> rather than mangled -- not evidenced anywhere in the tracked corpus, but a
+    /// general-purpose identifier sanitizer must not silently emit an invalid identifier for
+    /// one. Checked AFTER the character-stripping/leading-digit guard, since <c>@0class</c> is
+    /// not a real C# keyword and needs no escaping, but <c>@class</c> does.</summary>
     internal static string SanitizeIdentifier(string name)
     {
         var chars = name.Where(c => char.IsLetterOrDigit(c) || c == '_').ToArray();
         var result = new string(chars);
         if (result.Length == 0) return "Component";
-        return char.IsDigit(result[0]) ? "_" + result : result;
+        if (char.IsDigit(result[0])) result = "_" + result;
+        return ReservedCSharpKeywords.Contains(result) ? "@" + result : result;
+    }
+
+    /// <summary>Every C# reserved keyword (not a contextual one like <c>var</c>/<c>async</c>,
+    /// which remain legal as a plain identifier) -- the exact set that needs an <c>@</c> escape
+    /// to be used as an identifier at all.</summary>
+    private static readonly HashSet<string> ReservedCSharpKeywords = new(StringComparer.Ordinal)
+    {
+        "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked",
+        "class", "const", "continue", "decimal", "default", "delegate", "do", "double", "else",
+        "enum", "event", "explicit", "extern", "false", "finally", "fixed", "float", "for",
+        "foreach", "goto", "if", "implicit", "in", "int", "interface", "internal", "is", "lock",
+        "long", "namespace", "new", "null", "object", "operator", "out", "override", "params",
+        "private", "protected", "public", "readonly", "ref", "return", "sbyte", "sealed",
+        "short", "sizeof", "stackalloc", "static", "string", "struct", "switch", "this", "throw",
+        "true", "try", "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort", "using",
+        "virtual", "void", "volatile", "while",
+    };
+
+    /// <summary>Reserve()-style collision guard for one row/entity's own declared property list,
+    /// reused by every emitter that declares a whole class of properties from a raw column list
+    /// in one shot (SqlRowEmitter, EntityEmitter, ExcelRowEmitter, XmlRowEmitter, ...) -- the
+    /// exact same first-occurrence-keeps-its-name/later-collision-gets-a-numeric-suffix pattern
+    /// PackageClassEmitter.cs's own method-naming <c>Reserve()</c> already uses, extended here to
+    /// MEMOIZE by raw name (not just by desired identifier): a raw column referenced twice within
+    /// the same list (e.g. once to decide a primary key, once in the main property loop) must
+    /// resolve to the identical identifier both times, not consume a second suffix slot.
+    ///
+    /// This is a per-call-site closure, not a value threaded across files -- two SEPARATE row-
+    /// declaring emitters that independently resolve the SAME PIPELINE OUTPUT (e.g.
+    /// SqlRowEmitter's property declarations and SqlRowReaderEmitter's own read-back assignments)
+    /// stay in agreement with NO shared state at all, because both iterate the identical
+    /// <c>PipelineResolver.Resolve(...)</c> column list in the identical order and so independently
+    /// reproduce the identical suffix sequence -- a pure function of the same input, called twice.
+    /// The one HONEST, ACCEPTED limitation (unevidenced in any real corpus so far, not silently
+    /// pretended away): a reference site that does NOT have the whole column list in hand (most of
+    /// this project's <c>row.{X}</c>-emitting code, which resolves one column name at a time) calls
+    /// bare <see cref="SanitizeIdentifier"/> instead, so it can disagree with a declaration-side
+    /// suffix ONLY in the rare case where two genuinely different raw names collide to the same
+    /// sanitized identifier.</summary>
+    internal static Func<string, string> MakeColumnIdentifierResolver()
+    {
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        var resolvedByRaw = new Dictionary<string, string>(StringComparer.Ordinal);
+        return raw =>
+        {
+            if (resolvedByRaw.TryGetValue(raw, out var existing)) return existing;
+            var desired = SanitizeIdentifier(raw);
+            var name = desired;
+            var n = 2;
+            while (!used.Add(name)) name = $"{desired}_{n++}";
+            resolvedByRaw[raw] = name;
+            return name;
+        };
     }
 
     /// <summary>Evidence-based, not a fact lookup -- see NullabilityInference's own doc comment
@@ -1499,7 +1594,8 @@ public static partial class PackageGenerator
     private static (string RowTypeName, FlowSourceSpec Source)? ResolveFlowSource(
         PackageSpec package, string ns, string rowTypeBaseName, DataFlowPlan flow, PipelineComponentSpec? destinationForSqlCheck,
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<GenerationGap> gaps,
-        IReadOnlySet<string>? nullableColumnNames = null, List<CsvSampleCandidate>? csvSampleCandidates = null)
+        IReadOnlySet<string>? nullableColumnNames = null, List<CsvSampleCandidate>? csvSampleCandidates = null,
+        Dictionary<string, SecondaryConnectionRequest>? secondaryConnections = null)
     {
         if (flow.FlatFileSource is { } flatFileSource && flatFileSource.FlatFileSource?.ConnectionName is { } csvCmName
             && FindConnectionManager(package, csvCmName) is { } csvConnectionManager)
@@ -1532,7 +1628,7 @@ public static partial class PackageGenerator
 
         if (flow.OleDbSource is { } oleDbSource)
         {
-            var sqlSource = BuildSqlFlowSource(package, flow.TaskName, oleDbSource, destinationForSqlCheck, gaps);
+            var sqlSource = BuildSqlFlowSource(package, flow.TaskName, oleDbSource, destinationForSqlCheck, gaps, secondaryConnections: secondaryConnections);
             if (sqlSource is null) return null; // BuildSqlFlowSource already added the reason
 
             var rowTypeName = rowTypeBaseName + "SqlRow";
@@ -2494,7 +2590,8 @@ public static partial class PackageGenerator
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
         bool emitSeams, List<CsvSampleCandidate>? csvSampleCandidates = null,
-        ComponentHolderRegistry? componentHolders = null)
+        ComponentHolderRegistry? componentHolders = null,
+        Dictionary<string, SecondaryConnectionRequest>? secondaryConnections = null)
     {
         var liveBranches = scd.LiveBranches().ToList();
         if (liveBranches.Count == 0)
@@ -2538,7 +2635,7 @@ public static partial class PackageGenerator
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
         var nullableColumnNames = ResolveNullableColumnNames(flow);
         var sourceResult = ResolveFlowSource(package, ns, flowBaseName, flow,
-            firstSqlDestination, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
+            firstSqlDestination, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates, secondaryConnections);
         if (sourceResult is null) return null; // ResolveFlowSource already added the reason
         var (rowTypeName, programSource) = sourceResult.Value;
         var rowTypeNamespace = programSource is CsvFlowSource or FixedWidthFlowSource ? $"{ns}.Csv"
@@ -2861,7 +2958,8 @@ public static partial class PackageGenerator
         HashSet<string> functionsUsed, Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
         bool emitSeams, List<AggregateSourceTestCandidate>? testCandidates = null, List<CsvSampleCandidate>? csvSampleCandidates = null,
-        ComponentHolderRegistry? componentHolders = null)
+        ComponentHolderRegistry? componentHolders = null,
+        Dictionary<string, SecondaryConnectionRequest>? secondaryConnections = null)
     {
         if (flow.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination")
         {
@@ -3060,7 +3158,7 @@ public static partial class PackageGenerator
         }
 
         var nullableColumnNames = ResolveNullableColumnNames(flow);
-        var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates);
+        var sourceResult = ResolveFlowSource(package, ns, entityName, flow, flow.DestinationComponent, fileSourceEntries, files, gaps, nullableColumnNames, csvSampleCandidates, secondaryConnections);
         if (sourceResult is null) return null; // ResolveFlowSource already added the reason
         var (rowTypeName, rawProgramSource) = sourceResult.Value;
 
@@ -3442,8 +3540,21 @@ public static partial class PackageGenerator
 
     /// <summary>Resolves an OLE DB or ADO NET Source into a SqlFlowSource -- dispatches to
     /// <see cref="BuildOleDbFlowSource"/> or <see cref="BuildAdoNetFlowSource"/> after the one
-    /// check both share: a resolvable connection manager targeting the same server/database as
-    /// the flow's own destination (a second source connection is not supported yet).</summary>
+    /// check both share: a resolvable connection manager, targeting either the same
+    /// server/database as the flow's own destination, or -- Phase 5, 2026-09-17, and only when
+    /// <paramref name="secondaryConnections"/> is supplied -- a genuinely DIFFERENT one, resolved
+    /// as a secondary connection (see <see cref="SqlFlowSource"/>'s own doc comment for the full
+    /// design). <paramref name="secondaryConnections"/> defaults to null so every pre-existing
+    /// call site keeps its unconditional gap unchanged; it is threaded through from the plain
+    /// single-destination flow path AND <see cref="GenerateLookupFlow"/> (both real, evidenced
+    /// shapes across the 15 cross-database instances found across the GitHub portfolios --
+    /// `fact_sales.dtsx`'s own source sits behind a chain of Lookups, `dimcustomer`/
+    /// `DailyETLMain`'s own 13 flows are plain single-destination -- see
+    /// Tools/SsisExtractor/CLAUDE.md's own Phase 5 section). Conditional Split/Multicast/SCD/
+    /// Aggregate/Merge Join's own two sides/Union's own sides/a ForEach-Data-Flow-Loop body have
+    /// no real evidenced cross-database instance anywhere in the tracked corpus and are
+    /// deliberately left gapped.
+    /// </summary>
     /// <param name="columnAliases">Optional component-column-name -&gt; required-exposed-name map,
     /// supplied only by a Union All/Merge side whose own column names differ from the union's own
     /// output column names (the generated reader is keyed on the latter). Identity when omitted.
@@ -3451,7 +3562,8 @@ public static partial class PackageGenerator
     private static SqlFlowSource? BuildSqlFlowSource(
         PackageSpec package, string taskName, PipelineComponentSpec source,
         PipelineComponentSpec? destinationComponent, List<GenerationGap> gaps,
-        IReadOnlyDictionary<string, string>? columnAliases = null)
+        IReadOnlyDictionary<string, string>? columnAliases = null,
+        Dictionary<string, SecondaryConnectionRequest>? secondaryConnections = null)
     {
         var sourceCmName = SourceInfo.ConnectionName(source);
         if (sourceCmName is not { } cmName || FindConnectionManager(package, cmName) is not { } sourceCm
@@ -3460,6 +3572,8 @@ public static partial class PackageGenerator
             gaps.Add(new GenerationGap(taskName, $"Source '{source.Name}' has no resolvable connection manager"));
             return null;
         }
+
+        string? secondaryConnectionManagerName = null;
 
         // A Flat File Destination has no server/database of its own to compare against at all --
         // its own connection is a file path, not a SQL connection -- so this check, which exists
@@ -3473,27 +3587,66 @@ public static partial class PackageGenerator
         {
             var destCmName = DestinationInfo.ConnectionName(destinationComponent);
             var destParsed = destCmName is not null ? FindConnectionManager(package, destCmName)?.Parsed : null;
-            if (destParsed is null || sourceParsed.Server != destParsed.Server || sourceParsed.Database != destParsed.Database)
+            if (destParsed is null)
             {
-                gaps.Add(new GenerationGap(taskName, $"Source '{source.Name}' targets a different server/database than this flow's own destination -- a separate source connection is not supported yet"));
+                // Distinguished from the genuine cross-database mismatch below, 2026-09-17 --
+                // this is a DIFFERENT, unrelated root cause (the same class of problem as an
+                // unresolvable SOURCE connection manager above): the destination's own connection
+                // reference never resolved at all (most often a project-scoped .conmgr the
+                // project's own files never checked in -- see Phase 1's own "no resolvable
+                // connection manager" fix). Conflating the two used to make a genuinely
+                // unresolvable destination look like an unsupported cross-database source
+                // (real example: fact_sales.dtsx, whose destination references
+                // Project.ConnectionManagers[dest.book_sales] with no .conmgr anywhere in that
+                // repo to resolve it against -- nothing this feature can fix without the missing
+                // file).
+                gaps.Add(new GenerationGap(taskName, $"Destination '{destinationComponent.Name}' has no resolvable connection manager -- cannot compare it against source '{source.Name}''s own server/database"));
                 return null;
+            }
+            if (sourceParsed.Server != destParsed.Server || sourceParsed.Database != destParsed.Database)
+            {
+                if (secondaryConnections is null)
+                {
+                    gaps.Add(new GenerationGap(taskName, $"Source '{source.Name}' targets a different server/database than this flow's own destination -- a separate source connection is not supported yet"));
+                    return null;
+                }
+
+                // Same dedup-by-connection-manager-name shape ResolveSqlStep's own write-side
+                // case already established -- two flows against the same secondary database
+                // still produce ONE appsettings.json entry and one top-level connection string.
+                if (!secondaryConnections.ContainsKey(cmName))
+                {
+                    secondaryConnections[cmName] = sourceParsed.AuthMode == "SqlLogin"
+                        ? new SecondaryConnectionRequest(cmName, "SqlServer", sourceParsed.UserId, sourceParsed.Server ?? "", sourceParsed.Database ?? "")
+                        : new SecondaryConnectionRequest(cmName, "Windows", null, sourceParsed.Server ?? "", sourceParsed.Database ?? "");
+                }
+                secondaryConnectionManagerName = cmName;
             }
         }
 
+        SqlFlowSource? result;
         if (source.OleDbSource is { } oleDbPayload)
-            return BuildOleDbFlowSource(taskName, source.Name, oleDbPayload, gaps, columnAliases);
-
-        // The ADO NET path has never been run end to end (no fixture -- an SSIS object-model
-        // limitation in this environment blocks building one), so it deliberately does not gain
-        // an untested aliasing branch here: a rename is a named gap instead.
-        if (RequiresRename(columnAliases))
         {
-            var renames = string.Join(", ", columnAliases!.Where(kv => kv.Key != kv.Value).Select(kv => $"{kv.Key} -> {kv.Value}"));
-            gaps.Add(new GenerationGap(taskName,
-                $"ADO NET Source '{source.Name}' feeds a Union All/Merge that maps its columns to differently-named output columns ({renames}) -- renaming is only supported for an OLE DB Source in OpenRowset mode, where this tool builds the SELECT itself"));
-            return null;
+            result = BuildOleDbFlowSource(taskName, source.Name, oleDbPayload, gaps, columnAliases);
         }
-        return BuildAdoNetFlowSource(taskName, source.Name, source.AdoNetSource!, gaps);
+        else
+        {
+            // The ADO NET path has never been run end to end (no fixture -- an SSIS object-model
+            // limitation in this environment blocks building one), so it deliberately does not
+            // gain an untested aliasing branch here: a rename is a named gap instead.
+            if (RequiresRename(columnAliases))
+            {
+                var renames = string.Join(", ", columnAliases!.Where(kv => kv.Key != kv.Value).Select(kv => $"{kv.Key} -> {kv.Value}"));
+                gaps.Add(new GenerationGap(taskName,
+                    $"ADO NET Source '{source.Name}' feeds a Union All/Merge that maps its columns to differently-named output columns ({renames}) -- renaming is only supported for an OLE DB Source in OpenRowset mode, where this tool builds the SELECT itself"));
+                return null;
+            }
+            result = BuildAdoNetFlowSource(taskName, source.Name, source.AdoNetSource!, gaps);
+        }
+
+        return result is not null && secondaryConnectionManagerName is not null
+            ? result with { SecondaryConnectionManagerName = secondaryConnectionManagerName }
+            : result;
     }
 
     /// <summary>Builds the actual SELECT text per AccessMode: 0 (OpenRowset) builds
