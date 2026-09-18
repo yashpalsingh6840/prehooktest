@@ -8866,6 +8866,149 @@ closed, and the numeric-passthrough-coercion gap for every pairing other than th
 (`r8`/`i8`/`numeric`/`r4`/`wstr`/`i4` -> `i4`/`decimal`). The `int -> decimal` pairing, named
 above, is now closed.
 
+### SCD reading a Data-Conversion-produced column (2026-09-18) — Step 3 of glittery-spinning-mochi.md
+
+Closes the last of the 3 real gaps re-running the GitHub portfolios surfaced (Steps 1/2, identifier
+sanitization and `int -> decimal`, were closed earlier the same day — see above). The real evidenced
+package (`Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline`'s `Package`/`Package1`/
+`dimcustomer`, all three sharing the identical Data Flow Task shape) has a `Microsoft.SCD` component
+comparing an attribute column — `"Copy of ssc"`, `ColumnType=4` (Fixed) — produced by an intervening
+`Microsoft.DataConvert`, not the raw source. `PackageGenerator.GenerateScdFlow` used to reject this
+outright: `required = businessKeyColumns + attributeColumns; missing = required.Where(c =>
+!rowColumnNames.Contains(c))` checked ONLY the flow's raw source-component output, with zero
+awareness that a column could be produced by a transform in between — the exact same "resolve
+through a DataConversion lineage edge" problem this tool already solved for Conditional Split
+conditions and Derived Column cross-references, via `TransformEmitter.TranslateDataConversion`
+(already `internal`), just never wired into the SCD flow path.
+
+**Real XML read first, before any code, to confirm the exact real shape** (this project's own
+standing discipline — measure, don't guess): `dimcustomer.dtsx`'s own `Data Flow Task\Derived
+Column` produces `"ssc"` via `Expression="1"` (**a static literal, referencing no input column at
+all** — not `UPPER(x)` or any other column-derived computation), which `Data Flow Task\Data
+Conversion` then converts to `"Copy of ssc"`, target type **`"str"`** (`DT_STR`, non-Unicode/ANSI —
+NOT the already-measured `DT_WSTR`), `codePage="1252"`, feeding the SCD as `ColumnType=4`. This is a
+genuinely different, harder chain than every prior Data Conversion round in this file: DERIVED
+COLUMN feeds Data Conversion (the reverse of the already-supported "Data Conversion feeds Derived
+Column" cross-reference), and the target type itself (`DT_STR`) had never been added to
+`WrapDataConversion`'s switch.
+
+**`DT_STR` support, added with NO new dtexec measurement — reasoned from an existing, already-
+proven unification, not guessed.** `SsisPipelineTypeMap`/`TransformEmitter.MapPipelineTypeToSsisType`
+already map `"str"` and `"wstr"` identically everywhere in this codebase (both resolve to a plain C#
+`string`; a Unicode-vs-ANSI codepage distinction has no observable effect once the value is a .NET
+string) — so `WrapDataConversion`'s `"wstr"` case was widened to `"wstr" or "str"`, reusing
+`SsisFn.ToWstr`'s own already-measured truncate-under-`IgnoreFailure` rule rather than re-deriving a
+new one. **Then independently confirmed for real anyway**, via this round's own dedicated fixture's
+dtexec run (below) — DT_STR truncates exactly like DT_WSTR, not a guess left unverified.
+
+**The harder half: resolving a Data Conversion whose own raw input is ITSELF a Derived Column's
+computed output, not a real row property.** `TranslateDataConversion` always resolves the
+"DataConversion" lineage edge to SOME producing column name and unconditionally emits a bare
+`row.{name}` passthrough for it — it has no way to know whether that name is a genuine row
+property, so it can never itself report "not resolvable" for this shape; the caller has to check
+first. Two call sites needed the identical fix, found only by actually building the generated
+output (the second one was invisible until the first was fixed and a NEW compile error appeared
+where the old one used to be — this project's own recurring "closing one gap reveals the next"
+pattern):
+1. **`PackageGenerator.GenerateScdFlow`'s own attribute-array resolution** (the SCD's `row =>
+   new object?[] { ... }` selector, built directly in the package-root class) — now checks
+   `rowColumnNames.Contains(conversionEdge.FromColumnName)` first; when false and `flow.DerivedColumn`
+   has a matching output column with a non-null `Expression`, resolves it via
+   `TransformEmitter.TranslateDerivedColumn` (promoted from `private` to `internal`, same sharing
+   precedent as `TranslateDataConversion`/`TranslateCopyMap` — the MIRROR-IMAGE mechanism a Derived
+   Column referencing a Data Conversion output already reuses) and wraps the result via the
+   already-`internal` `TranslateDataConversionFromRawExpression`.
+2. **`TransformEmitter.Emit`'s own per-destination-column `convertedByName` branch** — each SCD
+   branch's own destination transform (`Mapping/SCD_DimCustomer_*Output.cs`) independently resolves
+   `CodeStr` for its INSERT, hitting the identical wall. Fixed with the same technique: after
+   `TranslateDataConversion` succeeds, check whether ITS OWN resolved source name is ALSO a key in
+   the already-built `computedByName` dictionary (Derived Column outputs); if so, re-resolve via
+   `TranslateDerivedColumn` and re-wrap.
+
+**A third, smaller wrinkle, also found only by building the generated output:** the SCD step's own
+attribute-array expression lives directly on the generated package-ROOT class
+(`PackageClassEmitter`'s own file), which carries no `using {ns}.Ssis;` — a bare `SsisFn.ToWstr(...)`
+reference there is `CS0103`. Fixed with the SAME already-established technique
+`ExpressionStep`/`PackageGenerator.cs:695` uses for the identical problem (a control-flow assignment
+needing `SsisFn` with no local `using`): fully-qualify via `.Replace("SsisFn.", "{ns}.Ssis.SsisFn.")`
+at the point the attribute expression is stored, rather than adding a package-wide `using` purely
+for this rare case. `TransformEmitter.CollectSsisFunctions` is also called on each resolved
+attribute expression so `Ssis/SsisFn.cs` itself still emits the right helper bodies.
+
+**A new dedicated fixture, deliberately matching the real evidenced STATIC-LITERAL shape rather
+than inventing a raw-column-derived one** (`Ssis.Extract.FixtureBuilder`'s new
+`scd-data-conversion-attribute` mode, `SyntheticScdDataConversionAttribute.dtsx`): OLE DB Source
+(EmpId, FirstName) → Derived Column (`CodeText <- "HELLO WORLD"`, a static literal, no input column
+marked `UT_READONLY` at all — same as `BuildScdRealShapeFixture`'s own `DER_StartDate`, since
+marking one anyway is a hard validation failure when nothing is referenced) → Data Conversion
+(`CodeText` wstr → `CodeStr` `DT_STR,5`) → SCD (key: EmpId; Changing: FirstName; Fixed: CodeStr).
+An `UPPER(RawCode)`-style per-row-computed literal was tried first and deliberately abandoned —
+it would have needed a SECOND, separate, unevidenced feature (a Data Conversion source that is
+itself a Derived-Column expression which ITSELF references a raw column), stacking one unevidenced
+shape on top of another exactly the way this project's own discipline elsewhere refuses to. Instead,
+every incoming row computes the IDENTICAL literal; classification varies purely by what the
+DIMENSION's own stored `CodeStr` already holds — still exercises the full routing table:
+- 400 Alice, dimension `CodeStr='HELLO'` (matches "HELLO WORLD" truncated to 5 chars), FirstName
+  unchanged → **Unchanged**.
+- 401 Bob, dimension `CodeStr='WORLD'` (DIFFERENT from the computed "HELLO"), FirstName unchanged →
+  **Fixed Attribute Output** — proves the Data-Conversion-produced attribute is genuinely compared,
+  not just resolved-and-ignored.
+- 402 Carol — no dimension row at all → **New Output**.
+- 403 David, dimension `CodeStr='HELLO'` (matches), but FirstName changed ("Dave" → "David") →
+  **Changing Attribute Updates Output** — proves an ORDINARY plain-passthrough attribute still works
+  correctly alongside a Data-Conversion-sourced one in the same component.
+
+Historical/Inferred Member outputs are deliberately left unwired (discarded) — nothing here
+exercises either, and `ResolveBranch`'s own "an unwired SCD output is a non-fatal discard"
+convention already covers it. Backing tables:
+`tests/Ssis.Extract.Tests/Fixtures/synthetic-scd-data-conversion-attribute-tables.sql`.
+
+**Verified to the strongest evidence tier this project's own philosophy asks for — a real dtexec
+probe FIRST, then the generated code run against the SAME reset tables, diffed row-for-row:**
+1. **Real `DTExec.exe /File` run against `.\SQLFORPOC_2022`/`SsisPoC`** — `DTSER_SUCCESS`. Read back
+   directly, not trusted from the exit code: `400/Alice/HELLO → Unchanged`, `401/Bob/HELLO → Fixed`,
+   `402/Carol/HELLO → New`, `403/David/HELLO → Changing` — confirming BOTH the SCD routing AND, for
+   the first time, that `DT_STR` truncates under `IgnoreFailure` exactly like the already-measured
+   `DT_WSTR` ("HELLO WORLD" → "HELLO"), independently validating the reused-not-re-measured
+   unification above.
+2. **`ssisx generate` against the fixture**: 8 non-blocking advisory gaps only (Historical/
+   Inferred-discard, the SqlCommand column-naming advisory, four pre-existing "no representative
+   value for Data Conversion target type 'str'" starter-test advisories, and Notification) — the
+   `"compares column(s) not present"` gap is gone entirely. **Generated, built against a copy of
+   `Tools/Etl.Core` (0 warnings/0 errors, production AND the generated `.Tests` project)**, and its
+   own 5 non-Integration starter tests all PASS.
+3. **The generated exe, actually RUN against the SAME reset tables**: exit 0, read back
+   afterward — **exact row-for-row match against the real dtexec probe**: `400/Alice/HELLO →
+   Unchanged`, `401/Bob/HELLO → Fixed`, `402/Carol/HELLO → New`, `403/David/HELLO → Changing`.
+4. **The real motivating portfolio, regenerated**: `Sales-DataWarehouse-with-Incremental-Load-SSIS-
+   ETL-Pipeline`'s three packages (`Package` from `dimproduct.dtsx`, `Package1` from
+   `03_Dim_Sales_Man.dtsx` — `Fact.dtsx`/`Package1.dtsx` are genuine duplicate-`ObjectName` siblings,
+   correctly skipped as benign per the earlier identifier-sanitization round's own `Run-Pipeline.ps1`
+   fix — and `dimcustomer` itself) all show the `"compares column(s) not present"` gap GONE. **None
+   of the three becomes fully generatable this round** — each independently still hits ONE
+   pre-existing, unrelated, already-documented Tier-3 gap
+   (`GenerateScdFlow`'s own doc comment: an OLE DB Command branch parameter computed by a Derived
+   Column on the branch, e.g. an `EndDate`/`ssc_st` stamped from a package variable — a real,
+   separate, out-of-scope limitation this round did not touch). This is the honest result, not a
+   guessed "3/3 now generatable" — closing the SCD/DataConversion gap was never going to close a
+   DIFFERENT, unrelated gap in the same flow.
+
+New unit test, `PackageGeneratorTests.Generate_WiresAnScdFlow_WithAnAttributeProducedByAnInterveningDataConversion`,
+reading the real fixture end to end and asserting the exact generated text at both call sites (the
+package-root class's fully-qualified `SyntheticScdDataConversionAttribute.Ssis.SsisFn.ToWstr(...)`
+and the branch transform's plain, `using`-qualified `SsisFn.ToWstr(...)`). Regression: 454/456 in
+`Ssis.Extract.Codegen.Tests` (was 453/455 — the same 2 pre-existing unrelated
+`GenerateGoldenFileTests` CRLF-vs-LF failures on `LoadEmployees.dtsx`/`LoadReferenceData.dtsx`,
+nothing new), 181/181 `Ssis.Runtime.Expressions.Tests`, 173/173 `Ssis.Extract.Tests`, 25/25
+`Ssis.Extract.Cli.Tests`. No `Etl.Core` changes needed this round — this is entirely an expression-
+resolution feature inside `Ssis.Extract.Codegen`.
+
+**Remaining known gaps, unchanged except for this round's own closure:** the SCD branch's own OLE
+DB Command binding a Derived-Column-computed parameter (already named, unrelated, out of scope —
+see above), Data Conversion target types other than the now-nine closed (`str` added this round),
+and the numeric-passthrough-coercion gap for every pairing beyond the six already closed. SCD
+reading a Data-Conversion-produced attribute column, named above, is now closed.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

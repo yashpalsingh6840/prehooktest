@@ -438,10 +438,19 @@ public sealed record ProgramScdBranch(
 /// <c>Etl.Core.Pipeline.SlowlyChangingDimensionStep{TRow,TKey}</c>'s own doc comment for why that
 /// ordering is a correctness requirement.
 ///
-/// <para><see cref="AttributeRoles"/> and <see cref="AttributeColumns"/> are index-aligned, and both
-/// align with the <c>object?[]</c> <see cref="CacheClassName"/> produces -- that three-way alignment
-/// is the whole contract between the emitted cache, the emitted value selector, and the runtime
-/// classifier.</para>
+/// <para><see cref="AttributeRoles"/>, <see cref="AttributeColumns"/> and
+/// <see cref="AttributeExpressions"/> are index-aligned, and all three align with the
+/// <c>object?[]</c> <see cref="CacheClassName"/> produces -- that alignment is the whole contract
+/// between the emitted cache, the emitted value selector, and the runtime classifier.</para>
+///
+/// <para><see cref="AttributeExpressions"/> carries each attribute's own ALREADY-RESOLVED C#
+/// expression -- a plain <c>row.{Name}</c> passthrough for an ordinary column, or
+/// <c>SsisFn.ToNullable*(row.{RawSourceColumn})</c> for one produced by an intervening Data
+/// Conversion component (resolved via <c>TransformEmitter.TranslateDataConversion</c>, the same
+/// helper a Conditional Split condition/Derived Column cross-reference already reuses -- see
+/// <c>PackageGenerator.GenerateScdFlow</c>). <see cref="AttributeColumns"/> stays the bare SSIS
+/// column name throughout (used for the dimension cache's own reference-SQL projection and for
+/// human-readable gap text), never re-derived into an identifier at the point of use any more.</para>
 /// </summary>
 public sealed record ProgramScdStep(
     string StepName,
@@ -451,6 +460,7 @@ public sealed record ProgramScdStep(
     IReadOnlyList<string> BusinessKeyColumns,
     IReadOnlyList<string> BusinessKeyClrTypes,
     IReadOnlyList<string> AttributeColumns,
+    IReadOnlyList<string> AttributeExpressions,
     IReadOnlyList<string> AttributeRoles,
     bool FailOnFixedAttributeChange,
     bool UpdateChangingAttributeHistory,

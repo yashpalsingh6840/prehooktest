@@ -1852,6 +1852,52 @@ public class PackageGeneratorTests
     }
 
     [Fact]
+    public void Generate_WiresAnScdFlow_WithAnAttributeProducedByAnInterveningDataConversion()
+    {
+        // SyntheticScdDataConversionAttribute.dtsx (gap-audit plan glittery-spinning-mochi.md,
+        // 2026-09-18, Step 3): OLE DB Source (EmpId, FirstName) -> Derived Column (CodeText <-
+        // "HELLO WORLD", a static literal referencing no column, matching the real evidenced
+        // package's own "ssc" shape exactly) -> Data Conversion (CodeText wstr -> CodeStr
+        // DT_STR,5) -> SCD (key: EmpId; Changing: FirstName; Fixed: CodeStr). Reproduces the real
+        // evidenced gap this round closes: Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-
+        // Pipeline's own dimcustomer.dtsx compares a "Copy of ssc" attribute (ColumnType=4)
+        // produced by an intervening Microsoft.DataConvert, which PackageGenerator.GenerateScdFlow
+        // used to reject outright ("compares column(s) not present on its own source's output")
+        // even though the exact resolution machinery already existed
+        // (TransformEmitter.TranslateDataConversion). Verified end-to-end beyond this test: a real
+        // dtexec run of this exact fixture measured DT_STR's own truncation under IgnoreFailure
+        // ("HELLO WORLD" -> "HELLO", matching DT_WSTR's already-measured rule) and the full
+        // routing table (Unchanged/Fixed/New/Changing, one row each); the generated exe, built
+        // against a copy of Tools/Etl.Core (0 warnings/0 errors) and run against
+        // .\SQLFORPOC_2022 with the output tables reset first, wrote the EXACT SAME rows -- see
+        // Tools/SsisExtractor/CLAUDE.md's own account.
+        var package = LoadSyntheticFixture("SyntheticScdDataConversionAttribute.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        Assert.DoesNotContain(result.Gaps, g => g.IsBlocking);
+        Assert.DoesNotContain(result.Gaps, g => g.Reason.Contains("compares column(s) not present"));
+
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticScdDataConversionAttribute.cs");
+        // The business key stays a plain row reference (EmpId is a raw source column); the
+        // attribute array mixes an ordinary passthrough (FirstName) with the Data-Conversion-
+        // sourced one, resolved through the Derived Column's own literal expression ("HELLO
+        // WORLD") rather than a nonexistent row.CodeText property.
+        Assert.Contains("row => row.EmpId,", classFile.Content);
+        Assert.Contains(
+            "row => new object?[] { row.FirstName, SyntheticScdDataConversionAttribute.Ssis.SsisFn.ToWstr(\"HELLO WORLD\", 5) },",
+            classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+
+        // Each branch's own destination transform independently resolves CodeStr too (for the
+        // INSERT), through the exact same chained resolution -- TransformEmitter.Emit's own
+        // convertedByName branch, not just GenerateScdFlow's attribute-array selector.
+        var unchangedTransform = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SCD_DimCustomer_UnchangedOutput.cs");
+        Assert.Contains("SsisFn.ToWstr(\"HELLO WORLD\", 5)", unchangedTransform.Content);
+        CodeAssertions.AssertNoSyntaxErrors(unchangedTransform.Content);
+    }
+
+    [Fact]
     public void Generate_WrapsTheRowSourceInSortingRowSource_ForAStandaloneSort()
     {
         // SyntheticStandaloneSort.dtsx (gap-audit Phase 3.5, 2026-09-02): OLE DB Source (seed

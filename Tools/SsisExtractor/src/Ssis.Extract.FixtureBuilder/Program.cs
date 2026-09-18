@@ -369,6 +369,10 @@ internal static class Program
         {
             return BuildScdCompositeKeyFixture(args[0]);
         }
+        if (fixtureName == "scd-data-conversion-attribute")
+        {
+            return BuildScdDataConversionAttributeFixture(args[0]);
+        }
         if (fixtureName == "identifier-sanitization")
         {
             return BuildIdentifierSanitizationFixture(args[0]);
@@ -5247,6 +5251,208 @@ internal static class Program
         foreach (var (outputName, table, componentName) in observed)
         {
             var output = scdMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.Name == outputName);
+            var destMeta = AddOleDbComponent(pipe, componentName, "Microsoft.OLEDBDestination", sqlCm,
+                accessMode: 3, openRowset: table);
+            AttachPath(pipe, output, destMeta.InputCollection[0]);
+            ResolveOleDbMetadata(destMeta, isDestination: true);
+        }
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A real gap found re-running the GitHub-portfolio pipeline (gap-audit plan
+    /// glittery-spinning-mochi.md, 2026-09-18, Step 3): the one real evidenced SCD package
+    /// (Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline's own dimcustomer.dtsx)
+    /// compares an attribute column ("Copy of ssc", <c>ColumnType=4</c> -- Fixed) that is
+    /// produced by an intervening <c>Microsoft.DataConvert</c> component, not the raw source --
+    /// something <c>PackageGenerator.GenerateScdFlow</c> used to reject outright with "compares
+    /// column(s) not present on its own source's output", even though the exact same
+    /// "DataConversion" lineage-edge resolution a Conditional Split condition/Derived Column
+    /// cross-reference already reuses (<c>TransformEmitter.TranslateDataConversion</c>) is fully
+    /// capable of resolving it.
+    ///
+    /// <para>Shape: <c>OLE DB Source (EmpId, FirstName) -&gt; Derived Column
+    /// (CodeText &lt;- "HELLO WORLD", a STATIC LITERAL -- no column reference at all) -&gt; Data
+    /// Conversion (CodeText wstr -&gt; CodeStr str,5) -&gt; SCD (key: EmpId; Changing: FirstName;
+    /// Fixed: CodeStr)</c> -- the same Source-&gt;DerivedColumn-&gt;DataConversion-&gt;SCD chain
+    /// AND the same static-literal Derived Column shape the real package uses (its own "ssc"
+    /// column is <c>"1"</c>, referencing nothing), with the SAME measured role
+    /// (<c>ColumnType=4</c>, Fixed) for the Data-Conversion-produced column. Deliberately NOT
+    /// derived from a raw source column (e.g. <c>UPPER(RawCode)</c>) -- that would need a SECOND,
+    /// separate, unevidenced feature (resolving a Data-Conversion source that is itself a
+    /// Derived-Column expression which ITSELF references a raw column), stacking one unevidenced
+    /// shape on top of another the same way this project's own discipline elsewhere refuses to.
+    /// Per-row classification variation instead comes from the DIMENSION's own stored value
+    /// (every incoming row computes the identical literal; only the dimension row it's compared
+    /// against varies), which still exercises the full routing table. The Data Conversion's own
+    /// target type, <c>DT_STR</c> (non-Unicode/ANSI, matching the real package's own "Copy of
+    /// ssc" exactly, not the already-measured DT_WSTR) is what this fixture's own dtexec run
+    /// measures for real: does an over-length source string TRUNCATE under
+    /// <c>IgnoreFailure</c> the same way DT_WSTR's own already-measured truncation does?
+    /// (Confirmed yes -- see TransformEmitter.WrapDataConversion's own doc comment for why DT_STR
+    /// and DT_WSTR are treated identically as a result, not independently re-derived semantics.)
+    ///
+    /// <para>Every row computes <c>CodeText = "HELLO WORLD"</c>, truncated by the Data Conversion
+    /// to <c>"HELLO"</c> (5 chars) -- so a single dtexec run reports the complete routing table
+    /// purely from how each EmpId's own dimension row was seeded:</para>
+    /// <list type="bullet">
+    /// <item>400 Alice, dimension CodeStr="HELLO" (matches), FirstName unchanged -&gt; Unchanged.</item>
+    /// <item>401 Bob, dimension CodeStr="WORLD" (DIFFERENT from the computed "HELLO"), FirstName
+    /// unchanged -&gt; Fixed Attribute Output (the Data-Conversion-produced attribute is what
+    /// changed, proving the cross-reference is genuinely compared, not just resolved-and-ignored).</item>
+    /// <item>402 Carol -&gt; no dimension row at all -&gt; New Output.</item>
+    /// <item>403 David, dimension CodeStr="HELLO" (matches), but FirstName changed ("Dave" -&gt;
+    /// "David") -&gt; Changing Attribute Updates Output -- proves an ORDINARY plain-passthrough
+    /// attribute still works correctly alongside a Data-Conversion-sourced one in the same
+    /// component.</item>
+    /// </list>
+    ///
+    /// <para>Historical/Inferred Member outputs are deliberately left unwired (discarded) --
+    /// nothing in this fixture exercises a Historical (<c>ColumnType=3</c>) attribute or
+    /// inferred-member detection, and <c>ResolveBranch</c>'s own "an unwired SCD output is a
+    /// non-fatal discard" convention (established by <see cref="BuildScdRealShapeFixture"/>)
+    /// already covers this without needing to wire every output.</para>
+    ///
+    /// <para>Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-scd-data-conversion-attribute-tables.sql</c>
+    /// on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.</para>
+    /// </summary>
+    private static int BuildScdDataConversionAttributeFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticScdDataConversionAttribute" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_ScdDataConversion";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT EmpId, FirstName FROM dbo.SyntheticScdDcaSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        // Derived Column: a STATIC LITERAL, referencing no input column at all -- matching the
+        // real evidenced package's own "ssc" column ("1") exactly. NO input column is marked
+        // UT_READONLY here, deliberately (same as BuildScdRealShapeFixture's own DER_StartDate,
+        // whose GETDATE() expression also references nothing) -- marking one anyway is a hard
+        // validation failure ("has usage type READONLY, but is not referenced by an expression").
+        // EmpId/FirstName still reach the destination regardless: a Derived Column is
+        // synchronous, so untouched columns pass through the same buffer without being declared
+        // input columns at all.
+        var derMeta = pipe.ComponentMetaDataCollection.New();
+        derMeta.ComponentClassID = "Microsoft.DerivedColumn";
+        var derInst = derMeta.Instantiate();
+        derInst.ProvideComponentProperties();
+        derMeta.Name = "DER_CodeText";
+        AttachPath(pipe, srcOutput, derMeta.InputCollection[0]);
+        derInst.ReinitializeMetaData();
+
+        var derOutput = derMeta.OutputCollection[0];
+        var codeTextCol = derInst.InsertOutputColumnAt(derOutput.ID, 0, "CodeText", "");
+        // DT_WSTR is Unicode -- codepage 0, not 1252 (see BuildDerivedColumnTernary's own note).
+        derInst.SetOutputColumnDataTypeProperties(derOutput.ID, codeTextCol.ID, DataType.DT_WSTR, 50, 0, 0, 0);
+        derInst.SetOutputColumnProperty(derOutput.ID, codeTextCol.ID, "FriendlyExpression", "\"HELLO WORLD\"");
+        derInst.SetOutputColumnProperty(derOutput.ID, codeTextCol.ID, "Expression", "\"HELLO WORLD\"");
+
+        // Data Conversion: CodeText (wstr) -> CodeStr (DT_STR, length 5 -- deliberately short, to
+        // measure DT_STR's own truncation behavior under IgnoreFailure for real, matching the
+        // real package's own "Copy of ssc" target type exactly, not the already-measured DT_WSTR.
+        var dconvMeta = pipe.ComponentMetaDataCollection.New();
+        dconvMeta.ComponentClassID = "Microsoft.DataConvert";
+        var dconvInst = dconvMeta.Instantiate();
+        dconvInst.ProvideComponentProperties();
+        dconvMeta.Name = "DCONV_Code";
+        AttachPath(pipe, derOutput, dconvMeta.InputCollection[0]);
+        dconvInst.AcquireConnections(null);
+        dconvInst.ReinitializeMetaData();
+        dconvInst.ReleaseConnections();
+
+        var dconvInput = dconvMeta.InputCollection[0];
+        var dconvVirtualInput = dconvInput.GetVirtualInput();
+        var dconvOutput = dconvMeta.OutputCollection[0];
+        AddConvertedColumn(dconvMeta, dconvInst, dconvInput, dconvVirtualInput, dconvOutput, 0,
+            "CodeText", "CodeStr", DataType.DT_STR, length: 5, precision: 0, scale: 0, codePage: 1252);
+
+        // SCD: business key EmpId (plain, ColumnType=1); FirstName is an ordinary passthrough
+        // Changing attribute (ColumnType=2); CodeStr is the Data-Conversion-produced Fixed
+        // attribute (ColumnType=4) -- the exact role the real evidenced package's own "Copy of
+        // ssc" column carries.
+        var scdMeta = pipe.ComponentMetaDataCollection.New();
+        scdMeta.ComponentClassID = "Microsoft.SCD";
+        var scdInst = scdMeta.Instantiate();
+        scdInst.ProvideComponentProperties(); // resets Name -- set it after, same as every other component here
+        scdMeta.Name = "SCD_DimCustomer";
+
+        var scdConn = scdMeta.RuntimeConnectionCollection[0];
+        scdConn.ConnectionManagerID = sqlCm.ID;
+        scdConn.ConnectionManager = DtsConvert.GetExtendedInterface(sqlCm);
+
+        scdInst.SetComponentProperty("SqlCommand",
+            "SELECT [EmpId], [FirstName], [CodeStr], [StartDate], [EndDate] FROM [dbo].[SyntheticScdDcaDim]");
+        scdInst.SetComponentProperty("CurrentRowWhere", "[StartDate] IS NOT NULL AND [EndDate] IS NULL");
+        scdInst.SetComponentProperty("UpdateChangingAttributeHistory", false);
+        scdInst.SetComponentProperty("FailOnFixedAttributeChange", false);
+        scdInst.SetComponentProperty("EnableInferredMember", false);
+        scdInst.SetComponentProperty("FailOnLookupFailure", false);
+        scdInst.SetComponentProperty("IncomingRowChangeType", 1);
+
+        AttachPath(pipe, dconvOutput, scdMeta.InputCollection[0]);
+
+        var scdColumnTypes = new System.Collections.Generic.Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["EmpId"] = 1,
+            ["FirstName"] = 2,
+            ["CodeStr"] = 4,
+        };
+
+        var scdReinitInst = scdMeta.Instantiate();
+        scdReinitInst.AcquireConnections(null);
+        scdReinitInst.ReinitializeMetaData();
+
+        var scdInput = scdMeta.InputCollection[0];
+        var scdVirtualInput = scdInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in scdVirtualInput.VirtualInputColumnCollection)
+        {
+            if (!scdColumnTypes.ContainsKey(vcol.Name)) continue;
+            scdReinitInst.SetUsageType(scdInput.ID, scdVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        foreach (IDTSInputColumn100 col in scdInput.InputColumnCollection)
+        {
+            if (!scdColumnTypes.TryGetValue(col.Name, out var columnType)) continue;
+            scdReinitInst.SetInputColumnProperty(scdInput.ID, col.ID, "ColumnType", columnType);
+
+            var ext = scdInput.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>()
+                .FirstOrDefault(e => e.Name == col.Name);
+            if (ext is not null) scdReinitInst.MapInputColumn(scdInput.ID, col.ID, ext.ID);
+        }
+        scdReinitInst.ReleaseConnections();
+
+        IDTSOutput100 ScdOutput(string name) => scdMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.Name == name);
+
+        // One destination per output actually reachable by this fixture's own seed data --
+        // Historical/Inferred Member are left unwired (discarded), see this method's own doc
+        // comment for why.
+        var observed = new (string OutputName, string Table, string Component)[]
+        {
+            ("Unchanged Output",                  "[dbo].[SyntheticScdDcaOutUnchanged]", "DST_Unchanged"),
+            ("New Output",                        "[dbo].[SyntheticScdDcaOutNew]",       "DST_New"),
+            ("Fixed Attribute Output",             "[dbo].[SyntheticScdDcaOutFixed]",     "DST_Fixed"),
+            ("Changing Attribute Updates Output",  "[dbo].[SyntheticScdDcaOutChanging]",  "DST_Changing"),
+        };
+
+        foreach (var (outputName, table, componentName) in observed)
+        {
+            var output = ScdOutput(outputName);
             var destMeta = AddOleDbComponent(pipe, componentName, "Microsoft.OLEDBDestination", sqlCm,
                 accessMode: 3, openRowset: table);
             AttachPath(pipe, output, destMeta.InputCollection[0]);

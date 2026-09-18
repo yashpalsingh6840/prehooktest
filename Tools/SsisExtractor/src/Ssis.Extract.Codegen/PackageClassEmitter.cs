@@ -757,7 +757,7 @@ public static class PackageClassEmitter
                     methods.Line("source,");
                     methods.Line($"loadCt => {scdStep.CacheClassName}.LoadAsync(SqlConnectionStringFactory.Build(Db()), loadCt),");
                     methods.Line($"row => {scdKeySelector},");
-                    methods.Line($"row => new object?[] {{ {string.Join(", ", scdStep.AttributeColumns.Select(c => $"row.{PackageGenerator.SanitizeIdentifier(c)}"))} }},");
+                    methods.Line($"row => new object?[] {{ {string.Join(", ", scdStep.AttributeExpressions)} }},");
                     methods.Line("new ScdClassifier(");
                     methods.Indent();
                     methods.Line($"[{string.Join(", ", scdStep.AttributeRoles.Select(r => $"ScdColumnRole.{r}"))}],");

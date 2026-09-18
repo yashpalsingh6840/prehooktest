@@ -2658,13 +2658,103 @@ public static partial class PackageGenerator
         var rowColumnNames = PipelineResolver.Resolve(sourceOutput).Columns
             .Select(c => c.PipelineColumnName).ToHashSet(StringComparer.Ordinal);
 
-        var required = new List<string>(scd.BusinessKeyColumns);
-        required.AddRange(scd.Attributes.Select(a => a.ColumnName));
-        var missing = required.Where(c => !rowColumnNames.Contains(c)).ToList();
-        if (missing.Count > 0)
+        // The business key is matched via a plain C# ValueTuple/scalar key (TKey : notnull),
+        // so it must exist directly on the raw source row -- a Data-Conversion-produced business
+        // key is a distinct, unevidenced shape (its own nullable CLR type would conflict with
+        // that constraint) and is deliberately left as a named future gap, not guessed at.
+        var missingKeys = scd.BusinessKeyColumns.Where(c => !rowColumnNames.Contains(c)).ToList();
+        if (missingKeys.Count > 0)
         {
             gaps.Add(new GenerationGap(flow.TaskName,
-                $"Slowly Changing Dimension '{scd.Component.Name}' compares column(s) not present on its own source's output ({string.Join(", ", missing)}) -- a column produced by an intervening transform is not supported here yet"));
+                $"Slowly Changing Dimension '{scd.Component.Name}' compares business key column(s) not present on its own source's output ({string.Join(", ", missingKeys)}) -- a column produced by an intervening transform is not supported for the business key (its nullable CLR type would conflict with the classifier's own notnull key constraint)"));
+            return null;
+        }
+
+        // Each compared attribute is either a plain passthrough column (already on the raw source
+        // row) or one produced by an intervening Data Conversion component -- resolved through the
+        // SAME "DataConversion" lineage edge and SsisFn.ToNullable* wrapping RouterEmitter/Derived
+        // Column cross-references already reuse (TransformEmitter.TranslateDataConversion), not
+        // re-derived here. This is safe for an ATTRIBUTE (unlike the business key above): the
+        // classifier's own attribute array is object?[], and ScdClassifier.ValuesEqual already
+        // null-checks both sides -- a Data Conversion column is nullable by construction
+        // (IgnoreFailure), which this generator already treats as an ordinary case elsewhere.
+        var dataConvertColumnsByName = (flow.DataConversion?.DataConvert?.Columns ?? [])
+            .ToDictionary(c => c.OutputColumnName, StringComparer.Ordinal);
+        var scdLineage = LineageBuilder.Build(flow.Pipeline);
+        var attributeExpressionsByName = new Dictionary<string, string>(StringComparer.Ordinal);
+        var unresolvedAttributes = new List<string>();
+        foreach (var attribute in scd.Attributes)
+        {
+            if (rowColumnNames.Contains(attribute.ColumnName))
+            {
+                attributeExpressionsByName[attribute.ColumnName] = $"row.{SanitizeIdentifier(attribute.ColumnName)}";
+                continue;
+            }
+
+            if (dataConvertColumnsByName.TryGetValue(attribute.ColumnName, out var conversion))
+            {
+                // TranslateDataConversion always resolves the "DataConversion" lineage edge to
+                // SOME producing column name and unconditionally emits a bare row.{name}
+                // passthrough for it -- it has no way to know whether that name is actually a
+                // real row property, so the check has to happen HERE, before calling it, not by
+                // reading its return type. A raw source column is the simple, already-proven
+                // case; anything else means the Data Conversion's own raw input is ITSELF a
+                // Derived Column's computed output rather than a raw source column -- the real
+                // evidenced package's own shape (dimcustomer.dtsx's static-literal "ssc" Derived
+                // Column feeding "Copy of ssc"'s Data Conversion). Resolved by translating that
+                // Derived Column's own expression first (reusing TranslateDerivedColumn -- the
+                // mirror-image mechanism a Derived Column referencing a Data Conversion output
+                // already reuses), then wrapping the result the same way TranslateDataConversion
+                // wraps a plain row reference.
+                var conversionEdge = scdLineage.Edges.FirstOrDefault(e => e.Kind == "DataConversion" && e.ToColumnName == attribute.ColumnName);
+                if (conversionEdge is not null && rowColumnNames.Contains(conversionEdge.FromColumnName))
+                {
+                    if (TransformEmitter.TranslateDataConversion(conversion, attribute.ColumnName, scdLineage) is TranslatedOk translated)
+                    {
+                        TransformEmitter.CollectSsisFunctions(translated.CSharpExpression, functionsUsed);
+                        // Fully-qualified, not "using {ns}.Ssis;" -- the SCD step's own key/
+                        // attribute selectors live directly on the generated package class,
+                        // which has no such using (same reasoning/precedent as the ExpressionStep
+                        // case a few lines up).
+                        attributeExpressionsByName[attribute.ColumnName] = translated.CSharpExpression.Replace("SsisFn.", $"{ns}.Ssis.SsisFn.");
+                        continue;
+                    }
+                }
+                else if (conversionEdge is not null && flow.DerivedColumn is not null)
+                {
+                    var derivedSourceColumn = flow.DerivedColumn.Outputs
+                        .Where(o => o.IsErrorOut != true)
+                        .SelectMany(o => o.Columns)
+                        .FirstOrDefault(c => c.Name == conversionEdge.FromColumnName && c.Expression is not null);
+
+                    if (derivedSourceColumn is not null)
+                    {
+                        var derivedExpression = new TransformEmitter.DerivedExpression(
+                            derivedSourceColumn.Name, derivedSourceColumn.RefId, derivedSourceColumn.Expression,
+                            derivedSourceColumn.FriendlyExpression, flow.DerivedColumn.Name, flow.DerivedColumn.RefId);
+                        var scdColumnTypes = TransformEmitter.BuildColumnTypeLookup(flow.Pipeline);
+                        var derivedTranslated = TransformEmitter.TranslateDerivedColumn(
+                            derivedExpression, flow.TaskName, attribute.ColumnName, scdLineage, scdColumnTypes,
+                            nullableColumnNames, dataConvertColumnsByName);
+
+                        if (derivedTranslated is TranslatedOk derivedOk
+                            && TransformEmitter.TranslateDataConversionFromRawExpression(conversion, derivedOk.CSharpExpression) is TranslatedOk chainedOk)
+                        {
+                            TransformEmitter.CollectSsisFunctions(chainedOk.CSharpExpression, functionsUsed);
+                            attributeExpressionsByName[attribute.ColumnName] = chainedOk.CSharpExpression.Replace("SsisFn.", $"{ns}.Ssis.SsisFn.");
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            unresolvedAttributes.Add(attribute.ColumnName);
+        }
+
+        if (unresolvedAttributes.Count > 0)
+        {
+            gaps.Add(new GenerationGap(flow.TaskName,
+                $"Slowly Changing Dimension '{scd.Component.Name}' compares attribute column(s) not present on its own source's output and not resolvable through an intervening Data Conversion ({string.Join(", ", unresolvedAttributes)}) -- a column produced by another kind of transform is not supported here yet"));
             return null;
         }
 
@@ -2801,6 +2891,7 @@ public static partial class PackageGenerator
             flow.TaskName, programSource, rowTypeName, cacheClassName,
             scd.BusinessKeyColumns, scd.BusinessKeyTypes.Select(t => t.ClrTypeName).ToList(),
             scd.Attributes.Select(a => a.ColumnName).ToList(),
+            scd.Attributes.Select(a => attributeExpressionsByName[a.ColumnName]).ToList(),
             scd.Attributes.Select(a => a.Role.ToString()).ToList(),
             scd.FailOnFixedAttributeChange, scd.UpdateChangingAttributeHistory,
             programBranches);

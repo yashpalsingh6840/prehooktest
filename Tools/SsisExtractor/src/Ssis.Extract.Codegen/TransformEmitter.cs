@@ -435,6 +435,32 @@ public static class TransformEmitter
             else if (convertedByName.TryGetValue(column.PipelineColumnName, out var conversion))
             {
                 var converted = TranslateDataConversion(conversion, column.PipelineColumnName, lineage);
+
+                // TranslateDataConversion always resolves the "DataConversion" lineage edge to
+                // SOME producing column name and blindly emits a bare row.{name} passthrough for
+                // it -- it has no way to know whether that name is a real row property. It might
+                // instead be a Derived Column's OWN computed output (the real evidenced shape: a
+                // static-literal Derived Column feeding a Data Conversion, e.g. dimcustomer.dtsx's
+                // "ssc" -> "Copy of ssc"). Checked here, after the call, by seeing whether the
+                // SAME lineage edge's own source name is ALSO a key in computedByName -- reusing
+                // TranslateDerivedColumn (the mirror-image mechanism used a few lines up for a
+                // Derived Column referencing a Data Conversion output) to resolve that expression
+                // first, then wrapping the result the same way TranslateDataConversion itself
+                // wraps a plain row reference.
+                if (converted is TranslatedOk)
+                {
+                    var conversionEdge = lineage.Edges.FirstOrDefault(e => e.Kind == "DataConversion" && e.ToColumnName == column.PipelineColumnName);
+                    if (conversionEdge is not null && computedByName.TryGetValue(conversionEdge.FromColumnName, out var derivedSource))
+                    {
+                        var derivedTranslated = TranslateDerivedColumn(
+                            derivedSource, request.EntityName, column.ExternalColumnName, lineage, columnTypes,
+                            request.NullableColumnNames, convertedByName, copiedByName);
+                        converted = derivedTranslated is TranslatedOk derivedOk
+                            ? TranslateDataConversionFromRawExpression(conversion, derivedOk.CSharpExpression)
+                            : derivedTranslated;
+                    }
+                }
+
                 if (converted is NotTranslatable notTranslatable)
                 {
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}", notTranslatable.Reason));
@@ -810,7 +836,12 @@ public static class TransformEmitter
     /// <param name="OwnerComponentRefId">The same component's own RefId -- <see cref="ComponentHolderRegistry"/>
     /// is keyed by this, never by name, since two Derived Columns in one package can share SSIS's
     /// own schema-default display name.</param>
-    private readonly record struct DerivedExpression(string Name, string RefId, string? Expression, string? FriendlyExpression,
+    /// <remarks>Internal, not private -- <c>PackageGenerator.GenerateScdFlow</c> constructs one
+    /// directly for the "Data Conversion's own raw source is itself a Derived Column's computed
+    /// output" case (see <see cref="TranslateDerivedColumn"/>'s own doc comment), the same sharing
+    /// precedent as <see cref="TranslateDataConversion(DataConversionColumnSpec,string,LineageSpec)"/>
+    /// itself.</remarks>
+    internal readonly record struct DerivedExpression(string Name, string RefId, string? Expression, string? FriendlyExpression,
         string OwnerComponentName, string OwnerComponentRefId);
 
     /// <summary>One destination column a Script Component produces, deferred until every column
@@ -831,7 +862,15 @@ public static class TransformEmitter
         public List<ScriptComponentGroupColumn> Columns { get; } = [];
     }
 
-    private static TranslatedExpression TranslateDerivedColumn(
+    /// <remarks>Internal, not private -- <c>PackageGenerator.GenerateScdFlow</c> reuses this
+    /// directly to resolve an SCD attribute whose feeding Data Conversion's own raw source is
+    /// ITSELF a Derived Column's computed output (not a real row property), the real evidenced
+    /// shape in Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline's own dimcustomer.dtsx
+    /// (a static-literal "ssc" Derived Column feeding "Copy of ssc"'s Data Conversion) -- the
+    /// mirror image of the case this method already handles (a Derived Column referencing a Data
+    /// Conversion output), reusing the SAME expression-translation machinery rather than
+    /// re-deriving it, same sharing precedent as <see cref="TranslateDataConversion(DataConversionColumnSpec,string,LineageSpec)"/>.</remarks>
+    internal static TranslatedExpression TranslateDerivedColumn(
         DerivedExpression derivedColumn, string entityName, string destinationColumnName,
         LineageSpec lineage, Dictionary<string, PipelineOutputColumnSpec> columnTypes,
         IReadOnlySet<string>? nullableColumnNames, Dictionary<string, DataConversionColumnSpec> convertedByName,
@@ -982,9 +1021,19 @@ public static class TransformEmitter
             // source string TRUNCATES to fit under IgnoreFailure rather than nulling out, so the
             // helper needs the declared target width, not just the raw value. No declared Length
             // is a named gap, never a guessed default width.
-            "wstr" => conversion.Length is int maxLength
+            //
+            // DT_STR ("str", non-Unicode/ANSI) added 2026-09-18 closing an SCD gap
+            // (Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline's own dimcustomer.dtsx
+            // -- a "Copy of ssc" attribute column converting a wstr input to str) -- NOT
+            // independently re-measured via a fresh dtexec probe: this project's own
+            // SsisPipelineTypeMap/MapPipelineTypeToSsisType already treat "str" and "wstr"
+            // identically everywhere else (both resolve to a plain C# string; a Unicode-vs-ANSI
+            // codepage distinction has no observable effect once the value is a .NET string), so
+            // reusing DT_WSTR's already-measured truncate-not-null rule here is applying an
+            // existing, proven unification, not guessing at a new one.
+            "wstr" or "str" => conversion.Length is int maxLength
                 ? new TranslatedOk($"SsisFn.ToWstr({sourceRef}, {maxLength})")
-                : new NotTranslatable($"Data Conversion to DT_WSTR has no declared target width to truncate to"),
+                : new NotTranslatable($"Data Conversion to DT_WSTR/DT_STR has no declared target width to truncate to"),
             _ => new NotTranslatable($"Data Conversion to target type '{conversion.TargetDataType}' is not supported yet"),
         };
 
