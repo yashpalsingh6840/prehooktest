@@ -5,6 +5,8 @@ using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Package;
 using Ssis.Extract.Model.Serialization;
 
+using Ssis.Extract.Model.Diagnostics;
+
 namespace Ssis.Extract.Cli;
 
 /// <summary>
@@ -154,10 +156,36 @@ internal static class GenerateCommand
         var allGaps = new List<GapSpec>();
         var decisionOutcomes = new List<(string Package, GapDecisionOutcome Outcome)>();
 
+        var crashCount = 0;
+        var packageOrdinal = 0;
         foreach (var package in loaded.Packages)
         {
+            packageOrdinal++;
             var decisions = LoadDecisions(fillsDir, package.ObjectName);
-            var result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests, includeNotifications);
+
+            PackageGenerateResult result;
+            try
+            {
+                result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests, includeNotifications);
+            }
+            catch (Exception ex)
+            {
+                // A real crash generating ONE package must never cost every other package in
+                // the batch -- the same "one bad package never costs you the rest" rule this
+                // tool already applies to a package that fails to LOAD (PackageLoader's own
+                // load-failures.md). Capture a client-data-free diagnostic (ordinal position
+                // only, never the package name/path) and move on to the next package.
+                crashCount++;
+                var scrubbed = DiagnosticReport.ScrubArgs("ssisx", "generate", args);
+                var diagPath = DiagnosticReport.Capture(
+                    "ssisx", scrubbed, "package-generation", ex,
+                    context: [("Package", $"{packageOrdinal} of {loaded.Packages.Count}")],
+                    outDir: outDir);
+                Console.Error.WriteLine($"error: package {packageOrdinal} of {loaded.Packages.Count} hit an unexpected internal error during generation -- skipped, continuing with the rest.");
+                Console.Error.WriteLine($"  A diagnostic file with no client data was written to: {diagPath}");
+                continue;
+            }
+
             results.Add(result);
             decisionOutcomes.AddRange(decisions.Outcomes.Concat(decisions.Orphans())
                 .Select(o => (package.ObjectName, o)));
@@ -223,7 +251,12 @@ internal static class GenerateCommand
                               $"{(refused > 0 ? $", {refused} NOT used -- see the report" : "")}");
         }
 
-        return totalGaps > 0 ? 3 : 0;
+        if (crashCount > 0)
+        {
+            Console.WriteLine($"  {crashCount} package(s) crashed during generation and were skipped -- see the diagnostic file(s) reported above");
+        }
+
+        return crashCount > 0 ? 98 : (totalGaps > 0 ? 3 : 0);
     }
 
     /// <summary>

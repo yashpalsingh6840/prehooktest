@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Ssis.Extract.Dtsx;
+using Ssis.Extract.Model.Diagnostics;
 using Svk.Core;
 
 namespace Svk.Cli;
@@ -55,36 +56,56 @@ public static class WalkthroughCommand
             return 2;
         }
 
+        var crashCount = 0;
+        var ordinal = 0;
         foreach (var pkg in loaded)
         {
-            var steps = ExecutionOrderBuilder.Build(pkg);
-            var dataFlowRules = ConformanceRulesBuilder.Build(pkg).Where(r => r.Category == "DataFlow").ToList();
-
-            var claimsPath = Path.Combine(claimsDir, $"{pkg.ObjectName}.claims.json");
-            var claims = LoadClaims(claimsPath);
-            foreach (var rule in dataFlowRules)
+            ordinal++;
+            try
             {
-                if (!claims.ContainsKey(rule.RuleId))
+                var steps = ExecutionOrderBuilder.Build(pkg);
+                var dataFlowRules = ConformanceRulesBuilder.Build(pkg).Where(r => r.Category == "DataFlow").ToList();
+
+                var claimsPath = Path.Combine(claimsDir, $"{pkg.ObjectName}.claims.json");
+                var claims = LoadClaims(claimsPath);
+                foreach (var rule in dataFlowRules)
                 {
-                    claims[rule.RuleId] = new WalkthroughClaim { RuleId = rule.RuleId };
+                    if (!claims.ContainsKey(rule.RuleId))
+                    {
+                        claims[rule.RuleId] = new WalkthroughClaim { RuleId = rule.RuleId };
+                    }
                 }
+                if (!File.Exists(claimsPath))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(claimsPath)!);
+                    var ordered = claims.Values.OrderBy(c => c.RuleId, StringComparer.Ordinal).ToList();
+                    File.WriteAllText(claimsPath, JsonSerializer.Serialize(ordered, JsonOptions));
+                }
+
+                var md = WalkthroughBuilder.BuildMarkdown(pkg, steps, dataFlowRules, claims);
+                var mdPath = Path.Combine(outDir, "walkthrough", $"{pkg.ObjectName}.walkthrough.md");
+                Directory.CreateDirectory(Path.GetDirectoryName(mdPath)!);
+                File.WriteAllText(mdPath, md);
+
+                Console.WriteLine($"{pkg.ObjectName}: {steps.Count} step(s), {dataFlowRules.Count} data-flow obligation(s) -> {mdPath}");
             }
-            if (!File.Exists(claimsPath))
+            catch (Exception ex)
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(claimsPath)!);
-                var ordered = claims.Values.OrderBy(c => c.RuleId, StringComparer.Ordinal).ToList();
-                File.WriteAllText(claimsPath, JsonSerializer.Serialize(ordered, JsonOptions));
+                // One package's crash must not cost every other package's walkthrough --
+                // capture a client-data-free diagnostic (ordinal only, never the package name)
+                // and move on to the next package.
+                crashCount++;
+                var scrubbed = DiagnosticReport.ScrubArgs("svk", "walkthrough", args);
+                var diagPath = DiagnosticReport.Capture(
+                    "svk", scrubbed, "walkthrough", ex,
+                    context: [("Package", $"{ordinal} of {loaded.Count}")],
+                    outDir: outDir);
+                Console.Error.WriteLine($"error: package {ordinal} of {loaded.Count} hit an unexpected internal error building its walkthrough -- skipped, continuing with the rest.");
+                Console.Error.WriteLine($"  A diagnostic file with no client data was written to: {diagPath}");
             }
-
-            var md = WalkthroughBuilder.BuildMarkdown(pkg, steps, dataFlowRules, claims);
-            var mdPath = Path.Combine(outDir, "walkthrough", $"{pkg.ObjectName}.walkthrough.md");
-            Directory.CreateDirectory(Path.GetDirectoryName(mdPath)!);
-            File.WriteAllText(mdPath, md);
-
-            Console.WriteLine($"{pkg.ObjectName}: {steps.Count} step(s), {dataFlowRules.Count} data-flow obligation(s) -> {mdPath}");
         }
 
-        return 0;
+        return crashCount > 0 ? 98 : 0;
     }
 
     private static Dictionary<string, WalkthroughClaim> LoadClaims(string path)

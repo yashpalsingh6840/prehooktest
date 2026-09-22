@@ -197,6 +197,16 @@ multi-step read-only workflows, verify each step separately before moving to the
       any `error`/`FAILED` lines -- never tail or dump the full restore/compile transcript into
       the conversation.
 
+18. **Exit code 98 or 99 from `ssisx`/`svk` means a genuine bug in the TOOL itself, not a problem
+    with this client's packages.** Do not try to fix, patch, or work around it yourself (this
+    repeats rule 1 for a different failure shape). Both codes write a compact
+    `ssisx-diagnostic-<timestamp>.txt` (or `svk-diagnostic-...`) to the `--out` directory (or the
+    current folder) -- point the user at that exact file and tell them plainly: it contains no
+    package/column/file names or other client data, only the exception type and a stack trace
+    filtered to this tool's own source, so it is safe to screenshot and share back for the tool to
+    be fixed. Read the file yourself first if you can (it is short) so you can summarize what it
+    says, but never try to guess a fix from it.
+
 ## The one-sentence workflow
 
 **Survey once (cheap, whole portfolio, read-only) -> generate one package (or a named few) at

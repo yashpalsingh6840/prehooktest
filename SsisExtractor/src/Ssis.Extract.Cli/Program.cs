@@ -1,3 +1,5 @@
+using Ssis.Extract.Model.Diagnostics;
+
 namespace Ssis.Extract.Cli;
 
 internal static class Program
@@ -13,7 +15,29 @@ internal static class Program
         var command = args[0];
         var rest = args[1..];
 
-        return command switch
+        try
+        {
+            return Dispatch(command, rest);
+        }
+        catch (Exception ex)
+        {
+            // Every command's own Run() already catches the failures it expects (bad flags, an
+            // unreadable input, a load error) and returns exit 2/3 with a short message -- this
+            // is only reached by something genuinely unexpected (a real ssisx bug), which is
+            // exactly what a client site cannot just email a repro for: nothing can leave that
+            // machine. Write a compact, client-data-free crash report instead, so the person
+            // running this can screenshot ONE small file rather than nothing at all.
+            var scrubbed = DiagnosticReport.ScrubArgs("ssisx", command, rest);
+            var path = DiagnosticReport.Capture("ssisx", scrubbed, "top-level (uncaught)", ex,
+                outDir: DiagnosticReport.TryFindOutDir(rest));
+            Console.Error.WriteLine($"error: ssisx hit an unexpected internal error and stopped.");
+            Console.Error.WriteLine($"A diagnostic file with no client data was written to: {path}");
+            Console.Error.WriteLine("Please share that file (e.g. a screenshot of it) so this can be fixed.");
+            return 99;
+        }
+    }
+
+    private static int Dispatch(string command, string[] rest) => command switch
         {
             "extract" => ExtractCommand.Run(rest),
             "generate" => GenerateCommand.Run(rest),
@@ -31,7 +55,6 @@ internal static class Program
                 Fail($"'{command}' needs SSISDB catalog access, which this engagement does not have (Phase0-Extractor-Plan.md §11 decision 4) -- use 'ssisx extract --diff-against' against a deployed .ispac instead for drift detection."),
             _ => Fail($"unknown command '{command}'. Run 'ssisx --help'."),
         };
-    }
 
     private static int Fail(string message)
     {
@@ -293,6 +316,15 @@ internal static class Program
             package's coverage was below --fail-under (extract) / generate produced one or
             more gaps (generate) / a seam is unfilled or stale (apply-fills). See each
             command's own section above for its exact precedence when more than one applies.
+            98 (generate only) one or more packages hit a genuine, unexpected internal ssisx
+            error during generation and were skipped -- every OTHER package still generated
+            normally. 99 an unexpected internal error crashed the whole run before it could
+            finish at all. Both 98 and 99 write a compact ssisx-diagnostic-<timestamp>.txt
+            containing no package/column/file names or other client data -- only the exception
+            type, a stack trace filtered to this tool's own source, and which package ordinal
+            (never its name) was being processed. If this ever happens on a client site (where
+            nothing else can leave the machine), that file is what to screenshot and share back
+            so the tool itself can be fixed.
 
             Not implemented -- need SSISDB catalog access this engagement does not have
             (plan §11 decision 4); use 'extract --diff-against' against a deployed .ispac
