@@ -17,7 +17,7 @@ public class IspacReaderTests
     private static string ThisFilePath([CallerFilePath] string path = "") => path;
 
     private static readonly string IspacPath = Path.GetFullPath(Path.Combine(
-        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "SSIS", "bin", "Development", "SSIS.ispac"));
+        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "..", "SSIS_Packages", "SSIS", "bin", "Development", "SSIS.ispac"));
 
     /// <summary>
     /// Deliberately does NOT pin an exact package count. It used to assert exactly 2 and had

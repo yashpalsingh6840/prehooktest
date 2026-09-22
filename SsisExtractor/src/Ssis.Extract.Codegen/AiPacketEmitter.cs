@@ -71,9 +71,9 @@ public static class AiPacketEmitter
 
     /// <summary>The real <c>TestData/</c> file name this gap's fill must use -- see
     /// <see cref="GapSpec.ExpectedFileName"/>'s own doc comment for why this is NOT the Tier-A
-    /// sample's own name. Mirrors <see cref="LocalFileSourceDataEvidence"/>'s own two-way
-    /// resolution (by connection manager RefId for CSV/fixed-width, by component name for Excel)
-    /// rather than sharing code with it -- each resolution is a few lines and returns a
+    /// sample's own name. Mirrors <see cref="LocalFileSourceDataEvidence"/>'s own three-way
+    /// resolution (by connection manager RefId for CSV/fixed-width, by component name for Excel/
+    /// XML) rather than sharing code with it -- each resolution is a few lines and returns a
     /// differently-shaped result (evidence text vs. a bare file name).</summary>
     private static string? LocalFileSourceDataExpectedFileName(PackageSpec package, GenerationGap gap)
     {
@@ -87,7 +87,14 @@ public static class AiPacketEmitter
             .Select(e => e.DataFlowTask?.Pipeline)
             .Where(p => p is not null)
             .SelectMany(p => p!.Components)
-            .FirstOrDefault(c => c.Name == gap.Location && c.ExcelSource is not null);
+            .FirstOrDefault(c => c.Name == gap.Location && (c.ExcelSource is not null || c.XmlSource is not null));
+
+        // An XML Source has no connection manager at all (see XmlSourcePayload's own doc
+        // comment) -- its own literal XMLData path IS the file name to resolve, no connection
+        // manager lookup needed.
+        if (component?.XmlSource is { } xml)
+            return xml.XmlDataPath is { Length: > 0 } xmlPath ? Path.GetFileName(xmlPath) : null;
+
         var cmName = component?.ExcelSource?.ConnectionName;
         var excelCm = cmName is null ? null : package.ConnectionManagers.FirstOrDefault(c => c.ObjectName == cmName);
         return excelCm?.Parsed?.FilePath is { Length: > 0 } excelPath ? Path.GetFileName(excelPath) : null;
@@ -189,8 +196,9 @@ public static class AiPacketEmitter
         | `Dts.Variables["System::PackageName"]` | `ctx.Load.PackageName` (also `RunId`, `StartedAtUtc`) |
         | `Dts.Variables["User::Whatever"]` | `ctx.Variables.Get<T>(name)` / `.Set(name, value)`, shared with every other ported Script Task in this package |
         | `Dts.Connections[...].ConnectionString`, or any other configured value | resolve it from `ctx.Services` (e.g. `IOptions<FileSourceOptions>`) |
-        | `Dts.Events.FireError` + `Dts.TaskResult = Failure` | throw -- the run's transaction rolls back |
+        | `Dts.Events.FireError` + `Dts.TaskResult = Failure` | `throw` -- this is this rewrite's OWN documented equivalent of a Script Task `Failure` result, not merely "seemed reasonable": an unhandled exception from `RunAsync` triggers the same rollback + `FailureHandlers` path a `Value=Failure` precedence constraint or `OnError` handler would, and fails the whole run the same way SSIS's own task-failure semantics do. Treat this as settled unless the packet says otherwise. |
         | `Dts.Events.FireInformation` | an `ILogger` resolved from `ctx.Services` |
+        | `DateTime.Now` / `DateTime.UtcNow` | `DateTime.UtcNow` directly -- there is no per-call "now" on `ctx` (`ctx.Load.StartedAtUtc` is fixed at the whole RUN's start, not this task's own execution moment, and would silently collapse a real elapsed-time computation to ~0). Call out the local-to-UTC timezone change; do not assume it is inconsequential. |
 
         Note the transaction difference and do not try to work around it: this task's SQL joins the
         package's single all-or-nothing transaction, whereas SSIS auto-committed per task.
@@ -201,23 +209,42 @@ public static class AiPacketEmitter
         """;
 
     private const string ScriptComponentContract = """
-        The body of ONE method computing this column's value for a single row. It will be spliced into
-        the generated transform as a `partial` method, so it must be a pure function of the row:
+        The body of ONE method computing EVERY column this Script Component produces, together, for
+        a single row -- not one method per column. It will be spliced into the generated transform as
+        a `partial` method returning the combined record `ssisx generate --seams` already declared, so
+        it must be a pure function of the row:
 
         ```csharp
         // ssisx-fill: GapId=<this gap's id> Author=<you> Date=<yyyy-mm-dd> EvidenceSha256=<from the heading above>
-        private partial <ClrType> Fill_<ColumnName>(<RowType> row, in RowContext ctx);
+        private partial <Component>Result <Component>(<RowType> row, in RowContext ctx)
+        {
+            // fields/helpers are allowed here -- this is a class part, not a bare method body.
+            return new(<Column1>: ..., <Column2>: ..., ...);
+        }
         ```
 
-        `<ClrType>` is this column's own C# type from the "Columns this component produces" table
-        below; `<RowType>` is the generated row type, whose properties are the "Input columns
-        available on `row`" table. Getting the return type right matters -- the rest of the
-        signature is filled in for you when the fill is applied.
+        `<Component>`/`<Component>Result` and the exact record shape (one property per produced
+        column, with its own C# type) are both already generated -- read them off the seam declaration
+        this gap's own reason text points at, or the "Columns this component produces" table below.
+        `<RowType>` is the generated row type, whose properties are the "Input columns available on
+        `row`" table. Getting every property's type right matters -- the rest of the method signature
+        is filled in for you when the fill is applied.
 
-        The Script Component's full source is below -- port only the part that produces THIS column.
-        Other columns from the same component are separate work packets; do not fold them together.
-        `ctx` carries the run identity (`ctx.LoadedAtUtc` is the run's own UTC timestamp, the correct
-        stand-in for a script that stamped `DateTime.Now`).
+        The Script Component's full source is below -- port the WHOLE component, computing all of its
+        columns from the one method (they came from one script; there is exactly one work packet for
+        it, not one per column).
+
+        This method is itself called once PER ROW -- it is exactly where `Input0_ProcessInputRow` ran
+        in the original. So if the original script called `DateTime.Now`/`DateTime.UtcNow` inside that
+        per-row callback, calling `DateTime.UtcNow` directly inside THIS method is the faithful port:
+        it still evaluates fresh per row, only switching local time to UTC (call that timezone change
+        out; do not assume it is inconsequential). Reach for `ctx.LoadedAtUtc` instead only when the
+        original value was clearly meant to be ONE shared instant for the whole load -- e.g. it
+        reproduces an SSIS built-in expression like `GETUTCDATE()`, which this tool's own expression
+        translator already makes deterministic per load elsewhere, by design. Using `ctx.LoadedAtUtc`
+        as a substitute for a per-row `DateTime.Now` changes the actual VALUES stored on every row, not
+        just an implementation detail -- if you choose it anyway, say so explicitly, don't substitute
+        silently.
 
         """;
 
@@ -323,7 +350,7 @@ public static class AiPacketEmitter
         """ + PinnedTestingApiBlock + """
 
 
-        The evidence below tells you WHICH of four shapes this is -- read it before writing anything:
+        The evidence below tells you WHICH of five shapes this is -- read it before writing anything:
 
         - **A Conditional Split case** this pilot's own oracle-based evaluator could not resolve to a
           boolean for a representative row (see the reason above). Construct your OWN representative
@@ -334,10 +361,11 @@ public static class AiPacketEmitter
           `PackageHarness`-backed `IUnitOfWork` and assert its real, observable effect (a row it wrote
           via `uow.ExecutedSql`, a variable it set via `ctx.Variables` if you construct the context
           yourself, etc.) -- not merely that it does not throw.
-        - **A Script Component column seam**, once it is filled. Construct a representative row,
-          call `new <TransformClass>().Fill_<Column>(row, ctx)` (or `.Map(row, ctx)` if the seam is
-          only reachable through the whole transform), and assert the exact expected value -- state
-          your reasoning for what "correct" means for this column, since nothing here computes it for
+        - **A Script Component seam**, once it is filled. The seam is `private`, so it is never
+          directly callable from a separate `.Tests` project -- construct a representative row and
+          call `new <TransformClass>().Map(row, ctx)` instead, then assert the exact expected value(s)
+          on the returned entity for however many of the component's own columns you can verify --
+          state your reasoning for what "correct" means for each, since nothing here computes it for
           you the way `TransformTestEmitter`'s own oracle-verified assertions do.
         - **An Aggregate GroupBy/count source**, whose own starter test could not be generated
           because its GroupBy key resolves through a Lookup cache rather than a plain row property.
@@ -345,6 +373,11 @@ public static class AiPacketEmitter
           production code uses), feeding it a small in-memory fake `IRowSource<TSourceRow>` and a
           key-selector function using a plain dictionary as a stand-in for the Lookup cache (no real
           database needed) -- then assert the grouped/counted output rows.
+        - **A ForEach-Loop-over-a-Data-Flow-Task's own loop body**, whose per-iteration source has no
+          static Tier-A sample file to point a test at (its path is computed fresh each iteration, not
+          a fixed location). Write two small temp files into `harness.ForEachLoopFolder(key)` (the
+          evidence below names the real folder/file-spec/destination the real package uses) and assert
+          the destination sink receives rows from both.
 
         **If you cannot determine a correct expected value with confidence, say so instead of
         guessing one** -- a test asserting a wrong value is worse than no test at all, since it looks
@@ -476,16 +509,21 @@ public static class AiPacketEmitter
     };
 
     /// <summary>
-    /// Dispatches to one of four shapes by trying, in order, what <see cref="GapSpec.EvidenceRefId"/>
+    /// Dispatches to one of five shapes by trying, in order, what <see cref="GapSpec.EvidenceRefId"/>
     /// actually resolves to -- a Script Task companion test, a Script Component column companion
-    /// test, a Conditional Split router test, or an Aggregate GroupBy/count source test (see
-    /// <see cref="TestOracleContract"/>'s own bullets, which this must stay in lockstep with).
-    /// The fourth (Aggregate) shape was added 2026-09-06 after a real gap
-    /// (<c>Package_Transforms</c>'s own <c>RegionSummary</c>, whose GroupBy key resolves through a
-    /// Lookup cache rather than a plain row property) fell through to the generic "could not
-    /// resolve" fallback below -- <see cref="PipelineComponentSpec.Aggregate"/> was never checked
-    /// at all, not a bug in the refId lookup itself (<see cref="FindComponent"/> already resolved
-    /// the component correctly).
+    /// test, a Conditional Split router test, an Aggregate GroupBy/count source test, or a ForEach
+    /// Data Flow Loop's own loop-body test (see <see cref="TestOracleContract"/>'s own bullets,
+    /// which this must stay in lockstep with). The fourth (Aggregate) shape was added 2026-09-06
+    /// after a real gap (<c>Package_Transforms</c>'s own <c>RegionSummary</c>, whose GroupBy key
+    /// resolves through a Lookup cache rather than a plain row property) fell through to the
+    /// generic "could not resolve" fallback below -- <see cref="PipelineComponentSpec.Aggregate"/>
+    /// was never checked at all, not a bug in the refId lookup itself (<see cref="FindComponent"/>
+    /// already resolved the component correctly). The fifth (ForEach Data Flow Loop) shape closes
+    /// the identical failure class for real: its own EvidenceRefId points at the loop body's
+    /// DESTINATION component, which has none of ScriptComponent/ConditionalSplit/Aggregate set
+    /// either, and <see cref="FindComponent"/> alone can't tell "this is inside a loop" at all --
+    /// see <see cref="FindForEachDataFlowLoop"/>'s own doc comment for why that needed a real
+    /// ancestor-aware tree walk, not just another field check.
     /// </summary>
     private static string TestOracleEvidence(PackageSpec package, GenerationGap gap)
     {
@@ -521,6 +559,35 @@ public static class AiPacketEmitter
             sb.Append(ColumnTable(component.Inputs.SelectMany(i => i.Columns)
                 .Select(c => (c.CachedName, c.CachedDataType, c.CachedLength))));
             return sb.ToString();
+        }
+
+        // Fifth shape: a ForEach-Loop-over-a-Data-Flow-Task's own loop body (see
+        // PackageGenerator's own "no starter test coverage exists for this loop-body shape"
+        // comment) -- EvidenceRefId points at the loop body's DESTINATION component, which has
+        // none of ScriptComponent/ConditionalSplit/Aggregate set, so it fell through to the
+        // generic "could not resolve" message below until this branch was added. Checked AFTER
+        // Aggregate (an Aggregate can itself sit inside a loop body's own Data Flow Task in
+        // principle, though not evidenced yet -- the Aggregate-specific evidence is more useful
+        // when both match).
+        if (FindForEachDataFlowLoop(package, gap.EvidenceRefId) is { } loopMatch)
+        {
+            var (loop, dataFlowExecutable, destination) = loopMatch;
+            var fe = loop.ForEachLoop?.FileEnumerator;
+            var lsb = new StringBuilder();
+            lsb.Append($"- **ForEach Loop:** `{loop.ObjectName ?? loop.RefId}`\n");
+            lsb.Append($"- **Folder:** `{fe?.Folder ?? "(unresolved)"}`\n");
+            lsb.Append($"- **File spec:** `{fe?.FileSpec ?? "(unresolved)"}`\n");
+            lsb.Append($"- **Data Flow Task (runs once per file):** `{dataFlowExecutable.ObjectName ?? dataFlowExecutable.RefId}`\n");
+            lsb.Append($"- **Destination component:** `{destination.Name}`\n\n");
+            lsb.Append("### Destination's own input columns (the row shape written each iteration)\n\n");
+            lsb.Append(ColumnTable(destination.Inputs.SelectMany(i => i.Columns)
+                .Select(c => (c.CachedName, c.CachedDataType, c.CachedLength))));
+            lsb.Append("\n_There is no static sample file to point a source test at -- the path is computed" +
+                        " per iteration from the enumerated file name, not a fixed location. Write two small" +
+                        " temp files yourself (matching `harness.ForEachLoopFolder(key)`'s own convention, see" +
+                        " the pinned testing API above) and assert the destination sink receives rows from" +
+                        " each._\n");
+            return lsb.ToString();
         }
 
         if (found?.Component.Aggregate is { } agg)
@@ -591,11 +658,13 @@ public static class AiPacketEmitter
     /// <summary>
     /// Resolved differently depending on which source kind reported it: a CSV/fixed-width source
     /// carries its connection manager's own RefId (<see cref="GapSpec.EvidenceRefId"/>), so the
-    /// schema comes straight from <c>FlatFileFormatSpec</c>; an Excel source carries none (there is
-    /// no per-package-generation connection-manager thread for it -- see the call site's own
-    /// comment), so it is instead resolved by NAME: <c>PackageGenerator.BuildExcelFlowSource</c>
-    /// derives a Flow's own FileSourceKey directly from the Excel Source component's <c>Name</c>
-    /// (<c>gap.Location</c>), so searching for a component with that exact name is enough.
+    /// schema comes straight from <c>FlatFileFormatSpec</c>; an Excel or XML source carries none
+    /// (neither has a per-package-generation connection-manager thread -- an XML Source has no
+    /// connection manager reference AT ALL, see <c>XmlSourcePayload</c>'s own doc comment), so
+    /// each is instead resolved by NAME: <c>PackageGenerator.BuildExcelFlowSource</c>/
+    /// <c>BuildXmlFlowSource</c> both derive a Flow's own FileSourceKey directly from the
+    /// component's own <c>Name</c> (<c>gap.Location</c>), so searching for a component with that
+    /// exact name is enough.
     /// </summary>
     private static string LocalFileSourceDataEvidence(PackageSpec package, GenerationGap gap)
     {
@@ -628,9 +697,23 @@ public static class AiPacketEmitter
             .Select(e => e.DataFlowTask?.Pipeline)
             .Where(p => p is not null)
             .SelectMany(p => p!.Components)
-            .FirstOrDefault(c => c.Name == gap.Location && c.ExcelSource is not null);
+            .FirstOrDefault(c => c.Name == gap.Location && (c.ExcelSource is not null || c.XmlSource is not null));
+
+        if (component?.XmlSource is { } xml)
+        {
+            var xsb = new StringBuilder();
+            xsb.Append(saveAsLine);
+            xsb.Append($"- **XML Source:** `{component.Name}`\n");
+            xsb.Append($"- **Row (repeating) element:** `{component.Outputs.FirstOrDefault(o => o.IsErrorOut != true)?.Name ?? "(unknown)"}`\n");
+            xsb.Append($"- **Design-time XMLData path:** `{xml.XmlDataPath ?? "(not set)"}`\n\n");
+            xsb.Append("### Columns (direct children of the row element), in order\n\n");
+            xsb.Append(ColumnTable(component.Outputs.Where(o => o.IsErrorOut != true).SelectMany(o => o.Columns)
+                .Select(c => (c.Name, c.DataType, c.Length))));
+            return xsb.ToString();
+        }
+
         if (component?.ExcelSource is not { } excel)
-            return $"_Could not resolve the Excel Source component named '{gap.Location}' -- report this, it is a bug in AiPacketEmitter._\n";
+            return $"_Could not resolve the Excel Source or XML Source component named '{gap.Location}' -- report this, it is a bug in AiPacketEmitter._\n";
 
         var esb = new StringBuilder();
         esb.Append(saveAsLine);
@@ -710,7 +793,7 @@ public static class AiPacketEmitter
             .Select(c => (c.CachedName, c.CachedDataType, c.CachedLength))));
 
         sb.Append("\n### Columns this component produces\n\n");
-        sb.Append("The gap above is for ONE of these. Port only that one.\n\n");
+        sb.Append("The gap above is for this WHOLE component -- return every one of these columns together from the one combined method.\n\n");
         sb.Append(ColumnTable(component.Outputs.Where(o => o.IsErrorOut != true).SelectMany(o => o.Columns)
             .Select(c => (c.Name, c.DataType, c.Length))));
 
@@ -849,5 +932,35 @@ public static class AiPacketEmitter
             if (component is not null) return (executable.ObjectName ?? executable.RefId, component);
         }
         return null;
+    }
+
+    /// <summary>Finds the nearest ForEach Loop container (if any) whose descendant Data Flow Task
+    /// contains the component identified by <paramref name="componentRefId"/> -- the "ForEach
+    /// Data Flow Loop" test-oracle shape's own lookup. <see cref="PackageTree.AllExecutables"/>
+    /// flattens the whole tree with no parent link, which is fine for every OTHER lookup in this
+    /// file (they only ever need the one matching node), but this one genuinely needs the
+    /// ANCESTOR relationship, so it walks the tree itself instead, tracking the nearest
+    /// ForEachLoop-payload executable seen on the way down.</summary>
+    private static (ExecutableSpec Loop, ExecutableSpec DataFlowExecutable, PipelineComponentSpec Component)? FindForEachDataFlowLoop(
+        PackageSpec package, string? componentRefId)
+    {
+        if (componentRefId is null) return null;
+        return Walk(package.Executables, null);
+
+        (ExecutableSpec, ExecutableSpec, PipelineComponentSpec)? Walk(List<ExecutableSpec> executables, ExecutableSpec? nearestLoop)
+        {
+            foreach (var ex in executables)
+            {
+                var loopHere = ex.ForEachLoop is not null ? ex : nearestLoop;
+                if (loopHere is not null && ex.DataFlowTask?.Pipeline is { } pipeline)
+                {
+                    var component = pipeline.Components.FirstOrDefault(c => c.RefId == componentRefId);
+                    if (component is not null) return (loopHere, ex, component);
+                }
+                var found = Walk(ex.Children, loopHere);
+                if (found is not null) return found;
+            }
+            return null;
+        }
     }
 }

@@ -6,7 +6,7 @@ three different reasons:
 
 | Folder | What it is | Why it's here |
 |---|---|---|
-| [`SsisExtractor/`](SsisExtractor/README.md) | `ssisx` -- the extractor/report/conformance/generator CLI (its own solution, `SsisExtractor.slnx`) | The tool itself: parses raw `.dtsx` XML (no GAC, no SSISDB, no live SSIS install needed) and turns it into inventory, findings, conformance rules, and generated C#. |
+| [`SsisExtractor/`](SsisExtractor/README.md) | `ssisx` -- the extractor/generator CLI (its own solution, `SsisExtractor.slnx`) | The tool itself: parses raw `.dtsx` XML (no GAC, no SSISDB, no live SSIS install needed) and turns it into inventory, findings, conformance rules, and generated C#. Four commands: `extract` (survey), `generate` (produce C#), `apply-fills`, `apply-tests`. |
 | `Etl.Core/` | The hand-written runtime library every `ssisx generate` output targets (`SqlBulkSink`, `CsvRowSource`, `ExecuteSqlStep`/`DataFlowStep`/every other step type, the notification/hosting plumbing, etc.) | `ssisx generate` deliberately does not produce this -- it's written once, not derived from any `.dtsx` (see `GenerateCommand.WriteFixedFiles`'s own doc comment). A generated package needs a copy of it alongside its own project to build at all. |
 | [`SsisValidationKit/`](SsisValidationKit/README.md) | `svk` -- a **separate, standalone** review/sample-data tool (its own solution, `SsisValidationKit.slnx`) that only ever *reads* `ssisx extract`'s output; it never edits anything under `SsisExtractor/` and never generates C# | Two commands: `svk walkthrough` (a human-readable execution-order review doc + a claims file per package) and `svk sampledata` (deterministic, schema-correct sample CSVs/SQL/DDL). Both optional, both read-only against `ssisx`'s own spec output -- see "Reviewing before/alongside generation with `svk`" below. |
 
@@ -81,7 +81,7 @@ The built CLI is now at `SsisExtractor\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssi
 to this `Tools\` folder. The commands below assume you're running from `Tools\` and use that
 path directly -- adjust it if you `cd` elsewhere. (`dotnet run --project
 SsisExtractor\src\Ssis.Extract.Cli -- <args>` works too, without the separate build step, if you
-prefer -- e.g. `dotnet run --project SsisExtractor\src\Ssis.Extract.Cli -- report --input
+prefer -- e.g. `dotnet run --project SsisExtractor\src\Ssis.Extract.Cli -- extract --input
 <client .dtsx folder> --out out --recursive`.)
 
 ### Sample commands -- `cmd.exe` (no `.\` prefix needed; each line stands alone)
@@ -90,7 +90,7 @@ prefer -- e.g. `dotnet run --project SsisExtractor\src\Ssis.Extract.Cli -- repor
 set SSISX=SsisExtractor\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe
 
 REM 1. See what's there and how ready it is (no client SSISDB/SSIS install access needed)
-%SSISX% report --input C:\client-packages --out out --recursive
+%SSISX% extract --input C:\client-packages --out out --recursive
 
 REM 2. Generate C# -- for ONE package (the normal case on a real portfolio). --etl-core
 REM    copies the runtime library into out\generate\Etl.Core AS PART OF THIS COMMAND, and
@@ -128,7 +128,7 @@ parse time, before `set` has run. Typed as separate lines (as above), it works c
 ```powershell
 $ssisx = "SsisExtractor\src\Ssis.Extract.Cli\bin\Debug\net8.0\ssisx.exe"
 
-& $ssisx report --input C:\client-packages --out out --recursive
+& $ssisx extract --input C:\client-packages --out out --recursive
 & $ssisx generate --input C:\client-packages --out out --recursive --package LoadEmployees --etl-core Etl.Core --fills fills-library
 & $ssisx generate --input C:\client-packages --out out --recursive --package LoadEmployees,LoadReferenceData --etl-core Etl.Core --fills fills-library
 & $ssisx generate --input C:\client-packages --out out --recursive --etl-core Etl.Core --fills fills-library
@@ -213,6 +213,42 @@ corpus this environment doesn't have. Building (`dotnet build`, step 3 above) to
 code compiles is the expected extent of checking; running it against invented sample data is
 not the goal and should not be attempted.
 
+## Performance characteristics of generated code
+
+Worth knowing before pointing this at a high-volume flow (say, a single CSV source of
+100K-500K rows read, validated, and loaded/exported) -- these are facts about the SHAPE of the
+generated code, not a benchmark run in this environment (see "job ends at writing buildable C#
+source" above).
+
+**Reads and writes stream by default.** A source (`CsvRowSource<TRow>`, `SqlRowSource<TRow>`,
+etc.) yields rows one at a time via `IAsyncEnumerable<TRow>`; the plain SQL destination
+(`SqlBulkSink<TEntity>`) hands that straight to `SqlBulkCopy` through a real `IDataReader`
+adapter with `EnableStreaming = true`, and a flat-file destination (`FlatFileBulkSink<TEntity>`)
+writes one row at a time too -- neither materializes the whole result set in memory just to
+write it. Column validation/type coercion/truncation is plain generated C#, evaluated once per
+row -- there is no interpreted rules engine in the loop adding per-row overhead.
+
+Three things to check before assuming a specific high-volume flow scales unmodified:
+
+- **One transaction per run** (or one per concurrent branch, for a package with independent SSIS
+  branches -- see "What the generated code actually looks like" in `COPILOT_GUIDE.md`). Correct
+  for all-or-nothing loads, but a single large flow is one long-lived transaction unless you
+  widen `BulkCopyOptions.BatchSize` (`0` = single batch, matching SSIS's own default) or chunk it
+  by hand.
+- **Bad-row redirection is row-by-row, not bulk.** `RedirectingSqlSink<TEntity,TErrorEntity>`
+  only gets generated when the source package's own destination is configured
+  `ErrorRowDisposition=RedirectRow`, and it inserts one parameterized row at a time (`SqlBulkCopy`
+  has no per-row failure signal) -- a real throughput cost against the plain, bulk-copy path.
+  Check `generate-report.md`/the generated `Program`'s own sink wiring to see which one a given
+  package produces.
+- **No intra-flow parallelism.** Concurrency in generated code is across *independent SSIS
+  control-flow branches* only (real `Task.WhenAll`, each its own transaction) -- one flow (one
+  source, one transform, one destination) is always a single sequential pipeline, never
+  auto-partitioned across cores. A few transform shapes -- Aggregate, Merge Join, a
+  Conditional-Split-then-Union remerge -- also fully buffer their input in memory before
+  producing any output, by design (each type's own doc comment says so); fine at 100K-500K rows,
+  but not O(1) memory the way the plain streaming path is.
+
 ## Reviewing before/alongside generation with `svk`
 
 `svk` (`SsisValidationKit\`) is a **separate, standalone** tool from `ssisx` -- its own
@@ -236,44 +272,47 @@ $svk = "SsisValidationKit\src\SvkCli\bin\Debug\net8.0\svk.exe"
 
 Full command reference, output layout, and known limitations: `SsisValidationKit\README.md`.
 
-## Running this with GitHub Copilot
+## Running this with GitHub Copilot or Claude Code
 
-Three files exist for this -- two under `Tools\` itself, and one written FRESH into every
+Four files (plus one folder of slash commands) exist for this -- three under `Tools\` itself,
+one folder of Claude Code slash commands also under `Tools\`, and one written FRESH into every
 `--out` folder by `generate`, specifically so it's visible from wherever the generated output
 actually gets opened later, not just from `Tools\`:
 
-| File | What it is | How it reaches Copilot |
+| File / folder | What it is | How it reaches the assistant |
 |---|---|---|
-| [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | Short hard rules (don't re-implement the tool, don't generate the whole portfolio unless asked, always pass `--etl-core`, don't invent a verification step, don't confuse `gaps/` with `fills/`, don't read this repo's own dev-history docs) | **Auto-loaded**, but only when the IDE's open workspace root is `Tools\` itself -- see "Where to open it" below. Least reliable of the three in practice. |
-| [`COPILOT_GUIDE.md`](COPILOT_GUIDE.md) | Full command reference, the `--package`/`--etl-core` workflow, and a library of ready-to-paste prompts | **Not** auto-loaded -- Copilot reads it when told to. |
-| **`<out>\HOW-TO-FILL-GAPS.md`** | Self-contained -- lists every open Tier-1/2 gap with its exact `GapId` and packet path, and the exact procedure to answer each, with nothing assumed about what else is in view | Written by every `generate` run, at the OUTPUT ROOT -- sits right next to `generate\`, `gaps\`, `fills\`. **This is the one to point Copilot at when working from the generated solution itself, e.g. in Visual Studio.** |
+| [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | Short hard rules (don't re-implement the tool, don't generate the whole portfolio unless asked, always pass `--etl-core`, don't invent a verification step, don't confuse `gaps/` with `fills/`, don't read this repo's own dev-history docs) | **GitHub Copilot only.** Auto-loaded, but only when the IDE's open workspace root is `Tools\` itself -- see "Where to open it" below. Least reliable of the three in practice. |
+| [`COPILOT_GUIDE.md`](COPILOT_GUIDE.md) | Full command reference, the `--package`/`--etl-core` workflow, and a library of ready-to-paste prompts | **Not** auto-loaded for either assistant -- read it when told to. |
+| [`.github/prompts/*.prompt.md`](.github/prompts/) (7 files) | One prompt per pipeline step (`ssisx-extract`, `ssisx-walkthrough`, `ssisx-generate`, `ssisx-fill`, `ssisx-test`, `ssisx-more-tests`, `ssisx-rewrite`) -- these hold the ACTUAL step-by-step instructions | **GitHub Copilot**, as `/ssisx-extract` etc. in Copilot Chat, when `Tools\` is the open workspace root. |
+| [`.claude/commands/*.md`](.claude/commands/) (7 files) | One thin pointer per pipeline step, same names as above (`/ssisx-extract` ... `/ssisx-rewrite`) -- each one just reads and follows the matching file in `.github/prompts/`, so the real instructions are written down in exactly one place and the two assistants can never drift apart | **Claude Code**, as slash commands, when `Tools\` is opened as the project root (`claude` run from inside `Tools\`, or with `--add-dir`/`cd` there first). |
+| **`<out>\HOW-TO-FILL-GAPS.md`** | Self-contained -- lists every open Tier-1/2 gap with its exact `GapId` and packet path, and the exact procedure to answer each, with nothing assumed about what else is in view | **Either assistant.** Written by every `generate` run, at the OUTPUT ROOT -- sits right next to `generate\`, `gaps\`, `fills\`. **This is the one to point an assistant at when working from the generated solution itself, e.g. in Visual Studio.** |
 
 ### If you're working from Visual Studio (or opened the generated `.slnx` directly)
 
 **This is very likely what actually happened if gap-filling "isn't working": the generated
-solution (`Generated.slnx`) doesn't contain `Tools\.github\copilot-instructions.md` at all** --
-it's a separate folder tree, and a `.slnx`/Solution Explorer only shows `.csproj`-referenced
-files, so `gaps\` and `fills\` (plain folders, not part of any project) don't even appear in
-Solution Explorer by default. Auto-loaded instructions never had a chance to apply here, and
-Copilot has no reason to know those folders exist unless told.
+solution (`Generated.slnx`) doesn't contain `Tools\.github\copilot-instructions.md` (or
+`Tools\.claude\commands\`) at all** -- it's a separate folder tree, and a `.slnx`/Solution
+Explorer only shows `.csproj`-referenced files, so `gaps\` and `fills\` (plain folders, not part
+of any project) don't even appear in Solution Explorer by default. Neither assistant has a way
+to know those folders exist unless told.
 
-**Fix: open `<out>\HOW-TO-FILL-GAPS.md` yourself (File > Open > File, or drag it into the Copilot
-Chat panel) and tell Copilot to work from it.** It names every open gap, exactly where its work
+**Fix: open `<out>\HOW-TO-FILL-GAPS.md` yourself (File > Open > File, or drag it into the chat
+panel) and tell the assistant to work from it.** It names every open gap, exactly where its work
 packet is, and exactly what to write and where -- self-contained, no dependency on `Tools\`
 being in view at all. A good first message in that chat:
 
 > Read `HOW-TO-FILL-GAPS.md` (in this same output folder). Pick the first gap in its table, open
 > its work packet, and tell me what it's asking for before writing anything.
 
-### Where to open it, for the other two files (this is the part that actually matters there)
+### Where to open it, for the other files (this is the part that actually matters there)
 
-`.github/copilot-instructions.md` only auto-loads when it sits at the root of whatever folder
-your IDE has open as its workspace. **Open `Tools\` itself as the workspace/folder** --
-in VS Code: `File > Open Folder... > D:\PoC\SSIS\Tools` (or wherever this folder ends up on the
-client machine) -- not a parent folder containing `Tools\` as a subfolder, and not the generated
-solution either (see above). If a parent folder is opened instead, Copilot looks for
-`.github/copilot-instructions.md` at THAT root, won't find it, and silently skips it -- no
-error, it just won't know the rules above.
+**GitHub Copilot:** `.github/copilot-instructions.md` only auto-loads when it sits at the root of
+whatever folder your IDE has open as its workspace. **Open `Tools\` itself as the
+workspace/folder** -- in VS Code: `File > Open Folder... > D:\PoC\SSIS\Tools` (or wherever this
+folder ends up on the client machine) -- not a parent folder containing `Tools\` as a subfolder,
+and not the generated solution either (see above). If a parent folder is opened instead, Copilot
+looks for `.github/copilot-instructions.md` at THAT root, won't find it, and silently skips it --
+no error, it just won't know the rules above.
 
 If you can't change what's open as the workspace root, tell Copilot to read the file explicitly
 instead -- either paste its content, drag the file into the chat panel, or (VS Code Copilot
@@ -281,44 +320,58 @@ Chat) reference it by typing `#file:Tools/.github/copilot-instructions.md` in yo
 message. Either way, **say so in your very first message of the session** -- it does not carry
 over from an earlier chat/session automatically the way auto-loaded instructions do.
 
+**Claude Code:** slash commands (`/ssisx-extract`, `/ssisx-rewrite`, ...) only resolve when
+`.claude/commands/` sits at the project root Claude Code was started against -- run `claude`
+from inside `Tools\` itself (`cd Tools && claude`), or add it as a working directory
+(`claude --add-dir D:\PoC\SSIS\Tools`). If Claude was started from a parent folder or the
+generated solution's own folder instead, the `/ssisx-*` commands above simply won't exist --
+point it at `COPILOT_GUIDE.md` or `<out>\HOW-TO-FILL-GAPS.md` directly instead (Claude Code has
+no auto-loaded-instructions file the way `.github/copilot-instructions.md` is for Copilot; tell
+it what to read in your first message).
+
 ### Getting started
 
-Once the instructions file is in play (auto-loaded or explicitly referenced), open Copilot
-Chat and start with:
+Once the instructions are in play (Copilot's auto-loaded file, or a Claude Code session started
+at `Tools\`), open a chat and start with:
 
-> Read `COPILOT_GUIDE.md` in this folder, then run `ssisx report --input <client .dtsx folder>
+> Read `COPILOT_GUIDE.md` in this folder, then run `ssisx extract --input <client .dtsx folder>
 > --out out --recursive` and summarize what's there -- package count, complexity, and how many
 > would generate cleanly today.
 
 From there, [`COPILOT_GUIDE.md`](COPILOT_GUIDE.md)'s own "Prompts you can paste into Copilot
 Chat" section has the rest (generate one package, generate a named batch, work a gap, confirm a
-build) -- copy them as-is, filling in the real client folder path and package name(s).
+build) -- copy them as-is, filling in the real client folder path and package name(s). Same
+prompts, either assistant.
 
 **The standard pipeline for "run the tool" -- one package, a named few, or a whole folder, in a
-chat session:** `.github/prompts/ssisx-rewrite.prompt.md` (`/ssisx-rewrite` in Copilot Chat)
-sequences every step below -- extract, an optional `svk` walkthrough, generate, apply-fills,
-build, test, and a code-coverage report -- stopping at each of the two places a human decision is
-actually required (Tier-1/2 gaps, then test-oracle/local-data gaps) rather than guessing past
-them. It is agent-driven on purpose: each step is the agent's own tool call, so it can actually
-read a gap's own work packet and draft a fill, then stop for a human's confirmation -- something
-a plain script cannot do. Each step is still independently runnable via its own prompt if you'd
-rather go one at a time:
+chat session:** `/ssisx-rewrite` (either assistant) sequences every step below -- extract, an
+optional `svk` walkthrough, generate, apply-fills, build, test, and a code-coverage report --
+stopping at each of the two places a human decision is actually required (Tier-1/2 gaps, then
+test-oracle/local-data gaps) rather than guessing past them. It is agent-driven on purpose: each
+step is the agent's own tool call, so it can actually read a gap's own work packet and draft a
+fill, then stop for a human's confirmation -- something a plain script cannot do. Each step is
+still independently runnable on its own if you'd rather go one at a time -- **input** is what you
+supply when invoking that step, **output** is what it leaves behind for the next one to read:
 
-| # | Step | Prompt |
-|---|---|---|
-| 1 | Extract + survey | `ssisx-extract.prompt.md` |
-| 2 | Walkthrough (advisory) | `ssisx-walkthrough.prompt.md` |
-| 3 | Generate | `ssisx-generate.prompt.md` |
-| 4 | Tier-1/2 gap fills -- **AI, stops for review** | `ssisx-fill.prompt.md` |
-| 5 | Apply + build | `ssisx-fill.prompt.md` (its own closing step) |
-| 6 | Test-oracle/local-data fills -- **AI, stops for review** | `ssisx-test.prompt.md` |
-| 7 | Apply + build + test | `ssisx-test.prompt.md` (its own closing step) |
-| 8 | Code coverage | `SsisExtractor/scripts/Run-Coverage.ps1`, called directly |
+| # | Step | Input | Output (summary) | Copilot | Claude Code |
+|---|---|---|---|---|---|
+| 1 | Extract + survey (`ssisx extract` -- one command; it used to be `extract`+`report` run back to back, and now also covers what were separately `graph`/`conformance`/`testgen`) | A client `.dtsx`/`.dtproj`/`.ispac` folder | `out\project.spec.json`, `out\packages\<Package>.spec.json`, `out\inventory.csv/.md`, `findings.csv/.md`, `portfolio.md`, `primary-keys.json/.md`, lineage diagrams, gate-1 conformance rules, gate-2 expression tests, and more (see the command reference below) | `/ssisx-extract` | `/ssisx-extract` |
+| 2 | Walkthrough (advisory) (`svk walkthrough` + `svk sampledata`) | The `out\` folder from step 1 + a package name | One `<Package>.walkthrough.md` per package (execution-order review + a claims-file stub) and deterministic sample CSV/SQL/DDL | `/ssisx-walkthrough` | `/ssisx-walkthrough` |
+| 3 | Generate (`ssisx generate`) | Same input folder + package name(s) + `--etl-core`/`--fills`/`--framework` | `out\generate\<Package>\` (buildable C# + starter tests), `out\gaps\<Package>\*.md` work packets, `gaps.json`, `generate-report.md`, `HOW-TO-FILL-GAPS.md` | `/ssisx-generate` | `/ssisx-generate` |
+| 4 | Tier-1/2 gap fills -- **AI, stops for review** | The work packets step 3 wrote | Hand-written `fills-library\<Package>\*.cs` and `.decisions.json` | `/ssisx-fill` | `/ssisx-fill` |
+| 5 | Apply + build (`ssisx apply-fills` + `dotnet build`) | The fills written in step 4 | Fills copied into `out\generate\<Package>\Fills\`, `fills-applied.json` (Applied/Stale/Orphaned), a confirmed build | `/ssisx-fill`'s own closing step | `/ssisx-fill`'s own closing step |
+| 6 | Test-oracle/local-data fills -- **AI, stops for review** | The `TEST-ORACLE`/`LOCAL-DATA` packets from step 3 | New xUnit test files (`fills-library\<Package>\Tests\*.cs`) and realistic sample files (`...\TestData\*`) | `/ssisx-test` | `/ssisx-test` |
+| 7 | Apply + build + test | The fills written in step 6 | Same `fills-applied.json` manifest, plus a `dotnet test --filter Category!=Integration` run | `/ssisx-test`'s own closing step | `/ssisx-test`'s own closing step |
+| 8 | Code coverage | The built + tested solution from step 7 | `coverage-report.md` -- line/branch %, split into this package's own generated code vs. shared `Etl.Core` | `SsisExtractor/scripts/Run-Coverage.ps1`, called directly (no prompt) | same |
 
 Re-running `/ssisx-rewrite` is always safe -- it detects what already exists on disk (an
 extracted spec, a generated project, filled-in fills) per package and resumes from there rather
 than redoing finished work. **Never deletes any TestData, fill, or generated output along the
 way** -- a human may want to review or hand-supply data at any point.
+
+Once a package is already green (step 7 passing, zero fills outstanding), `/ssisx-more-tests`
+(either assistant) is a separate, optional, **not**-a-gap workflow for adding extra hand-written
+coverage -- see "Raising coverage past the starter tests" below.
 
 **No Claude/Copilot chat session available at all?** `SsisExtractor/scripts/Run-Pipeline.ps1`
 runs the same 5 mechanical steps (everything except the two AI-fill steps) as one script call --
@@ -330,9 +383,97 @@ reason about an answer); if a chat session is available, use `/ssisx-rewrite` in
 .\SsisExtractor\scripts\Run-Pipeline.ps1 -InputPath <client-folder> -OutputPath out -Framework net10.0
 ```
 
+Add `-Quiet` when a script or agent (not a human watching a terminal) is invoking this and only
+cares about the final result -- every step's own verbose output goes to
+`out\pipeline-run.log` instead of the console, leaving only a compact summary (exit codes plus
+gap counts by tier). An agent capturing this command's own output otherwise pays for the FULL
+transcript regardless of what it's told to read afterward, which is real, avoidable cost for a
+purely mechanical run.
+
 `Etl.Core/` here is a **portable copy** -- see this project's own internal dev notes for where
 it's actually developed and how to refresh it; that's not this file's concern, since this
 folder is meant to be handed to a client as-is.
+
+## Full command reference -- every `ssisx`/`svk` command, input, and output
+
+The 8-step pipeline table above is the recommended sequence. This is the underlying CLI-level
+reference for every command it (and the commands outside it) actually run -- exact flags,
+what each one needs as input, and a summary of what it leaves behind. Full flag-by-flag detail
+for `ssisx` is always `ssisx --help`; for `svk`, `svk <command> --help`.
+
+### `ssisx` -- the extractor/generator CLI
+
+Only **four** commands exist: `extract`, `generate`, `apply-fills`, `apply-tests`. `extract` alone
+covers what used to be six separate verbs (`extract`/`graph`/`report`/`conformance`/`testgen`/
+`diff`) -- merged 2026-09, because none of them ever depended on another's output (each
+independently re-parsed the same `--input`), so keeping them as six things to learn bought no
+real modularity, only more names to explain. `--diff-against` is the one piece kept opt-in rather
+than unconditional: it compares TWO packages, a genuinely different shape from "survey one input."
+
+Every example below points `--input` at the same stand-in client folder and `--out` at the same
+stand-in output folder, so copy-pasting more than one row in sequence works as a coherent
+walkthrough, not just four disconnected commands -- swap both paths for your own real ones
+(and `--package`/`LoadEmployees` for a real package name, once you know it from `extract`'s own
+`inventory.csv`) and everything else can stay as written. `--etl-core Etl.Core --fills
+fills-library` assume you're running from inside `Tools\` (see "One-time setup" above); use the
+full path (`D:\PoC\SSIS\Tools\Etl.Core`, `D:\PoC\SSIS\Tools\fills-library`) instead if you're not.
+
+| Command | Input | Output (summary) | Example |
+|---|---|---|---|
+| `ssisx extract --input <dir\|.dtsx\|.dtproj\|.ispac> --out <dir> [--recursive] [--package <name>] [--no-redact] [--fail-under <pct>] [--weights <path.json>] [--claims <dir>] [--check] [--diff-against <file>]` | A client's SSIS package(s) -- a folder (with `--recursive` to search subfolders), a single `.dtsx`, a `.dtproj`, or a deployed `.ispac` | Everything below, unconditionally: `<out>\project.spec.json`, `<out>\packages\<Package>.spec.json`, `<out>\_meta.json` (the canonical spec every other command/tool reads); `inventory.csv/.md`, `findings.csv/.md`; `nondeterministic.json`; `datatouch.md/.json`, `effects.json/.md` (incl. anything this tool has no model for, named rather than dropped); `primary-keys.json/.md` (best-effort, needs human confirmation); `expressions.csv`, `expression-functions.md`; `sql\` + `sql-analysis.json`; `lineage\*.mmd`/`*.dot` (one pair per Data Flow Task's column lineage); `graph\portfolio.mmd` + `dependencies.json`; `conformance\<Package>.rules.json`, `conformance-rules.csv`, `conformance-report.json/.md` + an all-Pending claims stub under `--claims` (default `<out>\conformance\claims`, hand-maintained, never overwritten -- gate 1); `testgen\<Package>.ExpressionTests.cs`, `testgen-summary.md` (gate 2 -- every expected value computed by the oracle-verified evaluator, never hand-authored); `unmapped.md`, `portfolio.md`, `portfolio-digest.md/.json`, `generation-readiness.md`, `load-failures.md`. With `--diff-against`, also `diff-report.md/.json` (semantic diff against that file). `--check` exits 1 unless every gate-1 obligation is Implemented or explained-`NotApplicable`; `--diff-against` alone also exits 1 on any real difference found | `ssisx extract --input D:\PoC\SSIS_Packages_From_GitHub\Datawarehouse_ETL_SSIS_end-to-end_Project --out D:\tmp\Datawarehouse_ETL_SSIS_end-to-end_Project\extract --recursive` |
+| `ssisx generate --input <same> --out <dir> [--recursive] [--package <name>] --etl-core <path> --fills <dir> [--framework net8.0\|net10.0] [--namespace-prefix <prefix>] [--skip-tests] [--unsafe-skip-seams]` | Same as `extract`, plus a copy of `Etl.Core\` (via `--etl-core`) and the durable `fills-library\` folder (via `--fills`) | `<out>\generate\<Package>\` (a buildable C# project targeting `Etl.Core`), `<out>\generate\<Package>.Tests\` (starter xUnit tests, unless `--skip-tests`), `<out>\gaps\<Package>\*.md` (one work packet per Tier-1/2 gap), `gaps.json`, `generate-report.md`, `<out>\HOW-TO-FILL-GAPS.md`. Exit 0 = zero gaps, 3 = wrote code but gaps remain (normal, not a failure), 2 = usage error | `ssisx generate --input D:\PoC\SSIS_Packages_From_GitHub\Datawarehouse_ETL_SSIS_end-to-end_Project --out D:\tmp\Datawarehouse_ETL_SSIS_end-to-end_Project\extract --recursive --package LoadEmployees --etl-core Etl.Core --fills fills-library` |
+| `ssisx apply-fills --out <dir> [--fills <dir>] [--claims <dir>]` | `fills-library\<Package>\*.cs`/`.decisions.json` written by a human (or by `/ssisx-fill`) | Copies validated fills into `<out>\generate\<Package>\Fills\`; `<out>\fills-applied.json` reports Applied/Stale/Orphaned per seam. Exit 1 on an orphan, 3 while any seam is unfilled/stale | `ssisx apply-fills --out D:\tmp\Datawarehouse_ETL_SSIS_end-to-end_Project\extract --fills fills-library` |
+| `ssisx apply-tests --out <dir> [--fills <dir>]` | `fills-library\<Package>\MoreTests\*.cs` -- voluntary extra coverage on an ALREADY-green package, not part of the gap-fill workflow | Copies every file unconditionally into `<out>\generate\<Package>.Tests\MoreTests\`; `<out>\tests-applied.json`. Never touches `gaps.json` or the generatable count | `ssisx apply-tests --out D:\tmp\Datawarehouse_ETL_SSIS_end-to-end_Project\extract --fills fills-library` |
+
+### `svk` -- the separate, read-only review/sample-data tool
+
+| Command | Input | Output (summary) |
+|---|---|---|
+| `svk walkthrough --spec <out> --out <dir> --claims <dir> [--package <name>]` | The `<out>\` folder from a prior `ssisx extract` run -- never SSISDB, never a live database | One `<Package>.walkthrough.md` per package: execution-order review, per-component lineage, linked conformance rule IDs, and a flag for any SSIS-side concurrency; plus a human-owned `claims\<Package>.claims.json` stub (never overwritten once it exists) |
+| `svk sampledata --spec <out> --out <dir> [--package <name>] [--rows <n>] [--seed <n>]` | Same `<out>\` folder | Deterministic (same input/`--seed` -> byte-identical output), schema-correct sample CSV/SQL/DDL per package, plus a `<Lookup>.reference.sql` where a Lookup's join key is resolvable |
+
+### What every flag above actually expects -- reading them, not just typing them
+
+A few rules apply to EVERY command below, stated once here rather than repeated per row:
+
+- **Every path (`--input`/`--spec`/`--out`/`--etl-core`/`--fills`/`--claims`/`--weights`) is
+  resolved relative to your CURRENT WORKING DIRECTORY when you run the command** -- not relative
+  to `ssisx.exe`'s/`svk.exe`'s own location, and not relative to `Tools\`. If you `cd` into
+  `Tools\` first (as every example in this file assumes), a bare `out` means `Tools\out`; if you
+  run the same command from somewhere else, it means `<wherever-you-are>\out` instead. Absolute
+  paths (`C:\client-packages`, `D:\PoC\SSIS\Tools\out`) always work regardless of your current
+  directory, and are the safer choice the moment you're not certain what's currently `cd`'d.
+- **`--out`/`--spec` folders never need to exist beforehand** -- `extract`/`generate` create
+  `<out>\` (and every subfolder under it) the first time they run; `walkthrough`/`sampledata`'s
+  `--spec` must already exist (it's `extract`'s own OUTPUT you're pointing back at), but their
+  own `--out` is created the same way.
+- **`--package <name>` takes the package's own internal name** (its `.dtsx`'s own `DTS:ObjectName`
+  -- usually, but not always, the same as its filename minus `.dtsx`), not a file path. Don't know
+  the names yet? Run `extract` once with no `--package` at all (it covers every package it finds),
+  then read `<out>\inventory.csv` or the console output -- both list every real package name.
+  Omitting `--package` entirely processes every package `--input` finds; passing it restricts to
+  just the one(s) named. Two ways to name more than one: repeat the flag
+  (`--package LoadEmployees --package LoadReferenceData`) or comma-separate one value
+  (`--package LoadEmployees,LoadReferenceData`) -- **no spaces around the commas** in the
+  comma form. A name that matches nothing is a hard usage error (exit 2), never a silent
+  no-op -- so a typo is caught immediately rather than quietly generating zero packages.
+- **`--etl-core`/`--fills` are folder paths you already have on disk before running `generate`**,
+  not something `generate` creates for you: `--etl-core` names wherever the `Etl.Core\` folder
+  from this same `Tools\` tree currently sits (the examples in the table above assume you're
+  running from `Tools\` itself, so a bare `Etl.Core` resolves correctly; from anywhere else, use
+  the full path, e.g. `D:\PoC\SSIS\Tools\Etl.Core`), and `--fills` names the durable `fills-library\`
+  folder (also at the `Tools\` root, tracked in git) -- **never** `<out>\fills`, which doesn't
+  exist and wouldn't survive `<out>\` being deleted anyway. Both are safe to point at an empty
+  folder the very first time; `--fills` starts genuinely empty until a human/AI writes into it.
+
+### Exit codes worth knowing (both tools)
+
+`0` success/zero gaps. `1` a real problem was found (a `diff`, a failed `conformance --check`, an
+`apply-fills` orphan). `2` a usage error (bad flags, or a `--package` name matching nothing --
+never a silent no-op). `3` "ran fine, but there is follow-up work" -- `generate` produced one or
+more gaps, `apply-fills`/`apply-tests`... left something unfilled, or `extract --fail-under` was
+not met. Exit `3` from `generate` is the **normal**, expected result of a real portfolio -- not a
+failure to fix before moving on.
 
 ## What's deliberately not here
 

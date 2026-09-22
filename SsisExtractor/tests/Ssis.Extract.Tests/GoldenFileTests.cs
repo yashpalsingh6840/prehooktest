@@ -31,7 +31,7 @@ public class GoldenFileTests
 
     // Tools/SsisExtractor/tests/Ssis.Extract.Tests -> repo root -> SSIS/ (the PoC project)
     private static readonly string FixturesDir =
-        Path.GetFullPath(Path.Combine(TestsProjectDir, "..", "..", "..", "..", "SSIS"));
+        Path.GetFullPath(Path.Combine(TestsProjectDir, "..", "..", "..", "..", "..", "SSIS_Packages", "SSIS"));
 
     private static readonly string GoldenDir = Path.Combine(TestsProjectDir, "Golden");
 

@@ -40,7 +40,7 @@ public class SyntheticParallelShapesTests
 
     // tests/Ssis.Extract.Tests -> Tools/SsisExtractor -> repo root -> SSIS/
     private static readonly string SsisProjectDir = Path.GetFullPath(Path.Combine(
-        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "SSIS"));
+        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "..", "SSIS_Packages", "SSIS"));
 
     private static string FixturePath => Path.Combine(SsisProjectDir, "SyntheticParallelShapes.dtsx");
 

@@ -18,7 +18,7 @@ public class PrimaryKeyInferenceTests
     private static string ThisFilePath([CallerFilePath] string path = "") => path;
 
     private static readonly string PoCPackagesDir = Path.GetFullPath(Path.Combine(
-        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "SSIS"));
+        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "..", "SSIS_Packages", "SSIS"));
 
     private static readonly string FixturesDir = Path.Combine(Path.GetDirectoryName(ThisFilePath())!, "Fixtures");
 

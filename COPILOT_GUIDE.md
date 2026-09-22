@@ -88,7 +88,7 @@ paths, every Execute SQL Task/File System Task/Sequence Container, every source 
 fixed-width, Excel, SQL, SQL/flat-file destinations), a Conditional Split's router, transforms,
 Merge Join mappers, OLE DB Command, ForEach loops, Multicast, and Aggregate. Every expected value
 is computed (not guessed) -- transform/router assertions go through the same oracle-verified
-expression evaluator `ssisx testgen` uses. **`dotnet test --filter Category!=Integration` on this
+expression evaluator gate 2 (part of `ssisx extract` now) uses. **`dotnet test --filter Category!=Integration` on this
 project is a real, legitimate verification step you can and should run, right after a fresh
 `generate` with zero fills applied** (unlike anything touching a real database, see below): it
 needs no client data or connection at all. Full detail, including the two-tier sample-data
@@ -200,7 +200,9 @@ which they need.
 
 ```powershell
 # See every package name + how complex/ready each one is. Read-only. Safe on everything.
-ssisx report --input <folder> --out out --recursive
+# (extract also writes lineage diagrams, gate-1 conformance rules, and gate-2 expression
+# tests in the same run -- it used to be six separate commands, now it's just this one.)
+ssisx extract --input <folder> --out out --recursive
 
 # Generate exactly one package. --etl-core copies the runtime library into
 # out\generate\Etl.Core as PART OF this command; --fills fills-library points every
@@ -220,8 +222,9 @@ ssisx generate --input <folder> --out out --recursive --etl-core Etl.Core --fill
 # not 10.0.11) for that run, and --etl-core copies the matching props files in too.
 ssisx generate --input <folder> --out out --recursive --package LoadEmployees --etl-core Etl.Core --fills fills-library --framework net8.0
 
-# See gate-1 obligations (what a rewrite owes) for one package
-ssisx conformance --input <folder> --out out --package LoadEmployees
+# See gate-1 obligations (what a rewrite owes) for one package -- part of 'extract' now,
+# not a separate command; --check makes it exit 1 if anything is still outstanding
+ssisx extract --input <folder> --out out --package LoadEmployees --check
 
 # After writing a Tier-2 fill file under fills-library\<Package>\*.cs (NOT out\fills\ --
 # see "What's disposable and what isn't" below):
@@ -460,7 +463,7 @@ the client's `.dtsx` files, and `<out>` with wherever you want output written (e
 > anything still waiting on my confirmation.
 
 **First look at a portfolio:**
-> Run `ssisx report --input <client-folder> --out <out> --recursive`. Don't generate anything
+> Run `ssisx extract --input <client-folder> --out <out> --recursive`. Don't generate anything
 > yet. Summarize: how many packages, which ones look simplest, and how many would generate with
 > zero blocking gaps today according to `generation-readiness.md`.
 

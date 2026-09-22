@@ -113,6 +113,23 @@ public sealed class PipelineComponentSpec
 
     /// <summary><c>Microsoft.RowCount</c>, see <see cref="RowCountPayload"/>'s own doc comment.</summary>
     public RowCountPayload? RowCount { get; init; }
+
+    /// <summary>Added for Phase 1 of the unsupported-component-types plan -- <c>Microsoft.CopyMap</c>
+    /// ("Copy Column"), see <see cref="CopyMapPayload"/>'s own doc comment.</summary>
+    public CopyMapPayload? CopyMap { get; init; }
+
+    /// <summary>Added for Phase 4 of the unsupported-component-types plan -- <c>Microsoft.PctSampling</c>
+    /// ("Percentage Sampling"), see <see cref="PctSamplingPayload"/>'s own doc comment.</summary>
+    public PctSamplingPayload? PctSampling { get; init; }
+
+    /// <summary>Added for Phase 5 of the unsupported-component-types plan -- <c>Microsoft.XmlSourceAdapter</c>
+    /// ("XML Source"), discriminated by <c>UserComponentTypeName</c> like Script Component/ADO NET,
+    /// see <see cref="XmlSourcePayload"/>'s own doc comment.</summary>
+    public XmlSourcePayload? XmlSource { get; init; }
+
+    /// <summary>Added for Phase 7 of the unsupported-component-types plan -- <c>Microsoft.SCD</c>
+    /// ("Slowly Changing Dimension"), see <see cref="ScdPayload"/>'s own doc comment.</summary>
+    public ScdPayload? Scd { get; init; }
 }
 
 /// <summary>A component's reference to a connection manager. <see cref="ConnectionManagerRefRaw"/> is the pipeline's own reference shape (a refId path, e.g. "Package.ConnectionManagers[CM_EmployeesCsv]") -- notably NOT the DTSID-GUID form Execute SQL Task uses (see <c>ExecuteSqlTaskPayload.ConnectionRefRaw</c>'s doc comment); resolved the same way, by matching against <c>ConnectionManagerSpec.RefId</c> this time instead of <c>DtsId</c>.</summary>

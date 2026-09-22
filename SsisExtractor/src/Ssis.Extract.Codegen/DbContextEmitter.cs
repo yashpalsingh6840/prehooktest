@@ -105,6 +105,14 @@ public static class DbContextEmitter
         foreach (var unresolved in resolved.Unresolved)
             gaps.Add(new GenerationGap($"{table.EntityName}.{unresolved.ColumnName}", unresolved.Reason));
 
+        // Independently reproduces EntityEmitter's own identifier mapping -- see
+        // PackageGenerator.MakeColumnIdentifierResolver's own doc comment. A real external column
+        // name (e.g. "WWI Stock Item ID") whose sanitized identifier differs from the raw name
+        // gets an explicit .HasColumnName(...) below, in EmitPropertyConfig -- without it, EF's
+        // own default convention would map the SANITIZED property to a column of that same
+        // sanitized (nonexistent) name, silently targeting the wrong column at run time.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var lines = new List<string>
         {
             $"        modelBuilder.Entity<{table.EntityName}>(entity =>",
@@ -115,8 +123,10 @@ public static class DbContextEmitter
         var keyColumn = table.PrimaryKey is { Confidence: "NamingConvention", Columns.Count: 1 } pk ? pk.Columns[0] : null;
         if (keyColumn is not null)
         {
-            lines.Add($"            entity.HasKey(e => e.{keyColumn});");
-            lines.Add($"            entity.Property(e => e.{keyColumn}).ValueGeneratedNever();");
+            var keyIdentifier = identifierOf(keyColumn);
+            var keyColumnNameConfig = keyIdentifier != keyColumn ? $".HasColumnName(\"{keyColumn}\")" : "";
+            lines.Add($"            entity.HasKey(e => e.{keyIdentifier});");
+            lines.Add($"            entity.Property(e => e.{keyIdentifier}).ValueGeneratedNever(){keyColumnNameConfig};");
         }
         else if (!resolved.Columns.Any(c => HasEfConventionKeyShape(c.PipelineColumnName, table.EntityName)))
         {
@@ -152,9 +162,19 @@ public static class DbContextEmitter
                 SsisFacetKind.ColumnType => RenderColumnTypeFacet(table.EntityName, column, gaps),
                 _ => null,
             };
-            if (facet is null) continue;
 
-            lines.Add($"            entity.Property(e => e.{column.ExternalColumnName}){facet};");
+            var propertyIdentifier = identifierOf(column.ExternalColumnName);
+            // Whenever sanitizing changed the identifier, EF's own default convention (map a
+            // property to a column of the SAME name) would otherwise target a column that does
+            // not exist -- an explicit .HasColumnName(...) restores the real mapping. Emitted
+            // regardless of whether this column also has a facet, since a renamed column with no
+            // facet would otherwise get NO fluent config line at all.
+            var columnNameConfig = propertyIdentifier != column.ExternalColumnName
+                ? $".HasColumnName(\"{column.ExternalColumnName}\")"
+                : "";
+            if (facet is null && columnNameConfig.Length == 0) continue;
+
+            lines.Add($"            entity.Property(e => e.{propertyIdentifier}){columnNameConfig}{facet};");
         }
 
         lines.Add("        });");

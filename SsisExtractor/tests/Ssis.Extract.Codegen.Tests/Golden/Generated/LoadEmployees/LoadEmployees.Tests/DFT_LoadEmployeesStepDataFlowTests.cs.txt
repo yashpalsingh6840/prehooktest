@@ -30,7 +30,7 @@ public class DFT_LoadEmployeesStepDataFlowTests
 
         var source = package.FF_SRC_Employees();
         var transform = new EmployeeTransform();
-        var sink = package.EmployeeDestination();
+        var sink = package.OLEDST_Employee();
         var step = new DataFlowStep<EmployeeCsvRow, Employee>("DFT_LoadEmployees", source, transform, sink, NullLogger<DataFlowStep<EmployeeCsvRow, Employee>>.Instance);
 
         await step.RunAsync(uow, new LoadContext(Guid.NewGuid(), DateTime.UtcNow, "DFT_LoadEmployees"), CancellationToken.None);

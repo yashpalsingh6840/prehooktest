@@ -1,5 +1,4 @@
 using Etl.Core.Abstractions;
-using Etl.Core.Ssis;
 using LoadEmployees.Csv;
 using LoadEmployees.Model;
 using LoadEmployees.Ssis;
@@ -14,21 +13,9 @@ public sealed class EmployeeTransform : IRowTransform<EmployeeCsvRow, Employee>
         Department = row.Department,
         HireDate = row.HireDate,
         Salary = row.Salary,
-        FullName = ComputeFullName(row, ctx),
-        Location = ComputeLocation(row, ctx),
-        EmployeeKey = ComputeEmployeeKey(row, ctx),
-        LoadedAtUtc = ComputeLoadedAtUtc(row, ctx),
+        FullName = DER_MergeColumns.FullName(row, ctx),
+        Location = DER_MergeColumns.Location(row, ctx),
+        EmployeeKey = DER_MergeColumns.EmployeeKey(row, ctx),
+        LoadedAtUtc = DER_MergeColumns.LoadedAtUtc(row, ctx),
     };
-
-    // (DT_WSTR,101)(FirstName + " " + LastName)
-    public static string ComputeFullName(EmployeeCsvRow row, in RowContext ctx) => WidthGuard.Wstr($"{row.FirstName} {row.LastName}", 101, nameof(Employee.FullName), ctx.RowNumber);
-
-    // (DT_WSTR,60)(City + ", " + State)
-    public static string ComputeLocation(EmployeeCsvRow row, in RowContext ctx) => WidthGuard.Wstr($"{row.City}, {row.State}", 60, nameof(Employee.Location), ctx.RowNumber);
-
-    // (DT_WSTR,20)(UPPER(SUBSTRING(Department,1,3)) + "-" + (DT_WSTR,10)EmployeeID)
-    public static string ComputeEmployeeKey(EmployeeCsvRow row, in RowContext ctx) => WidthGuard.Wstr($"{SsisFn.Upper(SsisFn.Substring(row.Department, 1, 3))}-{SsisFn.Str(row.EmployeeID)}", 20, nameof(Employee.EmployeeKey), ctx.RowNumber);
-
-    // GETUTCDATE()
-    public static DateTime ComputeLoadedAtUtc(EmployeeCsvRow row, in RowContext ctx) => ctx.LoadedAtUtc;
 }

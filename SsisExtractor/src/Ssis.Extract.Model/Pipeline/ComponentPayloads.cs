@@ -427,6 +427,58 @@ public sealed class DataConvertPayload
     public List<DataConversionColumnSpec> Columns { get; init; } = [];
 }
 
+/// <summary>
+/// <c>Microsoft.CopyMap</c> -- the "Copy Column" transform (SSIS Toolbox name; the runtime's
+/// own <c>PipelineComponentInfo.Name</c> is "Copy Column", <c>CreationName</c>
+/// <c>DTSTransform.CopyMap.8</c>, confirmed via a live <c>Application.PipelineComponentInfos</c>
+/// enumeration against this machine's real SSIS 16.0 install -- not guessed from documentation).
+/// Pure column duplication: an input column copied verbatim into a new, identically-typed
+/// output column under a new name, no expression, no cast. Structurally almost identical to
+/// <see cref="DataConvertPayload"/> -- the same generic <see cref="PipelineOutputColumnSpec"/>
+/// captures every copied column's own type/length/precision/scale, and the one bespoke piece is
+/// <see cref="CopyMapColumnSpec.SourceColumnLineageId"/> -- except the underlying custom
+/// property is named <c>copyColumnId</c> (lowercase, its own distinct name; NOT
+/// <c>SourceInputColumnLineageID</c>, which is Data Conversion's own property name), confirmed
+/// via a real, live SSIS object-model round trip: building a real <c>Microsoft.CopyMap</c>
+/// component, marking a source column <c>UT_READONLY</c>, then <c>InsertOutputColumnAt</c> +
+/// <c>SetOutputColumnProperty(..., "copyColumnId", sourceLineageId)</c> is what actually
+/// resolves the new column's data type/length automatically from the source (mirroring
+/// <c>Microsoft.Aggregate</c>'s own <c>AggregationColumnId</c>-driven type derivation, not Data
+/// Conversion's explicit <c>SetOutputColumnDataTypeProperties</c> call -- that call throws
+/// <c>COMException 0xC020401A</c> here, exactly like Aggregate/Lookup do, confirming the type is
+/// derived, not settable). The persisted value is the same <c>#{lineageId-path}</c> wrapper
+/// every other lineage-reference custom property in this tool already uses (e.g.
+/// <c>SourceInputColumnLineageID</c>), stripped the same way via
+/// <c>DtsxPackageReader.StripLineageRef</c>.
+///
+/// <para>Also confirmed live: <c>SetUsageType(..., UT_READWRITE)</c> on the source column throws
+/// <c>COMException 0xC0204023</c> -- this component only ever marks a copied-from column
+/// <c>UT_READONLY</c> (the original stays an untouched passthrough, resolved by
+/// <c>Ssis.Extract.Dtsx.LineageBuilder</c> the same way every other synchronous transform's
+/// untouched input columns already are), and the SAME source column can be copied into
+/// multiple, differently-named output columns (each with its own <c>copyColumnId</c> pointing
+/// at the identical source lineageId) -- both confirmed by a live round trip, not assumed.</para>
+/// </summary>
+public sealed class CopyMapPayload
+{
+    public List<CopyMapColumnSpec> Columns { get; init; } = [];
+}
+
+/// <summary>One copied output column of a Copy Column component. Every field except <see cref="SourceColumnLineageId"/> is a direct promotion of the same-named <see cref="PipelineOutputColumnSpec"/> field on this column -- same shape as <see cref="DataConversionColumnSpec"/>, kept here too so a consumer of <see cref="CopyMapPayload"/> doesn't need to cross-reference <see cref="PipelineComponentSpec.Outputs"/> by name.</summary>
+public sealed class CopyMapColumnSpec
+{
+    public required string OutputColumnName { get; init; }
+
+    /// <summary>The <c>#{...}</c> reference stripped down to the raw lineageId string, pointing at the upstream column being copied -- resolve the actual source column NAME via <c>Ssis.Extract.Dtsx.LineageBuilder</c>'s own producer index (same join key everything else in this model uses), not by string-matching here.</summary>
+    public string? SourceColumnLineageId { get; init; }
+
+    public string? TargetDataType { get; init; }
+    public int? Length { get; init; }
+    public int? Precision { get; init; }
+    public int? Scale { get; init; }
+    public int? CodePage { get; init; }
+}
+
 /// <summary>One converted output column of a Data Conversion component. Every field except <see cref="SourceColumnLineageId"/> is a direct promotion of the same-named <see cref="PipelineOutputColumnSpec"/> field on this column -- kept here too so a consumer of <see cref="DataConvertPayload"/> doesn't need to cross-reference <see cref="PipelineComponentSpec.Outputs"/> by name.</summary>
 public sealed class DataConversionColumnSpec
 {
@@ -650,4 +702,220 @@ public sealed class AggregateColumnSpec
 public sealed class RowCountPayload
 {
     public string? VariableName { get; init; }
+}
+
+/// <summary>
+/// <c>Microsoft.PctSampling</c> ("Percentage Sampling") -- Phase 4 of the unsupported-component-
+/// types plan. A pure row router with exactly two mutually exclusive outputs
+/// (<c>exclusionGroup="1"</c> on both), confirmed real from evidenced XML (UseCase_89's own
+/// Package.dtsx): both outputs' own <c>&lt;externalMetadataColumns/&gt;</c> are empty, i.e. this
+/// component neither adds, removes, nor transforms any column -- it only decides which of two
+/// outputs each row goes to. <see cref="SamplingValue"/> is the declared sampling percentage
+/// (0-100); <see cref="SamplingSeed"/> is the RNG seed.
+///
+/// Confirmed via a live object-model probe (<c>Ssis.Extract.FixtureBuilder</c>'s own
+/// <c>ProbePctSampling</c>, not guessed): right after <c>ProvideComponentProperties()</c> the
+/// component already declares exactly two outputs, in this fixed order --
+/// "Sampling Selected Output" (the sampled rows) then "Sampling Unselected Output" (the rest) --
+/// unlike Conditional Split/Multicast/Merge/MergeJoin, none of which start with their real
+/// output set already in place. <see cref="SamplingValue"/>/<see cref="SamplingSeed"/> are plain
+/// <c>System.Int32</c> custom properties, schema defaults 10/0 respectively.
+///
+/// Seed reproducibility was measured via a real dtexec probe (see the codegen project's own
+/// <c>PctSamplingRouterEmitter</c> for the exact runs performed): a fixed <c>SamplingSeed</c>
+/// reproduces the IDENTICAL row split across repeated runs of the real SSIS package; changing
+/// the seed changes which rows are selected.
+/// </summary>
+public sealed class PctSamplingPayload
+{
+    public int SamplingValue { get; init; }
+    public int SamplingSeed { get; init; }
+}
+
+/// <summary>
+/// <c>Microsoft.XmlSourceAdapter</c> ("XML Source") -- Phase 5 of the unsupported-component-types
+/// plan. Same discrimination shape as Script Component/ADO NET (own <c>ComponentClassId</c> is
+/// the generic <c>Microsoft.ManagedComponentHost</c>; <c>UserComponentTypeName</c> is what
+/// actually disambiguates it), confirmed real from evidenced XML
+/// (<c>ETL-SSIS-Real-Scenarios/UseCase_73</c>'s own <c>Package.dtsx</c>, "XML Source" reading
+/// <c>Sellers.xml</c> against <c>Sellers.xsd</c>) -- a flat <c>&lt;dataset&gt;&lt;record&gt;...
+/// &lt;/record&gt;...&lt;/dataset&gt;</c> shape, one repeating <c>record</c> element per row,
+/// direct scalar children as columns (<c>id</c>/<c>first_name</c>/<c>last_name</c>/<c>email</c>/
+/// <c>gender</c>/<c>country</c>).
+///
+/// <para><see cref="AccessModeRaw"/>'s enum was confirmed via a live GAC reflection probe against
+/// <c>Microsoft.SqlServer.XmlSrc.dll</c>'s own
+/// <c>Microsoft.SqlServer.Dts.Pipeline.XmlSourceAdapter+AccessMode</c> type (same "ask the
+/// runtime, don't guess" discipline as CLAUDE.md's trap 12) -- <b>0 = Default</b> (read
+/// <see cref="XmlDataPath"/>, a literal design-time file path -- the one evidenced real value),
+/// <b>1 = FileInVariable</b> (<see cref="XmlDataVariable"/> holds a path), <b>2 =
+/// TextInVariable</b> (<see cref="XmlDataVariable"/> holds the XML document text itself, not a
+/// path). Only mode 0 is supported by codegen -- 1/2 have no runtime-config mapping for an SSIS
+/// variable, the same rule File System Task's own variable-driven path already established.</para>
+///
+/// <para>Unlike every other bespoke source payload in this file, the real evidenced component has
+/// <b>no connection manager reference at all</b> -- confirmed by reading the raw XML directly:
+/// there is no <c>&lt;connections&gt;</c> element between <c>&lt;component&gt;</c> and
+/// <c>&lt;properties&gt;</c>. <see cref="XmlDataPath"/> is a plain literal property on the
+/// component itself, the same shape File System Task's own literal (non-connection-manager) path
+/// form already has.</para>
+///
+/// <para><see cref="XmlIntegerMappingRaw"/> (0 = Decimal, 1 = Int32, also confirmed via the same
+/// GAC reflection probe) is captured but deliberately UNUSED by codegen -- the output column's own
+/// resolved data type (e.g. the evidenced <c>id</c> column's <c>ui2</c>) already reflects whatever
+/// this setting produced at design time, so there is nothing left for codegen to decide from it.</para>
+///
+/// <para><b>Deliberately scoped to the one evidenced flat-rowset shape only</b> -- a hierarchical
+/// XML schema (more than one non-error, non-RowsetID-distinct output on this component) is a
+/// generation gap, never guessed at; see <c>PackagePlanner</c>'s own XML source resolution for
+/// where that count is checked (this payload's own <see cref="Columns"/> is always just the
+/// FIRST non-error output's columns, mirroring every other single-output source payload here).</para>
+/// </summary>
+public sealed class XmlSourcePayload
+{
+    /// <summary>The literal design-time XML file path (<see cref="AccessModeRaw"/> == 0/null) --
+    /// e.g. <c>D:\...\Sellers.xml</c>. Null/empty when <see cref="XmlDataVariable"/> is used
+    /// instead.</summary>
+    public string? XmlDataPath { get; init; }
+
+    /// <summary>The <c>Namespace::Variable</c> reference used instead of <see cref="XmlDataPath"/>
+    /// when <see cref="AccessModeRaw"/> is 1 (a path) or 2 (the XML text itself) -- unevidenced,
+    /// always a fatal gap when populated (see this type's own doc comment).</summary>
+    public string? XmlDataVariable { get; init; }
+
+    public int? AccessModeRaw { get; init; }
+    public int? XmlIntegerMappingRaw { get; init; }
+
+    /// <summary>The main (non-error) output's columns ↔ external (schema) columns, built the same
+    /// way as <see cref="OleDbSourcePayload.ColumnMappings"/>/<see cref="ExcelSourcePayload.ColumnMappings"/>.
+    /// Always the FIRST non-error output only -- see this type's own doc comment for the
+    /// multi-output (hierarchical XML) scoping rule.</summary>
+    public List<PipelineColumnMappingSpec> ColumnMappings { get; init; } = [];
+}
+
+/// <summary>
+/// <c>Microsoft.SCD</c> ("Slowly Changing Dimension") -- Phase 7 of the unsupported-component-types
+/// plan, and the largest single component this tool models. Replaces what used to be nothing but a
+/// generic <c>scd-component-present</c> "rewrite this by hand" finding in <c>RulesEngine</c> with
+/// real structured data.
+///
+/// <para><b>Confirmed real</b> from evidenced XML (<c>ETL-SSIS-Real-Scenarios/SCD SSIS</c>'s own
+/// <c>SCD.dtsx</c>: <c>Emp_Source</c> -&gt; SCD -&gt; four wired downstream chains against
+/// <c>dbo.DimEmployee</c>) <b>and</b> from a live object-model probe
+/// (<c>Ssis.Extract.FixtureBuilder</c>'s own <c>ProbeScd</c>, not guessed). The probe establishes
+/// the out-of-the-box shape, which matters because unlike Conditional Split/Multicast/Merge/MergeJoin
+/// -- each of which needed its own distinct "how do I add an output" recipe -- <b>this component
+/// declares all SIX of its outputs immediately after <c>ProvideComponentProperties()</c></b>, in this
+/// fixed order and with these fixed exclusion groups, and one runtime connection named
+/// <c>LookupConnection</c>:
+/// <list type="number">
+/// <item><c>Unchanged Output</c> (exclusionGroup 1)</item>
+/// <item><c>New Output</c> (1)</item>
+/// <item><c>Fixed Attribute Output</c> (1)</item>
+/// <item><c>Changing Attribute Updates Output</c> (1)</item>
+/// <item><c>Historical Attribute Inserts Output</c> (<b>2</b> -- deliberately its own group, so a
+/// row can reach it as well as a group-1 output)</item>
+/// <item><c>Inferred Member Updates Output</c> (1)</item>
+/// </list>
+/// Every one is synchronous on the single input and declares no output columns of its own, so this
+/// component neither adds nor transforms a column -- it only decides which output each row goes to
+/// (the same pure-router shape <see cref="PctSamplingPayload"/> already documents, just with six
+/// outputs instead of two).</para>
+///
+/// <para><b>Schema defaults measured by the same probe</b>, which is what makes an ABSENT property in
+/// a real <c>.dtsx</c> readable: <see cref="SqlCommand"/>/<see cref="CurrentRowWhere"/>/
+/// <see cref="InferredMemberIndicator"/> empty, <see cref="UpdateChangingAttributeHistory"/> false,
+/// <b><see cref="FailOnFixedAttributeChange"/> TRUE</b> (the real evidenced package explicitly sets
+/// it false -- so this one property's absence would mean the OPPOSITE of the other booleans'),
+/// <see cref="EnableInferredMember"/> false, <see cref="FailOnLookupFailure"/> false,
+/// <see cref="IncomingRowChangeTypeRaw"/> 1, <see cref="DefaultCodePage"/> 1252.</para>
+///
+/// <para><b><see cref="ScdColumnSpec.ColumnTypeRaw"/>'s enum is NOT resolvable by reflection here</b>
+/// -- unlike <see cref="XmlSourcePayload.AccessModeRaw"/>, whose enum was read straight out of a
+/// managed GAC assembly. <c>Microsoft.SCD</c> is implemented by a NATIVE <c>TxSCD.dll</c> (confirmed:
+/// the probe's own instance type is the generic <c>CManagedComponentWrapperClass</c>, and a scan of
+/// every managed SSIS assembly in <c>DTS\Binn</c>/the VS SSIS extension found no <c>ColumnType</c>
+/// or <c>IncomingRowChangeType</c> enum at all), and the <c>typeConverter="ColumnType"</c> attribute
+/// the saved XML carries is resolved by the designer UI, not by anything loadable here. The mapping
+/// below is therefore <b>measured behaviourally via a real dtexec run</b> (Phase 7b) -- see
+/// <c>PackagePlanner.ScdColumnType</c> for the measurement and its evidence, and note that the real
+/// evidenced package's own companion <c>update.txt</c> independently labels each changed column with
+/// the SCD type it is meant to demonstrate, which agrees with the measurement exactly.</para>
+/// </summary>
+public sealed class ScdPayload
+{
+    /// <summary>The <c>LookupConnection</c> runtime connection's resolved connection-manager name --
+    /// the connection the dimension table is read through. Named differently from every other
+    /// component's own connection (which are <c>OleDbConnection</c>/<c>OLE DB Connection</c>), so it
+    /// is resolved from the component's own single runtime connection rather than by that name.</summary>
+    public string? ConnectionName { get; init; }
+
+    /// <summary>The SELECT that reads the dimension table -- "Specifies the SELECT statement used to
+    /// create a schema rowset" per the property's own description. Real evidenced value:
+    /// <c>SELECT [Designation], [EmpId], [FirstName], [LastName],[StartDate],[EndDate] FROM [dbo].[DimEmployee]</c>.
+    /// Note it selects the CURRENT-row marker columns (<c>StartDate</c>/<c>EndDate</c>) even though
+    /// neither is an input column -- they exist only to satisfy <see cref="CurrentRowWhere"/>.</summary>
+    public string? SqlCommand { get; init; }
+
+    /// <summary>"Specifies the WHERE clause in the SELECT statement that selects the current row among
+    /// rows with identical business keys" -- real evidenced value
+    /// <c>[StartDate] IS NOT NULL AND [EndDate] IS NULL</c>. Empty when the dimension keeps no history
+    /// at all (no historical-attribute column), in which case every business key has exactly one row.</summary>
+    public string? CurrentRowWhere { get; init; }
+
+    /// <summary>"Indicates whether historical attribute updates are directed to the transformation
+    /// output for changing attribute updates" -- i.e. when true, a CHANGING-attribute change on a row
+    /// that also has history is routed differently. False on the one real evidenced instance and on
+    /// the schema default.</summary>
+    public bool? UpdateChangingAttributeHistory { get; init; }
+
+    /// <summary>"Indicates whether the transformation fails when columns with fixed attributes contain
+    /// changes". <b>Schema default is TRUE</b> (probe-confirmed); the real evidenced package sets it
+    /// false, which is what makes its own <c>Fixed Attribute Output</c> reachable at all.</summary>
+    public bool? FailOnFixedAttributeChange { get; init; }
+
+    /// <summary>"Specifies the column name for the inferred member" -- the dimension column that marks
+    /// a placeholder row. Empty on the one real evidenced instance.</summary>
+    public string? InferredMemberIndicator { get; init; }
+
+    /// <summary>"Indicates whether inferred member updates are detected". False on the one real
+    /// evidenced instance, so <c>Inferred Member Updates Output</c> is never reachable there.</summary>
+    public bool? EnableInferredMember { get; init; }
+
+    /// <summary>"Indicates whether the transformation fails when a lookup of an existing record fails".
+    /// False on the one real evidenced instance.</summary>
+    public bool? FailOnLookupFailure { get; init; }
+
+    /// <summary>Raw <c>IncomingRowChangeType</c> integer -- "Specifies that all rows in the input are
+    /// new or the transformation detects the change type". 1 on both the schema default and the one
+    /// real evidenced instance; no other value is evidenced, and the enum is not resolvable by
+    /// reflection (see this type's own doc comment), so codegen treats anything else as a named gap
+    /// rather than guessing (same raw-enum caveat as <see cref="OleDbDestinationPayload.AccessMode"/>).</summary>
+    public int? IncomingRowChangeTypeRaw { get; init; }
+
+    public int? DefaultCodePage { get; init; }
+
+    /// <summary>Every input column with its own declared <c>ColumnType</c>, in input declaration
+    /// order. This is the component's whole semantic core -- which column is the business key, which
+    /// are Type 1, which are Type 2, which are fixed.</summary>
+    public List<ScdColumnSpec> Columns { get; init; } = [];
+}
+
+/// <summary>One <c>Microsoft.SCD</c> input column and its declared <c>ColumnType</c> -- see
+/// <see cref="ScdPayload"/>'s own doc comment for why the enum's meaning had to be measured
+/// behaviourally rather than reflected.</summary>
+public sealed class ScdColumnSpec
+{
+    public required string ColumnName { get; init; }
+
+    /// <summary>Raw <c>ColumnType</c> integer, verbatim. Null when the input column declares none at
+    /// all -- a real, reachable case (an input column present in the buffer but not participating in
+    /// the SCD comparison), kept distinct from any decoded value so nothing is inferred from absence.</summary>
+    public int? ColumnTypeRaw { get; init; }
+
+    public string? DataType { get; init; }
+    public int? Length { get; init; }
+    public int? Precision { get; init; }
+    public int? Scale { get; init; }
+    public int? CodePage { get; init; }
 }

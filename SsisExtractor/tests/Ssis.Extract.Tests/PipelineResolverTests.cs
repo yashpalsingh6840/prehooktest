@@ -25,7 +25,7 @@ public class PipelineResolverTests
 
     // tests/Ssis.Extract.Tests -> Tools/SsisExtractor -> repo root -> SSIS/
     private static readonly string PoCPackagesDir = Path.GetFullPath(Path.Combine(
-        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "SSIS"));
+        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "..", "SSIS_Packages", "SSIS"));
 
     private static ResolvedColumnSet ResolveDestination(string dtsxFileName, string componentName)
     {

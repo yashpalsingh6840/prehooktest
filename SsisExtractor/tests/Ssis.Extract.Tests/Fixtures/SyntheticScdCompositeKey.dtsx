@@ -1,0 +1,679 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:refId="Package"
+  DTS:CreationDate="9/16/2026 11:50:46 PM"
+  DTS:CreationName="Microsoft.Package"
+  DTS:CreatorComputerName="IRIS-CSG-8214"
+  DTS:CreatorName="IRISSOFTWARE\yashpal.singh01"
+  DTS:DTSID="{9BECD305-8A08-4016-913F-0BF6B9F630AD}"
+  DTS:ExecutableType="Microsoft.Package"
+  DTS:LastModifiedProductVersion="16.0.1000.6"
+  DTS:LocaleID="1033"
+  DTS:ObjectName="SyntheticScdCompositeKey"
+  DTS:ProtectionLevel="0"
+  DTS:VersionGUID="{D4F2D255-C0C4-402D-B0D4-A85D0ED21C80}">
+  <DTS:Property
+    DTS:Name="PackageFormatVersion">8</DTS:Property>
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_Sql]"
+      DTS:CreationName="OLEDB"
+      DTS:DTSID="{0BBC3246-A422-4A0D-AB3A-232482C4224B}"
+      DTS:ObjectName="CM_Sql">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectRetryCount="1"
+          DTS:ConnectRetryInterval="5"
+          DTS:ConnectionString="Data Source=.\SQLFORPOC_2022;Initial Catalog=SsisPoC;Provider=MSOLEDBSQL.1;Integrated Security=SSPI;Auto Translate=False;" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Variables />
+  <DTS:Executables>
+    <DTS:Executable
+      DTS:refId="Package\DFT_ScdComposite"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:DTSID="{2CEFD5A3-F2B3-4FF1-939C-FEA51F6D02ED}"
+      DTS:ExecutableType="Microsoft.Pipeline"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="DFT_ScdComposite"
+      DTS:TaskContact="Performs high-performance data extraction, transformation and loading;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <pipeline
+          version="1">
+          <components>
+            <component
+              refId="Package\DFT_ScdComposite\DST_New"
+              componentClassID="Microsoft.OLEDBDestination"
+              contactInfo="OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4"
+              description="OLE DB Destination"
+              name="DST_New"
+              usesDispositions="true"
+              version="4">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset">[dbo].[SyntheticScdCompositeOutNew]</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Forces the use of the DefaultCodePage property value when describing character data."
+                  name="AlwaysUseDefaultCodePage">false</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">3</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the values supplied for identity columns will be copied to the destination. If false, values for identity columns will be auto-generated at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepIdentity">false</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the columns containing null will have null inserted in the destination. If false, columns containing null will have their default values inserted at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepNulls">false</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies options to be used with fast load.  Applies only if fast load is turned on."
+                  name="FastLoadOptions"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies when commits are issued during data insertion.  A value of 0 specifies that one commit will be issued at the end of data insertion.  Applies only if fast load is turned on."
+                  name="FastLoadMaxInsertCommitSize">2147483647</property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_ScdComposite\DST_New.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_Sql]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_Sql]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <inputs>
+                <input
+                  refId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input]"
+                  errorOrTruncationOperation="Insert"
+                  errorRowDisposition="FailComponent"
+                  hasSideEffects="true"
+                  name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input].Columns[RegionCode]"
+                      cachedDataType="wstr"
+                      cachedLength="10"
+                      cachedName="RegionCode"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input].ExternalColumns[RegionCode]"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[RegionCode]" />
+                    <inputColumn
+                      refId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input].Columns[StoreCode]"
+                      cachedDataType="wstr"
+                      cachedLength="10"
+                      cachedName="StoreCode"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input].ExternalColumns[StoreCode]"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[StoreCode]" />
+                    <inputColumn
+                      refId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input].Columns[StoreName]"
+                      cachedDataType="wstr"
+                      cachedLength="100"
+                      cachedName="StoreName"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input].ExternalColumns[StoreName]"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[StoreName]" />
+                  </inputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input].ExternalColumns[RegionCode]"
+                      dataType="wstr"
+                      length="10"
+                      name="RegionCode" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input].ExternalColumns[StoreCode]"
+                      dataType="wstr"
+                      length="10"
+                      name="StoreCode" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input].ExternalColumns[StoreName]"
+                      dataType="wstr"
+                      length="100"
+                      name="StoreName" />
+                  </externalMetadataColumns>
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_ScdComposite\DST_New.Outputs[OLE DB Destination Error Output]"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="OLE DB Destination Error Output"
+                  synchronousInputId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\DST_New.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ScdComposite\DST_New.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\DST_New.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ScdComposite\DST_New.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_ScdComposite\DST_Unchanged"
+              componentClassID="Microsoft.OLEDBDestination"
+              contactInfo="OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4"
+              description="OLE DB Destination"
+              name="DST_Unchanged"
+              usesDispositions="true"
+              version="4">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset">[dbo].[SyntheticScdCompositeOutUnchanged]</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Forces the use of the DefaultCodePage property value when describing character data."
+                  name="AlwaysUseDefaultCodePage">false</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">3</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the values supplied for identity columns will be copied to the destination. If false, values for identity columns will be auto-generated at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepIdentity">false</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the columns containing null will have null inserted in the destination. If false, columns containing null will have their default values inserted at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepNulls">false</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies options to be used with fast load.  Applies only if fast load is turned on."
+                  name="FastLoadOptions"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies when commits are issued during data insertion.  A value of 0 specifies that one commit will be issued at the end of data insertion.  Applies only if fast load is turned on."
+                  name="FastLoadMaxInsertCommitSize">2147483647</property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_ScdComposite\DST_Unchanged.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_Sql]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_Sql]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <inputs>
+                <input
+                  refId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input]"
+                  errorOrTruncationOperation="Insert"
+                  errorRowDisposition="FailComponent"
+                  hasSideEffects="true"
+                  name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input].Columns[RegionCode]"
+                      cachedDataType="wstr"
+                      cachedLength="10"
+                      cachedName="RegionCode"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input].ExternalColumns[RegionCode]"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[RegionCode]" />
+                    <inputColumn
+                      refId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input].Columns[StoreCode]"
+                      cachedDataType="wstr"
+                      cachedLength="10"
+                      cachedName="StoreCode"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input].ExternalColumns[StoreCode]"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[StoreCode]" />
+                    <inputColumn
+                      refId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input].Columns[StoreName]"
+                      cachedDataType="wstr"
+                      cachedLength="100"
+                      cachedName="StoreName"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input].ExternalColumns[StoreName]"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[StoreName]" />
+                  </inputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input].ExternalColumns[RegionCode]"
+                      dataType="wstr"
+                      length="10"
+                      name="RegionCode" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input].ExternalColumns[StoreCode]"
+                      dataType="wstr"
+                      length="10"
+                      name="StoreCode" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input].ExternalColumns[StoreName]"
+                      dataType="wstr"
+                      length="100"
+                      name="StoreName" />
+                  </externalMetadataColumns>
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_ScdComposite\DST_Unchanged.Outputs[OLE DB Destination Error Output]"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="OLE DB Destination Error Output"
+                  synchronousInputId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\DST_Unchanged.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ScdComposite\DST_Unchanged.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\DST_Unchanged.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ScdComposite\DST_Unchanged.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_ScdComposite\OLE DB Source"
+              componentClassID="Microsoft.OLEDBSource"
+              contactInfo="OLE DB Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;7"
+              description="OLE DB Source"
+              name="OLE DB Source"
+              usesDispositions="true"
+              version="7">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset"></property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor">SELECT RegionCode, StoreCode, StoreName FROM dbo.SyntheticScdCompositeSource</property>
+                <property
+                  dataType="System.String"
+                  description="The variable that contains the SQL command to be executed."
+                  name="SqlCommandVariable"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Forces the use of the DefaultCodePage property value when describing character data."
+                  name="AlwaysUseDefaultCodePage">false</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">2</property>
+                <property
+                  dataType="System.String"
+                  description="The mappings between the parameters in the SQL command and variables."
+                  name="ParameterMapping"></property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_ScdComposite\OLE DB Source.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_Sql]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_Sql]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <outputs>
+                <output
+                  refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output]"
+                  name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[RegionCode]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[RegionCode]"
+                      length="10"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[RegionCode]"
+                      name="RegionCode"
+                      truncationRowDisposition="FailComponent" />
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[StoreCode]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[StoreCode]"
+                      length="10"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[StoreCode]"
+                      name="StoreCode"
+                      truncationRowDisposition="FailComponent" />
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[StoreName]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[StoreName]"
+                      length="100"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[StoreName]"
+                      name="StoreName"
+                      truncationRowDisposition="FailComponent" />
+                  </outputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[RegionCode]"
+                      dataType="wstr"
+                      length="10"
+                      name="RegionCode" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[StoreCode]"
+                      dataType="wstr"
+                      length="10"
+                      name="StoreCode" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].ExternalColumns[StoreName]"
+                      dataType="wstr"
+                      length="100"
+                      name="StoreName" />
+                  </externalMetadataColumns>
+                </output>
+                <output
+                  refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Error Output]"
+                  isErrorOut="true"
+                  name="OLE DB Source Error Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[RegionCode]"
+                      dataType="wstr"
+                      length="10"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[RegionCode]"
+                      name="RegionCode" />
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[StoreCode]"
+                      dataType="wstr"
+                      length="10"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[StoreCode]"
+                      name="StoreCode" />
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[StoreName]"
+                      dataType="wstr"
+                      length="100"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[StoreName]"
+                      name="StoreName" />
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_ScdComposite\SCD_DimStore"
+              componentClassID="Microsoft.SCD"
+              contactInfo="Slowly Changing Dimension;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;3"
+              description="Updates a SQL Server Analysis Services data warehouse dimension. Update dimension records that are already present and  insert dimension records that aren't. For example, update the DimProduct table of the AdventureWorksDW OLAP database with data from the Products table in the AdventureWorks OLTP database."
+              name="SCD_DimStore"
+              version="3">
+              <properties>
+                <property
+                  dataType="System.String"
+                  description="Specifies the SELECT statement used to create a schema rowset."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor">SELECT [RegionCode], [StoreCode], [StoreName], [StartDate], [EndDate] FROM [dbo].[SyntheticScdCompositeDim]</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the WHERE clause in the SELECT statement that selects the current row among rows with identical business keys."
+                  name="CurrentRowWhere">[StartDate] IS NOT NULL AND [EndDate] IS NULL</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether historical attribute updates are directed to the transformation output for changing attribute updates."
+                  name="UpdateChangingAttributeHistory">false</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the transformation fails when columns with fixed attributes contain changes."
+                  name="FailOnFixedAttributeChange">false</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the column name for the inferred member."
+                  name="InferredMemberIndicator"></property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether inferred member updates are detected."
+                  name="EnableInferredMember">false</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the transformation fails when a lookup of an existing record fails."
+                  name="FailOnLookupFailure">false</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies that all rows in the input are new or the transformation detects the change type."
+                  name="IncomingRowChangeType"
+                  typeConverter="IncomingRowChangeType">1</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_ScdComposite\SCD_DimStore.Connections[LookupConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_Sql]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_Sql]"
+                  description="Defines the connection to use for lookups in the dimension table"
+                  name="LookupConnection" />
+              </connections>
+              <inputs>
+                <input
+                  refId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input]"
+                  name="Slowly Changing Dimension Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input].Columns[RegionCode]"
+                      cachedDataType="wstr"
+                      cachedLength="10"
+                      cachedName="RegionCode"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input].ExternalColumns[RegionCode]"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[RegionCode]">
+                      <properties>
+                        <property
+                          dataType="System.Int32"
+                          name="ColumnType"
+                          typeConverter="ColumnType">1</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input].Columns[StoreCode]"
+                      cachedDataType="wstr"
+                      cachedLength="10"
+                      cachedName="StoreCode"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input].ExternalColumns[StoreCode]"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[StoreCode]">
+                      <properties>
+                        <property
+                          dataType="System.Int32"
+                          name="ColumnType"
+                          typeConverter="ColumnType">1</property>
+                      </properties>
+                    </inputColumn>
+                    <inputColumn
+                      refId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input].Columns[StoreName]"
+                      cachedDataType="wstr"
+                      cachedLength="100"
+                      cachedName="StoreName"
+                      externalMetadataColumnId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input].ExternalColumns[StoreName]"
+                      lineageId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output].Columns[StoreName]">
+                      <properties>
+                        <property
+                          dataType="System.Int32"
+                          name="ColumnType"
+                          typeConverter="ColumnType">2</property>
+                      </properties>
+                    </inputColumn>
+                  </inputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input].ExternalColumns[RegionCode]"
+                      dataType="wstr"
+                      length="10"
+                      name="RegionCode" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input].ExternalColumns[StoreCode]"
+                      dataType="wstr"
+                      length="10"
+                      name="StoreCode" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input].ExternalColumns[StoreName]"
+                      dataType="wstr"
+                      length="100"
+                      name="StoreName" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input].ExternalColumns[StartDate]"
+                      dataType="dbTimeStamp"
+                      name="StartDate" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input].ExternalColumns[EndDate]"
+                      dataType="dbTimeStamp"
+                      name="EndDate" />
+                  </externalMetadataColumns>
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_ScdComposite\SCD_DimStore.Outputs[Unchanged Output]"
+                  description="Unchanged rows"
+                  exclusionGroup="1"
+                  name="Unchanged Output"
+                  synchronousInputId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input]">
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_ScdComposite\SCD_DimStore.Outputs[New Output]"
+                  description="New rows"
+                  exclusionGroup="1"
+                  name="New Output"
+                  synchronousInputId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input]">
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_ScdComposite\SCD_DimStore.Outputs[Fixed Attribute Output]"
+                  description="Rows with changes in columns tagged FixedAttribute"
+                  exclusionGroup="1"
+                  name="Fixed Attribute Output"
+                  synchronousInputId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input]">
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_ScdComposite\SCD_DimStore.Outputs[Changing Attribute Updates Output]"
+                  description="These rows contain new information for ChangingAttribute (Type 1) column changes"
+                  exclusionGroup="1"
+                  name="Changing Attribute Updates Output"
+                  synchronousInputId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input]">
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_ScdComposite\SCD_DimStore.Outputs[Historical Attribute Inserts Output]"
+                  description="HistoricalAttribute (Type 2) changes result in these new rows"
+                  exclusionGroup="2"
+                  name="Historical Attribute Inserts Output"
+                  synchronousInputId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input]">
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_ScdComposite\SCD_DimStore.Outputs[Inferred Member Updates Output]"
+                  description="Information to update unpopulated initial dimension row"
+                  exclusionGroup="1"
+                  name="Inferred Member Updates Output"
+                  synchronousInputId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input]">
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+          </components>
+          <paths>
+            <path
+              refId="Package\DFT_ScdComposite.Paths[New Output]"
+              endId="Package\DFT_ScdComposite\DST_New.Inputs[OLE DB Destination Input]"
+              name="New Output"
+              startId="Package\DFT_ScdComposite\SCD_DimStore.Outputs[New Output]" />
+            <path
+              refId="Package\DFT_ScdComposite.Paths[OLE DB Source Output]"
+              endId="Package\DFT_ScdComposite\SCD_DimStore.Inputs[Slowly Changing Dimension Input]"
+              name="OLE DB Source Output"
+              startId="Package\DFT_ScdComposite\OLE DB Source.Outputs[OLE DB Source Output]" />
+            <path
+              refId="Package\DFT_ScdComposite.Paths[Unchanged Output]"
+              endId="Package\DFT_ScdComposite\DST_Unchanged.Inputs[OLE DB Destination Input]"
+              name="Unchanged Output"
+              startId="Package\DFT_ScdComposite\SCD_DimStore.Outputs[Unchanged Output]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+</DTS:Executable>

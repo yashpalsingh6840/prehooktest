@@ -20,9 +20,18 @@ namespace Ssis.Extract.Codegen;
 /// </summary>
 public static class SqlStatementBuilderEmitter
 {
-    public static EmitResult Emit(string mappingNamespace, string taskName, string sql)
+    /// <param name="identifierBase">The already-disambiguated identifier for this task (see
+    /// PackageGenerator's own ReserveStatementIdentifier) -- NOT re-derived from
+    /// <paramref name="taskName"/> here, because two Execute SQL Tasks anywhere in one package can
+    /// share the identical display name (a template task copy-pasted into many branches is a real,
+    /// evidenced SSIS authoring pattern), and deriving the class name from taskName alone would
+    /// collide both of their Mapping/{Name}Statement.cs files onto the same path -- silently
+    /// discarding one's own distinct SQL text via a plain File.WriteAllText overwrite, with no
+    /// error and no gap. The caller reserves a package-wide-unique identifier once per task and
+    /// passes it here.</param>
+    public static EmitResult Emit(string mappingNamespace, string taskName, string identifierBase, string sql)
     {
-        var className = taskName + "Statement";
+        var className = identifierBase + "Statement";
         var lines = new List<string>
         {
             $"namespace {mappingNamespace};",
@@ -49,9 +58,12 @@ public static class SqlStatementBuilderEmitter
     /// and parameterized rather than an anonymous <c>currentFile => "..." + currentFile</c> lambda
     /// embedded directly in Program.cs, the exact extension this file's own doc comment above
     /// already anticipated.</summary>
-    public static EmitResult EmitParameterized(string mappingNamespace, string taskName, string parameterName, string csharpExpression)
+    /// <param name="identifierBase">See <see cref="Emit"/>'s own doc comment -- same shared,
+    /// package-wide disambiguation, so this ForEach Loop body statement can never collide with an
+    /// ordinary Execute SQL Task's own Mapping/{Name}Statement.cs either.</param>
+    public static EmitResult EmitParameterized(string mappingNamespace, string taskName, string identifierBase, string parameterName, string csharpExpression)
     {
-        var className = taskName + "Statement";
+        var className = identifierBase + "Statement";
         var lines = new List<string>
         {
             $"namespace {mappingNamespace};",

@@ -286,6 +286,31 @@ internal static class Program
         "DATEDIFF(\"dd\",(DT_DBDATE)\"2020-01-01\",(DT_DBTIMESTAMP)\"2020-01-01 23:59:00\")",
         "DATEDIFF(\"dd\",(DT_DBDATE)\"2020-01-01\",(DT_DBTIMESTAMP)\"2020-01-02 00:00:01\")",
 
+        // --- DATEADD(datepart, number, date): the real evidenced call, Phase 2 of the
+        // unsupported-component-types plan (Microsoft.ExpressionTask), is
+        // DATEADD("Minute", -5, GETUTCDATE()). Questions this block resolves: whether the
+        // datepart literal matches T-SQL's own full-word spelling ("Minute", not "mi"/"n"),
+        // sign convention (a negative number subtracts), NULL propagation, whether DT_DBDATE
+        // and DT_DBTIMESTAMP mix freely as the base date the same way DATEDIFF's own two date
+        // arguments do, and the returned type/precision (does adding minutes to a DT_DBDATE
+        // promote it to a timestamp).
+        "DATEADD(\"Minute\",-5,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"Minute\",5,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"Day\",1,(DT_DBDATE)\"2020-01-01\")",
+        "DATEADD(\"Day\",-1,(DT_DBDATE)\"2020-01-01\")",
+        "DATEADD(\"Hour\",25,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"Month\",1,(DT_DBDATE)\"2020-01-31\")",
+        "DATEADD(\"Year\",1,(DT_DBDATE)\"2020-02-29\")",
+        "DATEADD(\"Second\",90,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"Minute\",0,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"Minute\",-5,NULL(DT_DBTIMESTAMP))",
+        "(DT_WSTR,30)DATEADD(\"Minute\",-5,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "(DT_WSTR,30)DATEADD(\"Day\",1,(DT_DBDATE)\"2020-01-01\")",
+        "DATEADD(\"minute\",-5,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "DATEADD(\"mi\",-5,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00\")",
+        "(DT_WSTR,30)(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.000\"",
+        "(DT_WSTR,30)(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.500\"",
+
         // --- arithmetic typing: integer division truncates, mixed int/float promotes,
         // there is no implicit string<->number coercion in either direction ---
         "5/2",
@@ -303,5 +328,48 @@ internal static class Program
         "LEN(123)",
         "TRUE + 1",
         "-\"a\"",
+
+        // --- DATEADD("Millisecond", ...) / DATEPART("Millisecond", ...): Phase 6 of the
+        // unsupported-component-types plan. The real evidenced call is sql-server-samples'
+        // DailyETLMain.dtsx, Microsoft.ExpressionTask "Trim Any Milliseconds":
+        //   @[User::TargetETLCutoffTime] = DATEADD("Millisecond",
+        //       0 - DATEPART("Millisecond", @[User::TargetETLCutoffTime]),
+        //       @[User::TargetETLCutoffTime])
+        // Questions this block resolves: whether "Millisecond" is accepted as a datepart
+        // literal at all; sign convention for DATEADD; NULL propagation for both functions;
+        // and whether a plain integer subtraction (0 - DATEPART(...)) needs anything beyond
+        // ordinary arithmetic.
+        //
+        // GENUINELY SURPRISING FINDING, not guessed, confirmed by these rows: DATEADD/DATEPART's
+        // own internal date arithmetic quantizes sub-second time to the nearest 1/300 of a
+        // second (~3.333ms per tick) -- the well-documented legacy "OLE Automation Date" time
+        // resolution limit (VT_DATE's fractional-day component is only reliable to 1/300s, a
+        // holdover from the original VB timer tick rate), NOT true 1ms precision. Measured:
+        // DATEPART("Millisecond", .456) reports 457 (456ms quantizes to tick 137 -> 456.667ms,
+        // rounds to 457), and DATEPART("Millisecond", .999) reports 0 (999ms quantizes to tick
+        // 300 = exactly 1000ms, which rolls over to the NEXT second with a 0ms remainder) -- a
+        // plain (DT_WSTR,n) CAST of the same .456 timestamp (no DATEADD/DATEPART involved) shows
+        // .456 exactly, so the quantization is specific to these two functions' own arithmetic
+        // engine, not how the value is stored/displayed. Crucially, DATEPART reads the SAME
+        // quantized representation DATEADD's own arithmetic operates on, so the real task's own
+        // idiom -- subtract a value's own reported millisecond count from itself -- still zeroes
+        // the fraction EXACTLY regardless of the quantization (confirmed on both .789 and an
+        // already-whole-second .000 input below).
+        "DATEPART(\"Millisecond\",(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.123\")",
+        "DATEPART(\"Millisecond\",(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.000\")",
+        "DATEPART(\"Millisecond\",(DT_DBDATE)\"2020-01-01\")",
+        "DATEPART(\"Millisecond\",NULL(DT_DBTIMESTAMP))",
+        "DATEPART(\"Millisecond\",(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.456\")",
+        "DATEPART(\"Millisecond\",(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.999\")",
+        "DATEADD(\"Millisecond\",500,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.000\")",
+        "DATEADD(\"Millisecond\",-123,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.123\")",
+        "DATEADD(\"Millisecond\",1500,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.000\")",
+        "DATEADD(\"Millisecond\",0,(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.456\")",
+        "DATEADD(\"Millisecond\",-5,NULL(DT_DBTIMESTAMP))",
+        "DATEADD(\"Millisecond\",0 - DATEPART(\"Millisecond\",(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.789\"),(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.789\")",
+        "DATEADD(\"Millisecond\",0 - DATEPART(\"Millisecond\",(DT_DBTIMESTAMP)\"2020-06-15 12:30:45.000\"),(DT_DBTIMESTAMP)\"2020-06-15 12:30:45.000\")",
+        "0 - 5",
+        "5 - 0",
+        "0 - DATEPART(\"Millisecond\",(DT_DBTIMESTAMP)\"2020-01-01 00:00:00.007\")",
     ];
 }

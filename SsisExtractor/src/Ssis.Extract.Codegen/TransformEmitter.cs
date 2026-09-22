@@ -23,6 +23,12 @@ public sealed record TransformRequest(
     PipelineComponentSpec DestinationComponent,
     IReadOnlySet<string>? NullableColumnNames = null,
     IReadOnlyList<PipelineComponentSpec>? DataConversions = null,
+    // Phase 1 of the unsupported-component-types plan: Microsoft.CopyMap ("Copy Column"). Kept
+    // as its own list, parallel to DataConversions, rather than folded into it -- a CopyMap
+    // column resolves to a plain `row.{SourceColumnName}` passthrough with no SsisFn.* wrapper
+    // (no conversion/cast involved at all, unlike Data Conversion), so it needs its own
+    // resolution dictionary (copiedByName) even though the wiring shape is identical.
+    IReadOnlyList<PipelineComponentSpec>? CopyMaps = null,
     // True only for a Merge Join flow's own call (GenerateMergeJoinFlow): MergeJoinEmitter
     // builds RowTypeName as its OWN combined row type, already resolving every output column's
     // true value itself (including through a Data Conversion, via its own SourceColumnLineageId
@@ -41,7 +47,54 @@ public sealed record TransformRequest(
     // Scoped to Script Components only (Tier 2, source present in the .dtsx). Any OTHER
     // unrecognized producer keeps its plain gap: that is missing TOOL support, and offering a
     // per-package hand-patch there would hide one systemic emitter gap behind N patches.
-    bool EmitSeams = false);
+    bool EmitSeams = false,
+    // 1-to-1 component-to-function mapping round (2026-09). One registry SHARED across every
+    // TransformEmitter.Emit call for the whole package (PackageGenerator creates exactly one, in
+    // Generate() itself, and threads it into every call site) -- this is what lets DER_Enrich (a
+    // Derived Column shared upstream of a Conditional Split, or reused across a Union-All-remerge
+    // pair of branches) get exactly ONE static holder class, referenced identically from every
+    // branch that needs it, instead of the SAME method bodies emitted byte-for-byte into each
+    // branch's own transform class. Null (the default) keeps every OTHER caller -- direct unit
+    // tests constructing a TransformRequest in isolation -- on the OLD behavior (a Derived
+    // Column's own compute method lives on the transform class itself), so this is purely
+    // additive: nothing about existing TransformEmitterTests needed to change for this round.
+    ComponentHolderRegistry? Holders = null);
+
+/// <summary>See <see cref="TransformRequest.Holders"/>. Keyed by the owning component's own
+/// <c>RefId</c> (a real .dtsx identity), never its display NAME -- two different Derived Column
+/// components can share SSIS's own schema-default name ("Derived Column 1") across different Data
+/// Flow Tasks in one package, and this guarantees each still gets its own reserved, package-wide
+/// unique class name via <see cref="ReserveName"/> rather than silently colliding.</summary>
+public sealed class ComponentHolderRegistry
+{
+    private readonly HashSet<string> _usedNames = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _reservedNameByRefId = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _emittedRefIds = new(StringComparer.Ordinal);
+
+    /// <summary>Returns this component's own reserved static-class name, deterministically the
+    /// same on every call for the same <paramref name="refId"/> -- the first caller to ask picks
+    /// the name (uniquified against every other holder AND against nothing else, since a
+    /// Mapping/ file's own class name lives in a separate namespace from the package class's own
+    /// method names); every later caller (a second branch referencing the same shared component)
+    /// gets that identical name back, so its own generated call site (<c>{Name}.{Method}(...)</c>)
+    /// agrees with whichever branch's call actually caused the file to be written.</summary>
+    public string ReserveName(string refId, string desiredName)
+    {
+        if (_reservedNameByRefId.TryGetValue(refId, out var existing)) return existing;
+        var name = desiredName;
+        var n = 2;
+        while (!_usedNames.Add(name)) name = $"{desiredName}_{n++}";
+        _reservedNameByRefId[refId] = name;
+        return name;
+    }
+
+    /// <summary>True only the FIRST time this is called for a given <paramref name="refId"/> --
+    /// the caller should build and return the holder's own GeneratedFile exactly then. Every
+    /// subsequent call (a second, third, ... branch referencing the same shared component) skips
+    /// re-emitting it: <see cref="ReserveName"/> already guarantees they compute the identical
+    /// call site regardless.</summary>
+    public bool ShouldEmit(string refId) => _emittedRefIds.Add(refId);
+}
 
 /// <summary>
 /// How a full-cache Lookup's added columns are resolved, once a human has confirmed the join key
@@ -92,7 +145,7 @@ public static class TransformEmitter
                 .SelectMany(o => o.Columns)
                 .Where(c => c.Expression is not null))
             {
-                computedByName.TryAdd(column.Name, new DerivedExpression(column.Name, column.RefId, column.Expression, column.FriendlyExpression));
+                computedByName.TryAdd(column.Name, new DerivedExpression(column.Name, column.RefId, column.Expression, column.FriendlyExpression, derivedColumn.Name, derivedColumn.RefId));
             }
 
             // "Replace <column>" mode: the expression lives on the readWrite INPUT column and no
@@ -103,7 +156,7 @@ public static class TransformEmitter
             {
                 foreach (var column in input.Columns.Where(c => c.Expression is not null))
                 {
-                    replacedByName.TryAdd(column.CachedName, new DerivedExpression(column.CachedName, column.RefId, column.Expression, column.FriendlyExpression));
+                    replacedByName.TryAdd(column.CachedName, new DerivedExpression(column.CachedName, column.RefId, column.Expression, column.FriendlyExpression, derivedColumn.Name, derivedColumn.RefId));
                 }
             }
         }
@@ -120,9 +173,31 @@ public static class TransformEmitter
                 convertedByName.TryAdd(column.OutputColumnName, column);
         }
 
+        // A Copy Column output column has no Expression either (see CopyMapPayload's own doc
+        // comment) -- keyed separately here, same shape as convertedByName above, but resolved
+        // via TranslateCopyMap (a plain passthrough, no SsisFn.* wrapper) rather than
+        // TranslateDataConversion.
+        var copiedByName = new Dictionary<string, CopyMapColumnSpec>();
+        foreach (var copyMap in request.CopyMaps ?? [])
+        {
+            foreach (var column in copyMap.CopyMap?.Columns ?? [])
+                copiedByName.TryAdd(column.OutputColumnName, column);
+        }
+
         var resolved = PipelineResolver.ResolveDestinationInput(request.DestinationComponent);
         foreach (var unresolved in resolved.Unresolved)
             gaps.Add(new GenerationGap($"{request.EntityName}.{unresolved.ColumnName}", unresolved.Reason));
+
+        // Independently reproduces EntityEmitter's own identifier mapping for THIS destination
+        // (same PipelineResolver.ResolveDestinationInput list, same order) -- see
+        // PackageGenerator.MakeColumnIdentifierResolver's own doc comment. Every DESTINATION-side
+        // identifier below (the LHS of each object-initializer assignment, a compute-method name
+        // keyed off the column, a Script Component seam's own record property) is resolved
+        // through this so it always agrees with the entity property EntityEmitter actually
+        // declared. A SOURCE-side reference (row.{X}) is a different list (the source row type's
+        // own declared columns) and uses bare PackageGenerator.SanitizeIdentifier instead -- see
+        // that method's own doc comment for the one accepted, unevidenced limitation this implies.
+        var destinationIdentifierOf = PackageGenerator.MakeColumnIdentifierResolver();
 
         // The destination's own input column CACHES the SOURCE's buffer type (e.g. "r8"),
         // independent of the destination's own EXTERNAL (real table) column type resolved.Type
@@ -163,8 +238,16 @@ public static class TransformEmitter
         // speculatively 2026-08-30 (synthetic-int-numeric-coercion-tables.sql): a real dtexec run
         // confirmed the SAME round-to-nearest-ties-to-even rule as r8->i4/wstr->i4 for both
         // float-shaped pairings (numeric, r4); i8->i4 has no rounding question at all (both sides
-        // are already integers). Any OTHER numeric pairing still gaps rather than guessing the
-        // same rule applies -- a wrong guess would silently corrupt data instead of failing loudly.
+        // are already integers). A sixth pairing, int source -> decimal destination
+        // (i4 -> numeric), was added 2026-09-18 with NO dtexec probe at all -- unlike every
+        // pairing above, it is a strictly WIDENING, lossless C#-native implicit conversion (a
+        // decimal has far more precision than a 32-bit int could ever need), so there is no
+        // rounding/truncation/overflow question to measure. Real, evidenced instance:
+        // sql-server-samples' DailyETLMain.dtsx, StockHolding_Staging's own "Last Cost Price"
+        // (an OLE DB Source buffers it as i4 from a SqlCommand's own `int` result-set column,
+        // the real destination table's column is decimal(18,2)). Any OTHER numeric pairing still
+        // gaps rather than guessing the same rule applies -- a wrong guess would silently corrupt
+        // data instead of failing loudly.
         var isFlatFileDestination = request.DestinationComponent.ComponentClassId == "Microsoft.FlatFileDestination";
         var inputColumnsByRefId = request.DestinationComponent.Inputs.FirstOrDefault()?.Columns
             .ToDictionary(c => c.RefId) ?? [];
@@ -174,6 +257,7 @@ public static class TransformEmitter
         var narrowedI8ToI4Columns = new HashSet<string>();
         var narrowedNumericToI4Columns = new HashSet<string>();
         var narrowedR4ToI4Columns = new HashSet<string>();
+        var widenedI4ToNumericColumns = new HashSet<string>();
         // Precomputed via the shared detector (not inline) because PackageGenerator's
         // ResolveNullableColumnNames needs the SAME answer before EntityEmitter runs --
         // ParseWstrToI4 always returns int? (string/string? are the same runtime type, unlike
@@ -215,6 +299,17 @@ public static class TransformEmitter
             if (sourceType.ClrTypeName == "float" && column.Type.ClrTypeName == "int")
             {
                 narrowedR4ToI4Columns.Add(column.PipelineColumnName);
+                continue;
+            }
+
+            if (sourceType.ClrTypeName == "int" && column.Type.ClrTypeName == "decimal")
+            {
+                // Strictly widening, lossless -- no dtexec probe was needed (see
+                // ColumnExpressionBuilders' own NumericCoercionKind doc comment). Real, evidenced
+                // instance: sql-server-samples' DailyETLMain.dtsx, StockHolding_Staging's own
+                // "Last Cost Price" (buffered i4 from a SqlCommand result set, decimal(18,2) at
+                // the real destination table).
+                widenedI4ToNumericColumns.Add(column.PipelineColumnName);
                 continue;
             }
 
@@ -274,17 +369,37 @@ public static class TransformEmitter
         // callable function (see AddComputeMethod's own doc comment for why this is scoped to
         // Derived Column only, not every non-passthrough branch).
         var computeMethods = new List<string>();
-        // Tier-2 Fill_* declarations (--seams). Empty unless EmitSeams and a Script Component
-        // genuinely produces one of this destination's columns.
+        // Tier-2 combined-seam declarations (--seams), one per Script Component (not per column
+        // -- see ScriptComponentGroup's own doc comment). Empty unless EmitSeams and a Script
+        // Component genuinely produces one of this destination's columns.
         var seams = new List<string>();
+        // Every column a Script Component produces, grouped by the component's own RefId --
+        // populated during the main loop below, consolidated into one seam/gap per component
+        // AFTER the loop, once every one of that component's columns reaching this destination is
+        // known. Dictionary iteration order matches insertion order here (no removals), matching
+        // this project's own established determinism convention elsewhere.
+        var scriptComponentGroups = new Dictionary<string, ScriptComponentGroup>();
+        // 1-to-1 component-to-function mapping round (2026-09): one entry per Derived Column
+        // component actually referenced by THIS destination's own resolved columns, keyed by that
+        // component's own RefId -- see TransformRequest.Holders' own doc comment for why a shared,
+        // per-package ComponentHolderRegistry is what lets two branches sharing one upstream
+        // Derived Column (e.g. a Conditional Split's own shared "enrich" step) reference the SAME
+        // static holder class instead of each emitting a byte-identical private copy of it.
+        var holderMethodsByRefId = new Dictionary<string, (string ClassName, List<string> Lines)>();
         foreach (var column in resolved.Columns)
         {
+            // The C# identifier EntityEmitter declared for this SAME raw external column name --
+            // every identifier-position use below routes through this, never the raw name
+            // directly; every diagnostic/gap-message use below keeps the raw name (more honest
+            // for a human reading it, and this project's own established convention).
+            var destId = destinationIdentifierOf(column.ExternalColumnName);
+
             // A replaced column has the SAME name as the upstream column it rewrites, whereas a
             // computed one introduces a new name, so these two lookups cannot collide.
             if (computedByName.TryGetValue(column.PipelineColumnName, out var derivedColumn) ||
                 replacedByName.TryGetValue(column.PipelineColumnName, out derivedColumn))
             {
-                var translated = TranslateDerivedColumn(derivedColumn, request.EntityName, column.ExternalColumnName, lineage, columnTypes, request.NullableColumnNames, convertedByName);
+                var translated = TranslateDerivedColumn(derivedColumn, request.EntityName, destId, lineage, columnTypes, request.NullableColumnNames, convertedByName, copiedByName);
                 if (translated is NotTranslatable notTranslatable)
                 {
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}", notTranslatable.Reason));
@@ -293,16 +408,59 @@ public static class TransformEmitter
 
                 var expr = ((TranslatedOk)translated).CSharpExpression;
                 CollectSsisFunctions(expr, functionsUsed);
-                var methodName = $"Compute{column.ExternalColumnName}";
                 var isNullable = request.NullableColumnNames?.Contains(column.PipelineColumnName) ?? false;
                 var returnType = column.Type is null ? "object" : column.Type.ClrTypeName + (isNullable ? "?" : "");
-                AddComputeMethod(computeMethods, methodName, returnType, request.RowTypeName, expr,
-                    derivedColumn.FriendlyExpression ?? derivedColumn.Expression);
-                assignments.Add($"        {column.ExternalColumnName} = {methodName}(row, ctx),");
+                var friendlyComment = derivedColumn.FriendlyExpression ?? derivedColumn.Expression;
+
+                if (request.Holders is { } holders)
+                {
+                    // Named after the real SSIS Derived Column component ("DER_Enrich"), not the
+                    // transform class -- see PackageClassEmitter/ComponentManifestEmitter's own
+                    // naming table. The method itself keeps the destination's own external column
+                    // name (no "Compute" prefix, matching the plan's own worked example --
+                    // "DER_Enrich.FullName(row, ctx)").
+                    var ownerClassName = holders.ReserveName(derivedColumn.OwnerComponentRefId, PackageGenerator.SanitizeIdentifier(derivedColumn.OwnerComponentName));
+                    if (!holderMethodsByRefId.TryGetValue(derivedColumn.OwnerComponentRefId, out var holder))
+                        holderMethodsByRefId[derivedColumn.OwnerComponentRefId] = holder = (ownerClassName, []);
+                    AddComputeMethod(holder.Lines, destId, returnType, request.RowTypeName, expr, friendlyComment);
+                    assignments.Add($"        {destId} = {ownerClassName}.{destId}(row, ctx),");
+                }
+                else
+                {
+                    var methodName = $"Compute{destId}";
+                    AddComputeMethod(computeMethods, methodName, returnType, request.RowTypeName, expr, friendlyComment);
+                    assignments.Add($"        {destId} = {methodName}(row, ctx),");
+                }
             }
             else if (convertedByName.TryGetValue(column.PipelineColumnName, out var conversion))
             {
                 var converted = TranslateDataConversion(conversion, column.PipelineColumnName, lineage);
+
+                // TranslateDataConversion always resolves the "DataConversion" lineage edge to
+                // SOME producing column name and blindly emits a bare row.{name} passthrough for
+                // it -- it has no way to know whether that name is a real row property. It might
+                // instead be a Derived Column's OWN computed output (the real evidenced shape: a
+                // static-literal Derived Column feeding a Data Conversion, e.g. dimcustomer.dtsx's
+                // "ssc" -> "Copy of ssc"). Checked here, after the call, by seeing whether the
+                // SAME lineage edge's own source name is ALSO a key in computedByName -- reusing
+                // TranslateDerivedColumn (the mirror-image mechanism used a few lines up for a
+                // Derived Column referencing a Data Conversion output) to resolve that expression
+                // first, then wrapping the result the same way TranslateDataConversion itself
+                // wraps a plain row reference.
+                if (converted is TranslatedOk)
+                {
+                    var conversionEdge = lineage.Edges.FirstOrDefault(e => e.Kind == "DataConversion" && e.ToColumnName == column.PipelineColumnName);
+                    if (conversionEdge is not null && computedByName.TryGetValue(conversionEdge.FromColumnName, out var derivedSource))
+                    {
+                        var derivedTranslated = TranslateDerivedColumn(
+                            derivedSource, request.EntityName, column.ExternalColumnName, lineage, columnTypes,
+                            request.NullableColumnNames, convertedByName, copiedByName);
+                        converted = derivedTranslated is TranslatedOk derivedOk
+                            ? TranslateDataConversionFromRawExpression(conversion, derivedOk.CSharpExpression)
+                            : derivedTranslated;
+                    }
+                }
+
                 if (converted is NotTranslatable notTranslatable)
                 {
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}", notTranslatable.Reason));
@@ -311,7 +469,19 @@ public static class TransformEmitter
 
                 var expr = ((TranslatedOk)converted).CSharpExpression;
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
+            }
+            else if (copiedByName.TryGetValue(column.PipelineColumnName, out var copyMapColumn))
+            {
+                var copied = TranslateCopyMap(copyMapColumn, column.PipelineColumnName, lineage);
+                if (copied is NotTranslatable notTranslatable)
+                {
+                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}", notTranslatable.Reason));
+                    continue;
+                }
+
+                var expr = ((TranslatedOk)copied).CSharpExpression;
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (request.LookupJoin is { } join
                      && join.OutputToReferenceColumn.TryGetValue(column.PipelineColumnName, out var referenceColumn))
@@ -321,15 +491,15 @@ public static class TransformEmitter
                 // KeyNotFoundException is the faithful translation. A Lookup that redirects
                 // no-match rows is a different, unsupported shape -- PackageGenerator gaps it
                 // rather than reaching here.
-                assignments.Add($"        {column.ExternalColumnName} = {LookupJoinExpressionBuilder.Build(join, referenceColumn)},");
+                assignments.Add($"        {destId} = {LookupJoinExpressionBuilder.Build(join, referenceColumn)},");
             }
             else if (flatFileStringConversionColumns.Contains(column.PipelineColumnName))
             {
                 // A nullable-inferred source column needs a null-conditional ToString() (empty
                 // string for a genuine NULL) rather than a plain one, which would NullReferenceException.
                 var isNullable = request.NullableColumnNames?.Contains(column.PipelineColumnName) == true;
-                var expr = FlatFileStringConversionExpressionBuilder.Build(column.PipelineColumnName, isNullable);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                var expr = FlatFileStringConversionExpressionBuilder.Build(PackageGenerator.SanitizeIdentifier(column.PipelineColumnName), isNullable);
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (narrowedR8ToI4Columns.Contains(column.PipelineColumnName))
             {
@@ -337,36 +507,56 @@ public static class TransformEmitter
                 // shape works whether or not this column is nullable-inferred, unlike the Flat
                 // File string-conversion case above (which needs the null-conditional `?`
                 // operator itself, not just an overload).
-                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowR8ToI4, column.PipelineColumnName);
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowR8ToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (narrowedI8ToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowI8ToI4, column.PipelineColumnName);
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowI8ToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (narrowedNumericToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowNumericToI4, column.PipelineColumnName);
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowNumericToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (narrowedR4ToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowR4ToI4, column.PipelineColumnName);
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.NarrowR4ToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
+            }
+            else if (widenedI4ToNumericColumns.Contains(column.PipelineColumnName))
+            {
+                // SsisFn.WidenI4ToNumeric has both an int and an int? overload -- the same call
+                // shape works whether or not this column is nullable-inferred, same reasoning as
+                // every other coercion helper above.
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.WidenI4ToNumeric, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
+                CollectSsisFunctions(expr, functionsUsed);
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (parsedWstrToI4Columns.Contains(column.PipelineColumnName))
             {
-                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.ParseWstrToI4, column.PipelineColumnName);
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.ParseWstrToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
-                assignments.Add($"        {column.ExternalColumnName} = {expr},");
+                assignments.Add($"        {destId} = {expr},");
             }
             else if (unrecognizedComponentColumns.TryGetValue(column.PipelineColumnName, out var producer))
             {
+                if (producer.ScriptComponent is null)
+                {
+                    // Any OTHER unrecognized producer (not a Script Component) stays Unclassified,
+                    // per-column, unchanged -- that is missing TOOL support, and grouping/hand-
+                    // patching it per package would hide one systemic emitter gap behind N patches.
+                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                        $"column '{column.PipelineColumnName}' is produced by '{producer.Name}' ({producer.ComponentClassId}), a component type this tool does not translate -- cannot safely generate a passthrough reference.",
+                        Kind: GapKind.Unclassified));
+                    continue;
+                }
+
                 // The destination entity's own property type, resolved by EXACTLY the rule
                 // EntityEmitter uses -- a seam whose return type disagreed with the property it
                 // feeds would turn a clear CS8795 ("fill this in") into a confusing CS0029.
@@ -375,46 +565,92 @@ public static class TransformEmitter
                     ? null
                     : seamIsNullable ? column.Type.ClrTypeName + "?" : column.Type.ClrTypeName;
 
-                if (request.EmitSeams && producer.ScriptComponent is not null && seamType is not null)
+                if (seamType is null)
                 {
-                    var methodName = $"Fill_{column.ExternalColumnName}";
-                    if (seams.Count > 0) seams.Add("");
-                    seams.Add($"    /// <summary>Buffer column '{column.PipelineColumnName}', produced by Script Component");
-                    seams.Add($"    /// '{producer.Name}'. Work packet: SCRIPT-COLUMN {request.EntityName}.{column.ExternalColumnName}.</summary>");
-                    seams.Add($"    private partial {seamType} {methodName}({request.RowTypeName} row, in RowContext ctx);");
-                    assignments.Add($"        {column.ExternalColumnName} = {methodName}(row, ctx),");
-
-                    // Still a BLOCKING gap, and still reported: a seam is outstanding work, not a
-                    // resolution. generation-readiness.md must keep saying this package is not
-                    // generatable until the fill exists -- which is literally true, it won't build.
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
-                        $"column '{column.PipelineColumnName}' is produced by Script Component '{producer.Name}' -- emitted as a `private partial {seamType} {methodName}({request.RowTypeName} row, in RowContext ctx)` seam. The project will not compile (CS8795) until a second part of '{request.TransformClassName}' implements it; apply one with `ssisx apply-fills`.",
-                        Kind: GapKind.ScriptComponentColumn,
-                        EvidenceRefId: producer.RefId));
-
-                    // Companion "Script Task / Script Component seam" taxonomy row
-                    // (Docs/Generated-Tests-Plan.md): a filled seam is human logic, and a test for
-                    // it is a test-oracle packet, not something the deterministic emitter can
-                    // derive -- a separate, non-blocking work item from the port itself, sharing
-                    // its own Location so both land under the same column in `gaps.json`.
-                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
-                        $"column '{column.ExternalColumnName}' ({methodName}) has no generated test at all (a filled seam is human logic -- see the TEST-ORACLE work packet for this column to write one).",
-                        IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: producer.RefId));
+                        $"column '{column.PipelineColumnName}' is produced by Script Component '{producer.Name}' but its own destination type could not be resolved -- cannot generate a seam for it.",
+                        Kind: GapKind.ScriptComponentColumn, EvidenceRefId: producer.RefId));
                     continue;
                 }
 
-                gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
-                    $"column '{column.PipelineColumnName}' is produced by '{producer.Name}' ({producer.ComponentClassId}), a component type this tool does not translate -- cannot safely generate a passthrough reference. If this is a Script Component, its transform logic must be ported by hand, the same limitation as a Script Task.",
-                    // Classified only when the producer really IS a Script Component: its source is
-                    // present in the .dtsx, so this is a portable translation job (Tier 2). Any OTHER
-                    // unrecognized producer stays Unclassified -- that is missing tool support, and
-                    // hand-patching it per package would hide one systemic emitter gap behind N patches.
-                    Kind: producer.ScriptComponent is not null ? GapKind.ScriptComponentColumn : GapKind.Unclassified,
-                    EvidenceRefId: producer.ScriptComponent is not null ? producer.RefId : null));
+                // Deferred, not emitted here -- every column this same Script Component produces
+                // (reaching this destination) needs to be known before its ONE combined seam/gap
+                // can be built. See the post-loop consolidation below and ScriptComponentGroup's
+                // own doc comment for why this replaced a per-column Fill_{Column} seam. Stores
+                // the RAW external name (human-readable text in the consolidated gap message) --
+                // the consolidation loop below independently sanitizes it into the same record
+                // property/method-call identifier this column's own LHS (destId) already uses.
+                if (!scriptComponentGroups.TryGetValue(producer.RefId, out var group))
+                    scriptComponentGroups[producer.RefId] = group = new ScriptComponentGroup(producer);
+                group.Columns.Add(new ScriptComponentGroupColumn(column.ExternalColumnName, seamType));
+
+                if (request.EmitSeams)
+                {
+                    var localVar = PackageGenerator.LowerFirst(PackageGenerator.SanitizeIdentifier(producer.Name)) + "Result";
+                    assignments.Add($"        {destId} = {localVar}.{PackageGenerator.SanitizeIdentifier(column.ExternalColumnName)},");
+                }
+                // else: EmitSeams off -- the column is simply omitted from the object initializer,
+                // same as today; the group's own consolidated gap below explains why.
             }
             else if (!mismatchedTypeColumns.Contains(column.PipelineColumnName))
             {
-                assignments.Add($"        {column.ExternalColumnName} = row.{column.PipelineColumnName},");
+                assignments.Add($"        {destId} = row.{PackageGenerator.SanitizeIdentifier(column.PipelineColumnName)},");
+            }
+        }
+
+        // Consolidate every deferred Script-Component group into ONE seam/gap per component --
+        // see ScriptComponentGroup's own doc comment. "var x = Method(row, ctx);" lines are
+        // prepended to Map()'s own body (which becomes block-bodied instead of a single
+        // expression the moment any exist) so a component producing several columns is computed
+        // exactly once per row, not once per column.
+        var scriptComponentLocals = new List<string>();
+        var scriptComponentRecords = new List<string>();
+        foreach (var group in scriptComponentGroups.Values)
+        {
+            var sanitizedName = PackageGenerator.SanitizeIdentifier(group.Producer.Name);
+            var resultTypeName = $"{sanitizedName}Result";
+            var columnList = string.Join(", ", group.Columns.Select(c => c.ExternalColumnName));
+
+            if (request.EmitSeams)
+            {
+                var localVar = PackageGenerator.LowerFirst(sanitizedName) + "Result";
+                scriptComponentLocals.Add($"        var {localVar} = {sanitizedName}(row, ctx);");
+
+                // Own resolver, scoped to this one group's own column list -- guards against two
+                // columns THIS Script Component produces sanitizing to the same identifier
+                // (unevidenced, but a duplicate record-struct property would fail to compile).
+                var recordIdentifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+                var recordProps = string.Join(", ", group.Columns.Select(c => $"{c.SeamType} {recordIdentifierOf(c.ExternalColumnName)}"));
+                scriptComponentRecords.Add($"internal readonly record struct {resultTypeName}({recordProps});");
+
+                if (seams.Count > 0) seams.Add("");
+                seams.Add($"    /// <summary>Script Component '{group.Producer.Name}', producing {group.Columns.Count} column(s)");
+                seams.Add($"    /// together: {columnList}. Work packet: SCRIPT-COLUMN {request.EntityName}.{sanitizedName}.</summary>");
+                seams.Add($"    private partial {resultTypeName} {sanitizedName}({request.RowTypeName} row, in RowContext ctx);");
+
+                // Still a BLOCKING gap, and still reported: a seam is outstanding work, not a
+                // resolution. generation-readiness.md must keep saying this package is not
+                // generatable until the fill exists -- which is literally true, it won't build.
+                gaps.Add(new GenerationGap($"{request.EntityName}.{sanitizedName}",
+                    $"Script Component '{group.Producer.Name}' produces {group.Columns.Count} column(s) ({columnList}) -- emitted as a single `private partial {resultTypeName} {sanitizedName}({request.RowTypeName} row, in RowContext ctx)` seam. The project will not compile (CS8795) until a second part of '{request.TransformClassName}' implements it; apply one with `ssisx apply-fills`.",
+                    Kind: GapKind.ScriptComponentColumn,
+                    EvidenceRefId: group.Producer.RefId));
+
+                // Companion "Script Task / Script Component seam" taxonomy row
+                // (Docs/Generated-Tests-Plan.md): a filled seam is human logic, and a test for it
+                // is a test-oracle packet, not something the deterministic emitter can derive --
+                // a separate, non-blocking work item from the port itself, sharing its own
+                // Location so both land under the same component in `gaps.json`.
+                gaps.Add(new GenerationGap($"{request.EntityName}.{sanitizedName}",
+                    $"Script Component '{group.Producer.Name}' ({sanitizedName}) has no generated test at all (a filled seam is human logic -- see the TEST-ORACLE work packet to write one).",
+                    IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: group.Producer.RefId));
+            }
+            else
+            {
+                gaps.Add(new GenerationGap($"{request.EntityName}.{sanitizedName}",
+                    $"Script Component '{group.Producer.Name}' produces {group.Columns.Count} column(s) ({columnList}) -- cannot safely generate a passthrough reference; its transform logic must be ported by hand, the same limitation as a Script Task. Re-run with --seams for a fillable partial-method seam instead of this plain gap.",
+                    Kind: GapKind.ScriptComponentColumn,
+                    EvidenceRefId: group.Producer.RefId));
             }
         }
 
@@ -424,9 +660,57 @@ public static class TransformEmitter
             return new TransformEmitResult(new EmitResult([], gaps), functionsUsed);
         }
 
-        var lines = BuildFile(request, assignments, functionsUsed, seams, computeMethods);
-        var file = new GeneratedFile($"Mapping/{request.TransformClassName}.cs", Rendering.JoinLines(lines));
-        return new TransformEmitResult(new EmitResult([file], gaps), functionsUsed);
+        var files = new List<GeneratedFile>();
+        // Emit each Derived Column's own static holder class ONLY the first time this package-wide
+        // registry has seen its RefId -- a second branch referencing the SAME shared component
+        // (DER_Enrich) already resolved the identical class/method names via ReserveName above, so
+        // its own generated call site agrees with whichever branch's call caused the file to exist,
+        // without emitting a second, redundant copy of the file itself.
+        if (request.Holders is { } holderRegistry)
+        {
+            foreach (var (refId, holder) in holderMethodsByRefId)
+            {
+                if (!holderRegistry.ShouldEmit(refId)) continue;
+                var holderLines = BuildComponentHolderFile(request, holder.ClassName, holder.Lines);
+                files.Add(new GeneratedFile($"Mapping/{holder.ClassName}.cs", Rendering.JoinLines(holderLines)));
+            }
+        }
+
+        var lines = BuildFile(request, assignments, functionsUsed, seams, computeMethods, scriptComponentLocals, scriptComponentRecords);
+        files.Add(new GeneratedFile($"Mapping/{request.TransformClassName}.cs", Rendering.JoinLines(lines)));
+        return new TransformEmitResult(new EmitResult(files, gaps), functionsUsed);
+    }
+
+    /// <summary>Builds one Derived Column's own static holder class file (e.g. <c>Mapping/
+    /// DER_Enrich.cs</c>) -- a plain, dependency-free static class, one public static method per
+    /// destination column this component computes, named after the destination's own external
+    /// column name (matching <see cref="AddComputeMethod"/>'s per-transform convention exactly,
+    /// just hoisted out to its own file/class so more than one transform can call it). Needs its
+    /// own minimal `using` set rather than reusing <see cref="BuildFile"/>'s -- a holder never
+    /// declares a Script-Component seam/record and is never itself an <c>IRowTransform</c>, so it
+    /// has no need for those usings, but DOES need <c>Etl.Core.Ssis</c> whenever a WidthGuard call
+    /// landed in one of its own methods (the same check <see cref="BuildFile"/> already makes), and
+    /// the entity namespace too in that same case -- a truncation call embeds
+    /// <c>nameof({Entity}.{Column})</c> in its own diagnostic (see ExpressionTranslator's own
+    /// WidthGuard.Wstr construction), the one place a holder method still names the destination
+    /// entity type despite never constructing one.</summary>
+    private static List<string> BuildComponentHolderFile(TransformRequest request, string className, List<string> methodLines)
+    {
+        var usesWidthGuard = methodLines.Any(l => l.Contains("WidthGuard.Wstr("));
+        var usesFunctions = methodLines.Any(l => l.Contains("SsisFn."));
+        var lines = new List<string> { "using Etl.Core.Abstractions;" };
+        if (usesWidthGuard) lines.Add("using Etl.Core.Ssis;");
+        lines.Add($"using {request.RowTypeNamespace};");
+        if (usesWidthGuard) lines.Add($"using {request.EntityNamespace};");
+        if (usesFunctions) lines.Add($"using {request.SsisFnNamespace};");
+        lines.Add("");
+        lines.Add($"namespace {request.MappingNamespace};");
+        lines.Add("");
+        lines.Add($"internal static class {className}");
+        lines.Add("{");
+        lines.AddRange(methodLines);
+        lines.Add("}");
+        return lines;
     }
 
     /// <summary>Appends one Derived-Column-computed value as its own named, callable, public
@@ -455,7 +739,8 @@ public static class TransformEmitter
         computeMethods.Add($"    public static {returnType} {methodName}({rowTypeName} row, in RowContext ctx) => {expression};");
     }
 
-    private static List<string> BuildFile(TransformRequest request, List<string> assignments, HashSet<string> functionsUsed, List<string> seams, List<string> computeMethods)
+    private static List<string> BuildFile(TransformRequest request, List<string> assignments, HashSet<string> functionsUsed,
+        List<string> seams, List<string> computeMethods, List<string> scriptComponentLocals, List<string> scriptComponentRecords)
     {
         // WidthGuard.Wstr(...) calls can live in either assignments (a plain, uncomputed
         // truncation -- not evidenced anywhere today, but not ruled out either) or computeMethods
@@ -474,6 +759,14 @@ public static class TransformEmitter
         lines.Add("");
         lines.Add($"namespace {request.MappingNamespace};");
         lines.Add("");
+        // One small record per Script-Component seam, declared ahead of the transform class --
+        // its own combined method returns this. Empty unless EmitSeams and at least one Script
+        // Component genuinely produces a column reaching this destination.
+        if (scriptComponentRecords.Count > 0)
+        {
+            lines.AddRange(scriptComponentRecords);
+            lines.Add("");
+        }
         // A Lookup flow's transform takes its preloaded reference cache as a primary-constructor
         // parameter -- Program.cs awaits the load at top level and constructs this directly (see
         // ProgramEmitter's LookupPreload), so there is nothing for DI to resolve here.
@@ -482,22 +775,43 @@ public static class TransformEmitter
         var partial = seams.Count > 0 ? "partial " : "";
         if (seams.Count > 0)
         {
-            lines.Add($"/// <summary>Has {seams.Count(s => s.Contains("private partial "))} unimplemented Tier-2 seam(s): column(s) produced by a Script");
-            lines.Add("/// Component, whose logic this tool does not translate. Implement each one in a SECOND");
-            lines.Add("/// PART of this partial class -- a class part, not just a method body, so the port can");
-            lines.Add("/// declare its own fields (a compiled Regex, a lookup table). Until then this project");
-            lines.Add("/// deliberately does NOT compile: CS8795, one error per unfilled seam. Put the part in");
-            lines.Add($"/// fills/&lt;Package&gt;/{request.TransformClassName}.Fills.cs and run `ssisx apply-fills`.</summary>");
+            var seamCount = seams.Count(s => s.Contains("private partial "));
+            lines.Add($"/// <summary>Has {seamCount} unimplemented Tier-2 seam(s): each is a Script Component, computing");
+            lines.Add("/// one or more columns together, whose logic this tool does not translate. Implement each");
+            lines.Add("/// one in a SECOND PART of this partial class -- a class part, not just a method body, so");
+            lines.Add("/// the port can declare its own fields (a compiled Regex, a lookup table). Until then this");
+            lines.Add("/// project deliberately does NOT compile: CS8795, one error per unfilled seam. Put the");
+            lines.Add($"/// part in fills/&lt;Package&gt;/{request.TransformClassName}.Fills.cs and run `ssisx apply-fills`.</summary>");
         }
         var declaration = request.LookupJoin is { } join
             ? $"public sealed {partial}class {request.TransformClassName}(Dictionary<{join.KeyClrTypeName}, {join.CacheClassName}.ReferenceRow> {join.CacheParameterName}) : IRowTransform<{request.RowTypeName}, {request.EntityName}>"
             : $"public sealed {partial}class {request.TransformClassName} : IRowTransform<{request.RowTypeName}, {request.EntityName}>";
         lines.Add(declaration);
         lines.Add("{");
-        lines.Add($"    public {request.EntityName} Map({request.RowTypeName} row, in RowContext ctx) => new()");
-        lines.Add("    {");
-        lines.AddRange(assignments);
-        lines.Add("    };");
+        // Block-bodied only when at least one Script-Component seam feeds this Map() -- one local
+        // variable per component, computed exactly once per row, then referenced by every one of
+        // that component's own properties in the object initializer below (indented one level
+        // deeper than the plain expression form, hence the "    " + a). Every transform with no
+        // Script Component seam keeps the original single-expression form, byte-identical to
+        // before this round.
+        if (scriptComponentLocals.Count > 0)
+        {
+            lines.Add($"    public {request.EntityName} Map({request.RowTypeName} row, in RowContext ctx)");
+            lines.Add("    {");
+            lines.AddRange(scriptComponentLocals);
+            lines.Add("        return new()");
+            lines.Add("        {");
+            lines.AddRange(assignments.Select(a => "    " + a));
+            lines.Add("        };");
+            lines.Add("    }");
+        }
+        else
+        {
+            lines.Add($"    public {request.EntityName} Map({request.RowTypeName} row, in RowContext ctx) => new()");
+            lines.Add("    {");
+            lines.AddRange(assignments);
+            lines.Add("    };");
+        }
         if (computeMethods.Count > 0)
         {
             lines.Add("");
@@ -516,12 +830,51 @@ public static class TransformEmitter
     /// Derived Column column, so that an OUTPUT column (a newly computed column) and a readWrite
     /// INPUT column (a "Replace &lt;column&gt;" in-place rewrite) can share one translation path
     /// instead of the in-place case having none at all.</summary>
-    private readonly record struct DerivedExpression(string Name, string RefId, string? Expression, string? FriendlyExpression);
+    /// <param name="OwnerComponentName">The real SSIS Derived Column component's own display
+    /// name (e.g. "DER_Enrich") -- added for the 1-to-1 component-to-function mapping round, used
+    /// to name/dedupe a <see cref="ComponentHolderRegistry"/> holder class.</param>
+    /// <param name="OwnerComponentRefId">The same component's own RefId -- <see cref="ComponentHolderRegistry"/>
+    /// is keyed by this, never by name, since two Derived Columns in one package can share SSIS's
+    /// own schema-default display name.</param>
+    /// <remarks>Internal, not private -- <c>PackageGenerator.GenerateScdFlow</c> constructs one
+    /// directly for the "Data Conversion's own raw source is itself a Derived Column's computed
+    /// output" case (see <see cref="TranslateDerivedColumn"/>'s own doc comment), the same sharing
+    /// precedent as <see cref="TranslateDataConversion(DataConversionColumnSpec,string,LineageSpec)"/>
+    /// itself.</remarks>
+    internal readonly record struct DerivedExpression(string Name, string RefId, string? Expression, string? FriendlyExpression,
+        string OwnerComponentName, string OwnerComponentRefId);
 
-    private static TranslatedExpression TranslateDerivedColumn(
+    /// <summary>One destination column a Script Component produces, deferred until every column
+    /// in the same group is known -- see <see cref="ScriptComponentGroup"/>.</summary>
+    private readonly record struct ScriptComponentGroupColumn(string ExternalColumnName, string SeamType);
+
+    /// <summary>Every column ONE Script Component produces, reaching THIS destination -- grouped
+    /// by <see cref="PipelineComponentSpec.RefId"/> so the component gets ONE combined seam method
+    /// (returning one small record with all its columns) instead of an independent
+    /// <c>Fill_{Column}</c> seam per column. Before this grouping existed, a 4-column Script
+    /// Component (RBC_Demo_ETL's own real SCR_CleanseCustomerRow) generated 4 separate seams, 4
+    /// separate blocking gaps, and 4 separate work packets each telling the reader "port only
+    /// this one column, do not fold them together" -- even though all 4 come from one script and
+    /// are naturally ported together. See CLAUDE.md's own account of this round.</summary>
+    private sealed class ScriptComponentGroup(PipelineComponentSpec producer)
+    {
+        public PipelineComponentSpec Producer { get; } = producer;
+        public List<ScriptComponentGroupColumn> Columns { get; } = [];
+    }
+
+    /// <remarks>Internal, not private -- <c>PackageGenerator.GenerateScdFlow</c> reuses this
+    /// directly to resolve an SCD attribute whose feeding Data Conversion's own raw source is
+    /// ITSELF a Derived Column's computed output (not a real row property), the real evidenced
+    /// shape in Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline's own dimcustomer.dtsx
+    /// (a static-literal "ssc" Derived Column feeding "Copy of ssc"'s Data Conversion) -- the
+    /// mirror image of the case this method already handles (a Derived Column referencing a Data
+    /// Conversion output), reusing the SAME expression-translation machinery rather than
+    /// re-deriving it, same sharing precedent as <see cref="TranslateDataConversion(DataConversionColumnSpec,string,LineageSpec)"/>.</remarks>
+    internal static TranslatedExpression TranslateDerivedColumn(
         DerivedExpression derivedColumn, string entityName, string destinationColumnName,
         LineageSpec lineage, Dictionary<string, PipelineOutputColumnSpec> columnTypes,
-        IReadOnlySet<string>? nullableColumnNames, Dictionary<string, DataConversionColumnSpec> convertedByName)
+        IReadOnlySet<string>? nullableColumnNames, Dictionary<string, DataConversionColumnSpec> convertedByName,
+        Dictionary<string, CopyMapColumnSpec>? copiedByName = null)
     {
         var expressionText = derivedColumn.FriendlyExpression ?? derivedColumn.Expression;
         if (expressionText is null)
@@ -559,6 +912,28 @@ public static class TransformEmitter
                 continue;
             }
 
+            // A reference to a Copy Column output column (e.g. a later Derived Column reading
+            // the copy rather than the original) resolves to the same plain `row.{source}`
+            // passthrough TranslateCopyMap emits for the direct-to-destination case -- there is
+            // no SsisFn.* wrapper to carry nullability the way Data Conversion's does, so this
+            // just reuses whichever type/nullability the TRUE source column already has.
+            if (copiedByName is not null && copiedByName.TryGetValue(edge.FromColumnName, out var copyMapColumn))
+            {
+                var copiedExpr = TranslateCopyMap(copyMapColumn, edge.FromColumnName, lineage);
+                if (copiedExpr is NotTranslatable copiedGap) return copiedGap;
+
+                var copySourceEdge = lineage.Edges.FirstOrDefault(e => e.Kind == "CopyMap" && e.ToColumnName == edge.FromColumnName);
+                var copiedType = copySourceEdge is not null && columnTypes.TryGetValue(copySourceEdge.FromColumnRefId, out var copySourceCol)
+                    ? MapPipelineTypeToSsisType(copySourceCol.DataType)
+                    : null;
+                if (copiedType is null)
+                    return new NotTranslatable($"referenced column '{edge.FromColumnName}' (a Copy Column output) has unmapped pipeline data type");
+
+                var copiedIsNullable = nullableColumnNames?.Contains(copySourceEdge!.FromColumnName) ?? false;
+                references[edge.FromColumnName] = new ColumnReference(((TranslatedOk)copiedExpr).CSharpExpression, copiedType.Value, copiedIsNullable);
+                continue;
+            }
+
             if (!columnTypes.TryGetValue(edge.FromColumnRefId, out var producerColumn))
                 return new NotTranslatable($"referenced column '{edge.FromColumnName}' has no resolvable producer in this pipeline");
 
@@ -567,7 +942,7 @@ public static class TransformEmitter
                 return new NotTranslatable($"referenced column '{edge.FromColumnName}' has unmapped pipeline data type '{producerColumn.DataType}'");
 
             var isNullable = nullableColumnNames?.Contains(edge.FromColumnName) ?? false;
-            references[edge.FromColumnName] = new ColumnReference($"row.{edge.FromColumnName}", mapped.Value, isNullable);
+            references[edge.FromColumnName] = new ColumnReference($"row.{PackageGenerator.SanitizeIdentifier(edge.FromColumnName)}", mapped.Value, isNullable);
         }
 
         return ExpressionTranslator.TranslateColumn(ast, entityName, destinationColumnName, references);
@@ -591,7 +966,7 @@ public static class TransformEmitter
         if (edge is null)
             return new NotTranslatable($"Data Conversion column '{outputColumnName}' has no resolvable source column");
 
-        return WrapDataConversion(conversion, $"row.{edge.FromColumnName}");
+        return WrapDataConversion(conversion, $"row.{PackageGenerator.SanitizeIdentifier(edge.FromColumnName)}");
     }
 
     /// <summary>Same wrapping as <see cref="TranslateDataConversion(DataConversionColumnSpec,string,LineageSpec)"/>,
@@ -606,6 +981,27 @@ public static class TransformEmitter
     /// there is no need to re-derive it through the shared, name-only lineage edge search.</summary>
     internal static TranslatedExpression TranslateDataConversionFromRawExpression(DataConversionColumnSpec conversion, string rawColumnExpression) =>
         WrapDataConversion(conversion, rawColumnExpression);
+
+    /// <summary>
+    /// Resolves a Copy Column output column's own RAW source column (via the "CopyMap" lineage
+    /// edge <c>LineageBuilder</c> emits) and returns it as a PLAIN passthrough reference -- no
+    /// <c>SsisFn.*</c> wrapper at all, unlike <see cref="TranslateDataConversion(DataConversionColumnSpec,string,LineageSpec)"/>,
+    /// since a Copy Column component performs no conversion/cast whatsoever (the new column is
+    /// identically typed to its source, confirmed via a real object-model round trip -- see
+    /// <see cref="Ssis.Extract.Model.Pipeline.CopyMapPayload"/>'s own doc comment). Internal (not
+    /// private) so <c>RouterEmitter</c> can reuse it for a Conditional Split condition
+    /// referencing a Copy Column column -- same sharing precedent as
+    /// <see cref="TranslateDataConversion(DataConversionColumnSpec,string,LineageSpec)"/> itself.
+    /// </summary>
+    internal static TranslatedExpression TranslateCopyMap(
+        CopyMapColumnSpec copyMap, string outputColumnName, LineageSpec lineage)
+    {
+        var edge = lineage.Edges.FirstOrDefault(e => e.Kind == "CopyMap" && e.ToColumnName == outputColumnName);
+        if (edge is null)
+            return new NotTranslatable($"Copy Column column '{outputColumnName}' has no resolvable source column");
+
+        return new TranslatedOk($"row.{PackageGenerator.SanitizeIdentifier(edge.FromColumnName)}");
+    }
 
     private static TranslatedExpression WrapDataConversion(DataConversionColumnSpec conversion, string sourceRef) =>
         conversion.TargetDataType?.ToLowerInvariant() switch
@@ -625,9 +1021,19 @@ public static class TransformEmitter
             // source string TRUNCATES to fit under IgnoreFailure rather than nulling out, so the
             // helper needs the declared target width, not just the raw value. No declared Length
             // is a named gap, never a guessed default width.
-            "wstr" => conversion.Length is int maxLength
+            //
+            // DT_STR ("str", non-Unicode/ANSI) added 2026-09-18 closing an SCD gap
+            // (Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline's own dimcustomer.dtsx
+            // -- a "Copy of ssc" attribute column converting a wstr input to str) -- NOT
+            // independently re-measured via a fresh dtexec probe: this project's own
+            // SsisPipelineTypeMap/MapPipelineTypeToSsisType already treat "str" and "wstr"
+            // identically everywhere else (both resolve to a plain C# string; a Unicode-vs-ANSI
+            // codepage distinction has no observable effect once the value is a .NET string), so
+            // reusing DT_WSTR's already-measured truncate-not-null rule here is applying an
+            // existing, proven unification, not guessing at a new one.
+            "wstr" or "str" => conversion.Length is int maxLength
                 ? new TranslatedOk($"SsisFn.ToWstr({sourceRef}, {maxLength})")
-                : new NotTranslatable($"Data Conversion to DT_WSTR has no declared target width to truncate to"),
+                : new NotTranslatable($"Data Conversion to DT_WSTR/DT_STR has no declared target width to truncate to"),
             _ => new NotTranslatable($"Data Conversion to target type '{conversion.TargetDataType}' is not supported yet"),
         };
 
@@ -659,7 +1065,12 @@ public static class TransformEmitter
     private static bool IsRecognizedPassthroughComponent(PipelineComponentSpec component) =>
         RecognizedPassthroughComponentClassIds.Contains(component.ComponentClassId)
         || SourceInfo.IsSqlSource(component)
-        || component.AdoNetDestination is not null;
+        || component.AdoNetDestination is not null
+        // XML Source (Phase 5 of the unsupported-component-types plan) shares Script Component's
+        // own generic "Microsoft.ManagedComponentHost" ComponentClassId, so it can never be
+        // recognized by class id alone -- checked by payload presence instead, the same
+        // discrimination XmlSourcePayload's own doc comment establishes everywhere else.
+        || component.XmlSource is not null;
 
     /// <summary>Internal (not private) so PackageGenerator's ResolveNullableColumnNames can
     /// detect the same string(wstr)-source/int(i4)-destination passthrough mismatch BEFORE
@@ -700,12 +1111,15 @@ public static class TransformEmitter
         if (csharpExpression.Contains("SsisFn.NarrowNumericToI4(")) functionsUsed.Add("NarrowNumericToI4");
         if (csharpExpression.Contains("SsisFn.NarrowR4ToI4(")) functionsUsed.Add("NarrowR4ToI4");
         if (csharpExpression.Contains("SsisFn.ParseWstrToI4(")) functionsUsed.Add("ParseWstrToI4");
+        if (csharpExpression.Contains("SsisFn.WidenI4ToNumeric(")) functionsUsed.Add("WidenI4ToNumeric");
         if (csharpExpression.Contains("SsisFn.ToNullableR8(")) functionsUsed.Add("ToNullableR8");
         if (csharpExpression.Contains("SsisFn.ToNullableBool(")) functionsUsed.Add("ToNullableBool");
         if (csharpExpression.Contains("SsisFn.ToWstr(")) functionsUsed.Add("ToWstr");
         if (csharpExpression.Contains("SsisFn.ToNullableI2(")) functionsUsed.Add("ToNullableI2");
         if (csharpExpression.Contains("SsisFn.ToNullableI8(")) functionsUsed.Add("ToNullableI8");
         if (csharpExpression.Contains("SsisFn.ToNullableDateTime(")) functionsUsed.Add("ToNullableDateTime");
+        if (csharpExpression.Contains("SsisFn.DatePartMillisecond(")) functionsUsed.Add("DatePartMillisecond");
+        if (csharpExpression.Contains("SsisFn.DateAddMillisecond(")) functionsUsed.Add("DateAddMillisecond");
     }
 
     /// <summary>Same evidenced surface as SsisPipelineTypeMap, mapped into the expression

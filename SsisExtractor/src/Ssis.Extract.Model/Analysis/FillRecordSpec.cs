@@ -3,9 +3,9 @@ using System.Text.Json.Serialization;
 namespace Ssis.Extract.Model.Analysis;
 
 /// <summary>
-/// What happened to one seam (one <c>Fill_&lt;Column&gt;</c> method, or one Script Task's
-/// <c>RunScriptAsync</c>) found inside a Tier-2 fill file, recorded in <c>fills-applied.json</c>
-/// by <c>ssisx apply-fills</c>.
+/// What happened to one seam (a Script Component's own combined method, named after the
+/// component, or one Script Task's <c>RunScriptAsync</c>) found inside a Tier-2 fill file,
+/// recorded in <c>fills-applied.json</c> by <c>ssisx apply-fills</c>.
 ///
 /// Mirrors <see cref="GapDecisionStatus"/>'s own shape and reasoning, one tier over: a fill that
 /// LOOKS applied but was not checked against the evidence it was written for is exactly the
@@ -50,9 +50,9 @@ public sealed class FillRecordSpec
     public required string Package { get; init; }
     public required string FileName { get; init; }
 
-    /// <summary>The seam this record is about: a method name (<c>Fill_FullName</c>) or, for a
-    /// Script Task, <c>&lt;ClassName&gt;.RunScriptAsync</c> -- the same qualifier
-    /// <c>ApplyFillsCommand</c>'s own console report already uses.</summary>
+    /// <summary>The seam this record is about: a component's own combined method name
+    /// (<c>SCR_CleanseCustomerRow</c>) or, for a Script Task, <c>&lt;ClassName&gt;.RunScriptAsync</c>
+    /// -- the same qualifier <c>ApplyFillsCommand</c>'s own console report already uses.</summary>
     public required string Seam { get; init; }
 
     /// <summary>Null only for <see cref="FillStatus.Orphaned"/> -- there is no gap to point at.</summary>
@@ -79,8 +79,9 @@ public sealed class FillRecordSpec
     /// The gate-1 <c>ScriptCode</c> conformance <c>RuleId</c> this seam's own translation
     /// contributes to, when its gap kind carries one (<c>ScriptTask</c>/<c>ScriptComponentColumn</c>,
     /// via <c>GapSpec.EvidenceRefId</c> and <c>ConformanceRulesBuilder.ScriptCodeRuleId</c>). A
-    /// Script Component's several columns share one value here -- the underlying obligation is
-    /// "port the whole component", not one per column. Null for every other gap kind, and for an
+    /// Script Component's combined seam already answers every column it produces in one method, so
+    /// this value is set the moment that ONE seam is filled -- there is no partial-component case to
+    /// reconcile any more. Null for every other gap kind, and for an
     /// <see cref="FillStatus.Orphaned"/> seam (no gap, so no rule to point at).
     /// </summary>
     public string? ConformanceRuleId { get; init; }

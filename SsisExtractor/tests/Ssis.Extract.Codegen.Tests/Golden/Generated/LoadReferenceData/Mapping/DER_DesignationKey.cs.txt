@@ -1,0 +1,16 @@
+using Etl.Core.Abstractions;
+using Etl.Core.Ssis;
+using LoadReferenceData.Csv;
+using LoadReferenceData.Model;
+using LoadReferenceData.Ssis;
+
+namespace LoadReferenceData.Mapping;
+
+internal static class DER_DesignationKey
+{
+    // (DT_WSTR,25)(UPPER(DesignationCode) + "-" + (DT_WSTR,10)JobLevel)
+    public static string DesignationKey(DesignationCsvRow row, in RowContext ctx) => WidthGuard.Wstr($"{SsisFn.Upper(row.DesignationCode)}-{SsisFn.Str(row.JobLevel)}", 25, nameof(Designation.DesignationKey), ctx.RowNumber);
+
+    // GETUTCDATE()
+    public static DateTime LoadedAtUtc(DesignationCsvRow row, in RowContext ctx) => ctx.LoadedAtUtc;
+}

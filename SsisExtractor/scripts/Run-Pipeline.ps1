@@ -62,6 +62,18 @@
   Copilot-chat convention. Defaults to `<OutputPath>\fills`. This script only ever READS from
   here (via `ssisx apply-fills`); it never writes a fill itself.
 
+.PARAMETER Quiet
+  Redirect every step's own verbose console output (dotnet restore/build noise, ssisx/svk's own
+  per-package chatter, the full `dotnet test` transcript) to `<OutputPath>\pipeline-run.log`
+  instead of the console -- only the final compact summary (exit codes + gap counts by tier,
+  parsed from gaps.json, no extra file reads needed by a caller) prints to stdout. Use this when
+  an AGENT is the one invoking this script: an agent's tool call captures a command's ENTIRE
+  stdout as its own context regardless of what the agent is later told to "only read" -- a run
+  with 60+ gaps across dotnet restore/build/test can easily be tens of thousands of tokens of
+  console noise the agent never actually needed. A human running this interactively should omit
+  -Quiet and keep seeing live progress; overwritten each run (it's a log, not user data -- the
+  additive-only rule above still applies to -OutputPath/-FillsPath themselves).
+
 .EXAMPLE
   .\Run-Pipeline.ps1 -InputPath D:\Client\SSIS -OutputPath D:\Client\ssisx-out -Framework net10.0
 
@@ -83,7 +95,9 @@ param(
 
     [string] $EtlCorePath,
 
-    [string] $FillsPath
+    [string] $FillsPath,
+
+    [switch] $Quiet
 )
 
 # Deliberately NOT 'Stop': a native command's stderr (e.g. dotnet test's own [FAIL] lines
@@ -91,6 +105,7 @@ param(
 # into a terminating exception. Fatal checks below use Write-Error -ErrorAction Stop explicitly.
 $ErrorActionPreference = 'Continue'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$logFilePath = $null # set once $OutputPath is known, below
 
 function Resolve-Tool([string] $exeName, [string] $csprojRelative) {
     $exe = Join-Path $scriptDir $exeName
@@ -102,13 +117,30 @@ function Resolve-Tool([string] $exeName, [string] $csprojRelative) {
     return @{ Cmd = 'dotnet'; Args = @('run', '--project', $csproj, '-c', 'Release', '--') }
 }
 
+# Every "banner"/status line always goes to the console (cheap, a handful of lines total) --
+# only the potentially-huge output of an ACTUAL command (dotnet restore/build/test chatter,
+# ssisx/svk's own per-package lines) is redirected to the log file under -Quiet. This is what
+# keeps -Quiet's console output small without hiding what step failed or why.
+function Write-Banner([string] $text) {
+    if ($logFilePath) { Add-Content -Path $logFilePath -Value $text }
+    else { Write-Host $text }
+}
+
 function Invoke-Tool([hashtable] $tool, [string[]] $toolArgs) {
     # Piped through Write-Host so the external command's own stdout streams to the console in
     # real time WITHOUT entering this function's own output stream -- otherwise PowerShell
     # merges that stdout with the trailing `return $LASTEXITCODE` into one combined array,
-    # corrupting the exit code the caller captures.
+    # corrupting the exit code the caller captures. Under -Quiet, the same output is appended to
+    # the log file instead -- an agent's tool call otherwise captures ALL of this as its own
+    # context regardless of what it's later told to read, which is the real reason a mechanical,
+    # tool-only pipeline run can still cost tens of thousands of tokens per invocation.
     $allArgs = @($tool.Args) + $toolArgs
-    & $tool.Cmd @allArgs | ForEach-Object { Write-Host $_ }
+    if ($logFilePath) {
+        & $tool.Cmd @allArgs 2>&1 | ForEach-Object { Add-Content -Path $logFilePath -Value $_ }
+    }
+    else {
+        & $tool.Cmd @allArgs | ForEach-Object { Write-Host $_ }
+    }
     return $LASTEXITCODE
 }
 
@@ -124,6 +156,12 @@ foreach ($dir in @($OutputPath, $FillsPath)) {
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 }
 
+if ($Quiet) {
+    $logFilePath = Join-Path $OutputPath 'pipeline-run.log'
+    Set-Content -Path $logFilePath -Value "Run-Pipeline.ps1 log -- $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    Write-Host "Running quietly -- full step-by-step output is being written to $logFilePath. Only the final summary below prints here."
+}
+
 $ssisx = Resolve-Tool 'ssisx.exe' '..\src\Ssis.Extract.Cli\Ssis.Extract.Cli.csproj'
 $svk = Resolve-Tool 'svk.exe' '..\..\SsisValidationKit\src\SvkCli\SvkCli.csproj'
 
@@ -135,44 +173,79 @@ $svkOut = Join-Path $OutputPath 'svk'
 $genOut = Join-Path $OutputPath 'gen'
 $generateDir = Join-Path $genOut 'generate'
 
-Write-Host "==================================================================="
-Write-Host " Step 1/5 -- extract"
-Write-Host "==================================================================="
+Write-Banner "==================================================================="
+Write-Banner " Step 1/5 -- extract"
+Write-Banner "==================================================================="
 $extractExit = Invoke-Tool $ssisx (@('extract', '--input', $InputPath, '--out', $extractOut, '--recursive') + $packageArgs)
-if ($extractExit -ne 0) { Write-Error "ssisx extract failed with exit code $extractExit." -ErrorAction Stop }
+if ($extractExit -ne 0) {
+    # ssisx extract returns a non-zero exit whenever ANY load failure occurred, but
+    # load-failures.md's own Kind column distinguishes benign skips (duplicate-name --
+    # first package with a given ObjectName wins, the rest are just omitted from the report;
+    # package-not-found -- a --package filter miss) from a genuinely unreadable
+    # .dtsx/.dtproj/.ispac (Kind package/project/ispac, carrying the real exception message).
+    # Only the latter should abort the pipeline.
+    $loadFailuresPath = Join-Path $extractOut 'load-failures.md'
+    $benignKinds = @('duplicate-name', 'package-not-found')
+    $hardFailureRows = @()
+    if (Test-Path $loadFailuresPath) {
+        $rows = Get-Content $loadFailuresPath | Where-Object { $_ -match '^\|\s*(\S[^|]*?)\s*\|' -and $_ -notmatch '^\|\s*Kind\s*\|' -and $_ -notmatch '^\|\s*---' }
+        foreach ($row in $rows) {
+            if ($row -match '^\|\s*(?<kind>[^|]+?)\s*\|') {
+                $kind = $Matches['kind'].Trim()
+                if ($benignKinds -notcontains $kind) { $hardFailureRows += $row }
+            }
+        }
+    }
+    if ($hardFailureRows.Count -gt 0) {
+        Write-Error "ssisx extract failed with exit code $extractExit -- genuine load failure(s) in load-failures.md (not just duplicate-name/package-not-found skips):`n$($hardFailureRows -join "`n")" -ErrorAction Stop
+    }
+    elseif (Test-Path $loadFailuresPath) {
+        Write-Warning "ssisx extract exited $extractExit, but load-failures.md shows only benign duplicate-name/package-not-found skips -- continuing to Step 2 anyway. See $loadFailuresPath."
+    }
+    else {
+        # Non-zero exit with no load-failures.md at all is unexpected -- treat as fatal rather
+        # than silently continuing past an error this script doesn't understand.
+        Write-Error "ssisx extract failed with exit code $extractExit and no $loadFailuresPath was found to explain why." -ErrorAction Stop
+    }
+}
 
-Write-Host ""
-Write-Host "==================================================================="
-Write-Host " Step 2/5 -- svk walkthrough + sampledata (advisory, never blocks)"
-Write-Host "==================================================================="
+Write-Banner ""
+Write-Banner "==================================================================="
+Write-Banner " Step 2/5 -- svk walkthrough + sampledata (advisory, never blocks)"
+Write-Banner "==================================================================="
 $walkthroughExit = Invoke-Tool $svk (@('walkthrough', '--spec', $extractOut, '--out', $svkOut) + $packageArgs)
 if ($walkthroughExit -ne 0) { Write-Warning "svk walkthrough exited $walkthroughExit -- continuing to Step 3 anyway (advisory only)." }
 $sampledataExit = Invoke-Tool $svk (@('sampledata', '--spec', $extractOut, '--out', $svkOut) + $packageArgs)
 if ($sampledataExit -ne 0) { Write-Warning "svk sampledata exited $sampledataExit -- continuing to Step 3 anyway (advisory only)." }
 
-Write-Host ""
-Write-Host "==================================================================="
-Write-Host " Step 3/5 -- generate (framework: $Framework)"
-Write-Host "==================================================================="
+Write-Banner ""
+Write-Banner "==================================================================="
+Write-Banner " Step 3/5 -- generate (framework: $Framework)"
+Write-Banner "==================================================================="
 $generateExit = Invoke-Tool $ssisx (@('generate', '--input', $InputPath, '--out', $genOut, '--recursive', '--etl-core', $EtlCorePath, '--framework', $Framework, '--fills', $FillsPath) + $packageArgs)
 if ($generateExit -ne 0 -and $generateExit -ne 3) { Write-Error "ssisx generate failed with exit code $generateExit." -ErrorAction Stop }
 if ($generateExit -eq 3) { Write-Warning "generate reported blocking gaps -- see $genOut\generate-report.md. Steps 4/5 still run against whatever DID generate." }
 if (-not (Test-Path $generateDir)) { Write-Error "generate produced no output at $generateDir." -ErrorAction Stop }
 
-Write-Host ""
-Write-Host "==================================================================="
-Write-Host " Step 4/5 -- apply-fills (from $FillsPath)"
-Write-Host "==================================================================="
+Write-Banner ""
+Write-Banner "==================================================================="
+Write-Banner " Step 4/5 -- apply-fills (from $FillsPath)"
+Write-Banner "==================================================================="
 $applyFillsExit = Invoke-Tool $ssisx @('apply-fills', '--out', $genOut, '--fills', $FillsPath)
 if ($applyFillsExit -eq 3) { Write-Warning "apply-fills: some seams remain unfilled -- the build below will show CS8795 for each. Not a script failure." }
 elseif ($applyFillsExit -ne 0) { Write-Warning "apply-fills exited $applyFillsExit -- see output above." }
 
-Write-Host ""
-Write-Host "==================================================================="
-Write-Host " Step 5/5 -- build + test + coverage"
-Write-Host "==================================================================="
+Write-Banner ""
+Write-Banner "==================================================================="
+Write-Banner " Step 5/5 -- build + test + coverage"
+Write-Banner "==================================================================="
 $slnx = Join-Path $generateDir 'Generated.slnx'
-& dotnet build $slnx -c Release
+if ($logFilePath) {
+    & dotnet build $slnx -c Release *>&1 | ForEach-Object { Add-Content -Path $logFilePath -Value $_ }
+}
+else {
+    & dotnet build $slnx -c Release
+}
 $buildExit = $LASTEXITCODE
 if ($buildExit -ne 0) {
     Write-Warning "Build failed (exit $buildExit) -- likely unfilled Tier-1/2 seams (CS8795). Coverage step below only covers whatever DID build."
@@ -181,22 +254,44 @@ if ($buildExit -ne 0) {
 $coverageScript = Join-Path $scriptDir 'Run-Coverage.ps1'
 $coverageArgs = @{ GeneratedRoot = $generateDir }
 if ($Package) { $coverageArgs['Package'] = $Package }
-& $coverageScript @coverageArgs
+if ($logFilePath) {
+    & $coverageScript @coverageArgs *>&1 | ForEach-Object { Add-Content -Path $logFilePath -Value $_ }
+}
+else {
+    & $coverageScript @coverageArgs
+}
 $coverageExit = $LASTEXITCODE
 
-Write-Host ""
-Write-Host "==================================================================="
-Write-Host " Pipeline summary"
-Write-Host "==================================================================="
+Write-Banner ""
+Write-Banner "==================================================================="
+Write-Banner " Pipeline summary"
+Write-Banner "==================================================================="
 Write-Host "  1. extract      : exit $extractExit"
 Write-Host "  2. walkthrough  : exit $walkthroughExit (advisory)"
 Write-Host "     sampledata   : exit $sampledataExit (advisory)"
 Write-Host "  3. generate     : exit $generateExit $(if ($generateExit -eq 3) {'(gaps reported -- see generate-report.md)'})"
 Write-Host "  4. apply-fills  : exit $applyFillsExit $(if ($applyFillsExit -eq 3) {'(seams still open)'})"
 Write-Host "  5. build        : exit $buildExit"
-Write-Host "     test+coverage: exit $coverageExit -- see $generateDir\coverage-report.md"
+Write-Host "     test+coverage: exit $coverageExit $(if ($coverageExit -eq 2) {'(no test projects -- 0 packages fully generated)'}) -- see $generateDir\coverage-report.md"
+
+# Gap counts by tier, parsed once here from gaps.json -- so a caller (especially an agent) never
+# needs a SEPARATE Read of that file just to get this number. MissingDatum/MissingLogic are the
+# only tiers a fill can ever close; MissingToolSupport/Advisory are informational.
+$gapsJsonPath = Join-Path $genOut 'gaps.json'
+if (Test-Path $gapsJsonPath) {
+    try {
+        $gaps = Get-Content $gapsJsonPath -Raw | ConvertFrom-Json
+        $byTier = $gaps | Group-Object Tier | Sort-Object Name
+        Write-Host "  gaps by tier  : $(($byTier | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ', ') (total $($gaps.Count))"
+    }
+    catch {
+        Write-Warning "Could not parse $gapsJsonPath for a gap-tier summary: $_"
+    }
+}
+
 Write-Host ""
 Write-Host "Nothing under -OutputPath/-FillsPath was deleted by this run -- re-run freely."
+if ($logFilePath) { Write-Host "Full step-by-step output for this run: $logFilePath" }
 
 if ($buildExit -ne 0) { exit $buildExit }
 exit $coverageExit

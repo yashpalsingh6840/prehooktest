@@ -80,7 +80,7 @@ internal static class Program
     {
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|data-conversion-types2|lookup-single|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources|union-plus-extra-source|aggregate-then-oledb-command]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|int-numeric-widen|data-conversion-types2|lookup-single|lookup-no-match-is-live|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources|union-plus-extra-source|aggregate-then-oledb-command|event-handler-probe|error-redirect|expression-task|expression-task-coercion-probe|expression-task-millisecond|for-loop|xml-source|scd-composite-key|cross-database-source|identifier-sanitization]");
             return 2;
         }
 
@@ -96,6 +96,14 @@ internal static class Program
         if (fixtureName == "lookup-single")
         {
             return BuildLookupSingleFixture(args[0]);
+        }
+        if (fixtureName == "lookup-no-match-is-live")
+        {
+            return BuildLookupNoMatchIsLiveFixture(args[0]);
+        }
+        if (fixtureName == "cross-database-source")
+        {
+            return BuildCrossDatabaseSourceFixture(args[0]);
         }
         if (fixtureName == "oledb-source-transform")
         {
@@ -137,6 +145,10 @@ internal static class Program
         {
             return BuildDataConversionFixture(args[0]);
         }
+        if (fixtureName == "copy-map")
+        {
+            return BuildCopyMapFixture(args[0]);
+        }
         if (fixtureName == "data-conversion-split")
         {
             return BuildDataConversionSplitFixture(args[0]);
@@ -169,6 +181,10 @@ internal static class Program
         {
             return BuildForEachDataFlowLoopFixture(args[0]);
         }
+        if (fixtureName == "for-loop")
+        {
+            return BuildForLoopFixture(args[0]);
+        }
         if (fixtureName == "aggregate")
         {
             return BuildAggregateFixture(args[0]);
@@ -180,6 +196,10 @@ internal static class Program
         if (fixtureName == "int-numeric-coercion")
         {
             return BuildIntNumericCoercionFixture(args[0]);
+        }
+        if (fixtureName == "int-numeric-widen")
+        {
+            return BuildIntNumericWidenFixture(args[0]);
         }
         if (fixtureName == "data-conversion-types2")
         {
@@ -293,9 +313,73 @@ internal static class Program
         {
             return BuildEventHandlerProbeFixture(args[0]);
         }
+        if (fixtureName == "error-redirect")
+        {
+            return BuildErrorRedirectFixture(args[0]);
+        }
+        if (fixtureName == "expression-task")
+        {
+            return BuildExpressionTaskFixture(args[0]);
+        }
+        if (fixtureName == "expression-task-coercion-probe")
+        {
+            return BuildExpressionTaskCoercionProbeFixture(args[0]);
+        }
+        if (fixtureName == "expression-task-millisecond")
+        {
+            return BuildExpressionTaskMillisecondFixture(args[0]);
+        }
+        if (fixtureName == "pct-sampling-probe")
+        {
+            return ProbePctSampling();
+        }
+        if (fixtureName == "xml-source-probe")
+        {
+            return ProbeXmlSource(@"D:\tmp\xmlprobe2\probe.xml", @"D:\tmp\xmlprobe2\probe.xsd");
+        }
+        if (fixtureName == "xml-source")
+        {
+            return BuildXmlSourceFixture(args[0]);
+        }
+        if (fixtureName == "pct-sampling")
+        {
+            return BuildPctSamplingFixture(args[0]);
+        }
+        if (fixtureName == "scd-probe")
+        {
+            return ProbeScd();
+        }
+        if (fixtureName == "scd-probe-fixture")
+        {
+            return BuildScdFixture(args[0]);
+        }
+        if (fixtureName == "scd-probe-fixture-failfixed")
+        {
+            return BuildScdFixture(args[0], failOnFixedAttributeChange: true, packageName: "SyntheticScdProbeFailFixed");
+        }
+        if (fixtureName == "scd-probe-fixture-updatehistory")
+        {
+            return BuildScdFixture(args[0], packageName: "SyntheticScdProbeUpdateHistory", updateChangingAttributeHistory: true);
+        }
+        if (fixtureName == "scd")
+        {
+            return BuildScdRealShapeFixture(args[0]);
+        }
+        if (fixtureName == "scd-composite-key")
+        {
+            return BuildScdCompositeKeyFixture(args[0]);
+        }
+        if (fixtureName == "scd-data-conversion-attribute")
+        {
+            return BuildScdDataConversionAttributeFixture(args[0]);
+        }
+        if (fixtureName == "identifier-sanitization")
+        {
+            return BuildIdentifierSanitizationFixture(args[0]);
+        }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', 'union-plus-extra-source', 'aggregate-then-oledb-command', or 'event-handler-probe'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'int-numeric-widen', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', 'union-plus-extra-source', 'aggregate-then-oledb-command', 'event-handler-probe', 'error-redirect', 'expression-task', 'expression-task-coercion-probe', 'expression-task-millisecond', 'pct-sampling', or 'xml-source'.");
 
             return 2;
         }
@@ -580,6 +664,67 @@ internal static class Program
     }
 
     /// <summary>
+    /// Phase 5 of the gap-audit plan (concurrent-whistling-turing.md, 2026-09-17): a genuine
+    /// cross-database Data Flow -- an OLE DB Source whose OWN connection manager
+    /// (<c>CM_SourceSecondDb</c>) resolves to <c>SsisPoC_Secondary</c>, a DIFFERENT database on
+    /// the same <c>.\SQLFORPOC_2022</c> instance than the flow's own destination
+    /// (<c>CM_Sql</c>, <c>SsisPoC</c>) -- reproducing the real evidenced shape found across
+    /// three GitHub portfolios (<c>dimcustomer</c>, <c>fact_sales</c>, and all 13 of
+    /// <c>DailyETLMain</c>'s own "Extract ... to Staging" flows: a source's own connection
+    /// manager pointing at one database while the flow's destination lives in another).
+    ///
+    /// Unlike <see cref="BuildSecondConnectionSqlFixture"/> (a SECOND, unrelated Execute SQL
+    /// Task writing to a different database -- the write-side case this feature's own
+    /// SecondaryConnections mechanism was originally built for), this fixture exercises the
+    /// READ side: <c>Etl.Core.Data.SqlRowSource{TRow}</c> already opens its own independent
+    /// connection regardless of database (see that type's own doc comment), so the only new
+    /// codegen needed was resolving the CONNECTION STRING for that independent connection from
+    /// <c>SecondaryConnections:{name}</c> config instead of the package's primary
+    /// <c>Db()</c> -- see <see cref="Ssis.Extract.Codegen.SqlFlowSource"/>'s own doc comment.
+    ///
+    /// A Derived Column sits between source and destination (not a direct copy) purely to avoid
+    /// tripping the unrelated, pre-existing "no Derived Column found -> direct-copy pipeline is
+    /// not generated" gate for a SQL destination -- the same reason every other single-source-SQL
+    /// fixture in this file (<see cref="BuildOleDbSourceTransformFixture"/>, etc.) already
+    /// includes one; it proves nothing about the cross-database feature itself.
+    /// </summary>
+    private static int BuildCrossDatabaseSourceFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticCrossDatabaseSource" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var secondDbCm = pkg.Connections.Add("OLEDB");
+        secondDbCm.Name = "CM_SourceSecondDb";
+        secondDbCm.ConnectionString = SecondarySqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", secondDbCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, Name FROM dbo.SyntheticCrossDatabaseSourceInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnLoadedAtUtc(pipe, mainOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticCrossDatabaseSourceTarget]");
+        AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
     /// OLE DB Source (SqlCommand mode, AccessMode=2) -> Derived Column (LoadedAtUtc &lt;-
     /// GETUTCDATE()) -> OLE DB Destination. Built specifically to prove ssisx generate's OLE
     /// DB Source support reaches a real, compiling, RUNNABLE Program.cs -- unlike
@@ -673,6 +818,206 @@ internal static class Program
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         Console.WriteLine($"wrote {outputPath}");
         return 0;
+    }
+
+    /// <summary>
+    /// Phase 3 of the gap-audit plan (concurrent-whistling-turing.md, 2026-09-16): the "no-match is
+    /// the live route" Lookup shape -- the classic "insert-if-new" dimension load pattern, confirmed
+    /// real from two real GitHub portfolio packages read directly (<c>author_dim.dtsx</c>/
+    /// <c>address_dim.dtsx</c>, both identical in shape): <c>Lookup Match Output</c> is left
+    /// COMPLETELY UNROUTED (a match means "already loaded, skip it"); <c>Lookup No Match Output</c>
+    /// is the one output wired straight to the destination (a miss means "this row needs to be
+    /// inserted"). The mirror image of <c>BuildLookupSingleFixture</c>'s own shape (Match routed,
+    /// No-Match left alone).
+    ///
+    /// <para>OLE DB Source (ID, Name) -> Lookup (full cache, NoMatchBehavior=1/REDIRECT, joining on
+    /// Name -> ExistingName, no reference columns copied -- a miss has no reference row to copy
+    /// from) -> No-Match Output -> OLE DB Destination. Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-lookup-no-match-is-live-tables.sql</c>.</para>
+    /// </summary>
+    private static int BuildLookupNoMatchIsLiveFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticLookupNoMatchIsLive" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_InsertIfNew";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, Name FROM dbo.SyntheticLookupNoMatchIsLiveSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        // --- the Lookup itself, NoMatchBehavior=1 (redirect, not fail) ---
+        var lookupMeta = pipe.ComponentMetaDataCollection.New();
+        lookupMeta.ComponentClassID = "Microsoft.Lookup";
+        var lookupInst = lookupMeta.Instantiate();
+        lookupInst.ProvideComponentProperties();
+        lookupMeta.Name = "LKP_ExistingNames";
+
+        var lookupConn = lookupMeta.RuntimeConnectionCollection[0];
+        lookupConn.ConnectionManagerID = sqlCm.ID;
+        lookupConn.ConnectionManager = DtsConvert.GetExtendedInterface(sqlCm);
+
+        lookupInst.SetComponentProperty("CacheType", 0);        // full cache
+        lookupInst.SetComponentProperty("NoMatchBehavior", 1);  // redirect to no-match output
+        lookupInst.SetComponentProperty("SqlCommand",
+            "SELECT ExistingName FROM dbo.SyntheticLookupNoMatchIsLiveReference");
+
+        AttachPath(pipe, srcOutput, lookupMeta.InputCollection[0]);
+        lookupInst.AcquireConnections(null);
+        lookupInst.ReinitializeMetaData();
+        lookupInst.ReleaseConnections();
+
+        var lookupInput = lookupMeta.InputCollection[0];
+        var virtualInput = lookupInput.GetVirtualInput();
+        var virtualName = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>()
+            .First(c => c.Name == "Name");
+        var mappedName = lookupInst.SetUsageType(
+            lookupInput.ID, virtualInput, virtualName.LineageID, DTSUsageType.UT_READONLY);
+        lookupInst.SetInputColumnProperty(lookupInput.ID, mappedName.ID, "JoinToReferenceColumn", "ExistingName");
+
+        // Match output left COMPLETELY UNROUTED -- no AttachPath call at all, matching the real
+        // evidenced shape exactly (never even a dead-end RowCount).
+        var noMatchOutput = lookupMeta.OutputCollection.Cast<IDTSOutput100>().First(o => o.Name == "Lookup No Match Output");
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticLookupNoMatchIsLiveTarget]");
+        AttachPath(pipe, noMatchOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source -> OLE DB Destination (ErrorRowDisposition=RedirectRow, fast load) -> (error
+    /// output) -> a SECOND OLE DB Destination, reproducing RBC_Demo_ETL's own real
+    /// DFT_LoadCustomers shape (OLEDST_StagingCustomers -> OLEDST_StagingErrors), which
+    /// ssisx generate silently dropped -- see CLAUDE.md's own account. Two real object-model facts
+    /// nailed down building this, neither guessed: <c>IDTSInput100.ErrorRowDisposition</c>/
+    /// <c>.TruncationRowDisposition</c>/<c>.ErrorOrTruncationOperation</c> are ordinary settable
+    /// properties on the INPUT itself (a WHOLE-ROW disposition, distinct from
+    /// <c>IDTSOutputColumn100.ErrorRowDisposition</c>'s own per-COLUMN disposition already used
+    /// elsewhere in this file for Data Conversion) -- confirmed via reflection before use, same
+    /// discipline as every other property in this file; and the error output is SYNCHRONOUS
+    /// (<c>synchronousInputId</c> points back at the primary destination's own input), so every
+    /// column already in the buffer at that point (Code/Name) is visible downstream through it via
+    /// its OWN original lineage id, with only ErrorCode/ErrorColumn genuinely new to this output --
+    /// exactly the same "synchronous transform never re-emits an untouched column" shape this
+    /// project's own LineageBuilder note already established for Derived Column.
+    ///
+    /// The second destination's own real target table (SyntheticErrorRedirectErrors) deliberately
+    /// leaves ErrorRowID (identity PK) and FailedAt (DB-side default) UNMAPPED -- matching the real
+    /// OLEDST_StagingErrors shape exactly, and specifically exercising EntityEmitter's new
+    /// extraProperties parameter (FailedAt has no pipeline-derived value at all). The generic
+    /// ResolveOleDbMetadata helper can't be reused as-is for it: it throws if ANY external column
+    /// has no matching upstream column, so this fixture resolves the error destination manually.
+    ///
+    /// The target table carries a UNIQUE constraint on Code, and the seed data
+    /// (synthetic-error-redirect-tables.sql) deliberately has two rows sharing the same Code --
+    /// the second one fails to insert with a genuine duplicate-key violation (errorOrTruncationOperation
+    /// ="Insert", not a truncation), the cleanest, most unambiguous way to exercise
+    /// ErrorRowDisposition=RedirectRow for real via dtexec.
+    /// </summary>
+    private static int BuildErrorRedirectFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticErrorRedirect" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_LoadWithErrorRedirect";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, Code, Name FROM dbo.SyntheticErrorRedirectSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        // --- primary destination, ErrorRowDisposition=RedirectRow ---
+        var primaryMeta = AddOleDbComponent(pipe, "OLEDST_Target", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticErrorRedirectTarget]");
+        AttachPath(pipe, srcOutput, primaryMeta.InputCollection[0]);
+        ResolveOleDbMetadata(primaryMeta, isDestination: true);
+
+        // FastLoadMaxInsertCommitSize=1 -- measured, not assumed, to matter: the real
+        // OLEDST_StagingCustomers leaves this at its schema default (2147483647, one commit for
+        // the whole load), and a first dtexec run against THAT default redirected ALL FOUR seeded
+        // rows (the target table ended up empty) the moment ONE of them violated the unique
+        // constraint -- documented SSIS fast-load behavior: a commit-sized batch fails and
+        // redirects as one atomic unit, so any bad row takes every good row in its own batch down
+        // with it. The only way real SSIS gets precise per-row isolation is exactly this setting
+        // (forcing a commit, and therefore a redirect decision, after every single row) -- which is
+        // what this fixture measures as its own real ground truth, since RedirectingSqlSink's own
+        // row-by-row design gives that same precision UNCONDITIONALLY (a deliberate improvement
+        // over the batch-wide default, not an approximation of it).
+        var primaryInst = primaryMeta.Instantiate();
+        primaryInst.SetComponentProperty("FastLoadMaxInsertCommitSize", 1);
+
+        var primaryInput = primaryMeta.InputCollection[0];
+        primaryInput.ErrorOrTruncationOperation = "Insert";
+        primaryInput.ErrorRowDisposition = DTSRowDisposition.RD_RedirectRow;
+
+        var errorOutput = primaryMeta.OutputCollection.Cast<IDTSOutput100>().First(o => o.IsErrorOut);
+
+        // --- error destination, mapped by hand (ErrorRowID/FailedAt deliberately left unmapped) ---
+        var errorMeta = AddOleDbComponent(pipe, "OLEDST_Errors", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticErrorRedirectErrors]");
+        AttachPath(pipe, errorOutput, errorMeta.InputCollection[0]);
+        ResolveErrorRedirectDestination(errorMeta, unmappedExternalColumns: ["ErrorRowID", "FailedAt"]);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>Same shape as ResolveOleDbMetadata's own destination branch, except an external
+    /// column named in <paramref name="unmappedExternalColumns"/> is deliberately left unmapped
+    /// (no matching upstream column exists for it -- it's populated some other way: an identity PK,
+    /// a DB-side default) instead of throwing.</summary>
+    private static void ResolveErrorRedirectDestination(IDTSComponentMetaData100 meta, HashSet<string> unmappedExternalColumns)
+    {
+        var inst = meta.Instantiate();
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        var externalNames = new HashSet<string>(
+            input.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>().Select(e => e.Name));
+
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            if (!externalNames.Contains(vcol.Name) || unmappedExternalColumns.Contains(vcol.Name)) continue;
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        foreach (IDTSExternalMetadataColumn100 ext in input.ExternalMetadataColumnCollection)
+        {
+            if (unmappedExternalColumns.Contains(ext.Name)) continue;
+
+            var match = input.InputColumnCollection.Cast<IDTSInputColumn100>().FirstOrDefault(c => c.Name == ext.Name);
+            if (match is null)
+            {
+                throw new InvalidOperationException($"fixture build error: no upstream column named '{ext.Name}' to map onto destination '{meta.Name}' -- source and destination column names must match exactly for this builder's simple by-name mapping.");
+            }
+            inst.MapInputColumn(input.ID, match.ID, ext.ID);
+        }
     }
 
     /// <summary>
@@ -1093,6 +1438,53 @@ internal static class Program
 
         var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
             accessMode: 3, openRowset: "[dbo].[SyntheticOleDbSourceTarget]");
+        AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand) -&gt; Derived Column (LoadedAtUtc &lt;- GETUTCDATE()) -&gt; OLE DB
+    /// Destination -- byte-for-byte the same shape as <see cref="BuildOleDbSourceTransformFixture"/>,
+    /// built 2026-09-18 specifically to prove the identifier-sanitization fix end to end: the
+    /// SOURCE SELECT's own column ("Last Cost Price", a real WWI-schema-style name with a
+    /// literal space, matching the real sql-server-samples/wwi-ssis/DailyETLMain.dtsx package's
+    /// own real "WWI Stock Item ID"/"Last Cost Price" columns exactly) and the DESTINATION
+    /// table's matching column both carry the space verbatim -- see
+    /// <c>synthetic-identifier-sanitization-tables.sql</c> for the exact schema. Before the fix
+    /// this shape produced raw C# identifiers containing a literal space (a hard CS1002/CS1003
+    /// parse failure); this fixture is what actually exercises SqlRowEmitter/SqlRowReaderEmitter/
+    /// EntityEmitter/DbContextEmitter/TransformEmitter's own sanitized-identifier path together,
+    /// end to end, since neither PoC package nor any prior fixture in this file has a
+    /// space-containing column name.
+    /// </summary>
+    private static int BuildIdentifierSanitizationFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticIdentifierSanitization" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT ID, [Last Cost Price] FROM dbo.SyntheticIdentifierSanitizationInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnLoadedAtUtc(pipe, mainOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticIdentifierSanitizationTarget]");
         AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
         ResolveOleDbMetadata(destMeta, isDestination: true);
 
@@ -1587,6 +1979,109 @@ internal static class Program
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         Console.WriteLine($"wrote {outputPath}");
         return 0;
+    }
+
+    /// <summary>
+    /// OLE DB Source (SqlCommand: ID, FullName) -> Copy Column (FullName -> FullNameCopy, a
+    /// pure duplicate, same type/length -- Phase 1 of the unsupported-component-types plan) ->
+    /// OLE DB Destination. Proves Microsoft.CopyMap end to end: the original FullName column
+    /// stays an untouched passthrough (resolved by LineageBuilder the same way any other
+    /// synchronous transform's untouched columns already are) while FullNameCopy is a brand new,
+    /// identically-typed column resolved via the "CopyMap" lineage edge/TranslateCopyMap.
+    ///
+    /// <para><b>Real object-model facts nailed down building this, none guessed</b> (a live probe
+    /// was run first, see <see cref="CopyMapPayload"/>'s own doc comment for the full account):
+    /// the copied column is created via the SAME <c>InsertOutputColumnAt</c> mechanism Data
+    /// Conversion uses, but the custom property that drives type derivation is
+    /// <c>copyColumnId</c> (lowercase, this component's own distinct name) -- NOT
+    /// <c>SourceInputColumnLineageID</c> -- and <c>SetOutputColumnDataTypeProperties</c> throws
+    /// <c>COMException 0xC020401A</c> here (the type is derived automatically from the source,
+    /// like Aggregate/Lookup, not settable directly like Data Conversion's own target type).
+    /// The source column must be marked <c>UT_READONLY</c> (not left <c>UT_IGNORED</c>) before
+    /// <c>InsertOutputColumnAt</c>+<c>copyColumnId</c> will resolve the type -- confirmed by a
+    /// live probe that failed with the SAME 0xC020401A when this step was skipped.</para>
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-copy-map-tables.sql</c> already created and
+    /// seeded on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>. Lives under
+    /// tests/Ssis.Extract.Tests/Fixtures/ (test-tier, not SSDT-registered), same as
+    /// SyntheticDataConversion.dtsx.
+    /// </summary>
+    private static int BuildCopyMapFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticCopyMap" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_CopyMapDemo";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, FullName FROM dbo.SyntheticCopyMapInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        var copyMeta = BuildCopyMap(pipe, srcOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticCopyMapTarget]");
+        AttachPath(pipe, copyMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    private static IDTSComponentMetaData100 BuildCopyMap(MainPipe pipe, IDTSOutput100 upstreamOutput)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.CopyMap";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties(); // resets Name -- must set Name after this, see AddOleDbComponent's comment
+        meta.Name = "CPY_FullName";
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        var output = meta.OutputCollection[0];
+
+        AddCopiedColumn(meta, inst, input, virtualInput, output, "FullName", "FullNameCopy");
+
+        return meta;
+    }
+
+    /// <summary>
+    /// Marks the SOURCE column UT_READONLY (read, not modified -- it stays an untouched
+    /// passthrough for anything downstream) and adds ONE new copied output column via
+    /// InsertOutputColumnAt, pointed back at its source via the copyColumnId custom property --
+    /// see BuildCopyMapFixture's own doc comment for why this is the real mechanism (and why it
+    /// differs from Data Conversion's own SourceInputColumnLineageID property name / explicit
+    /// SetOutputColumnDataTypeProperties call, which this component's type-derivation rejects).
+    /// </summary>
+    private static void AddCopiedColumn(
+        IDTSComponentMetaData100 meta, IDTSDesigntimeComponent100 inst,
+        IDTSInput100 input, IDTSVirtualInput100 virtualInput, IDTSOutput100 output,
+        string sourceColumnName, string outputColumnName)
+    {
+        var vcol = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>()
+            .First(v => v.Name == sourceColumnName);
+        inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+
+        var newCol = inst.InsertOutputColumnAt(output.ID, 0, outputColumnName, "");
+        // NOT SetOutputColumnDataTypeProperties -- this component derives the copied column's
+        // type/length/precision/scale automatically from copyColumnId, throwing
+        // COMException 0xC020401A if called explicitly (confirmed via a live probe).
+        inst.SetOutputColumnProperty(output.ID, newCol.ID, "copyColumnId", vcol.LineageID);
     }
 
     private static IDTSComponentMetaData100 BuildDataConversion(MainPipe pipe, IDTSOutput100 upstreamOutput)
@@ -3285,6 +3780,50 @@ internal static class Program
         return 0;
     }
 
+    /// <summary>
+    /// OLE DB Source (SqlCommand, an int "Val" column) -> OLE DB Destination (a decimal(18,2)
+    /// "Val" column), a plain passthrough with NO Data Conversion and NO Derived Column in
+    /// between -- reproduces, in isolation, the exact real shape sql-server-samples' own
+    /// DailyETLMain.dtsx has (StockHolding_Staging's own "Last Cost Price": buffered i4 from a
+    /// SqlCommand's own `int` result-set column, decimal(18,2) at the real destination table).
+    /// Added 2026-09-18. Unlike every other numeric-coercion fixture in this file, this one is
+    /// NOT a dtexec probe -- int -> decimal is a strictly widening, lossless C#-native implicit
+    /// conversion, so there is no rounding/truncation/overflow rule to measure; this fixture
+    /// exists purely to prove the generated C# round-trips the value exactly.
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-int-numeric-widen-tables.sql</c> already
+    /// created on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    private static int BuildIntNumericWidenFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticIntNumericWiden" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Coerce";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Val FROM dbo.SyntheticIntNumericWidenInput");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticIntNumericWidenTarget]");
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
     private static int BuildForEachDataFlowLoopFixture(string outputPath)
     {
         var filesDir = Path.Combine(TestFixturesDir(), "synthetic-foreach-data-flow-loop-files");
@@ -3370,6 +3909,129 @@ internal static class Program
 
         var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
             accessMode: 3, openRowset: "[dbo].[SyntheticForEachDataFlowLoopTarget]");
+        AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// <c>STOCK:FORLOOP</c> (For Loop Container) whose body is a single Data Flow Task -- Phase 3
+    /// of the unsupported-component-types plan. Confirmed real shape (not synthesized first) from
+    /// a genuine SSDT-authored package: <c>D:\PoC\SSIS_Packages_From_GitHub\ETL-SSIS-Real-Scenarios\
+    /// UseCase_34\Integration Services Project1\Integration Services Project1\Package.dtsx</c>
+    /// ("For Loop Container"), whose own <c>InitExpression</c>/<c>EvalExpression</c>/
+    /// <c>AssignExpression</c> use a BARE <c>@Name</c> variable-reference form (see
+    /// <c>Ssis.Extract.Model.Package.ForLoopPayload</c>'s own doc comment) -- reproduced here
+    /// verbatim (<c>@Part = 1</c> / <c>@Part &lt; 4</c> / <c>@Part = @Part + 1</c>, a small,
+    /// deliberately verifiable 3-iteration range rather than the real package's own 1..10).
+    ///
+    /// Confirmed via <c>[Microsoft.SqlServer.Dts.Runtime.ForLoop].GetProperties()</c> before
+    /// writing this method (same "ask the runtime, don't guess" discipline as trap 12): unlike
+    /// <c>STOCK:FOREACHLOOP</c> (a raw, untyped <c>ForEachEnumeratorHost</c> COM object with no
+    /// strongly-typed wrapper), <c>Microsoft.SqlServer.Dts.Runtime.ForLoop</c> has ordinary,
+    /// strongly-typed <c>InitExpression</c>/<c>EvalExpression</c>/<c>AssignExpression</c> string
+    /// properties -- no reflection/dynamic-property indirection needed at all.
+    ///
+    /// The loop body's own Flat File Source connection manager has its <c>ConnectionString</c>
+    /// PropertyExpression reference the loop's own counter DIRECTLY (the standard <c>@[User::Part]</c>
+    /// form -- <see cref="Ssis.Extract.Codegen.ForEachLoopEmitter"/> is what actually translates
+    /// this expression, reused unchanged from the ForEach-Loop-over-a-Data-Flow-Task round, and it
+    /// only lexes the standard <c>@[Namespace::Name]</c> form; it has nothing to do with the For
+    /// Loop container's OWN bare-@ Init/Eval/Assign attributes, a completely separate expression
+    /// surface), string-concatenated with literal path segments -- deliberately with NO
+    /// <c>(DT_WSTR,n)</c> cast (real SSIS would need one for its own runtime type-coercion rules,
+    /// but <c>ForEachLoopEmitter</c>'s own translator does not model a <c>Cast</c> node at all, and
+    /// nothing here needs real dtexec verification of the SOURCE package itself -- only of the
+    /// GENERATED C#, which is verified separately, end to end, against a live database). Three
+    /// real, pre-seeded per-iteration CSV files (<c>synthetic-for-loop-files/part-{1,2,3}.csv</c>,
+    /// each with distinct content) are what actually prove row CONTENT, not just row count, ties to
+    /// the correct counter value each iteration.
+    ///
+    /// Requires the backing table from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-for-loop-tables.sql</c> already created on
+    /// <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>, and the three <c>.csv</c> files under
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-for-loop-files/</c> present on disk.
+    /// </summary>
+    private static int BuildForLoopFixture(string outputPath)
+    {
+        var filesDir = Path.Combine(TestFixturesDir(), "synthetic-for-loop-files");
+        if (!Directory.Exists(filesDir) || Directory.GetFiles(filesDir, "*.csv").Length == 0)
+        {
+            Console.Error.WriteLine($"error: expected .csv sample files at {filesDir} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticForLoop" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        // Int32, design-time default 0 -- matches PackagePlanner.MapVariantType's own "Int32"
+        // parsing (long.TryParse against the design-time default text).
+        pkg.Variables.Add("Part", false, "User", 0);
+
+        var forLoopExec = pkg.Executables.Add("STOCK:FORLOOP");
+        var forLoop = (Microsoft.SqlServer.Dts.Runtime.ForLoop)forLoopExec;
+        forLoop.Name = "For Loop Container";
+        forLoop.InitExpression = "@Part = 1";
+        forLoop.EvalExpression = "@Part < 4";
+        forLoop.AssignExpression = "@Part = @Part + 1";
+
+        // A FLATFILE connection manager whose ConnectionString is entirely expression-driven --
+        // deliberately NOT AddFlatFileConnectionManager (that helper always sets a STATIC
+        // ConnectionString), the same reason BuildForEachDataFlowLoopFixture's own CSV connection
+        // manager is built this way: the whole point here is a per-iteration path with no
+        // design-time default at all.
+        var csvCm = pkg.Connections.Add("FLATFILE");
+        csvCm.Name = "CM_CurrentPartCsv";
+        var ff = (IDTSConnectionManagerFlatFile100)csvCm.InnerObject;
+        ff.Format = "Delimited";
+        ff.ColumnNamesInFirstDataRow = true;
+        ff.HeaderRowDelimiter = "\r\n";
+        ff.CodePage = 1252;
+        (string ColumnName, string DtType, int MaxWidth)[] csvColumns = [("ID", "DT_I4", 0), ("Label", "DT_WSTR", 50)];
+        for (var i = 0; i < csvColumns.Length; i++)
+        {
+            var (columnName, dtType, maxWidth) = csvColumns[i];
+            var col = ff.Columns.Add();
+            col.ColumnType = "Delimited";
+            col.ColumnDelimiter = i == csvColumns.Length - 1 ? "\r\n" : ",";
+            col.DataType = (RtDataType)Enum.Parse(typeof(RtDataType), dtType);
+            col.MaximumWidth = maxWidth;
+            ((IDTSName100)col).Name = columnName;
+        }
+        // "<filesDir>\part-" + @[User::Part] + ".csv" -- plain string concatenation of the
+        // loop's own counter, no cast (see this method's own doc comment for why).
+        csvCm.Properties["ConnectionString"].SetExpression(csvCm,
+            "\"" + filesDir + "\\part-\" + @[User::Part] + \".csv\"");
+
+        var dftHost = (RtTaskHost)forLoop.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = pipe.ComponentMetaDataCollection.New();
+        srcMeta.ComponentClassID = "Microsoft.FlatFileSource";
+        var srcInst = srcMeta.Instantiate();
+        srcInst.ProvideComponentProperties(); // resets Name to the class default -- must set Name after this
+        srcMeta.Name = "Flat File Source";
+        var srcConn = srcMeta.RuntimeConnectionCollection[0];
+        srcConn.ConnectionManagerID = csvCm.ID;
+        srcConn.ConnectionManager = DtsConvert.GetExtendedInterface(csvCm);
+        srcInst.AcquireConnections(null);
+        srcInst.ReinitializeMetaData();
+        srcInst.ReleaseConnections();
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+        var derivedMeta = BuildDerivedColumnLoadedAtUtc(pipe, mainOutput);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticForLoopTarget]");
         AttachPath(pipe, derivedMeta.OutputCollection[0], destMeta.InputCollection[0]);
         ResolveOleDbMetadata(destMeta, isDestination: true);
 
@@ -4501,6 +5163,1032 @@ internal static class Program
         return 0;
     }
 
+    /// <summary>Throwaway probe (never checked in as a real fixture builder, just a diagnostic
+    /// entry point) -- constructs a bare Microsoft.PctSampling component and prints its output
+    /// collection/property list to stdout BEFORE any fixture-building code is written against it,
+    /// same "ask the runtime, don't guess" discipline as BuildMulticastFixture's own doc comment.
+    /// Phase 4 of the unsupported-component-types plan.</summary>
+    /// <summary>
+    /// OLE DB Source -> Percentage Sampling -> {OLE DB Destination (sampled), OLE DB Destination
+    /// (not sampled)} -- Phase 4 of the unsupported-component-types plan. Confirmed via
+    /// ProbePctSampling: Microsoft.PctSampling starts with exactly TWO outputs right after
+    /// ProvideComponentProperties() (no InsertOutput dance needed at all, unlike Conditional
+    /// Split/Multicast/Merge/MergeJoin, each of which needed its own different recipe) --
+    /// "Sampling Selected Output" (index 0, the sampled rows) then "Sampling Unselected Output"
+    /// (index 1, the rest), both ExclusionGroup=1 (mutually exclusive), matching the real
+    /// evidenced XML from UseCase_89's Package.dtsx. SamplingValue/SamplingSeed are plain int
+    /// custom properties, settable via ordinary SetComponentProperty.
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-pct-sampling-tables.sql</c> already created
+    /// on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.
+    /// </summary>
+    /// <summary>
+    /// Phase 7b of the unsupported-component-types plan: the MEASUREMENT fixture for
+    /// <c>Microsoft.SCD</c> ("Slowly Changing Dimension"). OLE DB Source -&gt; SCD -&gt; one OLE DB
+    /// Destination per output, all six wired.
+    ///
+    /// <para>Every SCD output is wired to its OWN observation table deliberately, rather than
+    /// reproducing the real evidenced package's downstream UPDATE/INSERT chains: the question 7b has
+    /// to answer is purely <b>which output does each row go to</b>, and a destination per output
+    /// turns one dtexec run into the component's whole routing table, read back from real rows
+    /// rather than inferred from a net effect that several chains contributed to. The real
+    /// package's own chain shape is exercised separately by <c>BuildScdRealShapeFixture</c>.</para>
+    ///
+    /// <para>Shape and settings copied from the one real evidenced package
+    /// (<c>ETL-SSIS-Real-Scenarios/SCD SSIS</c>'s own <c>SCD.dtsx</c>) exactly: the same
+    /// <c>CurrentRowWhere</c>, the same <c>FailOnFixedAttributeChange=false</c>, and the same four
+    /// <c>ColumnType</c> assignments (business key / changing / historical / fixed). Requires the
+    /// backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-scd-tables.sql</c> on
+    /// <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.</para>
+    ///
+    /// <para><paramref name="failOnFixedAttributeChange"/> exists so the same builder can produce the
+    /// SECOND measurement variant -- what <c>FailOnFixedAttributeChange=true</c> (the component's own
+    /// schema default, probe-confirmed) actually does to a fixed-attribute change. That is a real open
+    /// question the property's own description ("Indicates whether the transformation fails when
+    /// columns with fixed attributes contain changes") does not settle: "fails" could mean the
+    /// component errors, or could mean the row simply stops being routed to the Fixed Attribute
+    /// Output.</para>
+    /// </summary>
+    private static int BuildScdFixture(string outputPath, bool failOnFixedAttributeChange = false, string packageName = "SyntheticScdProbe",
+        bool updateChangingAttributeHistory = false)
+    {
+        var pkg = new RtPackage { Name = packageName };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Scd";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT EmpId, FirstName, LastName, Designation FROM dbo.SyntheticScdSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var scdMeta = AddScdComponent(pipe, sqlCm, "SCD_DimEmployee", failOnFixedAttributeChange, updateChangingAttributeHistory);
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, scdMeta.InputCollection[0]);
+
+        ConfigureScdInputColumns(scdMeta);
+
+        // One destination per output, named after the output it observes.
+        var observed = new (string OutputName, string Table, string Component)[]
+        {
+            ("Unchanged Output",                    "[dbo].[SyntheticScdOutUnchanged]",  "DST_Unchanged"),
+            ("New Output",                          "[dbo].[SyntheticScdOutNew]",        "DST_New"),
+            ("Fixed Attribute Output",              "[dbo].[SyntheticScdOutFixed]",      "DST_Fixed"),
+            ("Changing Attribute Updates Output",   "[dbo].[SyntheticScdOutChanging]",   "DST_Changing"),
+            ("Historical Attribute Inserts Output", "[dbo].[SyntheticScdOutHistorical]", "DST_Historical"),
+            ("Inferred Member Updates Output",      "[dbo].[SyntheticScdOutInferred]",   "DST_Inferred"),
+        };
+
+        foreach (var (outputName, table, componentName) in observed)
+        {
+            var output = scdMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.Name == outputName);
+            var destMeta = AddOleDbComponent(pipe, componentName, "Microsoft.OLEDBDestination", sqlCm,
+                accessMode: 3, openRowset: table);
+            AttachPath(pipe, output, destMeta.InputCollection[0]);
+            ResolveOleDbMetadata(destMeta, isDestination: true);
+        }
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// A real gap found re-running the GitHub-portfolio pipeline (gap-audit plan
+    /// glittery-spinning-mochi.md, 2026-09-18, Step 3): the one real evidenced SCD package
+    /// (Sales-DataWarehouse-with-Incremental-Load-SSIS-ETL-Pipeline's own dimcustomer.dtsx)
+    /// compares an attribute column ("Copy of ssc", <c>ColumnType=4</c> -- Fixed) that is
+    /// produced by an intervening <c>Microsoft.DataConvert</c> component, not the raw source --
+    /// something <c>PackageGenerator.GenerateScdFlow</c> used to reject outright with "compares
+    /// column(s) not present on its own source's output", even though the exact same
+    /// "DataConversion" lineage-edge resolution a Conditional Split condition/Derived Column
+    /// cross-reference already reuses (<c>TransformEmitter.TranslateDataConversion</c>) is fully
+    /// capable of resolving it.
+    ///
+    /// <para>Shape: <c>OLE DB Source (EmpId, FirstName) -&gt; Derived Column
+    /// (CodeText &lt;- "HELLO WORLD", a STATIC LITERAL -- no column reference at all) -&gt; Data
+    /// Conversion (CodeText wstr -&gt; CodeStr str,5) -&gt; SCD (key: EmpId; Changing: FirstName;
+    /// Fixed: CodeStr)</c> -- the same Source-&gt;DerivedColumn-&gt;DataConversion-&gt;SCD chain
+    /// AND the same static-literal Derived Column shape the real package uses (its own "ssc"
+    /// column is <c>"1"</c>, referencing nothing), with the SAME measured role
+    /// (<c>ColumnType=4</c>, Fixed) for the Data-Conversion-produced column. Deliberately NOT
+    /// derived from a raw source column (e.g. <c>UPPER(RawCode)</c>) -- that would need a SECOND,
+    /// separate, unevidenced feature (resolving a Data-Conversion source that is itself a
+    /// Derived-Column expression which ITSELF references a raw column), stacking one unevidenced
+    /// shape on top of another the same way this project's own discipline elsewhere refuses to.
+    /// Per-row classification variation instead comes from the DIMENSION's own stored value
+    /// (every incoming row computes the identical literal; only the dimension row it's compared
+    /// against varies), which still exercises the full routing table. The Data Conversion's own
+    /// target type, <c>DT_STR</c> (non-Unicode/ANSI, matching the real package's own "Copy of
+    /// ssc" exactly, not the already-measured DT_WSTR) is what this fixture's own dtexec run
+    /// measures for real: does an over-length source string TRUNCATE under
+    /// <c>IgnoreFailure</c> the same way DT_WSTR's own already-measured truncation does?
+    /// (Confirmed yes -- see TransformEmitter.WrapDataConversion's own doc comment for why DT_STR
+    /// and DT_WSTR are treated identically as a result, not independently re-derived semantics.)
+    ///
+    /// <para>Every row computes <c>CodeText = "HELLO WORLD"</c>, truncated by the Data Conversion
+    /// to <c>"HELLO"</c> (5 chars) -- so a single dtexec run reports the complete routing table
+    /// purely from how each EmpId's own dimension row was seeded:</para>
+    /// <list type="bullet">
+    /// <item>400 Alice, dimension CodeStr="HELLO" (matches), FirstName unchanged -&gt; Unchanged.</item>
+    /// <item>401 Bob, dimension CodeStr="WORLD" (DIFFERENT from the computed "HELLO"), FirstName
+    /// unchanged -&gt; Fixed Attribute Output (the Data-Conversion-produced attribute is what
+    /// changed, proving the cross-reference is genuinely compared, not just resolved-and-ignored).</item>
+    /// <item>402 Carol -&gt; no dimension row at all -&gt; New Output.</item>
+    /// <item>403 David, dimension CodeStr="HELLO" (matches), but FirstName changed ("Dave" -&gt;
+    /// "David") -&gt; Changing Attribute Updates Output -- proves an ORDINARY plain-passthrough
+    /// attribute still works correctly alongside a Data-Conversion-sourced one in the same
+    /// component.</item>
+    /// </list>
+    ///
+    /// <para>Historical/Inferred Member outputs are deliberately left unwired (discarded) --
+    /// nothing in this fixture exercises a Historical (<c>ColumnType=3</c>) attribute or
+    /// inferred-member detection, and <c>ResolveBranch</c>'s own "an unwired SCD output is a
+    /// non-fatal discard" convention (established by <see cref="BuildScdRealShapeFixture"/>)
+    /// already covers this without needing to wire every output.</para>
+    ///
+    /// <para>Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-scd-data-conversion-attribute-tables.sql</c>
+    /// on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>.</para>
+    /// </summary>
+    private static int BuildScdDataConversionAttributeFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticScdDataConversionAttribute" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_ScdDataConversion";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT EmpId, FirstName FROM dbo.SyntheticScdDcaSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        // Derived Column: a STATIC LITERAL, referencing no input column at all -- matching the
+        // real evidenced package's own "ssc" column ("1") exactly. NO input column is marked
+        // UT_READONLY here, deliberately (same as BuildScdRealShapeFixture's own DER_StartDate,
+        // whose GETDATE() expression also references nothing) -- marking one anyway is a hard
+        // validation failure ("has usage type READONLY, but is not referenced by an expression").
+        // EmpId/FirstName still reach the destination regardless: a Derived Column is
+        // synchronous, so untouched columns pass through the same buffer without being declared
+        // input columns at all.
+        var derMeta = pipe.ComponentMetaDataCollection.New();
+        derMeta.ComponentClassID = "Microsoft.DerivedColumn";
+        var derInst = derMeta.Instantiate();
+        derInst.ProvideComponentProperties();
+        derMeta.Name = "DER_CodeText";
+        AttachPath(pipe, srcOutput, derMeta.InputCollection[0]);
+        derInst.ReinitializeMetaData();
+
+        var derOutput = derMeta.OutputCollection[0];
+        var codeTextCol = derInst.InsertOutputColumnAt(derOutput.ID, 0, "CodeText", "");
+        // DT_WSTR is Unicode -- codepage 0, not 1252 (see BuildDerivedColumnTernary's own note).
+        derInst.SetOutputColumnDataTypeProperties(derOutput.ID, codeTextCol.ID, DataType.DT_WSTR, 50, 0, 0, 0);
+        derInst.SetOutputColumnProperty(derOutput.ID, codeTextCol.ID, "FriendlyExpression", "\"HELLO WORLD\"");
+        derInst.SetOutputColumnProperty(derOutput.ID, codeTextCol.ID, "Expression", "\"HELLO WORLD\"");
+
+        // Data Conversion: CodeText (wstr) -> CodeStr (DT_STR, length 5 -- deliberately short, to
+        // measure DT_STR's own truncation behavior under IgnoreFailure for real, matching the
+        // real package's own "Copy of ssc" target type exactly, not the already-measured DT_WSTR.
+        var dconvMeta = pipe.ComponentMetaDataCollection.New();
+        dconvMeta.ComponentClassID = "Microsoft.DataConvert";
+        var dconvInst = dconvMeta.Instantiate();
+        dconvInst.ProvideComponentProperties();
+        dconvMeta.Name = "DCONV_Code";
+        AttachPath(pipe, derOutput, dconvMeta.InputCollection[0]);
+        dconvInst.AcquireConnections(null);
+        dconvInst.ReinitializeMetaData();
+        dconvInst.ReleaseConnections();
+
+        var dconvInput = dconvMeta.InputCollection[0];
+        var dconvVirtualInput = dconvInput.GetVirtualInput();
+        var dconvOutput = dconvMeta.OutputCollection[0];
+        AddConvertedColumn(dconvMeta, dconvInst, dconvInput, dconvVirtualInput, dconvOutput, 0,
+            "CodeText", "CodeStr", DataType.DT_STR, length: 5, precision: 0, scale: 0, codePage: 1252);
+
+        // SCD: business key EmpId (plain, ColumnType=1); FirstName is an ordinary passthrough
+        // Changing attribute (ColumnType=2); CodeStr is the Data-Conversion-produced Fixed
+        // attribute (ColumnType=4) -- the exact role the real evidenced package's own "Copy of
+        // ssc" column carries.
+        var scdMeta = pipe.ComponentMetaDataCollection.New();
+        scdMeta.ComponentClassID = "Microsoft.SCD";
+        var scdInst = scdMeta.Instantiate();
+        scdInst.ProvideComponentProperties(); // resets Name -- set it after, same as every other component here
+        scdMeta.Name = "SCD_DimCustomer";
+
+        var scdConn = scdMeta.RuntimeConnectionCollection[0];
+        scdConn.ConnectionManagerID = sqlCm.ID;
+        scdConn.ConnectionManager = DtsConvert.GetExtendedInterface(sqlCm);
+
+        scdInst.SetComponentProperty("SqlCommand",
+            "SELECT [EmpId], [FirstName], [CodeStr], [StartDate], [EndDate] FROM [dbo].[SyntheticScdDcaDim]");
+        scdInst.SetComponentProperty("CurrentRowWhere", "[StartDate] IS NOT NULL AND [EndDate] IS NULL");
+        scdInst.SetComponentProperty("UpdateChangingAttributeHistory", false);
+        scdInst.SetComponentProperty("FailOnFixedAttributeChange", false);
+        scdInst.SetComponentProperty("EnableInferredMember", false);
+        scdInst.SetComponentProperty("FailOnLookupFailure", false);
+        scdInst.SetComponentProperty("IncomingRowChangeType", 1);
+
+        AttachPath(pipe, dconvOutput, scdMeta.InputCollection[0]);
+
+        var scdColumnTypes = new System.Collections.Generic.Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["EmpId"] = 1,
+            ["FirstName"] = 2,
+            ["CodeStr"] = 4,
+        };
+
+        var scdReinitInst = scdMeta.Instantiate();
+        scdReinitInst.AcquireConnections(null);
+        scdReinitInst.ReinitializeMetaData();
+
+        var scdInput = scdMeta.InputCollection[0];
+        var scdVirtualInput = scdInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in scdVirtualInput.VirtualInputColumnCollection)
+        {
+            if (!scdColumnTypes.ContainsKey(vcol.Name)) continue;
+            scdReinitInst.SetUsageType(scdInput.ID, scdVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        foreach (IDTSInputColumn100 col in scdInput.InputColumnCollection)
+        {
+            if (!scdColumnTypes.TryGetValue(col.Name, out var columnType)) continue;
+            scdReinitInst.SetInputColumnProperty(scdInput.ID, col.ID, "ColumnType", columnType);
+
+            var ext = scdInput.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>()
+                .FirstOrDefault(e => e.Name == col.Name);
+            if (ext is not null) scdReinitInst.MapInputColumn(scdInput.ID, col.ID, ext.ID);
+        }
+        scdReinitInst.ReleaseConnections();
+
+        IDTSOutput100 ScdOutput(string name) => scdMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.Name == name);
+
+        // One destination per output actually reachable by this fixture's own seed data --
+        // Historical/Inferred Member are left unwired (discarded), see this method's own doc
+        // comment for why.
+        var observed = new (string OutputName, string Table, string Component)[]
+        {
+            ("Unchanged Output",                  "[dbo].[SyntheticScdDcaOutUnchanged]", "DST_Unchanged"),
+            ("New Output",                        "[dbo].[SyntheticScdDcaOutNew]",       "DST_New"),
+            ("Fixed Attribute Output",             "[dbo].[SyntheticScdDcaOutFixed]",     "DST_Fixed"),
+            ("Changing Attribute Updates Output",  "[dbo].[SyntheticScdDcaOutChanging]",  "DST_Changing"),
+        };
+
+        foreach (var (outputName, table, componentName) in observed)
+        {
+            var output = ScdOutput(outputName);
+            var destMeta = AddOleDbComponent(pipe, componentName, "Microsoft.OLEDBDestination", sqlCm,
+                accessMode: 3, openRowset: table);
+            AttachPath(pipe, output, destMeta.InputCollection[0]);
+            ResolveOleDbMetadata(destMeta, isDestination: true);
+        }
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Phase 7d of the unsupported-component-types plan: the END-TO-END fixture for
+    /// <c>Microsoft.SCD</c>. Reproduces the one real evidenced package's own topology
+    /// (<c>ETL-SSIS-Real-Scenarios/SCD SSIS</c>'s <c>SCD.dtsx</c>) link for link:
+    /// <code>
+    /// OLE DB Source
+    ///   -> SCD
+    ///        |- Changing Attribute Updates Output   -> OLE DB Command (Type 1 in-place UPDATE)
+    ///        |- Historical Attribute Inserts Output -> OLE DB Command (close the old row) -.
+    ///        |- New Output ------------------------------------------------------------.  |
+    ///        |- Unchanged / Fixed Attribute / Inferred Member Updates ... unwired       |  |
+    ///                                                                                  v  v
+    ///                                                                              Union All
+    ///                                                                                   |
+    ///                                                                                   v
+    ///                                                                        Derived Column
+    ///                                                                                   |
+    ///                                                                                   v
+    ///                                                                     OLE DB Destination
+    /// </code>
+    ///
+    /// <para><b>One deliberate difference from the real package, and it is the scope boundary this
+    /// round names explicitly.</b> The real package computes its close-out timestamp in a Derived
+    /// Column (<c>EndDate &lt;- (DT_DBTIMESTAMP)(@[System::StartTime])</c>) and binds THAT as the
+    /// UPDATE's first parameter. Resolving such a parameter would mean evaluating a branch Derived
+    /// Column's expression inside a command-parameter lambda -- where the transform's own
+    /// <c>ctx</c> does not exist -- and teaching the expression translator about <c>System::</c>
+    /// variables; two separate, unmeasured features. So this fixture closes the old row with
+    /// <c>SET [EndDate] = GETDATE()</c> instead, which is an equally real authoring style, binds
+    /// only source columns, and exercises every code path this round actually generates. The real
+    /// package's own shape is reported as a named gap rather than guessed at -- see
+    /// <c>PackageGenerator.GenerateScdFlow</c>'s own doc comment.</para>
+    ///
+    /// <para>Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-scd-tables.sql</c>.</para>
+    /// </summary>
+    private static int BuildScdRealShapeFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticScd" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_LoadDimEmployee";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT EmpId, FirstName, LastName, Designation FROM dbo.SyntheticScdSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var scdMeta = AddScdComponent(pipe, sqlCm, "SCD_DimEmployee", failOnFixedAttributeChange: false);
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, scdMeta.InputCollection[0]);
+        ConfigureScdInputColumns(scdMeta);
+
+        IDTSOutput100 ScdOutput(string name) => scdMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.Name == name);
+
+        // Type 1: overwrite the changing attribute on the existing current row. Terminal -- no
+        // destination at all, the command IS this branch's whole effect.
+        AddScdOleDbCommand(pipe, sqlCm, "OLECMD_UpdateChanging",
+            ScdOutput("Changing Attribute Updates Output"),
+            "UPDATE [dbo].[SyntheticScdDim] SET [LastName] = ? WHERE [EmpId] = ? AND [EndDate] IS NULL",
+            ["LastName", "EmpId"]);
+
+        // Type 2, half one: close the outgoing row. Mid-chain -- the row continues to the Union All
+        // below, which is what makes this the "command then insert" branch shape.
+        var historicalCmdMeta = AddScdOleDbCommand(pipe, sqlCm, "OLECMD_CloseHistorical",
+            ScdOutput("Historical Attribute Inserts Output"),
+            "UPDATE [dbo].[SyntheticScdDim] SET [EndDate] = GETDATE() WHERE [EmpId] = ? AND [EndDate] IS NULL",
+            ["EmpId"]);
+
+        // Union All: New Output and the post-command Historical rows converge on one destination,
+        // exactly as in the real package. Microsoft.UnionAll starts with ONE input -- a second is
+        // added via the raw InputCollection.New(), NOT InsertInput (see CLAUDE.md's own note: that
+        // call throws COMException 0xC020800E unconditionally for this component).
+        var unionMeta = pipe.ComponentMetaDataCollection.New();
+        unionMeta.ComponentClassID = "Microsoft.UnionAll";
+        var unionInst = unionMeta.Instantiate();
+        unionInst.ProvideComponentProperties();
+        unionMeta.Name = "UNION_Recombine";
+
+        // Second input created BEFORE any path is attached, and BOTH paths resolved in a SINGLE
+        // ReinitializeMetaData() pass -- the exact recipe BuildConditionalSplitRemergeFixture
+        // documents: InsertInput throws 0xC020800E for this component, and resolving incrementally
+        // leaves a stale lineage ID that only fails at dtexec validation time.
+        //
+        // One MORE fact this fixture nailed down, which CLAUDE.md's own Union All notes did not
+        // cover: InputCollection.New() creates an input with an EMPTY Name, and an empty name is a
+        // hard XML-LOAD failure at run time ("The object name is not valid. The name cannot be
+        // empty", then "Failed to load Data Flow objects") -- not a validation warning. It never
+        // surfaced before because the earlier Union-All-remerge fixture was itself never confirmed
+        // dtexec-executable (see that fixture's own note). Naming it explicitly fixes it.
+        var unionSecondInput = unionMeta.InputCollection.New();
+        unionSecondInput.Name = "Union All Input 2";
+        var unionSecondInputId = unionSecondInput.ID;
+        var historicalCmdOutput = historicalCmdMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        AttachPath(pipe, ScdOutput("New Output"), unionMeta.InputCollection[0]);
+        AttachPath(pipe, historicalCmdOutput, unionMeta.InputCollection.GetObjectByID(unionSecondInputId));
+        unionInst.AcquireConnections(null);
+        unionInst.ReinitializeMetaData();
+        unionInst.ReleaseConnections();
+
+        var unionInput2 = unionMeta.InputCollection.GetObjectByID(unionSecondInputId);
+        var unionOutput = unionMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        // The second input's own columns are NOT auto-mapped by ReinitializeMetaData -- each needs
+        // its OutputColumnLineageID pointed at the matching output column the FIRST input created
+        // (confirmed real, see CLAUDE.md's Union All notes).
+        var unionVirtual = unionInput2.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in unionVirtual.VirtualInputColumnCollection)
+        {
+            var match = unionOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>().FirstOrDefault(c => c.Name == vcol.Name);
+            if (match is null) continue;
+            unionInst.SetUsageType(unionInput2.ID, unionVirtual, vcol.LineageID, DTSUsageType.UT_READONLY);
+            var inputColumn = unionInput2.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == vcol.Name);
+            unionInst.SetInputColumnProperty(unionInput2.ID, inputColumn.ID, "OutputColumnLineageID", match.LineageID);
+        }
+
+        // Derived Column stamping the new row's StartDate -- the real package's own shape, and the
+        // reason the destination has a column the source does not.
+        var derMeta = pipe.ComponentMetaDataCollection.New();
+        derMeta.ComponentClassID = "Microsoft.DerivedColumn";
+        var derInst = derMeta.Instantiate();
+        derInst.ProvideComponentProperties();
+        derMeta.Name = "DER_StartDate";
+        AttachPath(pipe, unionOutput, derMeta.InputCollection[0]);
+        derInst.ReinitializeMetaData();
+
+        // NO input column is marked used here, deliberately -- this Derived Column's expression is
+        // GETDATE(), which references nothing. Marking them READONLY anyway is a hard validation
+        // failure ("has usage type READONLY, but is not referenced by an expression"), measured.
+        // The columns still reach the destination regardless: a Derived Column is synchronous, so
+        // untouched columns pass through the same buffer without being declared input columns at
+        // all -- the same passthrough-lineage rule this project documented years of fixtures ago.
+        var derOutput = derMeta.OutputCollection[0];
+        // InsertOutputColumnAt + SetOutputColumnDataTypeProperties, and FriendlyExpression BEFORE
+        // Expression -- the exact sequence every other Derived Column fixture here uses.
+        // OutputColumnCollection.New() + SetDataTypeProperties throws 0xC0204006 on this component.
+        var startDateCol = derInst.InsertOutputColumnAt(derOutput.ID, 0, "StartDate", "");
+        derInst.SetOutputColumnDataTypeProperties(derOutput.ID, startDateCol.ID, DataType.DT_DBTIMESTAMP, 0, 0, 0, 0);
+        derInst.SetOutputColumnProperty(derOutput.ID, startDateCol.ID, "FriendlyExpression", "GETDATE()");
+        derInst.SetOutputColumnProperty(derOutput.ID, startDateCol.ID, "Expression", "GETDATE()");
+
+        var destMeta = AddOleDbComponent(pipe, "OLEDST_DimEmployee", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticScdDim]");
+        AttachPath(pipe, derOutput, destMeta.InputCollection[0]);
+        ResolveScdDestinationMetadata(destMeta);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>Adds one <c>Microsoft.OLEDBCommand</c> hanging off an SCD output, binding the named
+    /// input columns to its <c>?</c> placeholders in the given order. Same construction as every
+    /// other OLE DB Command fixture here; factored out because this fixture needs two.</summary>
+    private static IDTSComponentMetaData100 AddScdOleDbCommand(
+        MainPipe pipe, ConnectionManager cm, string name, IDTSOutput100 upstreamOutput, string sql, string[] parameterColumns)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.OLEDBCommand";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties(); // resets Name -- set it after, see AddOleDbComponent's comment
+        meta.Name = name;
+
+        var conn = meta.RuntimeConnectionCollection[0];
+        conn.ConnectionManagerID = cm.ID;
+        conn.ConnectionManager = DtsConvert.GetExtendedInterface(cm);
+        inst.SetComponentProperty("SqlCommand", sql);
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        var externals = input.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>().ToList();
+        if (externals.Count != parameterColumns.Length)
+        {
+            throw new InvalidOperationException(
+                $"fixture build error: '{name}' resolved {externals.Count} parameter(s) from its SQL but {parameterColumns.Length} column(s) were supplied to bind.");
+        }
+
+        // externals are in true placeholder order (Param_0, Param_1, ...) -- bind positionally
+        // against the caller's own list, which is written in the SQL's own ? order.
+        for (var i = 0; i < parameterColumns.Length; i++)
+        {
+            var vcol = virtualInput.VirtualInputColumnCollection.Cast<IDTSVirtualInputColumn100>()
+                .First(v => v.Name == parameterColumns[i]);
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+            var inputColumn = input.InputColumnCollection.Cast<IDTSInputColumn100>().First(c => c.Name == parameterColumns[i]);
+            inst.MapInputColumn(input.ID, inputColumn.ID, externals[i].ID);
+        }
+
+        return meta;
+    }
+
+    /// <summary>Resolves an OLE DB Destination whose upstream buffer carries only a SUBSET of the
+    /// table's columns -- the dimension has an IDENTITY Id and an EndDate nothing upstream produces,
+    /// so the shared <see cref="ResolveOleDbMetadata"/> (which insists every external column has a
+    /// matching upstream column) would throw. Maps only what is actually available, which is exactly
+    /// what SSDT does when a designer leaves a destination column unmapped.</summary>
+    private static void ResolveScdDestinationMetadata(IDTSComponentMetaData100 meta)
+    {
+        var inst = meta.Instantiate();
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        var externals = input.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>().ToList();
+        var externalNames = new HashSet<string>(externals.Select(e => e.Name));
+
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            if (!externalNames.Contains(vcol.Name)) continue;
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        foreach (var ext in externals)
+        {
+            var match = input.InputColumnCollection.Cast<IDTSInputColumn100>().FirstOrDefault(c => c.Name == ext.Name);
+            if (match is null) continue; // genuinely unmapped -- e.g. the IDENTITY key, or EndDate
+            inst.MapInputColumn(input.ID, match.ID, ext.ID);
+        }
+    }
+
+    /// <summary>
+    /// Creates and configures a <c>Microsoft.SCD</c> component against the dimension table, matching
+    /// the one real evidenced package's own settings. Every fact below is probe-confirmed
+    /// (<see cref="ProbeScd"/>), not guessed:
+    /// <list type="bullet">
+    /// <item>All six outputs already exist after <c>ProvideComponentProperties()</c> -- no
+    /// <c>InsertOutput</c>/<c>InputCollection.New()</c> recipe of the kind Conditional Split, Union
+    /// All, Merge and Merge Join each needed separately.</item>
+    /// <item>The single runtime connection is named <c>LookupConnection</c>, not the
+    /// <c>OleDbConnection</c> every OLE DB component uses.</item>
+    /// <item><c>FailOnFixedAttributeChange</c>'s schema default is <b>true</b>, so the real package's
+    /// own <c>false</c> is an explicit setting, not an omission.</item>
+    /// </list>
+    /// </summary>
+    private static IDTSComponentMetaData100 AddScdComponent(
+        MainPipe pipe, ConnectionManager cm, string name, bool failOnFixedAttributeChange,
+        bool updateChangingAttributeHistory = false)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.SCD";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties(); // resets Name -- set it after, same as every other component here
+        meta.Name = name;
+
+        var conn = meta.RuntimeConnectionCollection[0];
+        conn.ConnectionManagerID = cm.ID;
+        conn.ConnectionManager = DtsConvert.GetExtendedInterface(cm);
+
+        // Column order in this SELECT mirrors the real evidenced package's own (alphabetical-ish,
+        // whatever the wizard emitted) rather than the input's -- the component matches by NAME.
+        inst.SetComponentProperty("SqlCommand",
+            "SELECT [Designation], [EmpId], [FirstName], [LastName],[StartDate],[EndDate] FROM [dbo].[SyntheticScdDim]");
+        inst.SetComponentProperty("CurrentRowWhere", "[StartDate] IS NOT NULL AND [EndDate] IS NULL");
+        inst.SetComponentProperty("UpdateChangingAttributeHistory", updateChangingAttributeHistory);
+        inst.SetComponentProperty("FailOnFixedAttributeChange", failOnFixedAttributeChange);
+        inst.SetComponentProperty("EnableInferredMember", false);
+        inst.SetComponentProperty("FailOnLookupFailure", false);
+        inst.SetComponentProperty("IncomingRowChangeType", 1);
+
+        return meta;
+    }
+
+    /// <summary>
+    /// Marks the SCD's own input columns used and assigns each one its <c>ColumnType</c>, matching
+    /// the real evidenced package exactly (<c>EmpId</c> 1, <c>LastName</c> 2, <c>Designation</c> 3,
+    /// <c>FirstName</c> 4). Must run AFTER the upstream path is attached -- there are no virtual
+    /// input columns to mark before that.
+    /// </summary>
+    private static void ConfigureScdInputColumns(IDTSComponentMetaData100 scdMeta)
+    {
+        var columnTypes = new System.Collections.Generic.Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["EmpId"] = 1,
+            ["LastName"] = 2,
+            ["Designation"] = 3,
+            ["FirstName"] = 4,
+        };
+
+        var inst = scdMeta.Instantiate();
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+
+        var input = scdMeta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            if (!columnTypes.ContainsKey(vcol.Name)) continue;
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        foreach (IDTSInputColumn100 col in input.InputColumnCollection)
+        {
+            if (!columnTypes.TryGetValue(col.Name, out var columnType)) continue;
+            inst.SetInputColumnProperty(input.ID, col.ID, "ColumnType", columnType);
+
+            // The real evidenced package maps every SCD input column to its own external metadata
+            // column (the dimension's matching column) -- ReinitializeMetaData above populates that
+            // collection from the dimension query, so this is a straight by-name map, the same shape
+            // ResolveOleDbMetadata already uses for an OLE DB Destination.
+            var ext = input.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>()
+                .FirstOrDefault(e => e.Name == col.Name);
+            if (ext is not null) inst.MapInputColumn(input.ID, col.ID, ext.ID);
+        }
+
+        inst.ReleaseConnections();
+    }
+
+    /// <summary>
+    /// Phase 4 of the gap-audit plan (concurrent-whistling-turing.md, 2026-09-16): a
+    /// <c>Microsoft.SCD</c> declaring a COMPOSITE business key (2 columns: RegionCode, StoreCode),
+    /// built specifically to measure -- not guess -- how SSIS matches on several key columns.
+    ///
+    /// <para>Seed data is deliberately chosen to distinguish four hypotheses at once, not just
+    /// confirm one: the dimension has exactly one current row (RegionCode='EAST',
+    /// StoreCode='001'). The source carries three rows: (1) an EXACT match on both key columns
+    /// with an unchanged attribute (the control -- must classify Unchanged); (2) the SAME
+    /// RegionCode ('EAST') but a DIFFERENT StoreCode ('999') -- if SSIS matched on the FIRST key
+    /// column alone, this would wrongly match the existing row; (3) a DIFFERENT RegionCode
+    /// ('ZZZZ') but the SAME StoreCode ('001') -- if SSIS matched on the SECOND key column alone,
+    /// or used OR-of-either, this would wrongly match too. Under true AND-of-equality across both
+    /// declared key columns, rows 2 and 3 must BOTH classify as New -- only row 1 as Unchanged.
+    /// </para>
+    ///
+    /// <para>Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-scd-composite-key-tables.sql</c>.</para>
+    /// </summary>
+    private static int BuildScdCompositeKeyFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticScdCompositeKey" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_ScdComposite";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null,
+            sqlCommand: "SELECT RegionCode, StoreCode, StoreName FROM dbo.SyntheticScdCompositeSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var scdMeta = pipe.ComponentMetaDataCollection.New();
+        scdMeta.ComponentClassID = "Microsoft.SCD";
+        var scdInst = scdMeta.Instantiate();
+        scdInst.ProvideComponentProperties(); // resets Name -- set it after, same as every other component here
+        scdMeta.Name = "SCD_DimStore";
+
+        var scdConn = scdMeta.RuntimeConnectionCollection[0];
+        scdConn.ConnectionManagerID = sqlCm.ID;
+        scdConn.ConnectionManager = DtsConvert.GetExtendedInterface(sqlCm);
+
+        scdInst.SetComponentProperty("SqlCommand",
+            "SELECT [RegionCode], [StoreCode], [StoreName], [StartDate], [EndDate] FROM [dbo].[SyntheticScdCompositeDim]");
+        scdInst.SetComponentProperty("CurrentRowWhere", "[StartDate] IS NOT NULL AND [EndDate] IS NULL");
+        scdInst.SetComponentProperty("UpdateChangingAttributeHistory", false);
+        scdInst.SetComponentProperty("FailOnFixedAttributeChange", false);
+        scdInst.SetComponentProperty("EnableInferredMember", false);
+        scdInst.SetComponentProperty("FailOnLookupFailure", false);
+        scdInst.SetComponentProperty("IncomingRowChangeType", 1);
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, scdMeta.InputCollection[0]);
+
+        var columnTypes = new System.Collections.Generic.Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["RegionCode"] = 1, // business key
+            ["StoreCode"] = 1,  // business key -- COMPOSITE with RegionCode above
+            ["StoreName"] = 2,  // changing
+        };
+
+        var scdInputInst = scdMeta.Instantiate();
+        scdInputInst.AcquireConnections(null);
+        scdInputInst.ReinitializeMetaData();
+
+        var scdInput = scdMeta.InputCollection[0];
+        var scdVirtualInput = scdInput.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in scdVirtualInput.VirtualInputColumnCollection)
+        {
+            if (!columnTypes.ContainsKey(vcol.Name)) continue;
+            scdInputInst.SetUsageType(scdInput.ID, scdVirtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+        foreach (IDTSInputColumn100 col in scdInput.InputColumnCollection)
+        {
+            if (!columnTypes.TryGetValue(col.Name, out var columnType)) continue;
+            scdInputInst.SetInputColumnProperty(scdInput.ID, col.ID, "ColumnType", columnType);
+            var ext = scdInput.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>()
+                .FirstOrDefault(e => e.Name == col.Name);
+            if (ext is not null) scdInputInst.MapInputColumn(scdInput.ID, col.ID, ext.ID);
+        }
+        scdInputInst.ReleaseConnections();
+
+        // Only Unchanged/New are wired -- the two outputs this fixture's own seed data is designed
+        // to distinguish. Fixed Attribute/Changing Attribute Updates/Historical Attribute
+        // Inserts/Inferred Member Updates are left unrouted, matching this project's own
+        // "an unwired SCD output is a non-fatal discard" convention (BuildScdRealShapeFixture's
+        // own precedent).
+        var unchangedOutput = scdMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.Name == "Unchanged Output");
+        var newOutput = scdMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.Name == "New Output");
+
+        var unchangedDest = AddOleDbComponent(pipe, "DST_Unchanged", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticScdCompositeOutUnchanged]");
+        AttachPath(pipe, unchangedOutput, unchangedDest.InputCollection[0]);
+        ResolveOleDbMetadata(unchangedDest, isDestination: true);
+
+        var newDest = AddOleDbComponent(pipe, "DST_New", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticScdCompositeOutNew]");
+        AttachPath(pipe, newOutput, newDest.InputCollection[0]);
+        ResolveOleDbMetadata(newDest, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    private static int BuildPctSamplingFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticPctSampling" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Sample";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = AddOleDbComponent(pipe, "OLE DB Source", "Microsoft.OLEDBSource", sqlCm,
+            accessMode: 2, openRowset: null, sqlCommand: "SELECT ID, Name FROM dbo.SyntheticPctSamplingSource");
+        ResolveOleDbMetadata(srcMeta, isDestination: false);
+
+        var pctMeta = pipe.ComponentMetaDataCollection.New();
+        pctMeta.ComponentClassID = "Microsoft.PctSampling";
+        var pctInst = pctMeta.Instantiate();
+        pctInst.ProvideComponentProperties(); // resets Name -- must set Name after this
+        pctMeta.Name = "PCTSAMP_TenPercent";
+        pctInst.SetComponentProperty("SamplingValue", 30);
+        pctInst.SetComponentProperty("SamplingSeed", 424242);
+
+        var srcOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+        AttachPath(pipe, srcOutput, pctMeta.InputCollection[0]);
+
+        pctInst.AcquireConnections(null);
+        pctInst.ReinitializeMetaData();
+        pctInst.ReleaseConnections();
+
+        var selectedOutput = pctMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.Name == "Sampling Selected Output");
+        var unselectedOutput = pctMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.Name == "Sampling Unselected Output");
+
+        var sampledMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticPctSamplingSampled]");
+        AttachPath(pipe, selectedOutput, sampledMeta.InputCollection[0]);
+        ResolveOleDbMetadata(sampledMeta, isDestination: true);
+
+        var notSampledMeta = AddOleDbComponent(pipe, "OLE DB Destination 1", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticPctSamplingNotSampled]");
+        AttachPath(pipe, unselectedOutput, notSampledMeta.InputCollection[0]);
+        ResolveOleDbMetadata(notSampledMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    private static int ProbePctSampling()
+    {
+        var pkg = new RtPackage { Name = "PctSamplingProbe" };
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Probe";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.PctSampling";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties();
+        meta.Name = "PCTSAMP_Probe";
+
+        Console.WriteLine($"Outputs right after ProvideComponentProperties(): {meta.OutputCollection.Count}");
+        foreach (IDTSOutput100 o in meta.OutputCollection)
+            Console.WriteLine($"  Output: Name='{o.Name}' IsErrorOut={o.IsErrorOut} ExclusionGroup={o.ExclusionGroup}");
+
+        Console.WriteLine("Custom properties:");
+        foreach (IDTSCustomProperty100 p in meta.CustomPropertyCollection)
+            Console.WriteLine($"  {p.Name} = {p.Value} (DataType={p.Value?.GetType()})");
+
+        Console.WriteLine("Inputs:");
+        foreach (IDTSInput100 i in meta.InputCollection)
+            Console.WriteLine($"  Input: Name='{i.Name}'");
+
+        // Try setting the two properties this plan expects, see whether they exist / what type.
+        try
+        {
+            inst.SetComponentProperty("SamplingValue", 10);
+            inst.SetComponentProperty("SamplingSeed", 12345);
+            Console.WriteLine("SetComponentProperty(SamplingValue, SamplingSeed) succeeded.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SetComponentProperty(SamplingValue/SamplingSeed) FAILED: {ex.Message}");
+        }
+
+        Console.WriteLine("Custom properties after setting:");
+        foreach (IDTSCustomProperty100 p in meta.CustomPropertyCollection)
+            Console.WriteLine($"  {p.Name} = {p.Value}");
+
+        Console.WriteLine($"Outputs after SetComponentProperty: {meta.OutputCollection.Count}");
+        foreach (IDTSOutput100 o in meta.OutputCollection)
+            Console.WriteLine($"  Output: Name='{o.Name}' IsErrorOut={o.IsErrorOut} ExclusionGroup={o.ExclusionGroup}");
+
+        return 0;
+    }
+
+    /// <summary>
+    /// XML Source (<c>Microsoft.XmlSourceAdapter</c>, discriminated by <c>UserComponentTypeName</c>
+    /// like Script Component/ADO NET) -> OLE DB Destination, a genuine direct-copy pipeline (no
+    /// transform at all) -- Phase 5 of the unsupported-component-types plan. Reuses the checked-in
+    /// <c>synthetic-xml-source.xml</c>/<c>.xsd</c> pair, itself a small, hand-authored reproduction
+    /// of the real evidenced shape (ETL-SSIS-Real-Scenarios' own UseCase_73 Package.dtsx, "XML
+    /// Source" reading Sellers.xml/Sellers.xsd) -- same element/column names
+    /// (dataset/record/id/first_name/last_name/email/gender/country), a handful of rows instead of
+    /// the real file's 1000, deliberately including an empty <c>&lt;email&gt;&lt;/email&gt;</c>, an
+    /// entirely OMITTED optional <c>&lt;gender&gt;</c> element, and a whitespace-padded
+    /// <c>first_name</c> -- to measure real behaviour for each rather than guess it.
+    ///
+    /// <c>ReinitializeMetaData()</c> genuinely reads the real XSD through the real, confirmed-
+    /// installed <c>Microsoft.SqlServer.XmlSrc</c> assembly (verified via <c>ProbeXmlSource</c>
+    /// first) -- no manual <c>InsertOutputColumnAt</c> needed, unlike Aggregate/Conditional Split.
+    /// </summary>
+    private static int BuildXmlSourceFixture(string outputPath)
+    {
+        var xmlPath = Path.Combine(TestFixturesDir(), "synthetic-xml-source.xml");
+        var xsdPath = Path.Combine(TestFixturesDir(), "synthetic-xml-source.xsd");
+        if (!File.Exists(xmlPath) || !File.Exists(xsdPath))
+        {
+            Console.Error.WriteLine($"error: expected the checked-in fixture .xml/.xsd at {xmlPath} / {xsdPath} -- missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticXmlSource" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_XmlLoad";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = pipe.ComponentMetaDataCollection.New();
+        srcMeta.ComponentClassID = "Microsoft.ManagedComponentHost";
+
+        // UserComponentTypeName must be seeded BEFORE Instantiate()/ProvideComponentProperties()
+        // -- same ordering rule Script Component's own BuildPassthroughScriptComponent already
+        // documents, confirmed to hold for XML Source too via ProbeXmlSource.
+        var seedProp = srcMeta.CustomPropertyCollection.New();
+        seedProp.Name = "UserComponentTypeName";
+        seedProp.Value = "Microsoft.XmlSourceAdapter";
+
+        var srcInst = srcMeta.Instantiate();
+        srcInst.ProvideComponentProperties();
+        srcMeta.Name = "XML Source";
+
+        srcInst.SetComponentProperty("XMLData", xmlPath);
+        srcInst.SetComponentProperty("XMLSchemaDefinition", xsdPath);
+        // AccessMode/XMLIntegerMapping left at their schema defaults (0/0 -- Default/Decimal),
+        // matching the one real evidenced instance exactly.
+
+        srcInst.AcquireConnections(null);
+        srcInst.ReinitializeMetaData();
+        srcInst.ReleaseConnections();
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().First(o => !o.IsErrorOut);
+
+        var destMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticXmlSourceTarget]");
+        AttachPath(pipe, mainOutput, destMeta.InputCollection[0]);
+        ResolveOleDbMetadata(destMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// ProbeScd (Phase 7b of the unsupported-component-types plan): dumps <c>Microsoft.SCD</c>'s
+    /// own out-of-the-box shape -- how many outputs it declares right after
+    /// <c>ProvideComponentProperties()</c>, their names/exclusion groups, and every custom
+    /// property with its declared type -- plus reflects the two <c>typeConverter</c>-backed enums
+    /// the real evidenced XML carries as bare integers (<c>ColumnType</c> on each input column,
+    /// <c>IncomingRowChangeType</c> on the component) out of whichever GAC assembly actually
+    /// implements this component. Same "ask the runtime, don't guess" discipline as CLAUDE.md
+    /// trap 12 -- the real package's <c>ColumnType</c> values (1/2/3/4) are meaningless without
+    /// this.
+    /// </summary>
+    private static int ProbeScd()
+    {
+        var pkg = new RtPackage { Name = "ScdProbe" };
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Probe";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.SCD";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties();
+        meta.Name = "SCD_Probe";
+
+        Console.WriteLine($"Outputs right after ProvideComponentProperties(): {meta.OutputCollection.Count}");
+        foreach (IDTSOutput100 o in meta.OutputCollection)
+            Console.WriteLine($"  Output[{o.ID}]: Name='{o.Name}' IsErrorOut={o.IsErrorOut} ExclusionGroup={o.ExclusionGroup} SyncInputID={o.SynchronousInputID}");
+
+        Console.WriteLine("Inputs:");
+        foreach (IDTSInput100 i in meta.InputCollection)
+            Console.WriteLine($"  Input[{i.ID}]: Name='{i.Name}'");
+
+        Console.WriteLine("Component custom properties:");
+        foreach (IDTSCustomProperty100 p in meta.CustomPropertyCollection)
+            Console.WriteLine($"  {p.Name} = '{p.Value}' (type={p.Value?.GetType().Name}) typeConverter='{p.TypeConverter}'");
+
+        Console.WriteLine("Connections:");
+        foreach (IDTSRuntimeConnection100 c in meta.RuntimeConnectionCollection)
+            Console.WriteLine($"  RuntimeConnection: Name='{c.Name}' Description='{c.Description}'");
+
+        // The component's own implementing assembly, then the two typeConverter-named enums.
+        var implType = inst.GetType();
+        Console.WriteLine($"Instance type: {implType.FullName}");
+        Console.WriteLine($"Assembly: {implType.Assembly.FullName}");
+        Console.WriteLine($"Location: {implType.Assembly.Location}");
+
+        foreach (var t in implType.Assembly.GetTypes().Where(t => t.IsEnum))
+        {
+            Console.WriteLine($"  enum {t.FullName}:");
+            foreach (var name in Enum.GetNames(t))
+                Console.WriteLine($"    {name} = {Convert.ToInt64(Enum.Parse(t, name))}");
+        }
+
+        return 0;
+    }
+
+    private static int ProbeXmlSource(string xmlPath, string xsdPath)
+    {
+        var pkg = new RtPackage { Name = "XmlSourceProbe" };
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Probe";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.ManagedComponentHost";
+
+        var seedProp = meta.CustomPropertyCollection.New();
+        seedProp.Name = "UserComponentTypeName";
+        seedProp.Value = "Microsoft.XmlSourceAdapter";
+
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties();
+        meta.Name = "XML_Probe";
+
+        Console.WriteLine($"Outputs right after ProvideComponentProperties(): {meta.OutputCollection.Count}");
+        foreach (IDTSOutput100 o in meta.OutputCollection)
+            Console.WriteLine($"  Output: Name='{o.Name}' IsErrorOut={o.IsErrorOut}");
+
+        Console.WriteLine("Custom properties:");
+        foreach (IDTSCustomProperty100 p in meta.CustomPropertyCollection)
+            Console.WriteLine($"  {p.Name} = '{p.Value}' (Type={p.Value?.GetType()})");
+
+        try
+        {
+            inst.SetComponentProperty("XMLData", xmlPath);
+            inst.SetComponentProperty("XMLSchemaDefinition", xsdPath);
+            Console.WriteLine("SetComponentProperty(XMLData, XMLSchemaDefinition) succeeded.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SetComponentProperty(XMLData/XMLSchemaDefinition) FAILED: {ex.Message}");
+        }
+
+        try
+        {
+            inst.AcquireConnections(null);
+            inst.ReinitializeMetaData();
+            inst.ReleaseConnections();
+            Console.WriteLine("ReinitializeMetaData() succeeded.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"ReinitializeMetaData() FAILED: {ex}");
+        }
+
+        Console.WriteLine($"Outputs after ReinitializeMetaData: {meta.OutputCollection.Count}");
+        foreach (IDTSOutput100 o in meta.OutputCollection)
+        {
+            Console.WriteLine($"  Output: Name='{o.Name}' IsErrorOut={o.IsErrorOut}");
+            foreach (IDTSOutputColumn100 c in o.OutputColumnCollection)
+                Console.WriteLine($"    Column: Name='{c.Name}' DataType={c.DataType} Length={c.Length}");
+            Console.WriteLine("    Output-level custom properties:");
+            foreach (IDTSCustomProperty100 p in o.CustomPropertyCollection)
+                Console.WriteLine($"      {p.Name} = '{p.Value}'");
+        }
+
+        return 0;
+    }
+
     /// <summary>
     /// OLE DB Source -> Multicast -> {OLE DB Destination, Flat File Destination} -- fans EVERY
     /// row unconditionally to BOTH a table load and a flat file audit copy, the exact real
@@ -5588,6 +7276,260 @@ internal static class Program
 
         var onFailure = pkg.PrecedenceConstraints.Add((Executable)body, (Executable)handler);
         onFailure.Value = Microsoft.SqlServer.Dts.Runtime.DTSExecResult.Failure;
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Phase 2 of the unsupported-component-types plan: <c>Microsoft.ExpressionTask</c> ("Expression
+    /// Task"). Two ExpressionTasks feeding a guarded, conditionally-executed downstream Execute SQL
+    /// Task -- the same "prove it end to end via the already-supported conditional-guard mechanism"
+    /// technique <c>SyntheticCondGuard.dtsx</c> already established, applied here to observe an
+    /// ExpressionTask's own runtime effect without inventing any new verification machinery.
+    ///
+    /// <list type="bullet">
+    /// <item><c>EXPR_SetCutoff</c>: <c>@[User::TargetETLCutoffTime] = DATEADD("Minute",-5,
+    /// GETUTCDATE())</c> -- the real evidenced call, verbatim, from <c>DailyETLMain.dtsx</c>'s own
+    /// "Calculate ETL Cutoff Time backup" task. Its own effect on a DateTime variable is verified
+    /// separately, via unit tests (<c>GuardVariable</c>/<c>MapVariantType</c> has no DateTime
+    /// support, so this variable cannot be read back through a conditional guard the way
+    /// <c>TableName</c> below can) -- included here mainly so this fixture proves the SAME shape
+    /// generates and RUNS without erroring, not just that a simpler string assignment does.</item>
+    /// <item><c>EXPR_SetTableName</c>: <c>@[User::TableName] = "City"</c> -- the real evidenced
+    /// shape of every OTHER ExpressionTask in that same package (e.g. "Set TableName to City").
+    /// Its effect IS independently, observably verified: <c>SQL_LogIfTableNameSet</c> only runs
+    /// when <c>@[User::TableName] == "City"</c> (a conditional precedence constraint,
+    /// EvalOp=ExpressionAndConstraint), so a real row landing in
+    /// <c>dbo.SyntheticExpressionTaskLog</c> is direct proof the ExpressionTask's own Set() call
+    /// took effect and a LATER guard's own Get() call read it back correctly.</item>
+    /// </list>
+    ///
+    /// A small DFT_Load (CSV -> Derived Column LoadedAtUtc -> OLE DB Destination) is included only
+    /// because a package with zero Data Flow Tasks reports "nothing to generate" -- see
+    /// PackageGenerator.Generate's own early gate.
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-expression-task-tables.sql</c> already created
+    /// on <c>.\SQLFORPOC_2022</c>/<c>SsisPoC</c>, and the CSV under
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-expression-task-csv/</c> present on disk.
+    /// </summary>
+    private static int BuildExpressionTaskFixture(string outputPath)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-expression-task-csv", "SyntheticExpressionTask.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticExpressionTask" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_ExpressionTaskCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 50, 0, 0));
+
+        // Declared for real (default values a human would plausibly pick, not asserted by this
+        // builder), so the extracted design-time default is genuine.
+        pkg.Variables.Add("TargetETLCutoffTime", false, "User", new DateTime(2000, 1, 1));
+        pkg.Variables.Add("TableName", false, "User", "TBD");
+
+        var setCutoff = AddExpressionTask(pkg, "EXPR_SetCutoff", "@[User::TargetETLCutoffTime] = DATEADD(\"Minute\",-5,GETUTCDATE())");
+        var setTableName = AddExpressionTask(pkg, "EXPR_SetTableName", "@[User::TableName] = \"City\"");
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        BuildFlatFileToOleDbLoad((MainPipe)dftHost.InnerObject, csvCm, sqlCm, "[dbo].[SyntheticExpressionTaskTarget]");
+
+        var logIfSet = AddExecuteSql(pkg, "SQL_LogIfTableNameSet", sqlCm,
+            "INSERT dbo.SyntheticExpressionTaskLog (Marker) VALUES (N'table-name-set-to-city');");
+
+        pkg.PrecedenceConstraints.Add((Executable)setCutoff, (Executable)setTableName);
+        pkg.PrecedenceConstraints.Add((Executable)setTableName, dftHost);
+        var gate = pkg.PrecedenceConstraints.Add(dftHost, (Executable)logIfSet);
+        gate.EvalOp = Microsoft.SqlServer.Dts.Runtime.DTSPrecedenceEvalOp.ExpressionAndConstraint;
+        gate.Expression = "@[User::TableName] == \"City\"";
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>
+    /// PURE MEASUREMENT PROBE, not a translation-target fixture -- same discipline as
+    /// BuildEventHandlerProbeFixture. Answers the one open question the Phase 2 plan named: does
+    /// real SSIS COERCE a numeric ExpressionTask result into a variable DECLARED as String, or
+    /// fail? <c>@[User::AsString] = 1 + 2</c> assigns an INTEGER result into a variable declared
+    /// type String.
+    ///
+    /// <para><b>Measured, real, and genuinely surprising (2026-09-15):</b> the assignment neither
+    /// fails nor stores the number's own string form ("3") -- it silently coerces to an EMPTY
+    /// STRING. Confirmed three ways in one run: SQL_Log's own bare `+ @[User::AsString] +`
+    /// concatenation logged "" (not "3"); SQL_LogCast's explicit `(DT_WSTR,20)` cast also logged
+    /// ""; and SQL_LogAsInt's own `(DT_I4)@[User::AsString]` cast FAILED at runtime with "Casting
+    /// expression '@[User::AsString]' from data type 'DT_WSTR' to data type 'DT_I4'" -- proving
+    /// the variable is genuinely typed DT_WSTR (matching its DECLARED type, not the RHS's own
+    /// I4), holding an empty string, not "3" stored as text.</para>
+    ///
+    /// <para><b>This tool does NOT reproduce this coercion</b> -- named here as a real, disclosed
+    /// limitation rather than guessed at: <see cref="ExpressionTaskEmitter"/>/<c>PackagePlanner.
+    /// ResolveExpressionTask</c> translate the RHS's own natural CLR type unconditionally
+    /// (`PackageVariables.Set(name, &lt;value&gt;)`, storing whatever type the RHS expression
+    /// produces) and never compare it against the target variable's own DECLARED type. Neither
+    /// evidenced real assignment in <c>DailyETLMain.dtsx</c> has this mismatch (DATEADD's own
+    /// DateTime result into a DateTime variable; a string literal into a String variable), so
+    /// this was out of scope to close this round -- closing it for real would need extending
+    /// SsisType resolution to a bare Reference's own declared type (not just literals/DATEADD),
+    /// then reproducing SSIS's own "silently blank on a numeric-into-string mismatch" rule (and
+    /// measuring whether the REVERSE direction -- a string into a numeric variable -- behaves the
+    /// same way, or differently, which this probe does not answer).</para>
+    ///
+    /// Requires dbo.SyntheticExpressionTaskCoercionProbe (Value NVARCHAR(50) NOT NULL) already
+    /// created on .\SQLFORPOC_2022/SsisPoC.
+    /// </summary>
+    private static int BuildExpressionTaskCoercionProbeFixture(string outputPath)
+    {
+        var pkg = new RtPackage { Name = "SyntheticExpressionTaskCoercionProbe" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        pkg.Variables.Add("AsString", false, "User", "");
+
+        var assign = AddExpressionTask(pkg, "EXPR_AssignNumericIntoString", "@[User::AsString] = 1 + 2");
+
+        var log = AddExecuteSql(pkg, "SQL_Log", sqlCm, "-- overwritten by PropertyExpression below");
+        log.Properties["SqlStatementSource"].SetExpression(log,
+            "\"INSERT INTO dbo.SyntheticExpressionTaskCoercionProbe (Value) VALUES (N'\" + @[User::AsString] + \"')\"");
+
+        // Two more probes, run regardless of whether the first one's bare "+" concatenation
+        // silently produced something unexpected -- an explicit cast to string, and a cast to
+        // int to see whether the stored value round-trips as a genuine number instead.
+        var logCast = AddExecuteSql(pkg, "SQL_LogCast", sqlCm, "-- overwritten by PropertyExpression below");
+        logCast.Properties["SqlStatementSource"].SetExpression(logCast,
+            "\"INSERT INTO dbo.SyntheticExpressionTaskCoercionProbe (Value) VALUES (N'cast:\" + (DT_WSTR,20)@[User::AsString] + \"')\"");
+
+        var logAsInt = AddExecuteSql(pkg, "SQL_LogAsInt", sqlCm, "-- overwritten by PropertyExpression below");
+        logAsInt.Properties["SqlStatementSource"].SetExpression(logAsInt,
+            "\"INSERT INTO dbo.SyntheticExpressionTaskCoercionProbe (Value) VALUES (N'int:\" + (DT_WSTR,20)(DT_I4)@[User::AsString] + \"')\"");
+
+        pkg.PrecedenceConstraints.Add((Executable)assign, (Executable)log);
+        pkg.PrecedenceConstraints.Add((Executable)log, (Executable)logCast);
+        pkg.PrecedenceConstraints.Add((Executable)logCast, (Executable)logAsInt);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    private static RtTaskHost AddExpressionTask(RtPackage pkg, string name, string expression)
+    {
+        var host = (RtTaskHost)pkg.Executables.Add("Microsoft.ExpressionTask");
+        host.Name = name;
+        host.Properties["Expression"].SetValue(host, expression);
+        return host;
+    }
+
+    /// <summary>
+    /// Phase 6 of the unsupported-component-types plan: <c>DATEADD("Millisecond", ...)</c> /
+    /// <c>DATEPART("Millisecond", ...)</c>, closing sql-server-samples' DailyETLMain.dtsx's own
+    /// "Trim Any Milliseconds" Expression Task
+    /// (<c>@[User::TargetETLCutoffTime] = DATEADD("Millisecond", 0 - DATEPART("Millisecond",
+    /// @[User::TargetETLCutoffTime]), @[User::TargetETLCutoffTime])</c>, reproduced here
+    /// VERBATIM). DailyETLMain itself can't be run end to end in this environment -- every one
+    /// of its own Data Flow Tasks sources from a linked-server/project-level connection manager
+    /// this generator can't resolve, an unrelated gap -- so this isolates the ExpressionTask
+    /// translation on its own, observable without any pipeline machinery at all.
+    ///
+    /// <b>Observation design, deliberately avoiding two higher-risk paths:</b> neither a
+    /// DateTime-typed guard COMPARISON (untested -- <c>PackagePlanner</c>'s own conditional-
+    /// constraint translator has never needed to compare a DbTimeStamp variable against a date
+    /// literal) nor a <c>(DT_WSTR,n)</c> CAST of the trimmed value (unsupported --
+    /// <see cref="ExpressionTaskEmitter"/>'s own <c>TranslateNode</c> has no <c>Cast</c> case,
+    /// only <see cref="ExpressionTranslator"/>'s pipeline-row translator does) is used. Instead:
+    /// a SECOND ExpressionTask, <c>EXPR_ObserveMs</c>, reads the (now-trimmed) value's own
+    /// millisecond component back into a plain <c>Int32</c> variable via
+    /// <c>DATEPART("Millisecond", @[User::TargetETLCutoffTime])</c> -- itself a supported,
+    /// already-oracle-verified shape, no Cast needed -- and an Execute SQL Task's own
+    /// precedence-constraint guard compares THAT (an ordinary Int32 comparison, a shape already
+    /// proven working long before this round) against the literal <c>0</c>. A genuinely
+    /// different millisecond value from every oracle corpus row (789, not 456) is used
+    /// deliberately, for independent confirmation beyond what the corpus itself already pins.
+    ///
+    /// A small DFT_Load (CSV -> Derived Column LoadedAtUtc -> OLE DB Destination) is included
+    /// only because a package with zero Data Flow Tasks reports "nothing to generate" -- reuses
+    /// the exact same CSV/table shape <c>BuildExpressionTaskFixture</c> already established.
+    ///
+    /// Requires the backing tables from
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-expression-task-tables.sql</c> (same file,
+    /// reused -- no new table needed, the existing <c>SyntheticExpressionTaskLog</c> table
+    /// carries this fixture's own marker too) and the CSV under
+    /// <c>tests/Ssis.Extract.Tests/Fixtures/synthetic-expression-task-csv/</c> present on disk.
+    /// </summary>
+    private static int BuildExpressionTaskMillisecondFixture(string outputPath)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-expression-task-csv", "SyntheticExpressionTask.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticExpressionTaskMillisecond" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_ExpressionTaskCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 50, 0, 0));
+
+        // The design-time DEFAULT itself is NOT where the nonzero-millisecond value under test
+        // comes from -- <DTS:VariableValue>'s own text serialization has no sub-second component
+        // at all (confirmed directly: SaveToXML rounds any millisecond-bearing default to the
+        // nearest whole second, e.g. 45.789 -> "46"), so a value baked in here would already be
+        // an exact .000 by the time either dtexec or the generated code ever reads it -- making
+        // the trim idiom a no-op and testing nothing interesting. Instead EXPR_SetMs789 (below)
+        // establishes a genuine, nonzero-ms value AT RUNTIME, via DATEADD itself -- .789,
+        // deliberately different from every oracle corpus row (.456/.123/.999/.000) so this run
+        // is independent confirmation, not a re-check of an already-measured value.
+        pkg.Variables.Add("TargetETLCutoffTime", false, "User", new DateTime(2020, 6, 15, 12, 30, 45));
+        pkg.Variables.Add("MsAfterTrim", false, "User", -1);
+
+        var setMs = AddExpressionTask(pkg, "EXPR_SetMs789",
+            "@[User::TargetETLCutoffTime] = DATEADD(\"Millisecond\", 789, @[User::TargetETLCutoffTime])");
+        // The real evidenced call, verbatim, from DailyETLMain.dtsx's own "Trim Any Milliseconds".
+        var trim = AddExpressionTask(pkg, "EXPR_TrimMilliseconds",
+            "@[User::TargetETLCutoffTime] = DATEADD(\"Millisecond\", 0 - DATEPART(\"Millisecond\", @[User::TargetETLCutoffTime]), @[User::TargetETLCutoffTime])");
+        var observe = AddExpressionTask(pkg, "EXPR_ObserveMs",
+            "@[User::MsAfterTrim] = DATEPART(\"Millisecond\", @[User::TargetETLCutoffTime])");
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_Load";
+        BuildFlatFileToOleDbLoad((MainPipe)dftHost.InnerObject, csvCm, sqlCm, "[dbo].[SyntheticExpressionTaskTarget]");
+
+        var logIfTrimmed = AddExecuteSql(pkg, "SQL_LogIfTrimmedToZero", sqlCm,
+            "INSERT dbo.SyntheticExpressionTaskLog (Marker) VALUES (N'ms-trimmed-to-zero');");
+
+        pkg.PrecedenceConstraints.Add((Executable)setMs, (Executable)trim);
+        pkg.PrecedenceConstraints.Add((Executable)trim, (Executable)observe);
+        pkg.PrecedenceConstraints.Add((Executable)observe, dftHost);
+        var gate = pkg.PrecedenceConstraints.Add(dftHost, (Executable)logIfTrimmed);
+        gate.EvalOp = Microsoft.SqlServer.Dts.Runtime.DTSPrecedenceEvalOp.ExpressionAndConstraint;
+        gate.Expression = "@[User::MsAfterTrim] == 0";
 
         pkg.SaveToXML(out var xml, null);
         File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));

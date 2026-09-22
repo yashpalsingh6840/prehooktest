@@ -15,7 +15,7 @@ public class PackagePlannerTests
     // synthetic fixtures under Ssis.Extract.Tests/Fixtures), same lookup depth
     // SyntheticParallelShapesTests.SsisProjectDir uses from its own sibling test project.
     private static readonly string SsisProjectDir = Path.GetFullPath(Path.Combine(
-        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "SSIS"));
+        Path.GetDirectoryName(ThisFilePath())!, "..", "..", "..", "..", "..", "SSIS_Packages", "SSIS"));
 
     // Tools/SsisExtractor/tests/Ssis.Extract.Codegen.Tests -> tests/Ssis.Extract.Tests/Fixtures --
     // where the synthetic component-coverage fixtures live (unlike TestFixtures.LoadPackage,
@@ -85,6 +85,122 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ReportsANamedGap_ForATransferSqlServerObjectsTask_RatherThanAGenericUnsupportedMessage()
+    {
+        // Hand-built ExecutableSpec, same "no dtsx/object-model build needed" reasoning as
+        // UnionPackage/StandaloneSortPackage elsewhere in this file -- the exact real attribute
+        // values below were read directly from a genuine SSDT-authored package
+        // (D:\PoC\SSIS_Packages_From_GitHub\ETL-SSIS-Real-Scenarios\UseCase_55\...\Package.dtsx,
+        // "Transfer SQL Server Objects Task"; see TransferSqlServerObjectsTaskPayload's own doc
+        // comment), not invented. Documented-gap-only (Phase 6): this must land as a named,
+        // specific, actionable gap -- not WalkContainer's generic "executable type ... is not
+        // supported" fallback -- and must never be silently guessed at as generated code.
+        var package = new PackageSpec
+        {
+            ObjectName = "Package",
+            SourceDtsxPath = "Package.dtsx",
+            Sha256 = "",
+            FileSizeBytes = 0,
+            LastWriteTimeUtc = default,
+            ProtectionLevelRaw = 0,
+            ProtectionLevelName = "DontSaveSensitive",
+            Coverage = new CoverageStats { TotalElements = 0, UnmappedElements = 0, ExcludedElements = 0, CoveragePercent = 100 },
+            Executables =
+            [
+                new ExecutableSpec
+                {
+                    RefId = @"Package\Transfer SQL Server Objects Task",
+                    ExecutableType = "Microsoft.TransferSqlServerObjectsTask",
+                    ObjectName = "Transfer SQL Server Objects Task",
+                    TransferSqlServerObjectsTask = new TransferSqlServerObjectsTaskPayload
+                    {
+                        SourceConnectionRefRaw = "{0068FB23-8DF9-447A-AD0B-DED0CBFED5CC}",
+                        SourceConnectionName = ".",
+                        DestinationConnectionRefRaw = "{05F4CEB5-52A8-4CD0-894B-4B7E6D2A5099}",
+                        DestinationConnectionName = @"AMR\MSSQLSERVER01",
+                        SourceDatabase = "SSIS",
+                        DestinationDatabase = "test",
+                        TablesListRaw = "4,15,[dbo].[Country],16,[dbo].[Currency],17,[dbo].[customer1],17,[dbo].[customer2],",
+                        Tables = ["[dbo].[Country]", "[dbo].[Currency]", "[dbo].[customer1]", "[dbo].[customer2]"],
+                        DropObjectsFirst = true,
+                        IncludeDependentObjects = true,
+                        CopyData = true,
+                        CopyIndexes = true,
+                        CopyPrimaryKeys = true,
+                        CopyForeignKeys = true,
+                    },
+                },
+            ],
+        };
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Flows);
+        var gap = Assert.Single(plan.Gaps, g => g.Location == "Transfer SQL Server Objects Task");
+        Assert.Equal(GapKind.Unclassified, gap.Kind);
+        Assert.Equal(GapTier.MissingToolSupport, GapIdentity.TierOf(gap));
+        Assert.DoesNotContain("is not supported by this planner yet", gap.Reason);
+
+        // Names the real source/destination databases, servers, table list, and flags -- not a
+        // generic "unsupported task type" message.
+        Assert.Contains("[dbo].[Country]", gap.Reason);
+        Assert.Contains("[dbo].[Currency]", gap.Reason);
+        Assert.Contains("[dbo].[customer1]", gap.Reason);
+        Assert.Contains("[dbo].[customer2]", gap.Reason);
+        Assert.Contains("SSIS", gap.Reason);
+        Assert.Contains("'.'", gap.Reason);
+        Assert.Contains("test", gap.Reason);
+        Assert.Contains(@"AMR\MSSQLSERVER01", gap.Reason);
+        Assert.Contains("DropObjectsFirst", gap.Reason);
+        Assert.Contains("IncludeDependentObjects", gap.Reason);
+        Assert.Contains("CopyData", gap.Reason);
+        Assert.Contains("CopyIndexes", gap.Reason);
+        Assert.Contains("CopyPrimaryKeys", gap.Reason);
+        Assert.Contains("CopyForeignKeys", gap.Reason);
+        Assert.Contains("SMO Transfer", gap.Reason);
+        Assert.Contains("DACPAC", gap.Reason);
+    }
+
+    [Fact]
+    public void Plan_ReportsAGap_ForATransferSqlServerObjectsTask_WithNoTablesListRecorded()
+    {
+        // A TablesList-less transfer (whole-database transfer) is real per the SMO object model,
+        // even though it isn't the one evidenced example -- must still read as an honest,
+        // specific statement rather than a blank/misleading one.
+        var package = new PackageSpec
+        {
+            ObjectName = "Package",
+            SourceDtsxPath = "Package.dtsx",
+            Sha256 = "",
+            FileSizeBytes = 0,
+            LastWriteTimeUtc = default,
+            ProtectionLevelRaw = 0,
+            ProtectionLevelName = "DontSaveSensitive",
+            Coverage = new CoverageStats { TotalElements = 0, UnmappedElements = 0, ExcludedElements = 0, CoveragePercent = 100 },
+            Executables =
+            [
+                new ExecutableSpec
+                {
+                    RefId = @"Package\Transfer Task",
+                    ExecutableType = "Microsoft.TransferSqlServerObjectsTask",
+                    ObjectName = "Transfer Task",
+                    TransferSqlServerObjectsTask = new TransferSqlServerObjectsTaskPayload
+                    {
+                        SourceDatabase = "Src",
+                        DestinationDatabase = "Dst",
+                    },
+                },
+            ],
+        };
+
+        var plan = PackagePlanner.Plan(package);
+
+        var gap = Assert.Single(plan.Gaps, g => g.Location == "Transfer Task");
+        Assert.Contains("no TablesList recorded", gap.Reason);
+        Assert.Contains("no flags set", gap.Reason);
+    }
+
+    [Fact]
     public void Plan_ReportsAnExplicitGap_ForAForEachLoopContainer()
     {
         // Real fixture (object-model-built, see docs/report-schema.md's ForEach/Script Task
@@ -115,6 +231,24 @@ public class PackagePlannerTests
         Assert.Equal("DCONV_Types", flow.DataConversion?.Name);
         Assert.Null(flow.DerivedColumn); // this fixture has no Derived Column at all -- proves the widened gate
         Assert.Equal(2, flow.DataConversion?.DataConvert?.Columns.Count);
+    }
+
+    [Fact]
+    public void Plan_FindsTheCopyMapComponent_ForTheSyntheticCopyMapFixture()
+    {
+        // Phase 1 of the unsupported-component-types plan.
+        var package = LoadSyntheticFixture("SyntheticCopyMap.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var flow = Assert.Single(plan.Flows);
+        Assert.Equal("DFT_CopyMapDemo", flow.TaskName);
+        Assert.Equal("CPY_FullName", flow.CopyMap?.Name);
+        Assert.Null(flow.DerivedColumn); // this fixture has no Derived Column at all
+        Assert.Null(flow.DataConversion); // nor any Data Conversion
+        Assert.Equal(1, flow.CopyMap?.CopyMap?.Columns.Count);
+        Assert.Equal("FullNameCopy", flow.CopyMap?.CopyMap?.Columns[0].OutputColumnName);
     }
 
     [Fact]
@@ -231,6 +365,64 @@ public class PackagePlannerTests
         Assert.Empty(plan.Gaps);
         var sqlStep = Assert.IsType<SqlStep>(plan.Steps.Single(s => s is SqlStep sql && sql.TaskName == "SQL_CacheSet_SecondDb"));
         Assert.Equal("CM_SqlSecondDb", sqlStep.ConnectionManagerName);
+    }
+
+    [Fact]
+    public void Plan_ResolvesTwoExpressionTaskAssignments_ForTheSyntheticExpressionTaskFixture()
+    {
+        // SyntheticExpressionTask.dtsx: EXPR_SetCutoff (DATEADD("Minute",-5,GETUTCDATE()) into a
+        // DateTime variable, the real evidenced call from DailyETLMain.dtsx) -> EXPR_SetTableName
+        // (a plain string literal, "City" -- the real shape of every OTHER ExpressionTask in that
+        // same package) -> DFT_Load -> a guarded SQL_LogIfTableNameSet. Phase 2 of the
+        // unsupported-component-types plan.
+        var package = LoadSyntheticFixture("SyntheticExpressionTask.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+
+        var setCutoff = Assert.Single(plan.Steps.OfType<ExpressionStep>(), s => s.TaskName == "EXPR_SetCutoff");
+        Assert.Equal("User::TargetETLCutoffTime", setCutoff.SsisVariableName);
+        Assert.Equal("DateTime.UtcNow.AddMinutes(-(5))", setCutoff.CSharpValueExpression);
+
+        var setTableName = Assert.Single(plan.Steps.OfType<ExpressionStep>(), s => s.TaskName == "EXPR_SetTableName");
+        Assert.Equal("User::TableName", setTableName.SsisVariableName);
+        Assert.Equal("\"City\"", setTableName.CSharpValueExpression);
+
+        // The downstream guard reads back the SAME variable name an ExpressionTask writes --
+        // proves the two features (ExpressionTask, conditional-constraint guard) resolve against
+        // the identical GuardVariable table, not two independently-derived namings.
+        Assert.Contains(plan.Steps, s => s.Guard is { CSharpPredicate: var p } && p.Contains("User::TableName"));
+    }
+
+    [Fact]
+    public void Plan_ResolvesTheRealTrimMillisecondsExpression_AndSeedsTheSelfReferencedVariable()
+    {
+        // SyntheticExpressionTaskMillisecond.dtsx, Phase 6: EXPR_SetMs789 -> EXPR_TrimMilliseconds
+        // (the real evidenced DailyETLMain.dtsx "Trim Any Milliseconds" call, verbatim) ->
+        // EXPR_ObserveMs -> DFT_Load -> a guarded SQL_LogIfTrimmedToZero. Also proves the real bug
+        // this round found and fixed: TargetETLCutoffTime is read by its OWN assignment's RHS
+        // (never by any guard), so it needs a design-time seed of its own -- previously only a
+        // guard-read variable (MsAfterTrim here) ever got one, and this variable would otherwise
+        // throw "was never set" the first time EXPR_TrimMilliseconds actually ran.
+        var package = LoadSyntheticFixture("SyntheticExpressionTaskMillisecond.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+
+        var trim = Assert.Single(plan.Steps.OfType<ExpressionStep>(), s => s.TaskName == "EXPR_TrimMilliseconds");
+        Assert.Equal("User::TargetETLCutoffTime", trim.SsisVariableName);
+        Assert.Equal(
+            "SsisFn.DateAddMillisecond(packageVariables.GetRequired<DateTime>(\"User::TargetETLCutoffTime\"), " +
+            "(0) - (SsisFn.DatePartMillisecond(packageVariables.GetRequired<DateTime>(\"User::TargetETLCutoffTime\"))))",
+            trim.CSharpValueExpression);
+
+        var observe = Assert.Single(plan.Steps.OfType<ExpressionStep>(), s => s.TaskName == "EXPR_ObserveMs");
+        Assert.Equal("SsisFn.DatePartMillisecond(packageVariables.GetRequired<DateTime>(\"User::TargetETLCutoffTime\"))", observe.CSharpValueExpression);
+
+        Assert.Contains(plan.VariableSeeds, s => s.SsisName == "User::TargetETLCutoffTime" && s.ClrTypeName == "DateTime");
+        Assert.Contains(plan.VariableSeeds, s => s.SsisName == "User::MsAfterTrim");
     }
 
     [Fact]
@@ -490,6 +682,38 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ResolvesAForLoop_WhoseBodyIsASingleDataFlowTask()
+    {
+        // SyntheticForLoop.dtsx -- Phase 3 of the unsupported-component-types plan. Confirmed real
+        // shape from a genuine SSDT-authored package (D:\PoC\SSIS_Packages_From_GitHub\
+        // ETL-SSIS-Real-Scenarios\UseCase_34\...\Package.dtsx, "For Loop Container"): a
+        // STOCK:FORLOOP whose own InitExpression/EvalExpression/AssignExpression use a BARE @Name
+        // form (@Part =1 / @Part <11 / @Part = @Part + 1). This fixture reproduces that shape with
+        // a small, deliberately verifiable range (Init=1, Eval=@Part<4, Assign=@Part=@Part+1).
+        // Before this round, ANY STOCK:FORLOOP was unrecognized -- it fell through to WalkContainer's
+        // own generic "unsupported executable type" gap.
+        var package = LoadSyntheticFixture("SyntheticForLoop.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        Assert.Empty(plan.Flows); // deliberately NOT duplicated into plan.Flows -- mirrors ForEachDataFlowLoopStep
+        var loopStep = Assert.Single(plan.Steps, s => s is ForLoopStep);
+        var loop = ((ForLoopStep)loopStep).Loop;
+
+        Assert.Equal("For Loop Container", loop.TaskName);
+        Assert.Equal("User::Part", loop.CounterVariableName);
+        Assert.Equal("int", loop.CounterClrTypeName);
+        Assert.Equal("1", loop.InitCSharpExpression);
+        Assert.Equal("(packageVariables.GetRequired<int>(\"User::Part\") < 4)", loop.EvalCSharpPredicate);
+        Assert.Equal("(packageVariables.GetRequired<int>(\"User::Part\")) + (1)", loop.AssignCSharpValueExpression);
+        Assert.Equal("DFT_Load", loop.Flow.TaskName);
+        Assert.NotNull(loop.Flow.FlatFileSource);
+        Assert.Equal("Microsoft.OLEDBDestination", loop.Flow.DestinationComponent.ComponentClassId);
+        Assert.Contains("@[User::Part]", loop.FilePathExpression);
+    }
+
+    [Fact]
     public void Plan_ResolvesAnAggregate_WithOneGroupByColumnAndOneCountColumn()
     {
         // SyntheticAggregate.dtsx, built speculatively 2026-08-30 (RBC_Demo_ETL's own real
@@ -506,8 +730,9 @@ public class PackagePlannerTests
         var flow = Assert.Single(plan.Flows);
         Assert.NotNull(flow.Aggregate);
         Assert.Equal("AGG_ByRegion", flow.Aggregate!.Component.Name);
-        Assert.Equal("Region", flow.Aggregate.GroupByOutputColumnName);
-        Assert.Equal("Region", flow.Aggregate.GroupBySourceColumnName);
+        var groupBy = Assert.Single(flow.Aggregate.GroupByColumns);
+        Assert.Equal("Region", groupBy.OutputColumnName);
+        Assert.Equal("Region", groupBy.SourceColumnName);
         var count = Assert.Single(flow.Aggregate.Functions);
         Assert.Equal("CustomerCount", count.OutputColumnName);
         Assert.Equal("CustomerID", count.SourceColumnName);
@@ -551,8 +776,9 @@ public class PackagePlannerTests
         Assert.Empty(plan.Gaps);
         var flow = Assert.Single(plan.Flows);
         Assert.NotNull(flow.Aggregate);
-        Assert.Equal("Region", flow.Aggregate!.GroupByOutputColumnName);
-        Assert.Equal("Region", flow.Aggregate.GroupBySourceColumnName);
+        var groupBy = Assert.Single(flow.Aggregate!.GroupByColumns);
+        Assert.Equal("Region", groupBy.OutputColumnName);
+        Assert.Equal("Region", groupBy.SourceColumnName);
         Assert.Equal(6, flow.Aggregate.Functions.Count);
 
         var totalRows = flow.Aggregate.Functions.Single(f => f.OutputColumnName == "TotalRows");
@@ -594,6 +820,25 @@ public class PackagePlannerTests
         var flow = Assert.Single(plan.Flows);
         Assert.NotNull(flow.ExcelSource);
         Assert.Equal("Excel Source", flow.ExcelSource!.Name);
+        Assert.Null(flow.DerivedColumn);
+        Assert.Equal("Microsoft.OLEDBDestination", flow.DestinationComponent.ComponentClassId);
+    }
+
+    [Fact]
+    public void Plan_ResolvesAnXmlSource_AsADirectCopyFlow_WithNoDerivedColumnNeeded()
+    {
+        // SyntheticXmlSource.dtsx: Microsoft.XmlSourceAdapter (discriminated via
+        // UserComponentTypeName -- see XmlSourcePayload's own doc comment) reading the real,
+        // checked-in synthetic-xml-source.xml/.xsd pair -> OLE DB Destination, no transform at
+        // all -- a genuine direct-copy pipeline, Phase 5 of the unsupported-component-types plan.
+        var package = LoadSyntheticFixture("SyntheticXmlSource.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var flow = Assert.Single(plan.Flows);
+        Assert.NotNull(flow.XmlSource);
+        Assert.Equal("XML Source", flow.XmlSource!.Name);
         Assert.Null(flow.DerivedColumn);
         Assert.Equal("Microsoft.OLEDBDestination", flow.DestinationComponent.ComponentClassId);
     }
@@ -770,6 +1015,144 @@ public class PackagePlannerTests
         Assert.Single(flow.Multicast.Branches, b => b.Discarded);
         var live = Assert.Single(flow.Multicast.Branches, b => !b.Discarded);
         Assert.Same(live.Destination, flow.DestinationComponent);
+    }
+
+    [Fact]
+    public void Plan_ResolvesAPercentageSampling_WithTwoMutuallyExclusiveBranchesInDeclaredOutputOrder()
+    {
+        // SyntheticPctSampling.dtsx (Phase 4 of the unsupported-component-types plan): OLE DB
+        // Source -> Percentage Sampling -> {OLE DB Destination (sampled), OLE DB Destination (not
+        // sampled)}. Confirmed via a live object-model probe (Ssis.Extract.FixtureBuilder's own
+        // ProbePctSampling) that the component always declares exactly these two outputs, in this
+        // order, right after ProvideComponentProperties() -- no dangling/spare-output quirk the
+        // way Multicast/Merge have, so PlanPctSampling must resolve exactly 2 branches with no
+        // filtering needed.
+        var package = LoadSyntheticFixture("SyntheticPctSampling.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.DoesNotContain(plan.Gaps, g => g.IsBlocking);
+        var flow = Assert.Single(plan.Flows);
+        Assert.Null(flow.ConditionalSplit);
+        Assert.Null(flow.Multicast);
+        Assert.NotNull(flow.PctSampling);
+        Assert.Equal("Sampling Selected Output", flow.PctSampling!.Sampled.OutputName);
+        Assert.Equal("Sampling Unselected Output", flow.PctSampling.NotSampled.OutputName);
+        Assert.NotNull(flow.PctSampling.Sampled.Destination);
+        Assert.NotNull(flow.PctSampling.NotSampled.Destination);
+        Assert.NotEqual(flow.PctSampling.Sampled.Destination!.RefId, flow.PctSampling.NotSampled.Destination!.RefId);
+        Assert.Equal(30, flow.PctSampling.Component.PctSampling!.SamplingValue);
+        Assert.Equal(424242, flow.PctSampling.Component.PctSampling.SamplingSeed);
+        // DestinationComponent is the Sampled branch's own destination -- the same
+        // non-authoritative-placeholder convention ConditionalSplit/Multicast already established.
+        Assert.Same(flow.PctSampling.Sampled.Destination, flow.DestinationComponent);
+    }
+
+    [Fact]
+    public void Plan_ResolvesAScd_WithAllFiveTrackedOutputsWiredToTheirOwnDestination_AndAdvisesOnTheDeadInferredOutput()
+    {
+        // SyntheticScdProbe.dtsx (Phase 7 of the unsupported-component-types plan): OLE DB Source
+        // -> SCD -> one OLE DB Destination per output, all six wired (including Inferred Member
+        // Updates Output, which EnableInferredMember=false makes structurally unreachable).
+        var package = LoadSyntheticFixture("SyntheticScdProbe.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        // The Inferred-output wiring is a real, named, NON-blocking advisory -- the package legally
+        // wires a dead output, and this tool says so rather than silently ignoring it.
+        Assert.DoesNotContain(plan.Gaps, g => g.IsBlocking);
+        Assert.Contains(plan.Gaps, g => !g.IsBlocking && g.Reason.Contains("Inferred Member Updates Output", StringComparison.Ordinal));
+
+        var flow = Assert.Single(plan.Flows);
+        Assert.NotNull(flow.Scd);
+        var scd = flow.Scd!;
+
+        Assert.Equal(["EmpId"], scd.BusinessKeyColumns);
+        Assert.Equal("int", scd.BusinessKeyTypes[0].ClrTypeName);
+        Assert.False(scd.FailOnFixedAttributeChange);
+        Assert.False(scd.UpdateChangingAttributeHistory);
+        Assert.Contains("[StartDate] IS NOT NULL AND [EndDate] IS NULL", scd.ReferenceSql);
+        Assert.Contains("SyntheticScdDim", scd.ReferenceSql);
+
+        // Every measured role, correctly classified -- see ScdColumnRoleRaw's own doc comment.
+        Assert.Contains(scd.Attributes, a => a.ColumnName == "LastName" && a.Role == ScdColumnRoleRaw.Changing);
+        Assert.Contains(scd.Attributes, a => a.ColumnName == "Designation" && a.Role == ScdColumnRoleRaw.Historical);
+        Assert.Contains(scd.Attributes, a => a.ColumnName == "FirstName" && a.Role == ScdColumnRoleRaw.Fixed);
+        Assert.Equal(3, scd.Attributes.Count); // business key itself never appears here
+
+        // Every one of the 5 tracked outputs is wired to its own destination, none via a command
+        // (this probe fixture wires straight to an observation table per output).
+        foreach (var branch in new[] { scd.Unchanged, scd.New, scd.FixedAttribute, scd.ChangingAttributeUpdates, scd.HistoricalAttributeInserts })
+        {
+            Assert.False(branch.Branch.Discarded);
+            Assert.NotNull(branch.Branch.Destination);
+            Assert.Null(branch.Command);
+        }
+
+        Assert.Equal(5, scd.LiveBranches().Count());
+    }
+
+    [Fact]
+    public void Plan_ResolvesTheRealShapedScd_WithACommandOnlyBranch_AndACommandThenInsertBranch()
+    {
+        // SyntheticScd.dtsx: the real evidenced package's own chain shape -- Changing Attribute
+        // Updates Output terminates in a bare OLE DB Command (Type 1 in-place UPDATE, no
+        // destination); Historical Attribute Inserts Output passes through an OLE DB Command
+        // (closing the old row) and THEN converges with New Output on one shared destination via
+        // a Union All -> Derived Column chain. Unchanged/Fixed Attribute/Inferred Member Updates
+        // are all left unwired, exactly as in the real package (it wires only 4 of 6 outputs).
+        var package = LoadSyntheticFixture("SyntheticScd.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.DoesNotContain(plan.Gaps, g => g.IsBlocking);
+        var flow = Assert.Single(plan.Flows);
+        Assert.NotNull(flow.Scd);
+        var scd = flow.Scd!;
+
+        Assert.True(scd.Unchanged.Branch.Discarded);
+        Assert.True(scd.FixedAttribute.Branch.Discarded);
+
+        // Changing: command only, no destination -- the Type 1 in-place update IS the whole effect.
+        Assert.False(scd.ChangingAttributeUpdates.Branch.Discarded);
+        Assert.Null(scd.ChangingAttributeUpdates.Branch.Destination);
+        Assert.NotNull(scd.ChangingAttributeUpdates.Command);
+        Assert.Contains("SET [LastName] = ", scd.ChangingAttributeUpdates.Command!.SqlTemplate);
+
+        // Historical: command AND destination -- close the old row, then insert the new one
+        // through the SAME destination the New Output branch feeds (converged via Union All).
+        Assert.False(scd.HistoricalAttributeInserts.Branch.Discarded);
+        Assert.NotNull(scd.HistoricalAttributeInserts.Command);
+        Assert.Contains("SET [EndDate] = ", scd.HistoricalAttributeInserts.Command!.SqlTemplate);
+        Assert.NotNull(scd.HistoricalAttributeInserts.Branch.Destination);
+
+        // New: insert only, and the SAME destination Historical's own insert half reaches --
+        // the whole point of the Union All convergence.
+        Assert.False(scd.New.Branch.Discarded);
+        Assert.Null(scd.New.Command);
+        Assert.NotNull(scd.New.Branch.Destination);
+        Assert.Equal(scd.New.Branch.Destination!.RefId, scd.HistoricalAttributeInserts.Branch.Destination!.RefId);
+
+        Assert.Equal(3, scd.LiveBranches().Count());
+    }
+
+    [Fact]
+    public void Plan_ResolvesAScdDangling_ThirdUnionAllInput_AsFilteredOutRatherThanAGap()
+    {
+        // The real evidenced package's own Union All declares a genuine third input with zero
+        // columns and no incoming path at all -- a permanently-unused spare slot, the same
+        // "component auto-provisions a dangling extra slot" quirk already documented for
+        // Microsoft.Multicast's own trailing output. PlanUnion must filter this out by
+        // connectivity (an incoming path), not choke on it as an unsupported malformed side --
+        // confirmed by the SyntheticScd.dtsx fixture (built via the real object model) actually
+        // reproducing this shape and this same test failing before PlanUnion was fixed to filter
+        // by connectivity rather than iterate every declared input.
+        var package = LoadSyntheticFixture("SyntheticScd.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.DoesNotContain(plan.Gaps, g => g.IsBlocking && g.Reason.Contains("Union All Input 3", StringComparison.Ordinal));
+        Assert.DoesNotContain(plan.Gaps, g => g.IsBlocking && g.Reason.Contains("has no columns", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -995,6 +1378,114 @@ public class PackagePlannerTests
         var gap = Assert.Single(plan.Gaps);
         Assert.Contains("fed by a Data Conversion", gap.Reason);
         Assert.Contains("not supported yet for a multi-independent-source Merge/UnionAll", gap.Reason);
+    }
+
+    [Fact]
+    public void Plan_ResolvesAnErrorRedirectDestination_ForTheSyntheticErrorRedirectFixture()
+    {
+        var package = LoadSyntheticFixture("SyntheticErrorRedirect.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Gaps);
+        var flow = Assert.Single(plan.Flows);
+        Assert.Equal("OLEDST_Target", flow.DestinationComponent.Name);
+        Assert.NotNull(flow.ErrorRedirect);
+        Assert.Equal("OLEDST_Errors", flow.ErrorRedirect!.ErrorDestinationComponent.Name);
+    }
+
+    [Fact]
+    public void Plan_SelectsThePrimaryDestination_RegardlessOfAlphabeticalComponentOrder()
+    {
+        // OLEDST_Errors sorts BEFORE OLEDST_Target alphabetically -- PipelineSpec.Components'
+        // own deterministic-output ordering -- so a bare FirstOrDefault (what PlanDataFlow used
+        // before SelectPrimaryDestination existed) picks the ERROR table as "the" destination.
+        // Confirmed real, not hypothetical: this is exactly the failure this fixture's own name
+        // was chosen to catch, found running it for the first time.
+        var package = LoadSyntheticFixture("SyntheticErrorRedirect.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        var flow = Assert.Single(plan.Flows);
+        Assert.Equal("OLEDST_Target", flow.DestinationComponent.Name);
+    }
+
+    [Fact]
+    public void Plan_ReportsAGap_WhenAThirdDestinationIsUnaccountedFor()
+    {
+        // The general defensive fix, not the redirect-specific one: a THIRD destination
+        // component sitting in the same pipeline, neither the resolved primary nor its own
+        // error-redirect target, must never silently vanish -- the exact bug class this whole
+        // round exists to close, generalized beyond the one evidenced shape.
+        var package = ErrorRedirectPackageWithExtraDestination();
+
+        var plan = PackagePlanner.Plan(package);
+
+        var gap = Assert.Single(plan.Gaps);
+        Assert.Contains("3 destination components", gap.Reason);
+        Assert.Contains("only 2 are accounted for", gap.Reason);
+        Assert.Contains("ExtraDestination", gap.Reason);
+    }
+
+    /// <summary>Hand-built minimal Source -&gt; Destination(RedirectRow) -&gt; ErrorDestination
+    /// shape, PLUS a completely unconnected third Microsoft.OLEDBDestination -- proves the
+    /// general "unaccounted destination" gap fires even when the redirect pair itself resolves
+    /// cleanly. Same "no dtsx/object-model build needed" reasoning as <see cref="UnionPackage"/>.</summary>
+    private static PackageSpec ErrorRedirectPackageWithExtraDestination()
+    {
+        var components = new List<PipelineComponentSpec>
+        {
+            new()
+            {
+                RefId = "SRC", Name = "Source", ComponentClassId = "Microsoft.OLEDBSource",
+                OleDbSource = new OleDbSourcePayload { AccessMode = 2, SqlCommand = "SELECT ID FROM dbo.Source" },
+                Outputs = [new PipelineOutputSpec { RefId = "SRC.Output", Name = "Output", Columns = [new PipelineOutputColumnSpec { RefId = "SRC.Output.Columns[ID]", Name = "ID", DataType = "i4", LineageId = "LIN_ID" }] }],
+            },
+            new()
+            {
+                RefId = "DST", Name = "Destination", ComponentClassId = "Microsoft.OLEDBDestination",
+                Inputs = [new PipelineInputSpec { RefId = "DST.Input", Name = "Input", ErrorRowDisposition = "RedirectRow", Columns = [new PipelineInputColumnSpec { RefId = "DST.Input.Columns[ID]", CachedName = "ID", LineageId = "LIN_ID" }] }],
+                Outputs = [new PipelineOutputSpec { RefId = "DST.Error", Name = "Error Output", IsErrorOut = true, Columns = [] }],
+            },
+            new()
+            {
+                RefId = "ERR", Name = "ErrorDestination", ComponentClassId = "Microsoft.OLEDBDestination",
+                Inputs = [new PipelineInputSpec { RefId = "ERR.Input", Name = "Input", Columns = [] }],
+            },
+            new()
+            {
+                RefId = "EXTRA", Name = "ExtraDestination", ComponentClassId = "Microsoft.OLEDBDestination",
+                Inputs = [new PipelineInputSpec { RefId = "EXTRA.Input", Name = "Input", Columns = [] }],
+            },
+        };
+        var paths = new List<PipelinePathSpec>
+        {
+            new() { RefId = "P_SRC_DST", StartId = "SRC.Output", EndId = "DST.Input" },
+            new() { RefId = "P_DST_ERR", StartId = "DST.Error", EndId = "ERR.Input" },
+        };
+
+        var pipeline = new PipelineSpec { Components = components, Paths = paths };
+        return new PackageSpec
+        {
+            ObjectName = "P",
+            SourceDtsxPath = "P.dtsx",
+            Sha256 = "",
+            FileSizeBytes = 0,
+            LastWriteTimeUtc = default,
+            ProtectionLevelRaw = 0,
+            ProtectionLevelName = "DontSaveSensitive",
+            Coverage = new CoverageStats { TotalElements = 0, UnmappedElements = 0, ExcludedElements = 0, CoveragePercent = 100 },
+            Executables =
+            [
+                new ExecutableSpec
+                {
+                    RefId = @"Package\DFT_Test",
+                    ExecutableType = "Microsoft.Pipeline",
+                    ObjectName = "DFT_Test",
+                    DataFlowTask = new DataFlowTaskPayload { Pipeline = pipeline, Lineage = LineageBuilder.Build(pipeline) },
+                },
+            ],
+        };
     }
 
     /// <summary>Hand-built minimal N-independent-source -&gt; [Sort] -&gt; Microsoft.Merge/UnionAll

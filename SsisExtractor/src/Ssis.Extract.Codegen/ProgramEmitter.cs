@@ -14,7 +14,21 @@ public sealed record CsvFlowSource(string ComponentName, string FileSourceKey, i
 /// file's own physical layout, in the connection manager's own column order.</summary>
 public sealed record FixedWidthFlowSource(
     string ComponentName, string FileSourceKey, IReadOnlyList<FixedWidthColumnPlan> Columns, int SkipRows) : FlowSourceSpec(ComponentName);
-public sealed record SqlFlowSource(string ComponentName, string CommandText) : FlowSourceSpec(ComponentName);
+/// <summary><see cref="SecondaryConnectionManagerName"/>, when set (Phase 5, added 2026-09-17),
+/// means this source's own connection manager resolves to a DIFFERENT server/database than the
+/// flow's own destination -- <c>Etl.Core.Data.SqlRowSource{TRow}</c> already opens its own
+/// independent connection regardless of database (see that type's own doc comment), so the only
+/// thing that actually changes is where the connection STRING comes from: not the package's
+/// primary <c>Db()</c>, but a <c>SecondaryConnections:{name}</c> config entry -- the exact same
+/// mechanism <see cref="ProgramSecondaryConnectionSqlStep"/> already established for the
+/// write-side case (an Execute SQL Task against a second database). Null (the default) preserves
+/// every pre-existing call site's behaviour byte-for-byte. A secondary-connection source is never
+/// bound to the package's own transaction (no <c>uow</c> argument at its construction site) --
+/// skipping <c>sp_bindsession</c> and falling back to READ UNCOMMITTED, the same already-accepted
+/// tradeoff every other unbound <c>SqlRowSource</c> read in this codebase uses (a Lookup preload,
+/// for instance) -- there is no meaningful "this package's active transaction" to bind to on a
+/// different database anyway.</summary>
+public sealed record SqlFlowSource(string ComponentName, string CommandText, string? SecondaryConnectionManagerName = null) : FlowSourceSpec(ComponentName);
 
 /// <summary>An Excel Source, added 2026-08-28 testing this tool against a real third-party
 /// portfolio (SSIS_From_Sandeep). Uses the same <see cref="FileSourceOptions"/>/FileSourceKey
@@ -25,6 +39,13 @@ public sealed record SqlFlowSource(string ComponentName, string CommandText) : F
 /// the underlying <c>ExcelRowSource{TRow}</c> is wrapped in a <c>FilteringRowSource{TRow}</c>
 /// rather than given any query capability of its own, since it never had one.</summary>
 public sealed record ExcelFlowSource(string ComponentName, string FileSourceKey, string WorksheetName, bool HasHeaderRow, string? WhereFilter = null) : FlowSourceSpec(ComponentName);
+
+/// <summary>An XML Source (<c>Microsoft.XmlSourceAdapter</c>), added for Phase 5 of the
+/// unsupported-component-types plan. Uses the same <see cref="FileSourceOptions"/>/FileSourceKey
+/// mechanism a <see cref="CsvFlowSource"/>/<see cref="ExcelFlowSource"/> does for its file path,
+/// plus the repeating row element's own local name (<see cref="RowElementName"/>) -- see
+/// <c>Etl.Core.Xml.XmlRowSource</c>'s own doc comment for exactly how that's matched.</summary>
+public sealed record XmlFlowSource(string ComponentName, string FileSourceKey, string RowElementName) : FlowSourceSpec(ComponentName);
 
 /// <summary>A Merge Join: two independent underlying sources (each itself a
 /// <see cref="CsvFlowSource"/>/<see cref="SqlFlowSource"/>, resolved exactly like a
@@ -85,6 +106,14 @@ public sealed record AggregateFunctionFieldSpec(string OutputPropertyName, strin
 /// throws.</summary>
 public sealed record AggregateLookupKeySpec(string LookupVariableName, string JoinInputPropertyName, string ReferenceColumnName);
 
+/// <summary>One GroupBy column's own destination-facing property name and CLR type -- a list on
+/// <see cref="AggregateFlowSource"/> (not a single value), closing a real 3-column GroupBy found
+/// in a genuine client portfolio. Exactly one entry reproduces the original, single-column shape
+/// byte-for-byte (a plain <c>TKey</c>, a plain <c>row => row.X</c> key selector); more than one
+/// uses a named C# tuple as <c>TKey</c> instead -- see <c>PackageClassEmitter</c>'s own Aggregate
+/// case for exactly where that split happens.</summary>
+public sealed record AggregateGroupByFieldSpec(string OutputPropertyName, string ClrType);
+
 /// <summary>A Microsoft.Aggregate flow (GroupBy + Count), built speculatively 2026-08-30 -- see
 /// <c>Ssis.Extract.Model.Pipeline.AggregatePayload</c>'s own doc comment for why (the one real
 /// evidenced instance is unreachable, blocked by its own upstream Lookup regardless). Wraps
@@ -108,11 +137,26 @@ public sealed record AggregateFlowSource(
     string ComponentName,
     FlowSourceSpec InnerSource,
     string SourceRowTypeName,
-    string GroupByPropertyName,
-    string GroupByKeyClrType,
+    List<AggregateGroupByFieldSpec> GroupByColumns,
     List<AggregateFunctionFieldSpec> Functions,
     AggregateLookupKeySpec? LookupKey = null,
     (string LookupVariableName, string JoinInputPropertyName)? LookupFilter = null) : FlowSourceSpec(ComponentName);
+
+/// <summary>The "no-match is the live route" Lookup shape (Phase 3, gap-audit plan
+/// concurrent-whistling-turing.md, 2026-09-16) -- the classic "insert-if-new" dimension load
+/// pattern: NoMatchBehavior=1, the Match output left unrouted (or itself a discarded RowCount
+/// dead end), and the No-Match output wired straight to a destination. Every row reaching the
+/// destination is, by definition, one the Lookup did NOT find a reference row for, so
+/// <see cref="InnerSource"/> is wrapped in a <c>FilteringRowSource&lt;TRow&gt;</c> keeping only
+/// rows whose join key is ABSENT from the cache -- the mirror image of
+/// <see cref="AggregateFlowSource.LookupFilter"/>'s own <c>ContainsKey</c> check (which keeps
+/// matches). No reference columns are ever copied for this shape (a miss has no reference row to
+/// copy from), so the owning flow's own transform needs no cache parameter at all --
+/// <c>ProgramFlowSpec.TransformNeedsLookupCache</c> is false whenever this type is used, even
+/// though <c>ProgramFlowSpec.Lookup</c> (the preload) is still populated, since the cache is
+/// still needed here, in the filter, just not in the transform.</summary>
+public sealed record LookupNoMatchFilteredFlowSource(
+    string ComponentName, FlowSourceSpec InnerSource, string LookupVariableName, string JoinInputPropertyName) : FlowSourceSpec(ComponentName);
 
 /// <summary>One column's write-time layout, mirroring Etl.Core.Data.FlatFileColumnFormat's own
 /// constructor shape verbatim -- this project never references the Etl.Core assembly (it emits
@@ -124,10 +168,27 @@ public sealed record FlatFileColumnFormatSpec(string PropertyName, int? FixedWid
 /// Flat File Destination (no EF Core table at all; constructed directly with an explicit file
 /// path + column layout, the same "construct directly, don't fight the DI container" pattern
 /// ConditionalSplitStep's own branches already use for their transforms). Exactly one concrete
-/// case per flow.</summary>
-public abstract record FlowSinkSpec;
-public sealed record SqlFlowSink : FlowSinkSpec;
-public sealed record FlatFileFlowSink(string FileSourceKey, bool Overwrite, string? HeaderLine, IReadOnlyList<FlatFileColumnFormatSpec> Columns) : FlowSinkSpec;
+/// case per flow. <see cref="ComponentName"/> is the destination's own real SSIS component name
+/// (e.g. "OLEDST_CustomerEnriched") -- every subtype carries it now (added for the 1-to-1
+/// component-to-function mapping round), not just <see cref="RedirectingSqlFlowSink"/>, so
+/// PackageClassEmitter.EmitSinkMethod can name a plain single-destination sink after its own real
+/// component instead of the entity it lands ("{Entity}Destination"), the same traceability every
+/// source method already had.</summary>
+public abstract record FlowSinkSpec(string ComponentName);
+public sealed record SqlFlowSink(string ComponentName) : FlowSinkSpec(ComponentName);
+public sealed record FlatFileFlowSink(string ComponentName, string FileSourceKey, bool Overwrite, string? HeaderLine, IReadOnlyList<FlatFileColumnFormatSpec> Columns) : FlowSinkSpec(ComponentName);
+
+/// <summary>A destination whose own input is configured ErrorRowDisposition=RedirectRow -- a row
+/// that fails to insert is redirected to a second, named destination (ErrorEntityName/table)
+/// instead of aborting the load. <see cref="PrimaryComponentName"/>/<see cref="ErrorComponentName"/>
+/// are each destination's own SSIS component name (e.g. OLEDST_StagingCustomers/
+/// OLEDST_StagingErrors) -- this one carries TWO component identities, because naming BOTH sink
+/// methods after their own component is the only way two destinations in one flow stay
+/// distinguishable; <see cref="FlowSinkSpec.ComponentName"/> (the base record's own property)
+/// resolves to <see cref="PrimaryComponentName"/>. <see cref="ErrorMapClassName"/> is the
+/// generated static class translating a failed TEntity + the causing DbException into the error
+/// entity -- see PackageGenerator.ResolveErrorRedirectSink.</summary>
+public sealed record RedirectingSqlFlowSink(string PrimaryComponentName, string ErrorComponentName, string ErrorEntityName, string ErrorMapClassName) : FlowSinkSpec(PrimaryComponentName);
 
 /// <summary>One Data Flow Task's already-decided naming, combining PackagePlanner's
 /// DataFlowPlan facts (StepName, Source) with the naming choices the caller makes for the
@@ -234,6 +295,12 @@ public sealed record ProgramFlowStep(ProgramFlowSpec Flow) : ProgramStep;
 /// anonymous string literal (see that emitter's own doc comment for why).</summary>
 public sealed record ProgramSqlStep(string StepName, string StatementClassName) : ProgramStep;
 
+/// <summary>A resolved Microsoft.ExpressionTask assignment -- see
+/// <c>PackagePlanner.ExpressionStep</c>/<c>ExpressionTaskEmitter</c> for how
+/// <see cref="CSharpValueExpression"/> was translated. <see cref="SsisVariableName"/> is passed
+/// straight through to <c>packageVariables.Set</c> at run time.</summary>
+public sealed record ProgramExpressionStep(string StepName, string SsisVariableName, string CSharpValueExpression) : ProgramStep;
+
 /// <summary>An Execute SQL Task whose own connection manager resolves to a DIFFERENT server/
 /// database than this package's primary one (see <c>PackageGenerator.ResolveSqlStep</c>'s own
 /// doc comment for the real motivating case and why this needs its own step kind rather than
@@ -299,6 +366,32 @@ public sealed record ProgramForEachDataFlowLoopStep(
     string SourceComponentName, string RowTypeName, string EntityName, string TransformClassName,
     string FileSourceKey) : ProgramStep;
 
+/// <summary>A <c>STOCK:FORLOOP</c> whose body is a Data Flow Task -- Phase 3 of the
+/// unsupported-component-types plan, structurally the counter-driven sibling of
+/// <see cref="ProgramForEachDataFlowLoopStep"/>. <see cref="CounterVariableName"/> is the
+/// namespace-qualified package variable name (e.g. "User::Part") every emitted
+/// <c>packageVariables.GetRequired&lt;{CounterClrTypeName}&gt;(...)</c>/<c>.Set(...)</c> call
+/// reads/writes directly; <see cref="InitCSharpExpression"/> is null exactly when the container
+/// declared no <c>InitExpression</c> at all, in which case the generated method emits no Init
+/// call whatsoever (the counter's own design-time default, already seeded onto
+/// <c>packageVariables</c> the same way a conditional-constraint guard's own variables are,
+/// stands as-is). <see cref="EvalCSharpPredicate"/>/<see cref="AssignCSharpValueExpression"/> are
+/// already-translated C# (<see cref="ForLoopEmitter"/>) reading/producing a value of
+/// <see cref="CounterClrTypeName"/>.
+///
+/// <see cref="FilePathExpression"/>/<see cref="SourceComponentName"/>/<see cref="RowTypeName"/>/
+/// <see cref="EntityName"/>/<see cref="TransformClassName"/> mirror
+/// <see cref="ProgramForEachDataFlowLoopStep"/>'s own fields exactly -- the loop body is generated
+/// the same way an ordinary single-destination CSV flow is, only the per-iteration source
+/// construction (reading the counter directly off <c>packageVariables</c>, not a lambda
+/// parameter -- see <c>Etl.Core.Pipeline.ForLoopStep{TRow,TEntity}</c>'s own doc comment for why)
+/// differs.</summary>
+public sealed record ProgramForLoopStep(
+    string StepName, string CounterVariableName, string CounterClrTypeName,
+    string? InitCSharpExpression, string EvalCSharpPredicate, string AssignCSharpValueExpression,
+    string FilePathExpression,
+    string SourceComponentName, string RowTypeName, string EntityName, string TransformClassName) : ProgramStep;
+
 public sealed record ProgramConditionalSplitStep(
     string StepName,
     FlowSourceSpec Source,
@@ -320,6 +413,58 @@ public sealed record ProgramMulticastStep(
     FlowSourceSpec Source,
     string RowTypeName,
     List<ProgramMulticastBranch> Branches) : ProgramStep;
+
+/// <summary>
+/// One <c>Microsoft.SCD</c> output's downstream chain, as generated. Exactly one of the three shapes
+/// the real evidenced package uses, distinguished by which fields are populated:
+/// insert-only (<see cref="EntityName"/>/<see cref="TransformClassName"/>/<see cref="Sink"/> set),
+/// command-only (<see cref="SqlTemplate"/> set), or both.
+/// <see cref="Slot"/> is the <c>Etl.Core.Pipeline.ScdBranches{TRow}</c> property this branch fills.
+/// </summary>
+public sealed record ProgramScdBranch(
+    string Slot,
+    string OutputName,
+    string? EntityName,
+    string? TransformClassName,
+    FlowSinkSpec? Sink,
+    string? SqlTemplate,
+    IReadOnlyList<string> CommandParameterColumns);
+
+/// <summary>
+/// A Slowly Changing Dimension flow (Phase 7 of the unsupported-component-types plan) -- one source,
+/// a full-cache read of the dimension's current rows, and up to five routed branches. Unlike every
+/// other multi-branch step here, a branch may run a per-row SQL command instead of (or as well as)
+/// inserting, and the branches run in two ordered phases -- see
+/// <c>Etl.Core.Pipeline.SlowlyChangingDimensionStep{TRow,TKey}</c>'s own doc comment for why that
+/// ordering is a correctness requirement.
+///
+/// <para><see cref="AttributeRoles"/>, <see cref="AttributeColumns"/> and
+/// <see cref="AttributeExpressions"/> are index-aligned, and all three align with the
+/// <c>object?[]</c> <see cref="CacheClassName"/> produces -- that alignment is the whole contract
+/// between the emitted cache, the emitted value selector, and the runtime classifier.</para>
+///
+/// <para><see cref="AttributeExpressions"/> carries each attribute's own ALREADY-RESOLVED C#
+/// expression -- a plain <c>row.{Name}</c> passthrough for an ordinary column, or
+/// <c>SsisFn.ToNullable*(row.{RawSourceColumn})</c> for one produced by an intervening Data
+/// Conversion component (resolved via <c>TransformEmitter.TranslateDataConversion</c>, the same
+/// helper a Conditional Split condition/Derived Column cross-reference already reuses -- see
+/// <c>PackageGenerator.GenerateScdFlow</c>). <see cref="AttributeColumns"/> stays the bare SSIS
+/// column name throughout (used for the dimension cache's own reference-SQL projection and for
+/// human-readable gap text), never re-derived into an identifier at the point of use any more.</para>
+/// </summary>
+public sealed record ProgramScdStep(
+    string StepName,
+    FlowSourceSpec Source,
+    string RowTypeName,
+    string CacheClassName,
+    IReadOnlyList<string> BusinessKeyColumns,
+    IReadOnlyList<string> BusinessKeyClrTypes,
+    IReadOnlyList<string> AttributeColumns,
+    IReadOnlyList<string> AttributeExpressions,
+    IReadOnlyList<string> AttributeRoles,
+    bool FailOnFixedAttributeChange,
+    bool UpdateChangingAttributeHistory,
+    IReadOnlyList<ProgramScdBranch> Branches) : ProgramStep;
 
 /// <summary>An OLE DB Command flow -- no destination table, no EF entity, no IBulkSink at all;
 /// the command itself is the flow's sink, run once per source row via
@@ -360,6 +505,15 @@ public sealed record ProgramRequest(
     /// been rolled back, each isolated so a throwing handler never replaces the original
     /// exception.</summary>
     public IReadOnlyList<FailureHandlerPlan> FailureHandlers { get; init; } = [];
+
+    /// <summary>Whether to wire <c>IPackageResultNotifier</c>/<c>AddEmailNotifications</c> at all.
+    /// Defaults to false -- a .dtsx carries no notification-recipient information (see the
+    /// {Package}.Notification gap), so unconditionally emitting this hook on every generated
+    /// package would wire an email-sending call the ORIGINAL SSIS package never had any equivalent
+    /// of, on the strength of nothing but "maybe someone will configure it later." Opt in via
+    /// `ssisx generate --notifications` once real recipients/SMTP settings actually exist to
+    /// configure.</summary>
+    public bool IncludeNotifications { get; init; }
 }
 
 /// <summary>
@@ -381,7 +535,7 @@ public static class ProgramEmitter
         var className = PackageClassEmitter.ClassName(request.PackageName);
         var w = new CodeWriter();
         w.Line("using Etl.Core.Hosting;");
-        w.Line("using Etl.Core.Notifications;");
+        if (request.IncludeNotifications) w.Line("using Etl.Core.Notifications;");
         w.Line($"using {request.RootNamespace};");
         w.Line($"using {request.RootNamespace}.Model;");
         w.Line("using Microsoft.Extensions.DependencyInjection;");
@@ -390,7 +544,7 @@ public static class ProgramEmitter
         w.Blank();
         w.Line("var builder = EtlHost.Create(args, PackageName);");
         w.Line($"builder.Services.AddEtlDbContext<{request.DbContextTypeName}>();");
-        w.Line("builder.Services.AddEmailNotifications(builder.Configuration);");
+        if (request.IncludeNotifications) w.Line("builder.Services.AddEmailNotifications(builder.Configuration);");
         w.Blank();
         w.Line("using var host = builder.Build();");
         w.Line($"return await new {className}(host.Services).RunAsync(CancellationToken.None);");

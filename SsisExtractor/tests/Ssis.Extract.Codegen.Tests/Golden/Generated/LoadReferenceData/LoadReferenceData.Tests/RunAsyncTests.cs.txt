@@ -26,8 +26,6 @@ public class RunAsyncTests
         var uow = Assert.Single(harness.CreatedUnitsOfWork);
         Assert.True(uow.RollbackCalled);
         Assert.False(uow.CommitCalled);
-        Assert.NotNull(harness.Notifier.Result);
-        Assert.False(harness.Notifier.Result!.Succeeded);
     }
 
     [Fact]
@@ -45,8 +43,5 @@ public class RunAsyncTests
             Assert.True(uow.CommitCalled);
             Assert.False(uow.RollbackCalled);
         });
-        Assert.NotNull(harness.Notifier.Result);
-        Assert.True(harness.Notifier.Result!.Succeeded);
-        Assert.Empty(harness.Notifier.Result!.FailureHandlersRun);
     }
 }

@@ -145,6 +145,74 @@ public class TransformEmitterTests
     }
 
     [Fact]
+    public void Emit_ResolvesAPlainPassthroughColumn_WhenSourceIsIntAndDestinationIsDecimal()
+    {
+        // Added 2026-09-18 -- the real shape sql-server-samples' own DailyETLMain.dtsx has
+        // (StockHolding_Staging's own "Last Cost Price": buffered i4 from a SqlCommand's own
+        // `int` result-set column, decimal(18,2) at the real destination table). Unlike every
+        // other pairing in this file, this needed NO dtexec probe -- int -> decimal is a
+        // strictly widening, lossless C#-native implicit conversion, so there's no rounding/
+        // truncation/overflow rule to measure.
+        var destination = new PipelineComponentSpec
+        {
+            RefId = "DST_Test",
+            Name = "OLE DB Destination",
+            ComponentClassId = "Microsoft.OLEDBDestination",
+            Inputs =
+            [
+                new PipelineInputSpec
+                {
+                    RefId = "DST_Test.Inputs[OLE DB Destination Input]",
+                    Name = "OLE DB Destination Input",
+                    Columns =
+                    [
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[LastCostPrice]",
+                            CachedName = "LastCostPrice",
+                            CachedDataType = "i4",
+                            LineageId = "SRC.Outputs[Output].Columns[LastCostPrice]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[LastCostPrice]",
+                        },
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[Name]",
+                            CachedName = "Name",
+                            CachedDataType = "wstr",
+                            LineageId = "SRC.Outputs[Output].Columns[Name]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Name]",
+                        },
+                    ],
+                    ExternalMetadataColumns =
+                    [
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[LastCostPrice]", Name = "LastCostPrice", DataType = "numeric", Precision = 18, Scale = 2 },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Name]", Name = "Name", DataType = "wstr", Length = 50 },
+                    ],
+                },
+            ],
+        };
+        var pipeline = new PipelineSpec { Components = [destination] };
+
+        var request = new TransformRequest(
+            "Generated.Mapping", "StockHoldingStagingTransform",
+            "Generated.Sql", "StockHoldingStagingRow",
+            "Generated.Model", "StockHoldingStaging",
+            "Generated.Ssis",
+            pipeline, [], destination);
+
+        var result = TransformEmitter.Emit(request);
+
+        Assert.Empty(result.Result.Gaps);
+        Assert.Equal(["WidenI4ToNumeric"], result.SsisFunctionsUsed);
+
+        var file = Assert.Single(result.Result.Files);
+        Assert.Contains("LastCostPrice = SsisFn.WidenI4ToNumeric(row.LastCostPrice),", file.Content);
+        Assert.Contains("Name = row.Name,", file.Content);
+        Assert.Contains("using Generated.Ssis;", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
+    [Fact]
     public void Emit_ReportsAGap_ForAPlainPassthroughColumn_WithAnUnevidencedNumericMismatch()
     {
         // i2 (smallint) -> i4 (int) has never been measured against a real dtexec run -- unlike
@@ -466,9 +534,10 @@ public class TransformEmitterTests
     [Fact]
     public void Emit_EmitsASeam_ForAScriptComponentColumn_WhenSeamsAreEnabled()
     {
-        // The same real shape as the test above -- but with --seams, the column stops being
-        // silently omitted and becomes a Fill_* a human implements. The class turns partial and
-        // the project stops compiling until they do, which is the whole point.
+        // The same real shape as the test above -- but with --seams, the component's own 2
+        // columns stop being silently omitted and become ONE combined seam a human implements
+        // (not one per column -- see TransformEmitter.ScriptComponentGroup). The class turns
+        // partial and the project stops compiling until they do, which is the whole point.
         var (scriptComponent, destination) = BuildScriptComponentPassthroughShape(withScriptComponentPayload: true);
         var pipeline = new PipelineSpec { Components = [scriptComponent, destination] };
 
@@ -484,24 +553,32 @@ public class TransformEmitterTests
         var file = Assert.Single(result.Result.Files);
 
         Assert.Contains("public sealed partial class StagingCustomersTransform", file.Content);
-        Assert.Contains("FullName = Fill_FullName(row, ctx),", file.Content);
-        Assert.Contains("private partial string Fill_FullName(StagingCustomersCsvRow row, in RowContext ctx);", file.Content);
+        // ONE combined record carrying both produced columns together.
+        Assert.Contains("internal readonly record struct SCR_CleanseCustomerRowResult(string FullName, string CleanEmail);", file.Content);
+        // ONE seam declaration, named after the component itself -- not "Fill_<Column>".
+        Assert.Contains("private partial SCR_CleanseCustomerRowResult SCR_CleanseCustomerRow(StagingCustomersCsvRow row, in RowContext ctx);", file.Content);
+        // Called ONCE from Map()'s own (now block-bodied) implementation.
+        Assert.Contains("var sCR_CleanseCustomerRowResult = SCR_CleanseCustomerRow(row, ctx);", file.Content);
+        Assert.Contains("FullName = sCR_CleanseCustomerRowResult.FullName,", file.Content);
+        Assert.Contains("CleanEmail = sCR_CleanseCustomerRowResult.CleanEmail,", file.Content);
         // The genuinely-passthrough column is unaffected.
         Assert.Contains("CustomerID = row.CustomerID,", file.Content);
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
 
         // A seam is outstanding work, not a resolution: the gap stays, stays BLOCKING, and keeps
-        // its Tier-2 classification so the work packet is still produced.
+        // its Tier-2 classification so the work packet is still produced -- ONE blocking gap for
+        // the whole component (was 2, one per column, before the combined-seam round).
         Assert.Equal(2, result.Result.Gaps.Count);
         var gap = Assert.Single(result.Result.Gaps, g => g.Kind == GapKind.ScriptComponentColumn);
-        Assert.Equal("StagingCustomers.FullName", gap.Location);
+        Assert.Equal("StagingCustomers.SCR_CleanseCustomerRow", gap.Location);
         Assert.True(gap.IsBlocking);
         Assert.Contains("CS8795", gap.Reason);
 
         // Companion "Script Task / Script Component seam" taxonomy row: a filled seam is human
-        // logic, and a test for it is a separate, non-blocking TEST-ORACLE work item.
+        // logic, and a test for it is a separate, non-blocking TEST-ORACLE work item -- also one
+        // per component, sharing the same Location.
         var testGap = Assert.Single(result.Result.Gaps, g => g.Kind == GapKind.TestOracle);
-        Assert.Equal("StagingCustomers.FullName", testGap.Location);
+        Assert.Equal("StagingCustomers.SCR_CleanseCustomerRow", testGap.Location);
         Assert.False(testGap.IsBlocking);
     }
 
@@ -531,9 +608,14 @@ public class TransformEmitterTests
         Assert.DoesNotContain("Fill_", file.Content);
         Assert.DoesNotContain("FullName", file.Content);
 
-        var gap = Assert.Single(result.Result.Gaps);
-        Assert.Equal(GapKind.Unclassified, gap.Kind);
-        Assert.DoesNotContain("CS8795", gap.Reason);
+        // Unclassified gaps are per-column, unaffected by combined-seam grouping -- one per
+        // produced column, since grouping only applies to a real Script Component's own seam.
+        Assert.Equal(2, result.Result.Gaps.Count);
+        Assert.All(result.Result.Gaps, gap =>
+        {
+            Assert.Equal(GapKind.Unclassified, gap.Kind);
+            Assert.DoesNotContain("CS8795", gap.Reason);
+        });
     }
 
     [Fact]
@@ -567,8 +649,10 @@ public class TransformEmitterTests
         // Mirrors the real shape RBC_Demo_ETL's own Package.dtsx/DFT_LoadCustomers has: a
         // Script Component (Microsoft.ManagedComponentHost -- the same generic discriminator
         // ADO NET Source/Destination use, disambiguated elsewhere by UserComponentTypeName, not
-        // relevant to this test) synthesizes a brand-new "FullName" column with its OWN fresh
-        // lineageId (no upstream producer at all -- the script genuinely created this value).
+        // relevant to this test) synthesizes TWO brand-new columns ("FullName"/"CleanEmail"),
+        // each with its OWN fresh lineageId (no upstream producer at all -- the script genuinely
+        // created these values) -- the real, evidenced 2-column shape (matching
+        // SyntheticScriptComponentSeams.dtsx), so this proves GROUPING, not just a single column.
         var scriptComponent = new PipelineComponentSpec
         {
             RefId = "SCR_Test",
@@ -590,6 +674,12 @@ public class TransformEmitterTests
                             RefId = "SCR_Test.Outputs[Output 0].Columns[FullName]",
                             Name = "FullName",
                             LineageId = "SCR_Test.Outputs[Output 0].Columns[FullName]",
+                        },
+                        new PipelineOutputColumnSpec
+                        {
+                            RefId = "SCR_Test.Outputs[Output 0].Columns[CleanEmail]",
+                            Name = "CleanEmail",
+                            LineageId = "SCR_Test.Outputs[Output 0].Columns[CleanEmail]",
                         },
                     ],
                 },
@@ -625,11 +715,20 @@ public class TransformEmitterTests
                             LineageId = "SCR_Test.Outputs[Output 0].Columns[FullName]",
                             ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[FullName]",
                         },
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[CleanEmail]",
+                            CachedName = "CleanEmail",
+                            CachedDataType = "wstr",
+                            LineageId = "SCR_Test.Outputs[Output 0].Columns[CleanEmail]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[CleanEmail]",
+                        },
                     ],
                     ExternalMetadataColumns =
                     [
                         new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]", Name = "CustomerID", DataType = "wstr", Length = 20 },
                         new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[FullName]", Name = "FullName", DataType = "wstr", Length = 200 },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[CleanEmail]", Name = "CleanEmail", DataType = "wstr", Length = 200 },
                     ],
                 },
             ],
@@ -660,15 +759,20 @@ public class TransformEmitterTests
 
         var result = TransformEmitter.Emit(request);
 
-        var gap = Assert.Single(result.Result.Gaps);
-        Assert.Equal("StagingCustomers.FullName", gap.Location);
+        // Unclassified (not-a-Script-Component) gaps stay PER-COLUMN, unaffected by the
+        // combined-seam grouping -- that grouping only applies to a real Script Component's own
+        // columns (GapKind.ScriptComponentColumn), never this "missing tool support" case.
+        Assert.Equal(2, result.Result.Gaps.Count);
+        var gap = Assert.Single(result.Result.Gaps, g => g.Location == "StagingCustomers.FullName");
         Assert.Contains("produced by 'SCR_CleanseCustomerRow' (Microsoft.ManagedComponentHost)", gap.Reason);
+        Assert.Single(result.Result.Gaps, g => g.Location == "StagingCustomers.CleanEmail");
 
         // The genuinely-passthrough column still generates -- same per-column-gap shape as
         // every other untranslatable case in this file (an unrelated column doesn't block the
         // whole flow).
         var file = Assert.Single(result.Result.Files);
         Assert.DoesNotContain("FullName", file.Content);
+        Assert.DoesNotContain("CleanEmail", file.Content);
         Assert.Contains("CustomerID = row.CustomerID,", file.Content);
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }
@@ -700,6 +804,7 @@ public class TransformEmitterTests
         Assert.Empty(result.Result.Gaps);
         var file = Assert.Single(result.Result.Files);
         Assert.Contains("FullName = row.FullName,", file.Content);
+        Assert.Contains("CleanEmail = row.CleanEmail,", file.Content);
         Assert.Contains("CustomerID = row.CustomerID,", file.Content);
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }

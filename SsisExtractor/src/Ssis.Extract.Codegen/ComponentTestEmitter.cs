@@ -26,6 +26,10 @@ public static class ComponentTestEmitter
         PipelineComponentSpec destinationComponent)
     {
         var resolved = PipelineResolver.ResolveDestinationInput(destinationComponent);
+        // Independently reproduces EntityEmitter's own identifier mapping (same
+        // PipelineResolver.ResolveDestinationInput list, same order) -- see
+        // PackageGenerator.MakeColumnIdentifierResolver's own doc comment.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
         var propertyInits = new List<string>();
         foreach (var column in resolved.Columns)
         {
@@ -33,7 +37,7 @@ public static class ComponentTestEmitter
             // own gap for it) -- this starter test just leaves it unset rather than repeating that
             // gap a second time.
             if (column.Type is not { } clrType) continue;
-            propertyInits.Add($"{column.ExternalColumnName} = {TransformTestEmitter.RepresentativeLiteral(clrType.ClrTypeName)}");
+            propertyInits.Add($"{identifierOf(column.ExternalColumnName)} = {TransformTestEmitter.RepresentativeLiteral(clrType.ClrTypeName)}");
         }
 
         // Nothing this pilot can synthesize a value for -- no starter test, and no gap either
@@ -115,11 +119,14 @@ public static class ComponentTestEmitter
         PipelineComponentSpec destinationComponent)
     {
         var resolved = PipelineResolver.ResolveDestinationInput(destinationComponent);
+        // Independently reproduces EntityEmitter's own identifier mapping -- see
+        // PackageGenerator.MakeColumnIdentifierResolver's own doc comment.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
         var propertyInits = new List<string>();
         foreach (var column in resolved.Columns)
         {
             if (column.Type is not { } clrType) continue;
-            propertyInits.Add($"{column.ExternalColumnName} = {TransformTestEmitter.RepresentativeLiteral(clrType.ClrTypeName)}");
+            propertyInits.Add($"{identifierOf(column.ExternalColumnName)} = {TransformTestEmitter.RepresentativeLiteral(clrType.ClrTypeName)}");
         }
 
         if (propertyInits.Count == 0) return new EmitResult([], []);
@@ -191,20 +198,21 @@ public static class ComponentTestEmitter
         return new EmitResult([new GeneratedFile($"{entityName}SinkTests.cs", Rendering.JoinLines(lines))], []);
     }
 
-    /// <summary>"Source -- CSV/fixed-width" taxonomy row: <c>Docs/Generated-Tests-Plan.md</c>'s own
-    /// wording is "assert .Name; full read tagged" -- the same shape <see cref="EmitSqlSourceTest"/>/
-    /// <see cref="EmitExcelSourceTest"/> already use, not the row-count/column assertions an earlier
-    /// version of this test made against a tool-synthesized Tier-A sample. That Tier-A fallback is
-    /// gone (2026-09-06): every file-based source, this one included, now resolves through the SAME
-    /// package-relative <c>TestData/</c> folder <c>appsettings.Development.json</c> already points a
-    /// real local run at -- see <see cref="TestDoublesEmitter"/>'s own doc comment -- so a real read
-    /// needs its own <c>LOCAL-DATA</c> fill applied first, exactly like a SQL source needs a real
-    /// server and an Excel source needs a real workbook. <c>CsvRowSource&lt;TRow&gt;</c>/
-    /// <c>FixedWidthRowSource&lt;TRow&gt;</c>'s own constructors never open the file (lazy, like
-    /// <c>SqlRowSource&lt;TRow&gt;</c>, unlike <c>ExcelRowSource&lt;TRow&gt;</c>'s eager one), so the
-    /// <c>.Name</c>-only test needs no registered file at all, only a registered DICTIONARY ENTRY
-    /// (still supplied unconditionally by <see cref="TestDoublesEmitter"/>, so no
-    /// <c>KeyNotFoundException</c> either way).</summary>
+    /// <summary>"Source -- CSV/fixed-width" (and, since Phase 5 of the unsupported-component-types
+    /// plan, XML) taxonomy row: <c>Docs/Generated-Tests-Plan.md</c>'s own wording is "assert .Name;
+    /// full read tagged" -- the same shape <see cref="EmitSqlSourceTest"/>/<see cref="EmitExcelSourceTest"/>
+    /// already use, not the row-count/column assertions an earlier version of this test made against
+    /// a tool-synthesized Tier-A sample. That Tier-A fallback is gone (2026-09-06): every file-based
+    /// source, this one included, now resolves through the SAME package-relative <c>TestData/</c>
+    /// folder <c>appsettings.Development.json</c> already points a real local run at -- see
+    /// <see cref="TestDoublesEmitter"/>'s own doc comment -- so a real read needs its own
+    /// <c>LOCAL-DATA</c> fill applied first, exactly like a SQL source needs a real server and an
+    /// Excel source needs a real workbook. <c>CsvRowSource&lt;TRow&gt;</c>/
+    /// <c>FixedWidthRowSource&lt;TRow&gt;</c>/<c>XmlRowSource&lt;TRow&gt;</c>'s own constructors never
+    /// open the file (lazy, like <c>SqlRowSource&lt;TRow&gt;</c>, unlike
+    /// <c>ExcelRowSource&lt;TRow&gt;</c>'s eager one), so the <c>.Name</c>-only test needs no
+    /// registered file at all, only a registered DICTIONARY ENTRY (still supplied unconditionally by
+    /// <see cref="TestDoublesEmitter"/>, so no <c>KeyNotFoundException</c> either way).</summary>
     public static GeneratedFile EmitFileSourceTest(
         string testNamespace, string rootNamespace, string rowTypeNamespace, string rowTypeName,
         string sourceMethodName, bool sourceNeedsUow, string componentName)
@@ -215,8 +223,9 @@ public static class ComponentTestEmitter
         {
             "// <auto-generated>",
             $"// Generated by `ssisx generate` -- a STARTER unit test for {sourceMethodName}(), proving",
-            "// it constructs correctly and reports its own Name -- neither CsvRowSource<TRow> nor",
-            "// FixedWidthRowSource<TRow> opens its file at construction, so this needs no real file. A",
+            "// it constructs correctly and reports its own Name -- this row source's own constructor",
+            "// (CsvRowSource<TRow>/FixedWidthRowSource<TRow>/XmlRowSource<TRow>) never opens its file",
+            "// at construction, so this needs no real file. A",
             "// second, [Trait(\"Category\", \"Integration\")]-tagged test attempts a real read; it needs a",
             "// real file under TestData/ matching this source's own configured name (see the LOCAL-DATA",
             "// work packet) and is skipped by `dotnet test --filter Category!=Integration`. Regenerating",
@@ -282,11 +291,21 @@ public static class ComponentTestEmitter
     /// A real, already-BEGUN <c>UnitOfWork</c> is what production code actually pairs with this call
     /// too (see <c>PackageClassEmitter</c>'s own bootstrap), so this is the faithful test, not a
     /// workaround.</summary>
+    /// <param name="isSecondaryConnection">Phase 5 (2026-09-17): true when this source's own
+    /// connection manager resolves to a DIFFERENT database than the package's primary one (see
+    /// <see cref="Ssis.Extract.Codegen.SqlFlowSource"/>'s own doc comment) -- the generated source
+    /// method then takes NO <c>uow</c> argument at all (it builds its own connection string from
+    /// <c>SecondaryConnections:{name}</c> config instead), so neither test constructs one. The
+    /// Integration test still needs a human to point <c>PackageHarness</c>'s own
+    /// <c>SecondaryConnections:{name}</c> entry at a reachable server first -- deliberately
+    /// unreachable by default, the same "unreachableSecondaryServer" pattern
+    /// <c>TestDoublesEmitter</c> already established for the write-side case.</param>
     public static GeneratedFile EmitSqlSourceTest(
         string testNamespace, string rootNamespace, string rowTypeNamespace, string rowTypeName,
-        string sourceMethodName, string componentName)
+        string sourceMethodName, string componentName, bool isSecondaryConnection = false)
     {
         var nameLiteral = ProgramEmitter.CSharpStringLiteral(componentName);
+        var sourceCallArgs = isSecondaryConnection ? "" : "uow";
         var lines = new List<string>
         {
             "// <auto-generated>",
@@ -312,29 +331,29 @@ public static class ComponentTestEmitter
             "    {",
             "        using var harness = new PackageHarness();",
             "        var package = harness.Package();",
-            "        var uow = harness.NewUnitOfWork();",
-            "",
-            $"        var source = package.{sourceMethodName}(uow);",
-            "",
-            $"        Assert.Equal({nameLiteral}, source.Name);",
-            "    }",
-            "",
-            "    [Fact]",
-            "    [Trait(\"Category\", \"Integration\")]",
-            $"    public async Task {sourceMethodName}_ReadsRealRows_AgainstARealServer()",
-            "    {",
-            "        using var harness = new PackageHarness();",
-            "        var package = harness.Package();",
-            "        await using var uow = await harness.NewRealUnitOfWorkAsync();",
-            $"        var source = package.{sourceMethodName}(uow);",
-            "",
-            $"        var rows = new List<{rowTypeName}>();",
-            "        await foreach (var row in source.ReadAsync(CancellationToken.None)) rows.Add(row);",
-            "",
-            "        Assert.NotNull(rows);",
-            "    }",
-            "}",
         };
+        if (!isSecondaryConnection) lines.Add("        var uow = harness.NewUnitOfWork();");
+        lines.Add("");
+        lines.Add($"        var source = package.{sourceMethodName}({sourceCallArgs});");
+        lines.Add("");
+        lines.Add($"        Assert.Equal({nameLiteral}, source.Name);");
+        lines.Add("    }");
+        lines.Add("");
+        lines.Add("    [Fact]");
+        lines.Add("    [Trait(\"Category\", \"Integration\")]");
+        lines.Add($"    public async Task {sourceMethodName}_ReadsRealRows_AgainstARealServer()");
+        lines.Add("    {");
+        lines.Add("        using var harness = new PackageHarness();");
+        lines.Add("        var package = harness.Package();");
+        if (!isSecondaryConnection) lines.Add("        await using var uow = await harness.NewRealUnitOfWorkAsync();");
+        lines.Add($"        var source = package.{sourceMethodName}({sourceCallArgs});");
+        lines.Add("");
+        lines.Add($"        var rows = new List<{rowTypeName}>();");
+        lines.Add("        await foreach (var row in source.ReadAsync(CancellationToken.None)) rows.Add(row);");
+        lines.Add("");
+        lines.Add("        Assert.NotNull(rows);");
+        lines.Add("    }");
+        lines.Add("}");
 
         return new GeneratedFile($"{sourceMethodName}SourceTests.cs", Rendering.JoinLines(lines));
     }
@@ -438,6 +457,11 @@ public static class ComponentTestEmitter
     {
         if (!TryGetTestableFileSystemKeys(action, out var sourceKey, out var destKey)) return null;
 
+        // taskName is the raw SSIS task display name (free text) -- must match the SANITIZED
+        // method name PackageClassEmitter actually emits on the package class, since this test
+        // calls that method directly (package.{safeTaskName}(...) below). See
+        // PackageGenerator.SanitizeIdentifier's own doc comment.
+        var safeTaskName = PackageGenerator.SanitizeIdentifier(taskName);
         var contentLiteral = ProgramEmitter.CSharpStringLiteral("ssisx starter-test file-system-task content");
         var sourceKeyLiteral = ProgramEmitter.CSharpStringLiteral(sourceKey);
         var destKeyLiteral = ProgramEmitter.CSharpStringLiteral(destKey);
@@ -455,17 +479,17 @@ public static class ComponentTestEmitter
             "",
             $"namespace {testNamespace};",
             "",
-            $"public class {taskName}StepTests",
+            $"public class {safeTaskName}StepTests",
             "{",
             "    [Fact]",
-            $"    public async Task {taskName}_CopiesTheSourceFileToTheDestination()",
+            $"    public async Task {safeTaskName}_CopiesTheSourceFileToTheDestination()",
             "    {",
             "        using var harness = new PackageHarness();",
             $"        await File.WriteAllTextAsync(harness.FileSystemTaskPath({sourceKeyLiteral}), {contentLiteral});",
             "        var package = harness.Package();",
             "        var uow = harness.NewUnitOfWork();",
             "",
-            $"        await package.{taskName}(uow, CancellationToken.None);",
+            $"        await package.{safeTaskName}(uow, CancellationToken.None);",
             "",
             $"        var destinationPath = harness.FileSystemTaskPath({destKeyLiteral});",
             "        Assert.True(File.Exists(destinationPath));",
@@ -474,7 +498,7 @@ public static class ComponentTestEmitter
             "}",
         };
 
-        return new GeneratedFile($"{taskName}StepTests.cs", Rendering.JoinLines(lines));
+        return new GeneratedFile($"{safeTaskName}StepTests.cs", Rendering.JoinLines(lines));
     }
 
     /// <summary>"Sequence container" taxonomy row: <c>Docs/Generated-Tests-Plan.md</c>'s own
@@ -604,9 +628,19 @@ public static class ComponentTestEmitter
         if (parameterColumnNames.Count == 0) return null;
         if (parameterColumnNames.Any(p => !literalsByName.ContainsKey(p))) return null;
 
-        var propertyInits = string.Join(", ", literalsByName.Select(kv => $"{kv.Key} = {kv.Value}"));
+        // stepName is the raw SSIS component display name (free text) -- sanitized for the
+        // class/method/file-name positions below; stepNameLiteral (the runtime label the
+        // reconstructed step itself carries) is built from the ORIGINAL, unsanitized name, same
+        // as the real generated code does.
+        var safeStepName = PackageGenerator.SanitizeIdentifier(stepName);
+        // literalsByName is keyed by the RAW source column name (matching parameterColumnNames'
+        // own raw entries, so the ContainsKey/lookup checks above stay simple); only the two
+        // EMISSION points below (the synthesized row's own object initializer and the parameter
+        // accessor) need the sanitized C# identifier -- see
+        // PackageGenerator.SanitizeIdentifier's own doc comment.
+        var propertyInits = string.Join(", ", literalsByName.Select(kv => $"{PackageGenerator.SanitizeIdentifier(kv.Key)} = {kv.Value}"));
         var parameterArrayLiteral = $"new object?[] {{ {string.Join(", ", parameterColumnNames.Select(p => literalsByName[p]))} }}";
-        var parameterAccessExpr = string.Join(", ", parameterColumnNames.Select(p => $"row.{p}"));
+        var parameterAccessExpr = string.Join(", ", parameterColumnNames.Select(p => $"row.{PackageGenerator.SanitizeIdentifier(p)}"));
         var sqlTemplateLiteral = ProgramEmitter.CSharpStringLiteral(sqlTemplate);
         var stepNameLiteral = ProgramEmitter.CSharpStringLiteral(stepName);
 
@@ -630,10 +664,10 @@ public static class ComponentTestEmitter
             "",
             $"namespace {testNamespace};",
             "",
-            $"public class {stepName}StepTests",
+            $"public class {safeStepName}StepTests",
             "{",
             "    [Fact]",
-            $"    public async Task {stepName}_RunsTheCommandOncePerRow_WithTheRightParameters()",
+            $"    public async Task {safeStepName}_RunsTheCommandOncePerRow_WithTheRightParameters()",
             "    {",
             "        using var harness = new PackageHarness();",
             "        var uow = harness.NewUnitOfWork();",
@@ -673,7 +707,7 @@ public static class ComponentTestEmitter
             "}",
         };
 
-        return new GeneratedFile($"{stepName}StepTests.cs", Rendering.JoinLines(lines));
+        return new GeneratedFile($"{safeStepName}StepTests.cs", Rendering.JoinLines(lines));
     }
 
     /// <summary>"ForEach loop" taxonomy row: <c>Docs/Generated-Tests-Plan.md</c>'s own wording is
@@ -699,6 +733,10 @@ public static class ComponentTestEmitter
     {
         if (!TryBuildTestFileNames(fileSpec, out var name1, out var name2)) return null;
 
+        // stepName is the raw SSIS component display name -- must match the SANITIZED method name
+        // PackageClassEmitter actually emits, since this test calls that method directly
+        // (package.{safeStepName}(...) below).
+        var safeStepName = PackageGenerator.SanitizeIdentifier(stepName);
         var keyLiteral = ProgramEmitter.CSharpStringLiteral(fileSourceKey);
 
         // The C# EXPRESSION passed to BuildStatement -- matching exactly what ForEachLoopStep's
@@ -729,10 +767,10 @@ public static class ComponentTestEmitter
             "",
             $"namespace {testNamespace};",
             "",
-            $"public class {stepName}StepTests",
+            $"public class {safeStepName}StepTests",
             "{",
             "    [Fact]",
-            $"    public async Task {stepName}_ExecutesOneStatementPerFile_InOrdinalFileOrder()",
+            $"    public async Task {safeStepName}_ExecutesOneStatementPerFile_InOrdinalFileOrder()",
             "    {",
             "        using var harness = new PackageHarness();",
             $"        await File.WriteAllTextAsync(Path.Combine(harness.ForEachLoopFolder({keyLiteral}), {ProgramEmitter.CSharpStringLiteral(name1)}), \"a\");",
@@ -740,7 +778,7 @@ public static class ComponentTestEmitter
             "        var package = harness.Package();",
             "        var uow = harness.NewUnitOfWork();",
             "",
-            $"        await package.{stepName}(uow, CancellationToken.None);",
+            $"        await package.{safeStepName}(uow, CancellationToken.None);",
             "",
             $"        Assert.Contains({statement1}, uow.ExecutedSql);",
             $"        Assert.Contains({statement2}, uow.ExecutedSql);",
@@ -749,7 +787,7 @@ public static class ComponentTestEmitter
             "}",
         };
 
-        return new GeneratedFile($"{stepName}StepTests.cs", Rendering.JoinLines(lines));
+        return new GeneratedFile($"{safeStepName}StepTests.cs", Rendering.JoinLines(lines));
     }
 
     /// <summary>The one shape this pilot can build 2 real, distinct, ordinal-sortable file names
@@ -823,7 +861,16 @@ public static class ComponentTestEmitter
         }
         if (literalsByName.Count == 0) return null;
 
-        var propertyInits = string.Join(", ", literalsByName.Select(kv => $"{kv.Key} = {kv.Value}"));
+        // stepName is the raw SSIS component display name -- sanitized for the class/method/
+        // file-name positions below; every ProgramEmitter.CSharpStringLiteral(stepName) call
+        // below builds the reconstructed step's own RUNTIME label from the original name, same as
+        // the real generated code does.
+        var safeStepName = PackageGenerator.SanitizeIdentifier(stepName);
+
+        // literalsByName is keyed by the RAW source column name -- sanitized at this one emission
+        // point (the synthesized row's own object initializer), see
+        // PackageGenerator.SanitizeIdentifier's own doc comment.
+        var propertyInits = string.Join(", ", literalsByName.Select(kv => $"{PackageGenerator.SanitizeIdentifier(kv.Key)} = {kv.Value}"));
         var entityNamespaces = branches.Select(b => b.EntityNamespace).Distinct(StringComparer.Ordinal).ToList();
 
         var branchLines = new List<string>();
@@ -874,10 +921,10 @@ public static class ComponentTestEmitter
         lines.Add("");
         lines.Add($"namespace {testNamespace};");
         lines.Add("");
-        lines.Add($"public class {stepName}StepTests");
+        lines.Add($"public class {safeStepName}StepTests");
         lines.Add("{");
         lines.Add("    [Fact]");
-        lines.Add($"    public async Task {stepName}_RunsEveryBranch_ForEveryRow()");
+        lines.Add($"    public async Task {safeStepName}_RunsEveryBranch_ForEveryRow()");
         lines.Add("    {");
         lines.Add("        using var harness = new PackageHarness();");
         lines.Add("        var uow = harness.NewUnitOfWork();");
@@ -934,7 +981,7 @@ public static class ComponentTestEmitter
         lines.Add("    }");
         lines.Add("}");
 
-        return new GeneratedFile($"{stepName}StepTests.cs", Rendering.JoinLines(lines));
+        return new GeneratedFile($"{safeStepName}StepTests.cs", Rendering.JoinLines(lines));
     }
 
     /// <summary>One Count function on an Aggregate flow, resolved by
@@ -971,6 +1018,12 @@ public static class ComponentTestEmitter
         if (functions.Any(f => f.AggregationTypeRaw != 1)) return null;
         if (groupByKeyClrType != "string") return null;
 
+        // groupByPropertyName/fn.SourcePropertyName/fn.OutputPropertyName are all raw column
+        // names -- sanitized here, once, for every identifier-position use below (a SOURCE row
+        // reference or the Aggregate row's own destination property, see
+        // PackageGenerator.SanitizeIdentifier's own doc comment).
+        var groupByIdentifier = PackageGenerator.SanitizeIdentifier(groupByPropertyName);
+
         // GroupA gets 3 rows -- 2 with a real value for the FIRST function's own counted column,
         // 1 with null for it -- so the same scenario proves both grouping (2 distinct keys) and
         // NULL-exclusion (GroupA's own count for that function is 2, not 3) in one synthesized set.
@@ -978,12 +1031,13 @@ public static class ComponentTestEmitter
         var nullExclusionColumn = functions[0].SourcePropertyName;
         string RowInit(string groupValue, bool nullOutFirstFunction)
         {
-            var assigns = new List<string> { $"{groupByPropertyName} = {ProgramEmitter.CSharpStringLiteral(groupValue)}" };
+            var assigns = new List<string> { $"{groupByIdentifier} = {ProgramEmitter.CSharpStringLiteral(groupValue)}" };
             foreach (var fn in functions)
             {
+                var srcId = PackageGenerator.SanitizeIdentifier(fn.SourcePropertyName);
                 assigns.Add(nullOutFirstFunction && fn.SourcePropertyName == nullExclusionColumn
-                    ? $"{fn.SourcePropertyName} = null"
-                    : $"{fn.SourcePropertyName} = {TransformTestEmitter.RepresentativeLiteral(fn.SourcePropertyClrType)}");
+                    ? $"{srcId} = null"
+                    : $"{srcId} = {TransformTestEmitter.RepresentativeLiteral(fn.SourcePropertyClrType)}");
             }
             return $"new {sourceRowTypeName} {{ {string.Join(", ", assigns)} }}";
         }
@@ -1025,15 +1079,15 @@ public static class ComponentTestEmitter
         lines.Add($"        var source = new AggregateRowSource<{sourceRowTypeName}, string, {aggregateRowTypeName}>(");
         lines.Add($"            {ProgramEmitter.CSharpStringLiteral(componentName)},");
         lines.Add("            new StubRowSource(rows),");
-        lines.Add($"            row => row.{groupByPropertyName},");
+        lines.Add($"            row => row.{groupByIdentifier},");
         lines.Add($"            (key, groupedRows) => new {aggregateRowTypeName}");
         lines.Add("            {");
-        lines.Add($"                {groupByPropertyName} = key,");
+        lines.Add($"                {groupByIdentifier} = key,");
         for (var i = 0; i < functions.Count; i++)
         {
             var fn = functions[i];
             var comma = i < functions.Count - 1 ? "," : "";
-            lines.Add($"                {fn.OutputPropertyName} = groupedRows.Count(r => r.{fn.SourcePropertyName} != null){comma}");
+            lines.Add($"                {PackageGenerator.SanitizeIdentifier(fn.OutputPropertyName)} = groupedRows.Count(r => r.{PackageGenerator.SanitizeIdentifier(fn.SourcePropertyName)} != null){comma}");
         }
         lines.Add("            });");
         lines.Add("");
@@ -1137,8 +1191,15 @@ public static class ComponentTestEmitter
             if (!TryAssign(literals, col.RawColumnName, col.RawColumnClrType, col.ConversionTargetType, col.ConversionLength)) return null;
         }
 
-        var leftPropertyInits = string.Join(", ", leftLiterals.Select(kv => $"{kv.Key} = {kv.Value.RawLiteral}"));
-        var rightPropertyInits = string.Join(", ", rightLiterals.Select(kv => $"{kv.Key} = {kv.Value.RawLiteral}"));
+        // leftLiterals/rightLiterals are keyed by the RAW source column name (Left/Right's own
+        // row types, matching SqlRowEmitter/CsvRowEmitter's own bare-sanitized declarations);
+        // combinedIdentifierOf independently reproduces MergeJoinEmitter.BuildRowTypeFile's own
+        // resolver over the SAME testColumns list, in the SAME order -- see
+        // PackageGenerator.MakeColumnIdentifierResolver's own doc comment.
+        var leftPropertyInits = string.Join(", ", leftLiterals.Select(kv => $"{PackageGenerator.SanitizeIdentifier(kv.Key)} = {kv.Value.RawLiteral}"));
+        var rightPropertyInits = string.Join(", ", rightLiterals.Select(kv => $"{PackageGenerator.SanitizeIdentifier(kv.Key)} = {kv.Value.RawLiteral}"));
+        var combinedIdentifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+        var combinedIdentifiers = testColumns.ToDictionary(c => c, c => combinedIdentifierOf(c.Name));
 
         var matchedAssertions = new List<string>
         {
@@ -1148,7 +1209,7 @@ public static class ComponentTestEmitter
         foreach (var col in testColumns)
         {
             var literals = col.MayBeAbsent ? rightLiterals : leftLiterals;
-            matchedAssertions.Add($"        Assert.Equal({literals[col.RawColumnName].ExpectedLiteral}, matched.{col.Name});");
+            matchedAssertions.Add($"        Assert.Equal({literals[col.RawColumnName].ExpectedLiteral}, matched.{combinedIdentifiers[col]});");
         }
 
         var rightSideColumns = testColumns.Where(c => c.MayBeAbsent).ToList();
@@ -1196,8 +1257,8 @@ public static class ComponentTestEmitter
             foreach (var col in testColumns)
             {
                 lines.Add(col.MayBeAbsent
-                    ? $"        Assert.Null(unmatched.{col.Name});"
-                    : $"        Assert.Equal({leftLiterals[col.RawColumnName].ExpectedLiteral}, unmatched.{col.Name});");
+                    ? $"        Assert.Null(unmatched.{combinedIdentifiers[col]});"
+                    : $"        Assert.Equal({leftLiterals[col.RawColumnName].ExpectedLiteral}, unmatched.{combinedIdentifiers[col]});");
             }
             lines.Add("    }");
         }
@@ -1252,6 +1313,12 @@ public static class ComponentTestEmitter
         string transformClassName, string sinkMethodName, string entityNamespace, string entityName,
         bool needsIntegrationTag)
     {
+        // taskName is the raw SSIS task display name (free text) -- sanitized for the class/
+        // method/file-name positions below; every "{taskName}" string literal further down (the
+        // reconstructed step's own runtime label) is still built from the ORIGINAL name, since
+        // this test never calls into the package class directly (see this method's own doc
+        // comment) and so has no need to match any generated identifier.
+        var safeTaskName = PackageGenerator.SanitizeIdentifier(taskName);
         var sourceArgs = sourceNeedsUow ? "uow" : "";
         var lines = new List<string>
         {
@@ -1276,12 +1343,12 @@ public static class ComponentTestEmitter
             "",
             $"namespace {testNamespace};",
             "",
-            $"public class {taskName}StepDataFlowTests",
+            $"public class {safeTaskName}StepDataFlowTests",
             "{",
             "    [Fact]",
         };
         if (needsIntegrationTag) lines.Add("    [Trait(\"Category\", \"Integration\")]");
-        lines.Add($"    public async Task {taskName}_WritesAtLeastOneRow_EndToEnd()");
+        lines.Add($"    public async Task {safeTaskName}_WritesAtLeastOneRow_EndToEnd()");
         lines.Add("    {");
         lines.Add(needsIntegrationTag
             ? "        using var harness = new PackageHarness();"
@@ -1300,7 +1367,7 @@ public static class ComponentTestEmitter
         lines.Add("    }");
         lines.Add("}");
 
-        return new GeneratedFile($"{taskName}StepDataFlowTests.cs", Rendering.JoinLines(lines));
+        return new GeneratedFile($"{safeTaskName}StepDataFlowTests.cs", Rendering.JoinLines(lines));
     }
 
     /// <summary>
@@ -1321,6 +1388,9 @@ public static class ComponentTestEmitter
         string routerClassName, IReadOnlyList<(string OutputName, string TransformClassName, string EntityName)> branches,
         string entityNamespace, bool needsIntegrationTag)
     {
+        // See EmitDataFlowStepTest's own comment -- taskName is free text, sanitized for the
+        // identifier positions only; every "{taskName}" runtime label below stays raw.
+        var safeTaskName = PackageGenerator.SanitizeIdentifier(taskName);
         var sourceArgs = sourceNeedsUow ? "uow" : "";
         var lines = new List<string>
         {
@@ -1346,12 +1416,12 @@ public static class ComponentTestEmitter
             "",
             $"namespace {testNamespace};",
             "",
-            $"public class {taskName}StepDataFlowTests",
+            $"public class {safeTaskName}StepDataFlowTests",
             "{",
             "    [Fact]",
         };
         if (needsIntegrationTag) lines.Add("    [Trait(\"Category\", \"Integration\")]");
-        lines.Add($"    public async Task {taskName}_WritesAtLeastOneRow_EndToEnd()");
+        lines.Add($"    public async Task {safeTaskName}_WritesAtLeastOneRow_EndToEnd()");
         lines.Add("    {");
         lines.Add(needsIntegrationTag
             ? "        using var harness = new PackageHarness();"
@@ -1377,6 +1447,6 @@ public static class ComponentTestEmitter
         lines.Add("    }");
         lines.Add("}");
 
-        return new GeneratedFile($"{taskName}StepDataFlowTests.cs", Rendering.JoinLines(lines));
+        return new GeneratedFile($"{safeTaskName}StepDataFlowTests.cs", Rendering.JoinLines(lines));
     }
 }

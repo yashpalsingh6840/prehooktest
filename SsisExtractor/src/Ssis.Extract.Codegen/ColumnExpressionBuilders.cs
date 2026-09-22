@@ -10,13 +10,21 @@ internal static class LookupJoinExpressionBuilder
     /// KeyNotFoundException is the faithful translation. A Lookup that redirects no-match rows
     /// is a different, unsupported shape -- PackageGenerator gaps it rather than reaching here.</summary>
     public static string Build(LookupJoinSpec join, string referenceColumn) =>
-        $"{join.CacheParameterName}[row.{join.InputColumnName}].{referenceColumn}";
+        // join.InputColumnName (a SOURCE row property) and referenceColumn (a ReferenceRow
+        // property, see LookupCacheEmitter's own identifierOf) are both raw external/pipeline
+        // column names -- sanitized here, at the one place both are turned into C# identifiers.
+        $"{join.CacheParameterName}[row.{PackageGenerator.SanitizeIdentifier(join.InputColumnName)}].{PackageGenerator.SanitizeIdentifier(referenceColumn)}";
 }
 
 /// <summary>One evidenced numeric-passthrough-coercion pairing, each measured against a real
 /// dtexec run rather than guessed -- see CLAUDE.md's own "Numeric-passthrough-coercion" sections
 /// for the evidence behind each. The generated SsisFn helper name is exactly the member's own
-/// name, so adding a pairing here and to SsisFnEmitter is the only wiring needed.</summary>
+/// name, so adding a pairing here and to SsisFnEmitter is the only wiring needed. ONE exception:
+/// <see cref="WidenI4ToNumeric"/> needed no dtexec probe at all -- int -> decimal is a strictly
+/// widening, lossless C#-native implicit conversion (decimal has far more precision than a
+/// 32-bit int could ever need), so there is no rounding/truncation/overflow question to
+/// measure. See SsisFnEmitter's own WidenI4ToNumericBody doc comment for the real evidenced
+/// instance (DailyETLMain.dtsx's own StockHolding_Staging.Last Cost Price).</summary>
 public enum NumericCoercionKind
 {
     NarrowR8ToI4,
@@ -24,6 +32,7 @@ public enum NumericCoercionKind
     NarrowNumericToI4,
     NarrowR4ToI4,
     ParseWstrToI4,
+    WidenI4ToNumeric,
 }
 
 /// <summary>Builds the C# expression for one of the evidenced numeric-coercion pairings,

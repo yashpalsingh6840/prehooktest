@@ -33,7 +33,8 @@ public static class RouterTestEmitter
     public static EmitResult Emit(
         string testNamespace, string routerNamespace, string routerClassName,
         string rowTypeNamespace, string rowTypeName, ConditionalSplitPlan split,
-        PipelineComponentSpec? derivedColumn = null, PipelineComponentSpec? dataConversion = null)
+        PipelineComponentSpec? derivedColumn = null, PipelineComponentSpec? dataConversion = null,
+        PipelineComponentSpec? copyMap = null)
     {
         var splitComponent = split.Component;
         // RouterEmitter itself already reports a hard gap for anything other than exactly one
@@ -59,6 +60,13 @@ public static class RouterTestEmitter
             foreach (var col in output.Columns.Where(c => c.Expression is not null))
                 excludedNames.Add(col.Name);
         foreach (var col in dataConversion?.DataConvert?.Columns ?? [])
+            excludedNames.Add(col.OutputColumnName);
+        // Phase 1 of the unsupported-component-types plan: same reasoning as Data Conversion
+        // above -- a Copy Column output is a real buffer column RouterEmitter is happy to
+        // reference, but not a raw property on the generated row type (it resolves via
+        // `row.{trueSourceColumn}` instead), so it must be excluded from the representative row
+        // built here the same way.
+        foreach (var col in copyMap?.CopyMap?.Columns ?? [])
             excludedNames.Add(col.OutputColumnName);
 
         var rowLiterals = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -110,7 +118,11 @@ public static class RouterTestEmitter
             if (evaluated.AsBool) { expectedIndex = i; break; }
         }
 
-        var rowInitLines = rowLiteralOrder.Select(name => $"            {name} = {rowLiterals[name]},").ToList();
+        // rowLiterals/rowLiteralOrder/env are all keyed by the RAW buffer column name (matching
+        // the AST's own Reference nodes -- see PackageGenerator.SanitizeIdentifier's own doc
+        // comment); only this one emission point (the constructed row's own object initializer)
+        // needs the sanitized identifier.
+        var rowInitLines = rowLiteralOrder.Select(name => $"            {PackageGenerator.SanitizeIdentifier(name)} = {rowLiterals[name]},").ToList();
 
         var lines = new List<string>
         {

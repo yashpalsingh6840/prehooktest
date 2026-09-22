@@ -11,9 +11,5 @@
     "AuthMode": "SqlServer",
     "UserId": "ssis_loader",
     "ApplicationName": "LoadEmployees"
-  },
-  "Notification": {
-    "OnFailureRecipients": [],
-    "OnSuccessRecipients": []
   }
 }

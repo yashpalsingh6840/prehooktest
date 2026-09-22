@@ -24,7 +24,7 @@ public static partial class DtsxPackageReader
     private static readonly XNamespace Dts = "www.microsoft.com/SqlServer/Dts";
     private static readonly XNamespace SqlTask = "www.microsoft.com/sqlserver/dts/tasks/sqltask";
 
-    public static PackageSpec Read(string path, bool noRedact)
+    public static PackageSpec Read(string path, bool noRedact, IReadOnlyList<ConnectionManagerSpec>? projectConnectionManagers = null)
     {
         var doc = XDocument.Load(path, LoadOptions.PreserveWhitespace);
         var root = doc.Root ?? throw new InvalidDataException($"{path}: no root element");
@@ -41,9 +41,22 @@ public static partial class DtsxPackageReader
         var unmapped = new List<UnmappedFragment>();
         var coverage = new CoverageAccumulator();
 
-        var connectionManagers = (root.Element(Dts + "ConnectionManagers")?.Elements(Dts + "ConnectionManager") ?? [])
+        var packageConnectionManagers = (root.Element(Dts + "ConnectionManagers")?.Elements(Dts + "ConnectionManager") ?? [])
             .Select(cmEl => ReadConnectionManager(cmEl, noRedact))
             .ToList();
+        // A project-scoped connection manager (a standalone .conmgr file, referenced from the
+        // .dtproj manifest rather than embedded in this .dtsx) is visible to every package in
+        // the project -- the same way SSIS itself makes it available regardless of whether a
+        // given package actually uses it (CLAUDE.md's own "Sensitive credential" section
+        // documents the identical behavior for auto-split connection parameters: an unused
+        // connection manager gets one too). So every project CM the caller (PackageLoader, via
+        // DtprojReader) resolved is folded in here unconditionally, each still correctly tagged
+        // Scope: "Project" -- not filtered down to "only the ones this package references",
+        // which would need a second pass scanning every payload type for a connection
+        // reference and risks silently missing one.
+        var connectionManagers = projectConnectionManagers is { Count: > 0 }
+            ? packageConnectionManagers.Concat(projectConnectionManagers).ToList()
+            : packageConnectionManagers;
         var cmDtsIdToName = connectionManagers
             .Where(cm => cm.DtsId is not null)
             .ToDictionary(cm => cm.DtsId!, cm => cm.ObjectName);
@@ -202,6 +215,8 @@ public static partial class DtsxPackageReader
         ScriptTaskPayload? scriptTaskPayload = null;
         FileSystemTaskPayload? fileSystemTaskPayload = null;
         ExecutePackageTaskPayload? executePackageTaskPayload = null;
+        ExpressionTaskPayload? expressionTaskPayload = null;
+        TransferSqlServerObjectsTaskPayload? transferSqlServerObjectsTaskPayload = null;
 
         var objectData = exEl.Element(Dts + "ObjectData");
         if (objectData is not null)
@@ -217,6 +232,14 @@ public static partial class DtsxPackageReader
             else if (executableType == "Microsoft.ExecutePackageTask")
             {
                 executePackageTaskPayload = ReadExecutePackageTask(objectData, cmDtsIdToName, coverage);
+            }
+            else if (executableType == "Microsoft.ExpressionTask")
+            {
+                expressionTaskPayload = ReadExpressionTask(objectData);
+            }
+            else if (executableType == "Microsoft.TransferSqlServerObjectsTask")
+            {
+                transferSqlServerObjectsTaskPayload = ReadTransferSqlServerObjectsTask(objectData, cmDtsIdToName);
             }
             else if (executableType == "Microsoft.Pipeline")
             {
@@ -259,6 +282,21 @@ public static partial class DtsxPackageReader
             ? ReadForEachLoop(exEl, coverage)
             : null;
 
+        // A For Loop Container's own three expressions sit directly on this element (no
+        // <ObjectData>, no sibling wrapper) -- see ForLoopPayload's own doc comment. Reading
+        // them here, rather than falling through to whatever the generic attribute reading
+        // above already covers, is what stops these three from being silently invisible to
+        // both the model and the coverage accounting, the exact shape the ForEachLoop/
+        // pipeline-output-property gaps this file already documents once were.
+        var forLoopPayload = executableType == "STOCK:FORLOOP"
+            ? new ForLoopPayload
+            {
+                InitExpression = exEl.Attr(Dts + "InitExpression"),
+                EvalExpression = exEl.Attr(Dts + "EvalExpression"),
+                AssignExpression = exEl.Attr(Dts + "AssignExpression"),
+            }
+            : null;
+
         return new ExecutableSpec
         {
             RefId = refId,
@@ -288,7 +326,23 @@ public static partial class DtsxPackageReader
             ForEachLoop = forEachLoopPayload,
             FileSystemTask = fileSystemTaskPayload,
             ExecutePackageTask = executePackageTaskPayload,
+            ExpressionTask = expressionTaskPayload,
+            TransferSqlServerObjectsTask = transferSqlServerObjectsTaskPayload,
+            ForLoop = forLoopPayload,
         };
+    }
+
+    /// <summary>
+    /// <c>Microsoft.ExpressionTask</c>'s own <c>&lt;ExpressionTask Expression="..."&gt;</c> --
+    /// no namespace prefix on the element or its attribute, confirmed real from
+    /// <c>DailyETLMain.dtsx</c> (Phase 2 of the unsupported-component-types plan; the same
+    /// no-prefix shape as <c>&lt;FileSystemData&gt;</c>/<c>&lt;ScriptProject&gt;</c>, not
+    /// re-guessed here).
+    /// </summary>
+    internal static ExpressionTaskPayload ReadExpressionTask(XElement objectData)
+    {
+        var el = objectData.Element("ExpressionTask");
+        return new ExpressionTaskPayload { Expression = el?.Attr("Expression") };
     }
 
     /// <summary>
@@ -325,6 +379,89 @@ public static partial class DtsxPackageReader
             DestinationConnectionName = destConnectionName,
             OverwriteDestination = el.AttrBool("TaskOverwriteDestFile"),
         };
+    }
+
+    /// <summary>
+    /// <c>Microsoft.TransferSqlServerObjectsTask</c>'s own <c>&lt;TransferSqlServerObjectsTaskData&gt;</c>
+    /// -- no namespace prefix on the element or its attributes, confirmed real from
+    /// <c>UseCase_55\...\Package.dtsx</c>'s own "Transfer SQL Server Objects Task" (see
+    /// <see cref="TransferSqlServerObjectsTaskPayload"/>'s own doc comment), not guessed from
+    /// documentation alone. Extraction-only -- <c>ssisx generate</c> never composes this into
+    /// generated code, see <c>PackagePlanner</c>.
+    /// </summary>
+    internal static TransferSqlServerObjectsTaskPayload ReadTransferSqlServerObjectsTask(XElement objectData, Dictionary<string, string> cmDtsIdToName)
+    {
+        var el = objectData.Element("TransferSqlServerObjectsTaskData");
+        if (el is null) return new TransferSqlServerObjectsTaskPayload();
+
+        var sourceConnRaw = el.Attr("SourceConnection");
+        var sourceConnName = sourceConnRaw is not null && cmDtsIdToName.TryGetValue(sourceConnRaw, out var srcName) ? srcName : null;
+
+        var destConnRaw = el.Attr("DestinationConnection");
+        var destConnName = destConnRaw is not null && cmDtsIdToName.TryGetValue(destConnRaw, out var destName) ? destName : null;
+
+        var tablesListRaw = el.Attr("TablesList");
+
+        return new TransferSqlServerObjectsTaskPayload
+        {
+            SourceConnectionRefRaw = sourceConnRaw,
+            SourceConnectionName = sourceConnName,
+            DestinationConnectionRefRaw = destConnRaw,
+            DestinationConnectionName = destConnName,
+            SourceDatabase = el.Attr("SourceDatabase"),
+            DestinationDatabase = el.Attr("DestinationDatabase"),
+            TablesListRaw = tablesListRaw,
+            Tables = ParseTransferTablesList(tablesListRaw),
+            DropObjectsFirst = el.AttrBool("DropObjectsFirst"),
+            IncludeDependentObjects = el.AttrBool("IncludeDependentObjects"),
+            CopyData = el.AttrBool("CopyData"),
+            CopyIndexes = el.AttrBool("CopyIndexes"),
+            CopyPrimaryKeys = el.AttrBool("CopyPrimaryKeys"),
+            CopyForeignKeys = el.AttrBool("CopyForeignKeys"),
+        };
+    }
+
+    /// <summary>
+    /// Decodes <c>TransferSqlServerObjectsTaskData</c>'s own <c>TablesList</c> attribute --
+    /// <c>"&lt;count&gt;,&lt;len1&gt;,&lt;name1&gt;,&lt;len2&gt;,&lt;name2&gt;,...,"</c>, a leading
+    /// table count followed by that many (character-length, object-name) pairs. The length
+    /// prefix is what's actually decoded on (not a comma split -- a real object name could
+    /// legally contain a comma, e.g. a delimited identifier, though no evidenced example does),
+    /// see <see cref="TransferSqlServerObjectsTaskPayload"/>'s own doc comment for how this was
+    /// worked out from the one real evidenced value. Returns an empty list -- never throws --
+    /// for a null/empty/malformed input, since this tool only ever reports on this task, never
+    /// executes it: a decode quirk in one attribute should not fail extraction of the rest of
+    /// the package.
+    /// </summary>
+    internal static List<string> ParseTransferTablesList(string? raw)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrEmpty(raw)) return result;
+
+        var i = 0;
+        int? ReadInt()
+        {
+            var start = i;
+            while (i < raw.Length && raw[i] != ',') i++;
+            if (i >= raw.Length || i == start) return null; // no comma found, or empty token
+            var token = raw.Substring(start, i - start);
+            i++; // skip the comma
+            return int.TryParse(token, out var n) ? n : null;
+        }
+
+        var count = ReadInt();
+        if (count is null) return result;
+
+        for (var t = 0; t < count.Value; t++)
+        {
+            var len = ReadInt();
+            if (len is null || len.Value < 0 || i + len.Value > raw.Length) break; // malformed -- stop rather than throw/guess
+            result.Add(raw.Substring(i, len.Value));
+            i += len.Value;
+            if (i < raw.Length && raw[i] == ',') i++; // trailing separator before the next pair
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -621,7 +758,16 @@ public static partial class DtsxPackageReader
     // internal (not private), same reasoning as ReadFileSystemTask/ReadScriptTask above: a
     // direct unit test via InternalsVisibleTo, for a shape (DPAPI ciphertext) no synthetic
     // fixture builder can easily produce.
-    internal static ConnectionManagerSpec ReadConnectionManager(XElement cmEl, bool noRedact)
+    //
+    // <paramref name="scope"/>/<paramref name="refIdOverride"/> exist for the project-scoped
+    // (.conmgr) case: a standalone .conmgr file's root <DTS:ConnectionManager> element is
+    // byte-for-byte the same schema as a package-embedded one (confirmed directly against
+    // real GitHub SSIS portfolios), but it carries no DTS:refId of its own (that path shape,
+    // "Project.ConnectionManagers[{Name}]", is synthesized by the caller -- DtprojReader --
+    // and only ever appears inside a .dtsx's own pipeline/task XML, never inside the .conmgr
+    // file itself). The two package-embedded call sites (this file, and the direct unit tests
+    // in SyntheticFixtureTests) keep the defaults unchanged.
+    internal static ConnectionManagerSpec ReadConnectionManager(XElement cmEl, bool noRedact, string scope = "Package", string? refIdOverride = null)
     {
         var creationName = cmEl.Attr(Dts + "CreationName") ?? "";
         var objectData = cmEl.Element(Dts + "ObjectData")?.Element(Dts + "ConnectionManager");
@@ -655,11 +801,11 @@ public static partial class DtsxPackageReader
         return new ConnectionManagerSpec
         {
             ObjectName = cmEl.Attr(Dts + "ObjectName") ?? "",
-            RefId = cmEl.Attr(Dts + "refId"),
+            RefId = refIdOverride ?? cmEl.Attr(Dts + "refId"),
             DtsId = cmEl.Attr(Dts + "DTSID"),
             Description = cmEl.Attr(Dts + "Description"),
             CreationName = creationName,
-            Scope = "Package", // every connection manager inside a .dtsx is package-scoped by definition; project-scoped ones live in .conmgr files referenced from .dtproj (none in this PoC)
+            Scope = scope, // "Package" for a .dtsx-embedded <DTS:ConnectionManager>; "Project" when read from a standalone .conmgr file via DtprojReader
             ConnectionString = redactedConnString,
             UnredactedConnectionString = noRedact ? rawConnString : null,
             WasRedacted = hadPassword,

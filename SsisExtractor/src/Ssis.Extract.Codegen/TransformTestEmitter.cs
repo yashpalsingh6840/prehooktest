@@ -22,7 +22,13 @@ public sealed record TransformTestRequest(
     PipelineSpec Pipeline,
     IReadOnlyList<PipelineComponentSpec>? DerivedColumns,
     PipelineComponentSpec DestinationComponent,
-    IReadOnlyList<PipelineComponentSpec>? DataConversions = null);
+    IReadOnlyList<PipelineComponentSpec>? DataConversions = null,
+    // Phase 1 of the unsupported-component-types plan: Microsoft.CopyMap ("Copy Column"). Not
+    // part of this pilot's own coverage scope (see the class doc comment's "Pilot scope"
+    // section) -- passed through only so a Copy Column column reaching this destination is
+    // recognized and skipped with an explicit gap, rather than silently falling into the
+    // plain-passthrough branch below and asserting against a row property that does not exist.
+    IReadOnlyList<PipelineComponentSpec>? CopyMaps = null);
 
 /// <summary>
 /// Scaffolds ONE starter xUnit test class per Data Flow Task transform, asserting the exact
@@ -121,7 +127,18 @@ public static class TransformTestEmitter
             foreach (var col in dataConversion.DataConvert?.Columns ?? [])
                 convertedByName.TryAdd(col.OutputColumnName, col);
 
+        var copiedByName = new Dictionary<string, CopyMapColumnSpec>();
+        foreach (var copyMap in request.CopyMaps ?? [])
+            foreach (var col in copyMap.CopyMap?.Columns ?? [])
+                copiedByName.TryAdd(col.OutputColumnName, col);
+
         var resolved = PipelineResolver.ResolveDestinationInput(request.DestinationComponent);
+
+        // Independently reproduces EntityEmitter's own identifier mapping for THIS destination
+        // (same PipelineResolver.ResolveDestinationInput list, same order) -- see
+        // PackageGenerator.MakeColumnIdentifierResolver's own doc comment. Every `result.{X}`
+        // assertion below routes through this.
+        var destinationIdentifierOf = PackageGenerator.MakeColumnIdentifierResolver();
 
         // The row's own representative literal values, keyed by ROW PROPERTY name -- shared
         // between every column that references or IS a given property, so e.g. EmployeeID (both
@@ -129,12 +146,14 @@ public static class TransformTestEmitter
         // expression) gets exactly one value used consistently everywhere it appears. Order
         // tracked explicitly (not relying on Dictionary's own enumeration order) so repeated
         // generation is byte-identical, the same discipline every other emitter in this tool
-        // follows.
+        // follows. Callers pass the RAW source column name; sanitized here, uniformly, so every
+        // caller's own lookup/assignment agrees regardless of which one ran first.
         var rowLiterals = new Dictionary<string, string>(StringComparer.Ordinal);
         var rowLiteralOrder = new List<string>();
-        void AssignRowLiteral(string propertyName, string literal)
+        void AssignRowLiteral(string rawPropertyName, string literal)
         {
-            if (rowLiterals.TryAdd(propertyName, literal)) rowLiteralOrder.Add(propertyName);
+            var id = PackageGenerator.SanitizeIdentifier(rawPropertyName);
+            if (rowLiterals.TryAdd(id, literal)) rowLiteralOrder.Add(id);
         }
 
         const string fixedLoadedAtUtc = "new DateTime(2020, 6, 15, 12, 0, 0, DateTimeKind.Utc)";
@@ -142,6 +161,10 @@ public static class TransformTestEmitter
 
         foreach (var column in resolved.Columns)
         {
+            // The C# identifier EntityEmitter declared for this SAME raw external column name --
+            // every `result.{X}` assertion below routes through this.
+            var destId = destinationIdentifierOf(column.ExternalColumnName);
+
             if (computedByName.TryGetValue(column.PipelineColumnName, out var derivedCol))
             {
                 var friendly = derivedCol.FriendlyExpression ?? derivedCol.Expression;
@@ -159,7 +182,7 @@ public static class TransformTestEmitter
                 if (ast is FunctionCall { Name: "GETUTCDATE" or "GETDATE", Args.Count: 0 })
                 {
                     assertions.Add($"        // {derivedCol.Name} <- {friendly}");
-                    assertions.Add($"        Assert.Equal({fixedLoadedAtUtc}, result.{column.ExternalColumnName});");
+                    assertions.Add($"        Assert.Equal({fixedLoadedAtUtc}, result.{destId});");
                     continue;
                 }
 
@@ -226,7 +249,7 @@ public static class TransformTestEmitter
                 }
 
                 assertions.Add($"        // {derivedCol.Name} <- {friendly}");
-                assertions.Add($"        Assert.Equal({Literal(evaluated.ToDisplayString())}, result.{column.ExternalColumnName});");
+                assertions.Add($"        Assert.Equal({Literal(evaluated.ToDisplayString())}, result.{destId});");
             }
             else if (convertedByName.TryGetValue(column.PipelineColumnName, out var conversion))
             {
@@ -246,7 +269,7 @@ public static class TransformTestEmitter
                     continue;
                 }
 
-                if (rowLiterals.TryGetValue(edge.FromColumnName, out var existingLiteral) && existingLiteral != rep.RawLiteral)
+                if (rowLiterals.TryGetValue(PackageGenerator.SanitizeIdentifier(edge.FromColumnName), out var existingLiteral) && existingLiteral != rep.RawLiteral)
                 {
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
                         $"starter test not generated for this column -- its raw source column '{edge.FromColumnName}' already has a different representative value assigned elsewhere in this row. Add an assertion by hand.", IsBlocking: false));
@@ -255,7 +278,18 @@ public static class TransformTestEmitter
                 AssignRowLiteral(edge.FromColumnName, rep.RawLiteral);
 
                 assertions.Add($"        // {column.ExternalColumnName} <- Data Conversion ({edge.FromColumnName} -> {conversion.TargetDataType})");
-                assertions.Add($"        Assert.Equal({rep.ExpectedLiteral}, result.{column.ExternalColumnName});");
+                assertions.Add($"        Assert.Equal({rep.ExpectedLiteral}, result.{destId});");
+            }
+            else if (copiedByName.ContainsKey(column.PipelineColumnName))
+            {
+                // A Copy Column ("Microsoft.CopyMap") output -- out of this pilot's own scope
+                // (see the class doc comment's "Pilot scope" section), reported explicitly rather
+                // than silently falling into the plain-passthrough branch below, which would
+                // otherwise assign a representative literal keyed by the COPIED column's own
+                // name (e.g. "EmployeeID_Copy") -- a row property that does not exist, since
+                // TransformEmitter resolves it as `row.{trueSourceColumn}`, not a same-named one.
+                gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                    "starter test not generated for this column -- it is produced by a Copy Column (Microsoft.CopyMap) component, which this pilot does not cover yet. Add an assertion by hand.", IsBlocking: false));
             }
             else
             {
@@ -268,7 +302,7 @@ public static class TransformTestEmitter
 
                 var literal = RepresentativeLiteral(clrType.ClrTypeName);
                 AssignRowLiteral(column.PipelineColumnName, literal);
-                assertions.Add($"        Assert.Equal({literal}, result.{column.ExternalColumnName});");
+                assertions.Add($"        Assert.Equal({literal}, result.{destId});");
             }
         }
 
@@ -339,6 +373,13 @@ public static class TransformTestEmitter
         "bool" => "true",
         "DateOnly" => "new DateOnly(2020, 6, 15)",
         "DateTime" => "new DateTime(2020, 6, 15, 12, 0, 0)",
+        // A varbinary/image-typed destination column, added 2026-09-17: real, evidenced (the
+        // real GitHub portfolio wwi-ssis' own DailyETLMain, unblocked by Phase 5's cross-database
+        // source fix -- this component-test path had simply never been reached with a byte[]
+        // column before, since every earlier flow reaching it either had no such column or was
+        // itself blocked by an unrelated gap first). Any literal 3-byte array is representative;
+        // this test only ever proves the sink writes it through, not any specific content.
+        "byte[]" => "new byte[] { 1, 2, 3 }",
         _ => throw new NotSupportedException($"TransformTestEmitter has no representative literal for CLR type '{clrTypeName}' -- add one before relying on it for a starter test."),
     };
 

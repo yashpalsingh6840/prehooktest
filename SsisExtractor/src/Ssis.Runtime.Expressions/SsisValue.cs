@@ -94,6 +94,19 @@ public readonly struct SsisValue
             double d => d.ToString(CultureInfo.InvariantCulture),
             decimal m => m.ToString(CultureInfo.InvariantCulture),
             DateTime dt when Type == SsisType.DbDate => dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            // Measured (2026-09-15, added for DATEADD -- Phase 2 of the unsupported-component-
+            // types plan): SSIS's own (DT_WSTR,n) cast of a DT_DBTIMESTAMP OMITS the fractional-
+            // second suffix entirely when it is exactly zero -- "2020-01-01 00:00:00.000" casts
+            // to "2020-01-01 00:00:00" (no trailing ".000000000"), while "...00.500" casts to
+            // "2020-01-01 00:00:00.500000000" (9-digit zero-padded fraction), same as the
+            // already-known "2020-02-29 13:45:00.123" -> "...123000000" row. A whole-second
+            // DATEADD result (the real evidenced Microsoft.ExpressionTask shape,
+            // DATEADD("Minute",-5,GETUTCDATE())) always has a zero fraction, so this was
+            // previously untested by the corpus (no prior row exercised a raw, uncast date
+            // value) and would otherwise render a spurious ".0000000" suffix no real SSIS output
+            // ever has.
+            DateTime dt when dt.Ticks % TimeSpan.TicksPerSecond == 0 =>
+                dt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
             DateTime dt => dt.ToString("yyyy-MM-dd HH:mm:ss.fffffff00", CultureInfo.InvariantCulture),
             _ => throw new SsisExpressionError($"no display form for {Type}"),
         };

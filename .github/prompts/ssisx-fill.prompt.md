@@ -23,12 +23,23 @@ is **per script component/task**:
 
 - Every gap produced by the same Script Component shares the **same script source** and the
   **same `EvidenceSha256`**. Read **one packet per component/task, not one per gap.**
-- Skip each packet's **"SSIS semantics you must preserve"** and **"Respond with"** sections —
-  identical boilerplate repeated in every packet.
+- **Never open/read a packet whole.** Its `"SSIS semantics you must preserve"` and
+  `"Respond with"` sections are identical boilerplate (~25 lines) repeated verbatim in every
+  packet from the same run — reading them more than once is pure waste. Extract only the
+  `## Why ssisx generate stopped here` through `### <script source>` sections, e.g.:
+  ```powershell
+  sed -n '/^# Work packet/,/^## SSIS semantics/p' out/gaps/<package>/<file>.md
+  ```
+  (stop the range one line before `## SSIS semantics` — everything from there to the end of
+  the file is the boilerplate to skip).
 - The exact seam signature (return type, parameter types, class, namespace) is already quoted
   in the packet's own reason text. **Do not open the generated `.cs` file to look it up.**
+- **Exception, do open the generated file for this:** before writing `using`s, grep the
+  generated row/entity type file(s) the packet references (e.g. `grep -n "^namespace"
+  out/generate/<Package>/{Sql,Csv,Model}/<Type>.cs`) for their real namespace — guessing wrong
+  here is only caught by a full build, costing an entire extra build+test cycle.
 
-Only open a generated file if a packet is genuinely ambiguous.
+Only open a generated file for the reason above, or if a packet is genuinely ambiguous.
 
 ## Step 2 — write the fills
 
@@ -71,22 +82,40 @@ class name from the packet. Put one attribution line immediately above each seam
 Copy the `GapId` and `EvidenceSha256` **verbatim** from the packet — never compute or guess them.
 Fields (a compiled `Regex`, a constant, a helper) are allowed, since this is a class part.
 
-Mapping rules from the packets: `Dts.Events.FireError` + `TaskResult = Failure` → **throw**;
-`FireInformation` → an `ILogger`; `Dts.Variables[...]` → `ctx.Variables`;
-`AcquireConnection` for SQL → `ctx.Uow`. A script that stamped `DateTime.Now` per row should
-normally use `ctx.LoadedAtUtc` — but **call that out**, it changes the stored values.
+Mapping rules from the packets: `Dts.Events.FireError` + `TaskResult = Failure` → **throw** (this
+rewrite's own documented equivalent of a Script Task `Failure` result — an unhandled exception
+triggers the same rollback + failure-handler path a `Value=Failure` constraint/`OnError` handler
+would, so treat this as settled, not a guess needing a human check); `FireInformation` → an
+`ILogger`; `Dts.Variables[...]` → `ctx.Variables`; `AcquireConnection` for SQL → `ctx.Uow`.
+
+**`DateTime.Now` needs different treatment depending on WHERE it's called:**
+- **Inside a Script Component's per-row method** (the seam itself runs once per row, exactly
+  where `Input0_ProcessInputRow` ran) — call `DateTime.UtcNow` directly INSIDE that method. It
+  still evaluates fresh per row; only the local→UTC timezone changes, which you should still call
+  out. Reach for `ctx.LoadedAtUtc` only when the original value was clearly meant to be one shared
+  instant for the whole load (e.g. reproducing `GETUTCDATE()`) — using it as a substitute for a
+  per-row `DateTime.Now` changes the actual stored values on every row and must be called out, not
+  substituted silently.
+- **Inside a Script Task** (no per-row loop at all) — there is no per-call "now" on `ctx`;
+  `ctx.Load.StartedAtUtc` is fixed at the whole run's start and would collapse an elapsed-time
+  computation. Use `DateTime.UtcNow` directly there too, and call out the local→UTC change.
 
 If a task's real logic cannot be reproduced against these abstractions, **say so plainly
 instead of inventing a substitute.**
 
 ## Step 3 — apply and build
 
-Resolve `$ssisx` / `$dotnet` via the bootstrap block in `ssisx-extract.prompt.md` (Step 1), then:
+Resolve `$ssisx` / `$dotnet` via the bootstrap block in `ssisx-extract.prompt.md` (Step 1) —
+**reuse that same resolved path here; never `dotnet run --project ...` for the CLI**, which
+pays a full restore/build check on every call — then:
 
 ```powershell
 & $ssisx apply-fills --out out --fills fills-library
-& $dotnet build out/generate/Generated.slnx -c Debug --nologo
+& $dotnet build out/generate/Generated.slnx -c Debug --nologo -v minimal
 ```
+
+Read only the final `Build succeeded`/`Build FAILED` line plus any `error CS...` lines — do
+not tail the full restore/compile transcript into context.
 
 `CS8795` means a seam is still unimplemented — check `apply-fills` output before assuming a
 port needs redoing. A build is the furthest verification that is in scope: **never** invent

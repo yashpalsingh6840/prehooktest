@@ -16,12 +16,32 @@ namespace Ssis.Extract.Codegen;
 /// </summary>
 public static class EntityEmitter
 {
-    public static EmitResult Emit(string ns, string entityName, PipelineComponentSpec destinationComponent, IReadOnlySet<string>? nullableColumnNames = null)
+    /// <summary><paramref name="extraProperties"/> -- added closing a real gap found reviewing
+    /// RBC_Demo_ETL's own real Package.dtsx: an error-redirect destination's own target table
+    /// (dbo.StagingCustomers_Errors) has a FailedAt column with no corresponding
+    /// &lt;inputColumn&gt; at all (a DB-side default, never mapped from the pipeline) -- invisible
+    /// to <see cref="PipelineResolver.ResolveDestinationInput"/> by construction, since that walks
+    /// only <c>destinationComponent</c>'s own mapped input columns. A property named here is
+    /// appended verbatim, with NO pipeline/nullability resolution at all (the caller supplies the
+    /// exact CLR type name) -- this is for a column the SINK itself populates at write time, not
+    /// one derivable from any upstream row.</summary>
+    public static EmitResult Emit(string ns, string entityName, PipelineComponentSpec destinationComponent,
+        IReadOnlySet<string>? nullableColumnNames = null,
+        IReadOnlyList<(string Name, string ClrType)>? extraProperties = null)
     {
         var resolved = PipelineResolver.ResolveDestinationInput(destinationComponent);
         var gaps = resolved.Unresolved
             .Select(u => new GenerationGap($"{entityName}.{u.ColumnName}", u.Reason))
             .ToList();
+
+        // DbContextEmitter independently resolves this SAME PipelineResolver.ResolveDestinationInput
+        // list, in the same order, so it reproduces this exact identifier mapping with no state
+        // shared between them (see PackageGenerator.MakeColumnIdentifierResolver's own doc
+        // comment) -- and, wherever a real column's raw external name differs from its sanitized
+        // identifier, DbContextEmitter emits an explicit .HasColumnName(...) so EF still writes
+        // to the column's true real name (e.g. "WWI Stock Item ID"), not its sanitized property
+        // name.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
 
         var propertyLines = new List<string>();
         foreach (var column in resolved.Columns)
@@ -45,7 +65,16 @@ public static class EntityEmitter
             var isNullable = nullableColumnNames?.Contains(column.PipelineColumnName) ?? false;
             var typeName = isNullable ? column.Type.ClrTypeName + "?" : column.Type.ClrTypeName;
             var initializer = !isNullable && column.Type.ClrTypeName == "string" ? " = \"\";" : "";
-            propertyLines.Add($"    public {typeName} {column.ExternalColumnName} {{ get; set; }}{initializer}");
+            propertyLines.Add($"    public {typeName} {identifierOf(column.ExternalColumnName)} {{ get; set; }}{initializer}");
+        }
+
+        foreach (var (name, clrType) in extraProperties ?? [])
+        {
+            if (propertyLines.Count > 0) propertyLines.Add("");
+            // Caller-supplied (e.g. "FailedAt"), never a raw external column name -- already a
+            // safe identifier, but still routed through the resolver so it can't collide with a
+            // real column's own sanitized name.
+            propertyLines.Add($"    public {clrType} {identifierOf(name)} {{ get; set; }}");
         }
 
         if (propertyLines.Count == 0)

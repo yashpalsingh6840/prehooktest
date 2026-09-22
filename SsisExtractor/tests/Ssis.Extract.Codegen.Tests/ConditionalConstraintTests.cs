@@ -240,7 +240,10 @@ public class ConditionalConstraintTests
     {
         var package = LoadSyntheticFixture("SyntheticFailureHandler.dtsx");
 
-        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+        // includeNotifications: true -- this test specifically asserts the emitted
+        // FailureHandlersRun-carrying NotifyAsync call, which only exists when notifications
+        // are wired (see PackageGenerator.Generate's own includeNotifications parameter).
+        var result = PackageGenerator.Generate(package, namespacePrefix: null, includeNotifications: true);
 
         var classFile = Assert.Single(result.Files, f => f.RelativePath.EndsWith("SyntheticFailureHandler.cs"));
         // Run strictly after the rollback, inside the catch block's own try/catch-per-handler loop
@@ -412,7 +415,7 @@ public class ConditionalConstraintTests
                 // in a Task.WhenAll, not the plain sequential shape this test actually wants to
                 // assert (the real planner never produces two root steps sharing a Wave unless
                 // they genuinely have no precedence constraint between them).
-                new ProgramFlowStep(new ProgramFlowSpec("DFT_Load", new CsvFlowSource("FF_SRC_Load", "Load"), "LoadCsvRow", "Load", "LoadTransform", new SqlFlowSink())) { Wave = 0 },
+                new ProgramFlowStep(new ProgramFlowSpec("DFT_Load", new CsvFlowSource("FF_SRC_Load", "Load"), "LoadCsvRow", "Load", "LoadTransform", new SqlFlowSink("OLEDST_Load"))) { Wave = 0 },
                 new ProgramSqlStep("SQL_Handler", "SQL_HandlerStatement") { Wave = 1 },
             ])
         {

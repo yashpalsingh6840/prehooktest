@@ -35,6 +35,11 @@ public sealed record ProjectRequest(
     /// <summary>Defaults to empty so every pre-existing call site (none of which knows about
     /// secondary connections) keeps compiling unchanged.</summary>
     public List<SecondaryConnectionRequest> SecondaryConnections { get; init; } = SecondaryConnections ?? [];
+
+    /// <summary>Mirrors ProgramRequest's own flag of the same name -- when false (the default),
+    /// no "Notification" section is written into appsettings.json at all, since nothing in the
+    /// generated code reads it (IPackageResultNotifier is never wired).</summary>
+    public bool IncludeNotifications { get; init; }
 }
 
 /// <summary>
@@ -140,18 +145,20 @@ public static class ProjectEmitter
             targetDatabase["UserId"] = request.DatabaseAuth.UserId;
         targetDatabase["ApplicationName"] = request.PackageName;
 
-        var notification = new JsonObject
-        {
-            ["OnFailureRecipients"] = new JsonArray(request.OnFailureRecipients.Select(r => (JsonNode)r).ToArray()),
-            ["OnSuccessRecipients"] = new JsonArray(request.OnSuccessRecipients.Select(r => (JsonNode)r).ToArray()),
-        };
-
         var root = new JsonObject
         {
             ["FileSource"] = new JsonObject { ["Files"] = files },
             ["TargetDatabase"] = targetDatabase,
-            ["Notification"] = notification,
         };
+
+        if (request.IncludeNotifications)
+        {
+            root["Notification"] = new JsonObject
+            {
+                ["OnFailureRecipients"] = new JsonArray(request.OnFailureRecipients.Select(r => (JsonNode)r).ToArray()),
+                ["OnSuccessRecipients"] = new JsonArray(request.OnSuccessRecipients.Select(r => (JsonNode)r).ToArray()),
+            };
+        }
 
         // Server/Database live HERE, unlike TargetDatabase's own (Shared/appsettings.Shared.json) --
         // a secondary connection is package-specific, so there is no portfolio-wide shared file

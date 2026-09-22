@@ -104,8 +104,33 @@ public static class RulesEngine
                 }
                 if (comp.ComponentClassId.Contains("SCD", StringComparison.OrdinalIgnoreCase) || comp.ComponentClassId.Contains("SlowlyChangingDimension", StringComparison.OrdinalIgnoreCase))
                 {
+                    // Phase 7 of the unsupported-component-types plan gave this component a real
+                    // structured payload (ScdPayload), so this finding no longer has to say only
+                    // "reproduce this by hand" -- it now names the business key and each attribute's
+                    // own SCD type, which is exactly the information a reviewer sizing the rewrite
+                    // needs. The finding itself stays (SCD is genuinely high-effort even when
+                    // `ssisx generate` wires it), just with evidence attached. ScdColumnType lives in
+                    // Ssis.Extract.Codegen, which this project deliberately does not reference, so
+                    // the raw values are decoded locally here -- the mapping itself is measured, see
+                    // ScdPayload's own doc comment.
+                    var detail = "";
+                    if (comp.Scd is { } scd)
+                    {
+                        static string Describe(int? raw) => raw switch
+                        {
+                            1 => "business key",
+                            2 => "changing (Type 1)",
+                            3 => "historical (Type 2)",
+                            4 => "fixed",
+                            null => "unclassified",
+                            _ => $"ColumnType={raw}",
+                        };
+                        var columns = string.Join(", ", scd.Columns.Select(c => $"{c.ColumnName} ({Describe(c.ColumnTypeRaw)})"));
+                        detail = $" Dimension query: {scd.SqlCommand ?? "(none)"}. Current-row filter: {scd.CurrentRowWhere ?? "(none)"}. Columns: {(columns.Length == 0 ? "(none)" : columns)}.";
+                    }
+
                     Add(findings, "scd-component-present", "RewriteEffort", "Error", package.ObjectName, location,
-                        "Slowly Changing Dimension component -- a wizard-generated subgraph of several transforms working together; painful to reproduce by hand and worth flattening to explicit SQL/MERGE logic during rewrite rather than porting as-is.");
+                        "Slowly Changing Dimension component -- a wizard-generated subgraph of several transforms working together; painful to reproduce by hand and worth flattening to explicit SQL/MERGE logic during rewrite rather than porting as-is." + detail);
                 }
                 if (comp.ComponentClassId == "Microsoft.OLEDBCommand")
                 {

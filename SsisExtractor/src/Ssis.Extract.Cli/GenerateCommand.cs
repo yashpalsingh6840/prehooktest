@@ -41,6 +41,13 @@ internal static class GenerateCommand
         // this tool produce silently WRONG code, so it carries none of that flag's own warning
         // framing.
         var skipTests = false;
+        // Off by default -- a .dtsx carries no notification-recipient information at all, so
+        // wiring IPackageResultNotifier/AddEmailNotifications unconditionally would add an
+        // email-sending call the original SSIS package never had any equivalent of, on the
+        // strength of nothing but "maybe someone configures it later" (see the {Package}.
+        // Notification gap, only reported when this is set). Opt in once real recipients/SMTP
+        // settings actually exist to configure.
+        var includeNotifications = false;
         string? fillsDir = null;
         string? etlCorePath = null;
         var packageNames = new List<string>();
@@ -81,6 +88,7 @@ internal static class GenerateCommand
                     // --help.
                     case "--unsafe-skip-seams": seams = false; break;
                     case "--skip-tests": skipTests = true; break;
+                    case "--notifications": includeNotifications = true; break;
                     case "--fills": fillsDir = RequireValue(args, ref i, "--fills"); break;
                     // Folds the "copy Etl.Core alongside the generated output" step into this
                     // command instead of leaving it as a separate manual step someone (a human,
@@ -149,7 +157,7 @@ internal static class GenerateCommand
         foreach (var package in loaded.Packages)
         {
             var decisions = LoadDecisions(fillsDir, package.ObjectName);
-            var result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests);
+            var result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests, includeNotifications);
             results.Add(result);
             decisionOutcomes.AddRange(decisions.Outcomes.Concat(decisions.Orphans())
                 .Select(o => (package.ObjectName, o)));
@@ -622,7 +630,8 @@ internal static class GenerateCommand
         sb.AppendLine("  `fills/` from before this path was made explicit).");
         sb.AppendLine("- `generate/<Package>/` -- the generated C# project. **Never hand-edit files here** --");
         sb.AppendLine("  regenerated/overwritten on every `ssisx generate` run. A Script Task/Component's unfilled");
-        sb.AppendLine("  logic shows up here as an unimplemented `partial` method (`Fill_<Column>` or");
+        sb.AppendLine("  logic shows up here as an unimplemented `partial` method (a Script Component's own");
+        sb.AppendLine("  combined method, named after the component, or a Script Task's");
         sb.AppendLine("  `RunScriptAsync`) that deliberately fails to build (`CS8795`) until you supply the other");
         sb.AppendLine("  half in the fills directory above -- that failure is intentional, not something to patch");
         sb.AppendLine("  around here.");

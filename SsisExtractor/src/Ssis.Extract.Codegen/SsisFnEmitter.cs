@@ -36,12 +36,15 @@ public static class SsisFnEmitter
         if (functionsUsed.Contains("NarrowNumericToI4")) bodies.Add(NarrowNumericToI4Body());
         if (functionsUsed.Contains("NarrowR4ToI4")) bodies.Add(NarrowR4ToI4Body());
         if (functionsUsed.Contains("ParseWstrToI4")) bodies.Add(ParseWstrToI4Body());
+        if (functionsUsed.Contains("WidenI4ToNumeric")) bodies.Add(WidenI4ToNumericBody());
         if (functionsUsed.Contains("ToNullableR8")) bodies.Add(ToNullableR8Body());
         if (functionsUsed.Contains("ToNullableBool")) bodies.Add(ToNullableBoolBody());
         if (functionsUsed.Contains("ToNullableI2")) bodies.Add(ToNullableI2Body());
         if (functionsUsed.Contains("ToNullableI8")) bodies.Add(ToNullableI8Body());
         if (functionsUsed.Contains("ToNullableDateTime")) bodies.Add(ToNullableDateTimeBody());
         if (functionsUsed.Contains("ToWstr")) bodies.Add(ToWstrBody());
+        if (functionsUsed.Contains("DatePartMillisecond")) bodies.Add(DatePartMillisecondBody());
+        if (functionsUsed.Contains("DateAddMillisecond")) bodies.Add(DateAddMillisecondBody());
 
         var lines = new List<string>();
         if (functionsUsed.Contains("Str") || functionsUsed.Contains("ToNullableI4") || functionsUsed.Contains("ToNullableDate") || functionsUsed.Contains("ToNullableR8") || functionsUsed.Contains("ParseWstrToI4")
@@ -288,6 +291,26 @@ public static class SsisFnEmitter
         "        value is null ? null : checked((int)Math.Round(double.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture)));",
     ];
 
+    private static List<string> WidenI4ToNumericBody() =>
+    [
+        "    /// <summary>",
+        "    /// A plain passthrough column whose source buffer is int (DT_I4) but whose destination",
+        "    /// column is decimal (DT_NUMERIC), with no explicit Data Conversion component -- added",
+        "    /// 2026-09-18, the real shape sql-server-samples' own DailyETLMain.dtsx has",
+        "    /// (StockHolding_Staging's own \"Last Cost Price\": buffered i4 from a SqlCommand's own",
+        "    /// `int` result-set column, decimal(18,2) at the real destination table). UNLIKE every",
+        "    /// other coercion in this file, this one needed NO dtexec probe at all -- int -> decimal",
+        "    /// is a strictly WIDENING, lossless C#-native implicit conversion (a decimal has far",
+        "    /// more precision than a 32-bit int could ever need), so there is no rounding/",
+        "    /// truncation/overflow question to measure. A plain implicit conversion, not `checked`",
+        "    /// -- there is no overflow case for this pairing to guard against.",
+        "    /// </summary>",
+        "    public static decimal WidenI4ToNumeric(int value) => value;",
+        "",
+        "    /// <summary>Nullable-source overload -- a NULL source value passes through as NULL.</summary>",
+        "    public static decimal? WidenI4ToNumeric(int? value) => value is null ? null : value.Value;",
+    ];
+
     private static List<string> ToNullableR8Body() =>
     [
         "    /// <summary>",
@@ -384,5 +407,62 @@ public static class SsisFnEmitter
         "    /// </summary>",
         "    public static string? ToWstr(string? value, int maxLength) =>",
         "        value is null || value.Length <= maxLength ? value : value[..maxLength];",
+    ];
+
+    private static List<string> DatePartMillisecondBody() =>
+    [
+        "    /// <summary>",
+        "    /// DATEPART(\"Millisecond\", date) -- measured against the real SSIS 22 evaluator",
+        "    /// 2026-09-17 (sql-server-samples' DailyETLMain.dtsx, \"Trim Any Milliseconds\"). Its",
+        "    /// own internal arithmetic engine does NOT read the exact stored millisecond value --",
+        "    /// it quantizes to the nearest 1/300 of a second (~3.333ms per tick) before reporting",
+        "    /// the millisecond count, the well-documented legacy \"OLE Automation Date\" time",
+        "    /// resolution limit (a holdover from the original VB timer tick rate), not a guess.",
+        "    /// Measured: DATEPART(\"Millisecond\", .456) reports 457 (456ms quantizes to tick",
+        "    /// round(456*0.3)=137, i.e. 456.667ms, rounding to 457); DATEPART(\"Millisecond\",",
+        "    /// .999) reports 0 (999ms quantizes to tick 300 = exactly 1000ms, rolling over to the",
+        "    /// NEXT second with a 0ms remainder). A plain (DT_WSTR,n) cast of the same timestamp",
+        "    /// shows the exact, unquantized value -- this quantization is specific to",
+        "    /// DatePart/DateAdd's own arithmetic, not how a value is stored or displayed.",
+        "    /// </summary>",
+        "    public static int DatePartMillisecond(DateTime date)",
+        "    {",
+        "        var ticks = Math.Round(date.Millisecond * 0.3, MidpointRounding.ToEven);",
+        "        var quantizedMs = (int)Math.Round(ticks * (10.0 / 3.0), MidpointRounding.ToEven);",
+        "        return quantizedMs % 1000;",
+        "    }",
+    ];
+
+    private static List<string> DateAddMillisecondBody() =>
+    [
+        "    /// <summary>",
+        "    /// DATEADD(\"Millisecond\", number, date) -- measured against the real SSIS 22",
+        "    /// evaluator 2026-09-17 (see DatePartMillisecond's own doc comment for the shared",
+        "    /// 1/300-second-tick discovery). DATEADD's own arithmetic operates entirely in TICKS",
+        "    /// (1 tick = 1/300 second): both the base date's own millisecond remainder AND the",
+        "    /// delta being added are independently quantized to the nearest tick BEFORE being",
+        "    /// summed, not added as plain milliseconds and quantized afterward -- measured",
+        "    /// directly: DATEADD(\"Millisecond\", 1, .456) reports the SAME result as",
+        "    /// DATEADD(\"Millisecond\", 0, .456) (.457), because a 1ms delta quantizes to",
+        "    /// round(1*0.3)=0 ticks, i.e. no change at all. This is exactly why the real",
+        "    /// motivating idiom (subtract a value's own reported millisecond count from itself,",
+        "    /// via DatePartMillisecond) still lands exactly on the second boundary regardless of",
+        "    /// the quantization: DatePartMillisecond reports the base's own quantized tick count",
+        "    /// as milliseconds, and re-quantizing that exact count as the delta always cancels",
+        "    /// the base's own ticks precisely.",
+        "    /// </summary>",
+        "    public static DateTime DateAddMillisecond(DateTime date, int number)",
+        "    {",
+        "        var baseTicks = Math.Round(date.Millisecond * 0.3, MidpointRounding.ToEven);",
+        "        var deltaTicks = Math.Round(number * 0.3, MidpointRounding.ToEven);",
+        "        var totalMs = (baseTicks + deltaTicks) * (10.0 / 3.0);",
+        "",
+        "        var wholeSeconds = (int)Math.Floor(totalMs / 1000.0);",
+        "        var remainderMs = (int)Math.Round(totalMs - wholeSeconds * 1000.0, MidpointRounding.ToEven);",
+        "        if (remainderMs >= 1000) { wholeSeconds++; remainderMs -= 1000; }",
+        "        else if (remainderMs < 0) { wholeSeconds--; remainderMs += 1000; }",
+        "",
+        "        return date.AddMilliseconds(-date.Millisecond).AddSeconds(wholeSeconds).AddMilliseconds(remainderMs);",
+        "    }",
     ];
 }

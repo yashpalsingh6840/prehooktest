@@ -16,7 +16,13 @@ public static class DtprojReader
 {
     private static readonly XNamespace Ssis = "www.microsoft.com/SqlServer/SSIS";
 
-    public static ProjectSpec Read(string dtprojPath, string? projectParamsPath)
+    // Re-declared rather than shared with DtsxPackageReader's own identical constant -- a
+    // standalone .conmgr file is DTS-namespaced XML, read here for the one attribute
+    // (ObjectName) needed to synthesize its "Project.ConnectionManagers[{Name}]" refId
+    // before handing the whole element to DtsxPackageReader.ReadConnectionManager.
+    private static readonly XNamespace Dts = "www.microsoft.com/SqlServer/Dts";
+
+    public static ProjectSpec Read(string dtprojPath, string? projectParamsPath, bool noRedact = false)
     {
         var doc = XDocument.Load(dtprojPath, LoadOptions.PreserveWhitespace);
         var root = doc.Root ?? throw new InvalidDataException($"{dtprojPath}: no root element");
@@ -78,6 +84,37 @@ public static class DtprojReader
             });
         }
 
+        // Project-scoped connection managers: real SSIS Project-Deployment-Model projects
+        // routinely store these as separate, standalone .conmgr files referenced by name from
+        // the manifest's own <SSIS:ConnectionManagers> list, rather than embedding them inside
+        // every .dtsx that uses one. Confirmed byte-for-byte the same XML schema as a
+        // package-embedded <DTS:ConnectionManager> (same namespace/attributes/nested
+        // <DTS:ObjectData><DTS:ConnectionManager .../> shape) against real GitHub SSIS
+        // portfolios -- this is a wiring gap, not a new format to parse.
+        var projectDir = Path.GetDirectoryName(Path.GetFullPath(dtprojPath)) ?? "";
+        var connectionManagers = new List<ConnectionManagerSpec>();
+        foreach (var cmRefEl in manifestProject?.Element(Ssis + "ConnectionManagers")?.Elements(Ssis + "ConnectionManager") ?? [])
+        {
+            var cmFileName = cmRefEl.Attr(Ssis + "Name");
+            if (cmFileName is null) continue;
+
+            var cmPath = Path.Combine(projectDir, cmFileName);
+            if (!File.Exists(cmPath)) continue; // reported nowhere yet -- no failure-list mechanism exists on ProjectSpec today; the resulting unresolved connection reference still surfaces as its own generation gap downstream
+
+            var cmDoc = XDocument.Load(cmPath, LoadOptions.PreserveWhitespace);
+            var cmRoot = cmDoc.Root;
+            if (cmRoot is null) continue;
+
+            // The refId shape a .dtsx's own pipeline/task XML actually uses to reference a
+            // project CM (e.g. connectionManagerRefId="Project.ConnectionManagers[WWI_Source_DB]",
+            // confirmed real) is keyed by the connection manager's own ObjectName, not
+            // necessarily its filename -- read that one attribute directly rather than
+            // deriving the name from cmFileName.
+            var cmObjectName = cmRoot.Attr(Dts + "ObjectName") ?? Path.GetFileNameWithoutExtension(cmFileName);
+            var refId = $"Project.ConnectionManagers[{cmObjectName}]";
+            connectionManagers.Add(DtsxPackageReader.ReadConnectionManager(cmRoot, noRedact, scope: "Project", refIdOverride: refId));
+        }
+
         var buildConfigs = new List<BuildConfigurationSpec>();
         foreach (var cfgEl in root.Element("Configurations")?.Elements("Configuration") ?? [])
         {
@@ -109,7 +146,7 @@ public static class DtprojReader
             Description = NullIfBlank(ManifestProp("Description")),
             FormatVersion = ManifestProp("FormatVersion"),
             Packages = packages,
-            ConnectionManagers = [], // project-scoped CMs: empty in this PoC; .dtproj manifest's SSIS:ConnectionManagers is also empty here
+            ConnectionManagers = connectionManagers,
             Parameters = parameters,
             BuildConfigurations = buildConfigs,
             SourceDtprojPath = dtprojPath,

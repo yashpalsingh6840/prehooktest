@@ -30,7 +30,8 @@ public static class RouterEmitter
 
     public static RouterEmitResult Emit(
         string ns, string routerClassName, string rowTypeNamespace, string rowTypeName, string ssisFnNamespace,
-        ConditionalSplitPlan split, PipelineSpec? pipeline = null, PipelineComponentSpec? dataConversion = null)
+        ConditionalSplitPlan split, PipelineSpec? pipeline = null, PipelineComponentSpec? dataConversion = null,
+        PipelineComponentSpec? copyMap = null)
     {
         var splitComponent = split.Component;
         if (splitComponent.Inputs.Count != 1)
@@ -51,6 +52,16 @@ public static class RouterEmitter
         var convertedByName = new Dictionary<string, DataConversionColumnSpec>();
         foreach (var column in dataConversion?.DataConvert?.Columns ?? [])
             convertedByName.TryAdd(column.OutputColumnName, column);
+
+        // Phase 1 of the unsupported-component-types plan: the same cross-reference recognition
+        // as convertedByName above, but for a Conditional Split condition referencing a Copy
+        // Column ("Microsoft.CopyMap") output -- resolves to a plain `row.{trueSourceColumn}`
+        // passthrough (TranslateCopyMap), never nullable on its own (unlike Data Conversion,
+        // Copy Column performs no conversion that could fail).
+        var copiedByName = new Dictionary<string, CopyMapColumnSpec>();
+        foreach (var column in copyMap?.CopyMap?.Columns ?? [])
+            copiedByName.TryAdd(column.OutputColumnName, column);
+
         var lineage = pipeline is null ? null : LineageBuilder.Build(pipeline);
 
         var references = new Dictionary<string, ColumnReference>();
@@ -73,9 +84,28 @@ public static class RouterEmitter
                 // TranslateCondition's own "no resolvable producing column" gap fires naturally.
             }
 
+            if (lineage is not null && copiedByName.TryGetValue(inputColumn.CachedName, out var copyMapColumn))
+            {
+                var copiedExpr = TransformEmitter.TranslateCopyMap(copyMapColumn, inputColumn.CachedName, lineage);
+                if (copiedExpr is TranslatedOk copiedOk)
+                {
+                    var copiedType = TransformEmitter.MapPipelineTypeToSsisType(copyMapColumn.TargetDataType);
+                    if (copiedType is not null)
+                    {
+                        references[inputColumn.CachedName] = new ColumnReference(copiedOk.CSharpExpression, copiedType.Value);
+                        continue;
+                    }
+                }
+                // Unresolvable Copy Column column -- same fall-through reasoning as Data
+                // Conversion above.
+            }
+
             var mapped = TransformEmitter.MapPipelineTypeToSsisType(inputColumn.CachedDataType);
             if (mapped is null) continue; // unmapped buffer type -- simply unavailable as a reference, not a gap on its own
-            references[inputColumn.CachedName] = new ColumnReference($"row.{inputColumn.CachedName}", mapped.Value);
+            // Dictionary KEY stays the raw name (matches the AST's own Reference node exactly, as
+            // written in the FriendlyExpression); the C# expression VALUE routes through the
+            // sanitized identifier -- see PackageGenerator.SanitizeIdentifier's own doc comment.
+            references[inputColumn.CachedName] = new ColumnReference($"row.{PackageGenerator.SanitizeIdentifier(inputColumn.CachedName)}", mapped.Value);
         }
 
         // split.Branches[^1] is always the default (no condition of its own, see

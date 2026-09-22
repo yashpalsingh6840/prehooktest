@@ -30,6 +30,11 @@ public static class SqlRowReaderEmitter
 
         var resolved = PipelineResolver.Resolve(output);
 
+        // Independently reproduces SqlRowEmitter's own identifier mapping -- see
+        // PackageGenerator.MakeColumnIdentifierResolver's own doc comment for why this needs no
+        // state shared with that emitter.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var assignments = new List<string>();
         foreach (var column in resolved.Columns)
         {
@@ -37,6 +42,9 @@ public static class SqlRowReaderEmitter
             // the same row type -- don't double-report the same fact from a second emitter.
             if (column.Type is null) continue;
 
+            // The real SQL SELECT's own column name/alias -- a LITERAL lookup, must stay the raw
+            // name verbatim (never sanitized): the actual result set has no idea this tool needs
+            // a C# identifier for it.
             var ordinalExpr = $"reader.GetOrdinal(\"{column.PipelineColumnName}\")";
             var readExpr = $"reader.GetFieldValue<{column.Type.ClrTypeName}>({ordinalExpr})";
             // NullabilityInference's own evidence -- a genuinely-null value would otherwise
@@ -47,7 +55,7 @@ public static class SqlRowReaderEmitter
             if (nullableColumnNames?.Contains(column.PipelineColumnName) ?? false)
                 readExpr = $"reader.IsDBNull({ordinalExpr}) ? null : {readExpr}";
 
-            assignments.Add($"        {column.PipelineColumnName} = {readExpr},");
+            assignments.Add($"        {identifierOf(column.PipelineColumnName)} = {readExpr},");
         }
 
         if (assignments.Count == 0)

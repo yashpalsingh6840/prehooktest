@@ -4,7 +4,6 @@ using Etl.Core.Abstractions;
 using Etl.Core.Csv;
 using Etl.Core.Data;
 using Etl.Core.Hosting;
-using Etl.Core.Notifications;
 using Etl.Core.Pipeline;
 using LoadEmployees.Csv;
 using LoadEmployees.Mapping;
@@ -27,14 +26,12 @@ internal sealed partial class LoadEmployeesPackage(IServiceProvider services)
     internal IOptions<T> Opt<T>() where T : class => services.GetRequiredService<IOptions<T>>();
     private DatabaseOptions Db() => Opt<DatabaseOptions>().Value;
     private string File(string key) => Opt<FileSourceOptions>().Value[key].ResolvedPath;
-    private async Task Step(ILoadTask task, IUnitOfWork uow, CancellationToken ct) => _results.Add(await task.RunAsync(uow, _load, ct));
 
     public async Task<int> RunAsync(CancellationToken ct)
     {
         await using var scope = services.CreateAsyncScope();
         var sp = scope.ServiceProvider;
         var uow = sp.GetRequiredService<IUnitOfWork>();
-        var notifier = sp.GetRequiredService<IPackageResultNotifier>();
         var logger = Log<LoadEmployeesPackage>();
 
         var startedAtUtc = sp.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
@@ -67,11 +64,9 @@ internal sealed partial class LoadEmployeesPackage(IServiceProvider services)
             }
             logger.LogError(ex, "{Package} failed after {Steps} step(s); transaction rolled back", PackageName, _results.Count);
 
-            await notifier.NotifyAsync(new PackageResult(PackageName, false, _results, stopwatch.Elapsed, ex), CancellationToken.None);
             return ExitCode.LoadFailed;
         }
 
-        await notifier.NotifyAsync(new PackageResult(PackageName, true, _results, stopwatch.Elapsed, null), ct);
         foreach (var step in _results) logger.LogInformation("{Step}: {Rows:N0} rows loaded", step.Name, step.RowsWritten);
         return ExitCode.Success;
     }
@@ -79,17 +74,17 @@ internal sealed partial class LoadEmployeesPackage(IServiceProvider services)
     internal async Task SQL_TruncateTarget(IUnitOfWork uow, CancellationToken ct)
     {
         var step = new ExecuteSqlStep("SQL_TruncateTarget", SQL_TruncateTargetStatement.BuildStatement(), Log<ExecuteSqlStep>());
-        await Step(step, uow, ct);
+        _results.Add(await step.RunAsync(uow, _load, ct));
     }
 
     internal async Task DFT_LoadEmployees(IUnitOfWork uow, CancellationToken ct)
     {
         var source = FF_SRC_Employees();
         var transform = new EmployeeTransform();
-        var sink = EmployeeDestination();
+        var sink = OLEDST_Employee();
 
         var step = new DataFlowStep<EmployeeCsvRow, Employee>("DFT_LoadEmployees", source, transform, sink, Log<DataFlowStep<EmployeeCsvRow, Employee>>());
-        await Step(step, uow, ct);
+        _results.Add(await step.RunAsync(uow, _load, ct));
     }
 
     internal IRowSource<EmployeeCsvRow> FF_SRC_Employees()
@@ -97,7 +92,7 @@ internal sealed partial class LoadEmployeesPackage(IServiceProvider services)
         return new CsvRowSource<EmployeeCsvRow>("FF_SRC_Employees", new CsvSourceOptions { FilePath = File("Employee") }, new EmployeeCsvRowMap());
     }
 
-    internal IBulkSink<Employee> EmployeeDestination()
+    internal IBulkSink<Employee> OLEDST_Employee()
     {
         return new SqlBulkSink<Employee>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<Employee>>());
     }

@@ -13,10 +13,14 @@ namespace Ssis.Extract.Cli;
 /// and reports exactly what is still outstanding.
 ///
 /// A "fill" is a second part of a generated <c>partial</c> transform class, implementing the
-/// <c>Fill_&lt;Column&gt;</c> seams <c>ssisx generate --seams</c> emitted for columns produced by a
-/// Script Component. It is human work product -- authored by a person, usually with AI help from
-/// the SCRIPT-COLUMN work packet -- so this command only ever READS <c>fills/</c>, never writes to
-/// it, exactly like <c>conformance</c>'s claims files. Fills are copied INTO
+/// combined seam <c>ssisx generate --seams</c> emitted for one Script Component -- one method,
+/// named after the component itself (e.g. <c>SCR_CleanseCustomerRow</c>), returning ALL of that
+/// component's own produced columns together in one small record (not one independent
+/// <c>Fill_&lt;Column&gt;</c> seam per column, a retired earlier convention -- see
+/// <c>TransformEmitter.ScriptComponentGroup</c>'s own doc comment for why one seam per component,
+/// not per column, is the correct unit of work). It is human work product -- authored by a person,
+/// usually with AI help from the SCRIPT-COLUMN work packet -- so this command only ever READS
+/// <c>fills/</c>, never writes to it, exactly like <c>conformance</c>'s claims files. Fills are copied INTO
 /// <c>generate/&lt;Package&gt;/Fills/</c> (their own folder, not mixed in with <c>Mapping/</c>) so a
 /// reviewer can tell at a glance which files in the project are not machine-generated.
 ///
@@ -70,13 +74,20 @@ internal static class ApplyFillsCommand
 
     private sealed record FillProvenance(string? GapId, string? Author, string? Date, string? EvidenceSha256);
 
-    /// <summary>Matches an implementing part of a seam, e.g.
-    /// <c>private partial string Fill_FullName(StagingCustomersCsvRow row, in RowContext ctx) =&gt; ...</c>.
-    /// Deliberately loose about the return type (it can be nullable, generic, qualified) and about
-    /// modifier order -- the compiler is the authority on whether the part actually matches its
-    /// declaration; all this needs is the method NAME, to tell a real fill from an orphan.</summary>
-    private static readonly Regex FillMethodPattern =
-        new(@"partial\s+(?:async\s+)?[^\s(]+\s+(Fill_\w+)\s*\(", RegexOptions.Compiled);
+    /// <summary>Matches an implementing part of a Script-Component combined seam, e.g.
+    /// <c>private partial SCR_CleanseCustomerRowResult SCR_CleanseCustomerRow(Row row, in RowContext ctx) =&gt; ...</c>.
+    /// Deliberately loose about the return type/modifier order (the compiler is the authority on
+    /// whether the part actually matches its declaration) AND deliberately generic on the method
+    /// NAME -- unlike the retired <c>Fill_&lt;Column&gt;</c> convention, a combined seam is named
+    /// after the Script Component's own <c>SanitizeIdentifier</c>'d name, which can be anything.
+    /// <c>RunScriptAsync</c> is excluded explicitly wherever this pattern is matched: that name is
+    /// permanently reserved for a Script TASK's own seam (matched by its own, separate pass below,
+    /// keyed by class name, unaffected by this pattern at all) -- a Script Component's own name can
+    /// never legitimately collide with it, so excluding it here is what stops a Script Task fill
+    /// from being double-counted (once correctly by the class-keyed pass, once as a spurious
+    /// unresolved "orphan" picked up by this broader one).</summary>
+    private static readonly Regex ScriptComponentSeamPattern =
+        new(@"partial\s+(?:async\s+)?[^\s(]+\s+(\w+)\s*\(", RegexOptions.Compiled);
 
     /// <summary>
     /// A Script Task fill is matched by the CLASS it is a part of, not by its method name -- every
@@ -147,17 +158,20 @@ internal static class ApplyFillsCommand
             return 2;
         }
 
-        // Expected seams, per package: one per ScriptComponentColumn gap. GapSpec.Location is
-        // "{Entity}.{Column}", and TransformEmitter names the seam Fill_{Column} -- so the column
-        // is the part after the last '.'.
+        // Expected seams, per package: one per ScriptComponentColumn gap (one gap per COMPONENT
+        // since the combined-seam round -- see TransformEmitter.ScriptComponentGroup). GapSpec.
+        // Location is "{Entity}.{SanitizedComponentName}", and TransformEmitter names the seam
+        // method IDENTICALLY to that same sanitized name -- so the expected seam name is read
+        // directly off Location's own tail, never synthesized (unlike the retired "Fill_" + column
+        // convention, which assumed a naming rule rather than reading back what was emitted).
         var expected = new Dictionary<string, Dictionary<string, GapSpec>>(StringComparer.Ordinal);
         foreach (var gap in gaps.Where(g => g.Kind == GapKind.ScriptComponentColumn))
         {
-            var column = gap.Location[(gap.Location.LastIndexOf('.') + 1)..];
-            if (column.Length == 0) continue;
+            var seamName = gap.Location[(gap.Location.LastIndexOf('.') + 1)..];
+            if (seamName.Length == 0) continue;
             if (!expected.TryGetValue(gap.Package, out var byMethod))
                 expected[gap.Package] = byMethod = new Dictionary<string, GapSpec>(StringComparer.Ordinal);
-            byMethod[$"Fill_{column}"] = gap;
+            byMethod[seamName] = gap;
         }
 
         // Expected Script Task seams, per package, keyed by the generated partial CLASS name.
@@ -251,9 +265,10 @@ internal static class ApplyFillsCommand
                     // longer a plain distinct-method-names list, because staleness is a per-seam
                     // fact, not a per-file one.
                     var seams = new List<(string Seam, GapSpec? Gap)>();
-                    foreach (Match m in FillMethodPattern.Matches(content))
+                    foreach (Match m in ScriptComponentSeamPattern.Matches(content))
                     {
                         var method = m.Groups[1].Value;
+                        if (method == "RunScriptAsync") continue; // reserved for the Script Task pass below
                         if (seams.Any(s => s.Seam == method)) continue;
                         known.TryGetValue(method, out var gap);
                         seams.Add((method, gap));
@@ -587,7 +602,7 @@ internal static class ApplyFillsCommand
         var declaration = seam.EndsWith(".RunScriptAsync", StringComparison.Ordinal)
             ? ScriptTaskFillClassPattern.Matches(content)
                 .FirstOrDefault(m => $"{m.Groups[1].Value}.RunScriptAsync" == seam)
-            : FillMethodPattern.Matches(content)
+            : ScriptComponentSeamPattern.Matches(content)
                 .FirstOrDefault(m => m.Groups[1].Value == seam);
         if (declaration is null || !declaration.Success) return null;
 
@@ -715,7 +730,7 @@ internal static class ApplyFillsCommand
         if (orphanedFiles.Count > 0 || orphanedMethods.Count > 0)
         {
             sb.AppendLine();
-            sb.AppendLine("Orphaned -- implements a Fill_* no gap asked for, so NOT copied. Usually the package");
+            sb.AppendLine("Orphaned -- implements a seam no gap asked for, so NOT copied. Usually the package");
             sb.AppendLine("changed and that seam is gone; re-read the current work packet before reusing it.");
             foreach (var line in orphanedMethods) sb.AppendLine($"  ? {line}");
             foreach (var line in orphanedFiles) sb.AppendLine($"  ? {line} (skipped entirely -- nothing in it matched a seam)");

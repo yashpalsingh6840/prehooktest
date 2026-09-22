@@ -43,7 +43,13 @@ namespace Ssis.Extract.Codegen;
 /// that compiled a WRONG row type into a RIGHT-looking method call before this field existed). A
 /// row type name is comparably far more likely to be unique, since it's derived from the flow's own
 /// destination entity name.</param>
-public sealed record ComponentMethodEntry(string Kind, string SsisName, string MethodName, string Signature, string? RowTypeName = null);
+/// <param name="EntityName">Only ever set for <c>Kind == "Sink"</c>, added for the 1-to-1
+/// component-to-function mapping round (2026-09) alongside <see cref="SsisName"/> switching from
+/// the destination's ENTITY name to its real SSIS component name. Several joins in
+/// <c>PackageGenerator</c> (the Sink-SQL/Sink-FlatFile/direct-invocation starter tests) used to key
+/// off <see cref="SsisName"/> back when it WAS the entity name -- this field lets them keep doing
+/// exactly that without caring what <see cref="SsisName"/> now means.</param>
+public sealed record ComponentMethodEntry(string Kind, string SsisName, string MethodName, string Signature, string? RowTypeName = null, string? EntityName = null);
 
 /// <summary>The three method-signature templates <see cref="PackageClassEmitter"/> emits,
 /// extracted so <see cref="PackageReadmeEmitter"/> renders the identical text in its own
@@ -71,8 +77,9 @@ public static class PackageClassEmitter
     /// happy-path test (Docs/Generated-Tests-Plan.md's "RunAsync -- happy path" row) is safe to
     /// generate for this package. False the instant ANY source or step could reach out to
     /// something FakeUnitOfWork/PackageHarness cannot fake: a direct SQL/ADO NET source (opens a
-    /// real connection to resolve its own metadata), an Excel source (reads a real .xlsx -- no
-    /// Tier-A sample data exists for this shape yet), a Lookup preload (LookupCache.LoadAsync
+    /// real connection to resolve its own metadata), an Excel or XML source (each reads a real
+    /// .xlsx/.xml file -- no Tier-A sample data exists for either shape, no writer for either
+    /// format in this stack), a Lookup preload (LookupCache.LoadAsync
     /// takes a raw connection STRING, never IUnitOfWork, so it is never faked regardless of what
     /// the rest of the flow does), a secondary-connection SQL step (same reason), or a Script
     /// Task (an arbitrary, hand-ported fill -- e.g. the real Package.dtsx's own
@@ -102,8 +109,10 @@ public static class PackageClassEmitter
         var splits = request.Steps.OfType<ProgramConditionalSplitStep>().ToList();
         var multicasts = request.Steps.OfType<ProgramMulticastStep>().ToList();
         var oleDbCommands = request.Steps.OfType<ProgramOleDbCommandStep>().ToList();
+        var scds = request.Steps.OfType<ProgramScdStep>().ToList();
         var dataFlowLoops = request.Steps.OfType<ProgramForEachDataFlowLoopStep>().ToList();
-        if (flows.Count == 0 && splits.Count == 0 && multicasts.Count == 0 && oleDbCommands.Count == 0 && dataFlowLoops.Count == 0)
+        var forLoops = request.Steps.OfType<ProgramForLoopStep>().ToList();
+        if (flows.Count == 0 && splits.Count == 0 && multicasts.Count == 0 && oleDbCommands.Count == 0 && scds.Count == 0 && dataFlowLoops.Count == 0 && forLoops.Count == 0)
         {
             methodInventory = inventory;
             supportsFakeHappyPath = false;
@@ -113,33 +122,44 @@ public static class PackageClassEmitter
 
         var allSources = new List<FlowSourceSpec>();
         foreach (var source in flows.Select(f => f.Source).Concat(splits.Select(s => s.Source))
-                     .Concat(multicasts.Select(m => m.Source)).Concat(oleDbCommands.Select(c => c.Source)))
+                     .Concat(multicasts.Select(m => m.Source)).Concat(oleDbCommands.Select(c => c.Source))
+                     .Concat(scds.Select(s => s.Source)))
         {
             allSources.Add(source);
             if (source is MergeJoinFlowSource mj) { allSources.Add(mj.LeftSource); allSources.Add(mj.RightSource); }
             if (source is AggregateFlowSource agg) allSources.Add(agg.InnerSource);
             if (source is UnionFlowSource union) allSources.AddRange(union.Sides);
         }
-        var usesCsv = allSources.Any(s => s is CsvFlowSource or FixedWidthFlowSource) || dataFlowLoops.Count > 0;
+        var includeNotifications = request.IncludeNotifications;
+        var usesCsv = allSources.Any(s => s is CsvFlowSource or FixedWidthFlowSource) || dataFlowLoops.Count > 0 || forLoops.Count > 0;
         var usesExcel = allSources.Any(s => s is ExcelFlowSource);
-        var usesSql = allSources.Any(s => s is SqlFlowSource or MergeJoinFlowSource or AggregateFlowSource or UnionFlowSource);
+        var usesXml = allSources.Any(s => s is XmlFlowSource);
+        var usesSql = allSources.Any(s => s is SqlFlowSource or MergeJoinFlowSource or AggregateFlowSource or UnionFlowSource or LookupNoMatchFilteredFlowSource);
         // SqlBulkSink<T>/BulkCopyOptions (both Etl.Core.Data) are now constructed DIRECTLY inside
         // whatever method needs them -- unlike the old DI-registration-lambda design, where
         // AddBulkSink<T>() (an Etl.Core.Hosting extension method) meant Program.cs never had to
         // name SqlBulkSink itself. A Conditional Split's own branches are always SQL-sunk (no
         // Sink field at all on ProgramConditionalSplitBranch -- see its own doc comment), and a
         // ForEach-Data-Flow-Loop is likewise always SQL-sunk (PlanForEachDataFlowLoop's own gate
-        // requires it).
-        var usesSqlSink = flows.Any(f => f.Sink is SqlFlowSink) || splits.Count > 0
-            || multicasts.Any(m => m.Branches.Any(b => b.Sink is SqlFlowSink)) || dataFlowLoops.Count > 0;
+        // requires it), and so is a For Loop Container's own body (PlanForLoop's own gate
+        // requires a fast-load-configured, non-Flat-File destination).
+        var usesSqlSink = flows.Any(f => f.Sink is SqlFlowSink or RedirectingSqlFlowSink) || splits.Count > 0
+            || multicasts.Any(m => m.Branches.Any(b => b.Sink is SqlFlowSink)) || dataFlowLoops.Count > 0 || forLoops.Count > 0
+            || scds.Any(s => s.Branches.Any(b => b.Sink is SqlFlowSink));
         usesLookupPreload = flows.Any(f => f.Lookup is not null);
+        // Phase 5 (2026-09-17): a Data Flow source can be secondary-connection too, not just an
+        // Execute SQL Task's own write side -- allSources is already flattened through Merge
+        // Join/Aggregate/Union's own nested sides, so this single check covers one hiding inside
+        // any of them too, the same reasoning supportsFakeHappyPath's own check below relies on.
         var secondaryConnectionNames = request.Steps.OfType<ProgramSecondaryConnectionSqlStep>()
-            .Select(s => s.ConnectionManagerName).Distinct().ToList();
+            .Select(s => s.ConnectionManagerName)
+            .Concat(allSources.OfType<SqlFlowSource>().Select(s => s.SecondaryConnectionManagerName).OfType<string>())
+            .Distinct().ToList();
         var usesFlatFileSink = flows.Any(f => f.Sink is FlatFileFlowSink) || multicasts.Any(m => m.Branches.Any(b => b.Sink is FlatFileFlowSink));
         var usesRowCount = flows.Any(f => f.RowCountVariableNames is { Count: > 0 });
         var usesExcelWhereFilter = allSources.Any(s => s is ExcelFlowSource { WhereFilter: not null });
         var usesStandaloneSort = flows.Any(f => f.SortKey is not null);
-        var usesMapping = flows.Count > 0 || splits.Count > 0 || multicasts.Count > 0 || dataFlowLoops.Count > 0
+        var usesMapping = flows.Count > 0 || splits.Count > 0 || multicasts.Count > 0 || scds.Count > 0 || dataFlowLoops.Count > 0 || forLoops.Count > 0
             || request.Steps.OfType<ProgramSqlStep>().Any() || request.Steps.OfType<ProgramSecondaryConnectionSqlStep>().Any()
             || request.Steps.OfType<ProgramForEachFileLoopStep>().Any();
         var usesScriptTasks = request.Steps.Any(s => s is ProgramScriptTaskStep);
@@ -150,8 +170,8 @@ public static class PackageClassEmitter
         // Join/Aggregate/Union's own nested sides, so this single check covers a SqlFlowSource
         // hiding inside any of them too.
         supportsFakeHappyPath = !allSources.Any(s => s is SqlFlowSource)
-            && !usesExcel && !usesLookupPreload && secondaryConnectionNames.Count == 0
-            && !usesScriptTasks && !usesFileSystemTask && dataFlowLoops.Count == 0;
+            && !usesExcel && !usesXml && !usesLookupPreload && scds.Count == 0 && secondaryConnectionNames.Count == 0
+            && !usesScriptTasks && !usesFileSystemTask && dataFlowLoops.Count == 0 && forLoops.Count == 0;
 
         var ns = request.RootNamespace;
         var className = ClassName(request.PackageName);
@@ -162,7 +182,7 @@ public static class PackageClassEmitter
         // look like "SQL_Foo"/"DFT_Bar") is defended against rather than assumed away.
         var usedNames = new HashSet<string>(StringComparer.Ordinal)
         {
-            "packageVariables", "_results", "_load", "Log", "Opt", "Db", "File", "Config", "Step", "RunAsync", "RunBranchAsync",
+            "packageVariables", "_results", "_load", "Log", "Opt", "Db", "File", "Config", "RunAsync", "RunBranchAsync",
         };
         string Reserve(string desired)
         {
@@ -185,21 +205,28 @@ public static class PackageClassEmitter
         // comment.
         var reachedFlagFieldNames = request.FailureHandlers
             .Where(h => h.IsDualPosition)
-            .ToDictionary(h => h.TaskName, h => Reserve(h.TaskName + "Reached"));
+            .ToDictionary(h => h.TaskName, h => Reserve(PackageGenerator.SanitizeIdentifier(h.TaskName) + "Reached"));
 
         // ----- shared source/sink construction, recursive for Merge Join/Union/Aggregate -----
 
-        string EmitAggregateFunctionExpression(AggregateFunctionFieldSpec fn) => fn.AggregationTypeRaw switch
+        // fn.SourcePropertyName is a raw source-row column name -- see
+        // PackageGenerator.SanitizeIdentifier's own doc comment (a SOURCE-side reference, sanitized
+        // bare at each use, same convention as every other row.{X}/r.{X} reference in this file).
+        string EmitAggregateFunctionExpression(AggregateFunctionFieldSpec fn)
         {
-            1 => $"rows.Count(r => r.{fn.SourcePropertyName} != null)",
-            2 => "rows.Count",
-            3 => $"rows.Select(r => r.{fn.SourcePropertyName}).Where(v => v != null).Distinct().Count()",
-            4 => $"rows.All(r => r.{fn.SourcePropertyName} == null) ? null : rows.Sum(r => r.{fn.SourcePropertyName})",
-            5 => $"rows.Average(r => r.{fn.SourcePropertyName})",
-            6 => $"rows.Min(r => r.{fn.SourcePropertyName})",
-            7 => $"rows.Max(r => r.{fn.SourcePropertyName})",
-            _ => throw new InvalidOperationException($"unsupported AggregationType {fn.AggregationTypeRaw} reached PackageClassEmitter -- PackagePlanner should have rejected this"),
-        };
+            var src = fn.SourcePropertyName is null ? null : PackageGenerator.SanitizeIdentifier(fn.SourcePropertyName);
+            return fn.AggregationTypeRaw switch
+            {
+                1 => $"rows.Count(r => r.{src} != null)",
+                2 => "rows.Count",
+                3 => $"rows.Select(r => r.{src}).Where(v => v != null).Distinct().Count()",
+                4 => $"rows.All(r => r.{src} == null) ? null : rows.Sum(r => r.{src})",
+                5 => $"rows.Average(r => r.{src})",
+                6 => $"rows.Min(r => r.{src})",
+                7 => $"rows.Max(r => r.{src})",
+                _ => throw new InvalidOperationException($"unsupported AggregationType {fn.AggregationTypeRaw} reached PackageClassEmitter -- PackagePlanner should have rejected this"),
+            };
+        }
 
         string BuildFlatFileSinkExpr(string entityName, FlatFileFlowSink sink)
         {
@@ -247,6 +274,19 @@ public static class PackageClassEmitter
                 }
                 case SqlFlowSource sql:
                 {
+                    if (sql.SecondaryConnectionManagerName is { } secondaryCm)
+                    {
+                        // Mirrors the ProgramSecondaryConnectionSqlStep case below exactly (same
+                        // config section, same "throw if missing" guard) -- see SqlFlowSource's
+                        // own doc comment for why no uow is passed (skip sp_bindsession, fall back
+                        // to READ UNCOMMITTED, the same already-accepted tradeoff as a Lookup
+                        // preload's own unbound read).
+                        w.Line($"var connectionString = SqlConnectionStringFactory.Build(Config().GetSection({Str($"SecondaryConnections:{secondaryCm}")}).Get<DatabaseOptions>()");
+                        w.Line($"    ?? throw new InvalidOperationException({Str($"The SecondaryConnections:{secondaryCm} configuration section is missing.")}));");
+                        var secondaryOpts = $"new SqlSourceOptions {{ ConnectionString = connectionString, CommandText = {Str(sql.CommandText)} }}";
+                        w.Line($"{assignPrefix}new SqlRowSource<{rowTypeName}>({Str(sql.ComponentName)}, {secondaryOpts}, {rowTypeName}Reader.Read);");
+                        break;
+                    }
                     var opts = $"new SqlSourceOptions {{ ConnectionString = SqlConnectionStringFactory.Build(Db()), CommandText = {Str(sql.CommandText)} }}";
                     // uow is passed through so this source can bind its own connection to the
                     // package's active transaction (see SqlRowSource's own doc comment) --
@@ -261,6 +301,12 @@ public static class PackageClassEmitter
                     w.Line(excel.WhereFilter is { } filter
                         ? $"{assignPrefix}new FilteringRowSource<{rowTypeName}>({Str(excel.ComponentName)}, new ExcelRowSource<{rowTypeName}>({Str(excel.ComponentName)}, {opts}, {rowTypeName}Reader.Read), row => {filter});"
                         : $"{assignPrefix}new ExcelRowSource<{rowTypeName}>({Str(excel.ComponentName)}, {opts}, {rowTypeName}Reader.Read);");
+                    break;
+                }
+                case XmlFlowSource xmlSource:
+                {
+                    var opts = $"new XmlSourceOptions {{ FilePath = File({Str(xmlSource.FileSourceKey)}), RowElementName = {Str(xmlSource.RowElementName)} }}";
+                    w.Line($"{assignPrefix}new XmlRowSource<{rowTypeName}>({Str(xmlSource.ComponentName)}, {opts}, {rowTypeName}Reader.Read);");
                     break;
                 }
                 case MergeJoinFlowSource mj:
@@ -293,7 +339,7 @@ public static class PackageClassEmitter
                         w.Blank();
                     }
                     w.Line(union.IsSortedInterleave
-                        ? $"{assignPrefix}new MergeInterleaveRowSource<{union.RowTypeName}, {union.KeyClrType}>({Str(union.ComponentName)}, BuildSide0(), BuildSide1(), row => row.{union.KeyPropertyName}, Comparer<{union.KeyClrType}>.Default);"
+                        ? $"{assignPrefix}new MergeInterleaveRowSource<{union.RowTypeName}, {union.KeyClrType}>({Str(union.ComponentName)}, BuildSide0(), BuildSide1(), row => row.{PackageGenerator.SanitizeIdentifier(union.KeyPropertyName!)}, Comparer<{union.KeyClrType}>.Default);"
                         : $"{assignPrefix}new ConcatenatingRowSource<{union.RowTypeName}>({Str(union.ComponentName)}, [{string.Join(", ", Enumerable.Range(0, union.Sides.Count).Select(i => $"BuildSide{i}()"))}]);");
                     break;
                 }
@@ -306,7 +352,7 @@ public static class PackageClassEmitter
                         EmitSource(w, agg.SourceRowTypeName, agg.InnerSource, "return ");
                         w.CloseBlock();
                         w.Blank();
-                        w.Line($"return new FilteringRowSource<{agg.SourceRowTypeName}>({Str(agg.ComponentName)}, BuildRawSource(), row => {lookupFieldNames[lookupFilter.LookupVariableName]}.ContainsKey(row.{lookupFilter.JoinInputPropertyName}));");
+                        w.Line($"return new FilteringRowSource<{agg.SourceRowTypeName}>({Str(agg.ComponentName)}, BuildRawSource(), row => {lookupFieldNames[lookupFilter.LookupVariableName]}.ContainsKey(row.{PackageGenerator.SanitizeIdentifier(lookupFilter.JoinInputPropertyName)}));");
                         w.CloseBlock();
                     }
                     else
@@ -316,26 +362,63 @@ public static class PackageClassEmitter
                         w.CloseBlock();
                     }
                     w.Blank();
-                    w.Line($"{assignPrefix}new AggregateRowSource<{agg.SourceRowTypeName}, {agg.GroupByKeyClrType}, {rowTypeName}>(");
+                    // A single GroupBy column keeps the ORIGINAL shape byte-for-byte (a plain
+                    // TKey, a plain `row => row.X`/`key` selector/projection) -- the only shape a
+                    // Lookup-derived key (agg.LookupKey) ever appears with, since
+                    // GenerateLookupThenAggregateFlow's own composed shape stays scoped to
+                    // exactly one GroupBy column (see AggregatePlan's own doc comment). More than
+                    // one uses a named C# tuple as TKey instead -- ValueTuple already implements
+                    // structural equality/GetHashCode, so no new generated key type is needed.
+                    var isCompositeKey = agg.GroupByColumns.Count > 1;
+                    // agg.GroupByColumns[].OutputPropertyName is a raw column name, used in TWO
+                    // roles here: a tuple ELEMENT name / this Aggregate row's own DECLARED
+                    // property (destination side, matching AggregateRowEmitter's own resolver in
+                    // the common non-collision case) and a SOURCE row reference (row.{X}, since a
+                    // GroupBy column keeps the same name through the aggregation -- see
+                    // AggregateGroupByFieldSpec's own construction). Both routes sanitize bare, at
+                    // each use, per PackageGenerator.SanitizeIdentifier's own doc comment.
+                    var keyClrType = isCompositeKey
+                        ? $"({string.Join(", ", agg.GroupByColumns.Select(g => $"{g.ClrType} {PackageGenerator.SanitizeIdentifier(g.OutputPropertyName)}"))})"
+                        : agg.GroupByColumns[0].ClrType;
+                    var keySelector = agg.LookupKey is { } lk
+                        ? $"{lookupFieldNames[lk.LookupVariableName]}[row.{PackageGenerator.SanitizeIdentifier(lk.JoinInputPropertyName)}].{PackageGenerator.SanitizeIdentifier(lk.ReferenceColumnName)}"
+                        : isCompositeKey
+                            ? $"({string.Join(", ", agg.GroupByColumns.Select(g => $"row.{PackageGenerator.SanitizeIdentifier(g.OutputPropertyName)}"))})"
+                            : $"row.{PackageGenerator.SanitizeIdentifier(agg.GroupByColumns[0].OutputPropertyName)}";
+                    w.Line($"{assignPrefix}new AggregateRowSource<{agg.SourceRowTypeName}, {keyClrType}, {rowTypeName}>(");
                     w.Indent();
                     w.Line($"{Str(agg.ComponentName)},");
                     w.Line("BuildAggregateSource(),");
-                    w.Line(agg.LookupKey is { } lk
-                        ? $"row => {lookupFieldNames[lk.LookupVariableName]}[row.{lk.JoinInputPropertyName}].{lk.ReferenceColumnName},"
-                        : $"row => row.{agg.GroupByPropertyName},");
+                    w.Line($"row => {keySelector},");
                     w.Line($"(key, rows) => new {rowTypeName}");
                     w.Line("{");
                     w.Indent();
-                    w.Line($"{agg.GroupByPropertyName} = key,");
+                    if (isCompositeKey)
+                        foreach (var g in agg.GroupByColumns)
+                        {
+                            var id = PackageGenerator.SanitizeIdentifier(g.OutputPropertyName);
+                            w.Line($"{id} = key.{id},");
+                        }
+                    else
+                        w.Line($"{PackageGenerator.SanitizeIdentifier(agg.GroupByColumns[0].OutputPropertyName)} = key,");
                     for (var i = 0; i < agg.Functions.Count; i++)
                     {
                         var fn = agg.Functions[i];
                         var comma = i < agg.Functions.Count - 1 ? "," : "";
-                        w.Line($"{fn.OutputPropertyName} = {EmitAggregateFunctionExpression(fn)}{comma}");
+                        w.Line($"{PackageGenerator.SanitizeIdentifier(fn.OutputPropertyName)} = {EmitAggregateFunctionExpression(fn)}{comma}");
                     }
                     w.Dedent();
                     w.Line("});");
                     w.Dedent();
+                    break;
+                }
+                case LookupNoMatchFilteredFlowSource noMatch:
+                {
+                    w.OpenBlock($"IRowSource<{rowTypeName}> BuildRawSource()");
+                    EmitSource(w, rowTypeName, noMatch.InnerSource, "return ");
+                    w.CloseBlock();
+                    w.Blank();
+                    w.Line($"{assignPrefix}new FilteringRowSource<{rowTypeName}>({Str(noMatch.ComponentName)}, BuildRawSource(), row => !{lookupFieldNames[noMatch.LookupVariableName]}.ContainsKey(row.{PackageGenerator.SanitizeIdentifier(noMatch.JoinInputPropertyName)}));");
                     break;
                 }
             }
@@ -360,9 +443,12 @@ public static class PackageClassEmitter
             ProgramFileSystemStep s => s.StepName,
             ProgramForEachFileLoopStep s => s.StepName,
             ProgramForEachDataFlowLoopStep s => s.StepName,
+            ProgramForLoopStep s => s.StepName,
             ProgramConditionalSplitStep s => s.StepName,
             ProgramMulticastStep s => s.StepName,
+            ProgramScdStep s => s.StepName,
             ProgramOleDbCommandStep s => s.StepName,
+            ProgramExpressionStep s => s.StepName,
             _ => throw new InvalidOperationException($"Unhandled ProgramStep type {step.GetType().Name}"),
         };
 
@@ -387,10 +473,14 @@ public static class PackageClassEmitter
         // regardless would be a real, visible wart in generated code meant to be read and reviewed.
         bool SourceNeedsUow(FlowSourceSpec source) => source switch
         {
-            SqlFlowSource => true,
+            // A secondary-connection source never receives uow at all (see SqlFlowSource's own
+            // doc comment) -- declaring the parameter anyway would be the same unused-uow wart
+            // File/Excel/CSV sources are already spared.
+            SqlFlowSource sql => sql.SecondaryConnectionManagerName is null,
             MergeJoinFlowSource mj => SourceNeedsUow(mj.LeftSource) || SourceNeedsUow(mj.RightSource),
             UnionFlowSource union => union.Sides.Any(SourceNeedsUow),
             AggregateFlowSource agg => SourceNeedsUow(agg.InnerSource),
+            LookupNoMatchFilteredFlowSource noMatch => SourceNeedsUow(noMatch.InnerSource),
             _ => false,
         };
 
@@ -414,28 +504,58 @@ public static class PackageClassEmitter
         // no `uow` parameter must be called with no argument either, or it won't compile.
         string SourceCallArgs(FlowSourceSpec source) => SourceNeedsUow(source) ? "uow" : "";
 
-        // A destination component carries no name of its own anywhere in the plan (unlike a
-        // source, an OLE DB/Flat File Destination's own .dtsx object name was never threaded this
-        // far) -- named after the entity it lands instead, which is just as deterministic and
-        // still gives every destination its own independently-constructible method.
+        // Every destination component now carries its own real SSIS object name all the way
+        // through FlowSinkSpec.ComponentName (added for the 1-to-1 component-to-function mapping
+        // round), so the generated sink method is named after the real component
+        // ("OLEDST_CustomerEnriched") rather than "{Entity}Destination" -- the same traceability a
+        // source method already had. RedirectingSqlFlowSink still needs special handling because
+        // it names TWO components (primary + error) from one FlowSinkSpec value, which is why it's
+        // still checked first.
         string EmitSinkMethod(string entityName, FlowSinkSpec sink)
         {
-            var name = Reserve($"{entityName}Destination");
+            if (sink is RedirectingSqlFlowSink redirect)
+            {
+                var primaryName = Reserve(PackageGenerator.SanitizeIdentifier(redirect.PrimaryComponentName));
+                var primarySignature = MethodSignatures.ForSink(primaryName, entityName);
+                componentMethods.OpenBlock(primarySignature);
+                componentMethods.Line($"return new RedirectingSqlSink<{entityName}, {redirect.ErrorEntityName}>(");
+                componentMethods.Indent();
+                var errorName = Reserve(PackageGenerator.SanitizeIdentifier(redirect.ErrorComponentName));
+                componentMethods.Line($"{errorName}(), {redirect.ErrorMapClassName}.Map, Log<RedirectingSqlSink<{entityName}, {redirect.ErrorEntityName}>>());");
+                componentMethods.Dedent();
+                componentMethods.CloseBlock();
+                componentMethods.Blank();
+                inventory.Add(new ComponentMethodEntry("Sink", redirect.PrimaryComponentName, primaryName, primarySignature, EntityName: entityName));
+
+                var errorSignature = MethodSignatures.ForSink(errorName, redirect.ErrorEntityName);
+                componentMethods.OpenBlock(errorSignature);
+                componentMethods.Line($"return new SqlBulkSink<{redirect.ErrorEntityName}>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<{redirect.ErrorEntityName}>>());");
+                componentMethods.CloseBlock();
+                componentMethods.Blank();
+                inventory.Add(new ComponentMethodEntry("Sink", redirect.ErrorComponentName, errorName, errorSignature, EntityName: redirect.ErrorEntityName));
+
+                return primaryName;
+            }
+
+            var name = Reserve(PackageGenerator.SanitizeIdentifier(sink.ComponentName));
             var signature = MethodSignatures.ForSink(name, entityName);
             componentMethods.OpenBlock(signature);
             EmitSinkConstruction(componentMethods, entityName, sink, "return ");
             componentMethods.CloseBlock();
             componentMethods.Blank();
-            // No SSIS name is available here -- a destination component's own object name is
-            // never threaded this far into the plan (see this method's own doc comment above);
-            // the entity name is the closest identifying fact PackageReadmeEmitter has to show.
-            inventory.Add(new ComponentMethodEntry("Sink", entityName, name, signature));
+            inventory.Add(new ComponentMethodEntry("Sink", sink.ComponentName, name, signature, EntityName: entityName));
             return name;
         }
 
         string EmitStepMethod(ProgramStep step)
         {
-            var methodName = Reserve(StepDisplayName(step));
+            // StepDisplayName is the raw SSIS task/component display name (e.g. "DFT - Load
+            // Customers") -- free text a designer author can type anything into, not a valid C#
+            // method name. Sanitized here the same way PackageGenerator.SanitizeIdentifier already
+            // sanitizes an entity/component name everywhere else in this emitter; the raw name is
+            // still used, unsanitized, wherever this step's own runtime label string is emitted
+            // (Str(flow.StepName) etc., below) -- only the IDENTIFIER position needs this.
+            var methodName = Reserve(PackageGenerator.SanitizeIdentifier(StepDisplayName(step)));
             var signature = MethodSignatures.ForStepOrContainer(methodName);
             methods.OpenBlock(signature);
 
@@ -446,7 +566,7 @@ public static class PackageClassEmitter
                     var sourceMethodName = EmitSourceMethod(flow.RowTypeName, flow.Source);
                     methods.Line($"var source = {sourceMethodName}({SourceCallArgs(flow.Source)});");
                     if (flow.SortKey is { } sortKey)
-                        methods.Line($"source = new SortingRowSource<{flow.RowTypeName}, {sortKey.KeyClrType}>({Str(flow.StepName + ".Sort")}, source, row => row.{sortKey.KeyColumnName}, Comparer<{sortKey.KeyClrType}>.Default);");
+                        methods.Line($"source = new SortingRowSource<{flow.RowTypeName}, {sortKey.KeyClrType}>({Str(flow.StepName + ".Sort")}, source, row => row.{PackageGenerator.SanitizeIdentifier(sortKey.KeyColumnName)}, Comparer<{sortKey.KeyClrType}>.Default);");
                     foreach (var variableName in flow.RowCountVariableNames ?? [])
                         methods.Line($"source = new CountingRowSource<{flow.RowTypeName}>({Str(flow.StepName + ".RowCount")}, source, packageVariables, {Str(variableName)});");
                     var transformExpr = flow.Lookup is { } flowLookup && flow.TransformNeedsLookupCache
@@ -457,26 +577,33 @@ public static class PackageClassEmitter
                     methods.Line($"var sink = {sinkMethodName}();");
                     methods.Blank();
                     methods.Line($"var step = new DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>({Str(flow.StepName)}, source, transform, sink, Log<DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>>());");
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 }
                 case ProgramSqlStep sqlStep:
                     methods.Line($"var step = new ExecuteSqlStep({Str(sqlStep.StepName)}, {sqlStep.StatementClassName}.BuildStatement(), Log<ExecuteSqlStep>());");
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
+                    break;
+                case ProgramExpressionStep exprStep:
+                    // The assignment lambda closes over the class-level `packageVariables` field
+                    // directly (see Etl.Core.Pipeline.ExpressionTaskStep's own doc comment for why
+                    // this type takes a plain Action, not Action<PackageVariables>).
+                    methods.Line($"var step = new ExpressionTaskStep({Str(exprStep.StepName)}, () => packageVariables.Set({Str(exprStep.SsisVariableName)}, {exprStep.CSharpValueExpression}), Log<ExpressionTaskStep>());");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramSecondaryConnectionSqlStep secStep:
                     methods.Line($"var connectionString = SqlConnectionStringFactory.Build(Config().GetSection({Str($"SecondaryConnections:{secStep.ConnectionManagerName}")}).Get<DatabaseOptions>()");
                     methods.Line($"    ?? throw new InvalidOperationException({Str($"The SecondaryConnections:{secStep.ConnectionManagerName} configuration section is missing.")}));");
                     methods.Line($"var step = new SecondaryConnectionSqlStep({Str(secStep.StepName)}, {Str(secStep.ConnectionManagerName)}, connectionString, {secStep.StatementClassName}.BuildStatement(), Log<SecondaryConnectionSqlStep>());");
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramScriptTaskStep scriptStep:
                     methods.Line($"var step = new {scriptStep.ClassName}(packageVariables, services);");
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramFileSystemStep fsStep:
                     methods.Line($"var step = new FileSystemStep({Str(fsStep.StepName)}, {FileSystemActionExpr(fsStep.Action)}, Log<FileSystemStep>());");
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramForEachFileLoopStep loopStep:
                     methods.Line("var step = new ForEachLoopStep(");
@@ -486,7 +613,7 @@ public static class PackageClassEmitter
                     methods.Line($"{loopStep.CurrentFileParamName} => {loopStep.StatementClassName}.BuildStatement({loopStep.CurrentFileParamName}),");
                     methods.Line("Log<ForEachLoopStep>());");
                     methods.Dedent();
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramForEachDataFlowLoopStep dfStep:
                     methods.Line($"var step = new ForEachFileDataFlowStep<{dfStep.RowTypeName}, {dfStep.EntityName}>(");
@@ -500,8 +627,35 @@ public static class PackageClassEmitter
                     methods.Line($"new SqlBulkSink<{dfStep.EntityName}>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<{dfStep.EntityName}>>()),");
                     methods.Line($"Log<DataFlowStep<{dfStep.RowTypeName}, {dfStep.EntityName}>>());");
                     methods.Dedent();
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
+                case ProgramForLoopStep forStep:
+                {
+                    // Init/Eval/Assign are plain parameterless delegates closing over the
+                    // class-level packageVariables field directly (see
+                    // Etl.Core.Pipeline.ForLoopStep<TRow,TEntity>'s own doc comment, mirroring
+                    // ExpressionTaskStep's own established shape) -- Init is omitted entirely
+                    // when the container declared none (ForLoopPlan.InitCSharpExpression is
+                    // null), leaving the counter's own already-seeded design-time default as-is.
+                    var setCounter = $"packageVariables.Set({Str(forStep.CounterVariableName)}, {{0}})";
+                    methods.Line($"var step = new ForLoopStep<{forStep.RowTypeName}, {forStep.EntityName}>(");
+                    methods.Indent();
+                    methods.Line($"{Str(forStep.StepName)},");
+                    methods.Line(forStep.InitCSharpExpression is { } init
+                        ? "() => " + string.Format(setCounter, init) + ","
+                        : "null,");
+                    methods.Line($"() => {forStep.EvalCSharpPredicate},");
+                    methods.Line($"() => {string.Format(setCounter, forStep.AssignCSharpValueExpression)},");
+                    methods.Line($"() => new CsvRowSource<{forStep.RowTypeName}>({Str(forStep.SourceComponentName)}, new CsvSourceOptions {{ FilePath = {forStep.FilePathExpression} }}, new {forStep.RowTypeName}Map()),");
+                    methods.Line($"new {forStep.TransformClassName}(),");
+                    // A For Loop Container's own body is always SQL-sunk -- PlanForLoop's own
+                    // gate requires a fast-load-configured, non-Flat-File destination.
+                    methods.Line($"new SqlBulkSink<{forStep.EntityName}>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<{forStep.EntityName}>>()),");
+                    methods.Line($"Log<DataFlowStep<{forStep.RowTypeName}, {forStep.EntityName}>>());");
+                    methods.Dedent();
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
+                    break;
+                }
                 case ProgramConditionalSplitStep splitStep:
                 {
                     var splitSourceMethodName = EmitSourceMethod(splitStep.RowTypeName, splitStep.Source);
@@ -533,7 +687,7 @@ public static class PackageClassEmitter
                     methods.Line("],");
                     methods.Line($"Log<ConditionalSplitStep<{splitStep.RowTypeName}>>());");
                     methods.Dedent();
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 }
                 case ProgramMulticastStep multicastStep:
@@ -564,7 +718,78 @@ public static class PackageClassEmitter
                     methods.Line("],");
                     methods.Line($"Log<MulticastStep<{multicastStep.RowTypeName}>>());");
                     methods.Dedent();
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
+                    break;
+                }
+                case ProgramScdStep scdStep:
+                {
+                    var scdSourceMethodName = EmitSourceMethod(scdStep.RowTypeName, scdStep.Source);
+                    methods.Line($"var source = {scdSourceMethodName}({SourceCallArgs(scdStep.Source)});");
+
+                    // Each branch's sink gets its own method, exactly like every other flow shape --
+                    // emitted BEFORE the step construction so the reader sees them in the order they
+                    // are used. A converged destination (two branches through one Union All) yields
+                    // the same method name twice; EmitSinkMethod's own Reserve() already guarantees
+                    // one method per distinct component name, so the second call just reuses it.
+                    var sinkMethodNames = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (var branch in scdStep.Branches)
+                    {
+                        if (branch.Sink is null || branch.EntityName is null) continue;
+                        if (sinkMethodNames.ContainsKey(branch.Sink.ComponentName)) continue;
+                        sinkMethodNames[branch.Sink.ComponentName] = EmitSinkMethod(branch.EntityName, branch.Sink);
+                    }
+
+                    // Phase 4: a composite business key (more than one declared ColumnType=1
+                    // column) becomes a plain, unnamed C# tuple -- ValueTuple already implements
+                    // structural equality/GetHashCode for free, so no new generated key type is
+                    // needed, and this is byte-identical to the original single-column shape
+                    // whenever there is exactly one key column.
+                    var scdIsCompositeKey = scdStep.BusinessKeyColumns.Count > 1;
+                    var scdKeyClrType = scdIsCompositeKey
+                        ? $"({string.Join(", ", scdStep.BusinessKeyClrTypes)})"
+                        : scdStep.BusinessKeyClrTypes[0];
+                    var scdKeySelector = scdIsCompositeKey
+                        ? $"({string.Join(", ", scdStep.BusinessKeyColumns.Select(c => $"row.{PackageGenerator.SanitizeIdentifier(c)}"))})"
+                        : $"row.{PackageGenerator.SanitizeIdentifier(scdStep.BusinessKeyColumns[0])}";
+                    var scdStepType = $"SlowlyChangingDimensionStep<{scdStep.RowTypeName}, {scdKeyClrType}>";
+                    methods.Line($"var step = new {scdStepType}(");
+                    methods.Indent();
+                    methods.Line($"{Str(scdStep.StepName)},");
+                    methods.Line("source,");
+                    methods.Line($"loadCt => {scdStep.CacheClassName}.LoadAsync(SqlConnectionStringFactory.Build(Db()), loadCt),");
+                    methods.Line($"row => {scdKeySelector},");
+                    methods.Line($"row => new object?[] {{ {string.Join(", ", scdStep.AttributeExpressions)} }},");
+                    methods.Line("new ScdClassifier(");
+                    methods.Indent();
+                    methods.Line($"[{string.Join(", ", scdStep.AttributeRoles.Select(r => $"ScdColumnRole.{r}"))}],");
+                    methods.Line($"failOnFixedAttributeChange: {(scdStep.FailOnFixedAttributeChange ? "true" : "false")},");
+                    methods.Line($"updateChangingAttributeHistory: {(scdStep.UpdateChangingAttributeHistory ? "true" : "false")}),");
+                    methods.Dedent();
+                    methods.Line($"new ScdBranches<{scdStep.RowTypeName}>");
+                    methods.Line("{");
+                    methods.Indent();
+                    for (var i = 0; i < scdStep.Branches.Count; i++)
+                    {
+                        var branch = scdStep.Branches[i];
+                        var comma = i < scdStep.Branches.Count - 1 ? "," : "";
+                        methods.Line($"{branch.Slot} = new ScdBranch<{scdStep.RowTypeName}>(");
+                        methods.Indent();
+                        methods.Line($"{Str(branch.OutputName)},");
+                        var sinkExpr = branch.Sink is null || branch.EntityName is null || branch.TransformClassName is null
+                            ? "null"
+                            : $"new ConditionalSplitBranch<{scdStep.RowTypeName}, {branch.EntityName}>({Str(branch.OutputName)}, new {branch.TransformClassName}(), {sinkMethodNames[branch.Sink.ComponentName]}())";
+                        methods.Line($"{sinkExpr},");
+                        methods.Line(branch.SqlTemplate is null ? "null," : $"{Str(branch.SqlTemplate)},");
+                        methods.Line(branch.SqlTemplate is null
+                            ? $"null){comma}"
+                            : $"row => new object?[] {{ {string.Join(", ", branch.CommandParameterColumns.Select(c => $"row.{PackageGenerator.SanitizeIdentifier(c)}"))} }}){comma}");
+                        methods.Dedent();
+                    }
+                    methods.Dedent();
+                    methods.Line("},");
+                    methods.Line($"Log<{scdStepType}>());");
+                    methods.Dedent();
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 }
                 case ProgramOleDbCommandStep cmdStep:
@@ -575,10 +800,10 @@ public static class PackageClassEmitter
                     methods.Line($"{Str(cmdStep.StepName)},");
                     methods.Line("source,");
                     methods.Line($"{Str(cmdStep.SqlTemplate)},");
-                    methods.Line($"row => new object?[] {{ {string.Join(", ", cmdStep.ParameterColumnNames.Select(c => $"row.{c}"))} }},");
+                    methods.Line($"row => new object?[] {{ {string.Join(", ", cmdStep.ParameterColumnNames.Select(c => $"row.{PackageGenerator.SanitizeIdentifier(c)}"))} }},");
                     methods.Line($"Log<OleDbCommandStep<{cmdStep.RowTypeName}>>());");
                     methods.Dedent();
-                    methods.Line("await Step(step, uow, ct);");
+                    methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
             }
 
@@ -637,7 +862,7 @@ public static class PackageClassEmitter
                         if (child is StepNode csn) EmitGuardedCall(body, csn.Step, childName);
                         else body.Line($"await {childName}(uow, ct);");
                     }
-                    var name = Reserve(cn.Name);
+                    var name = Reserve(PackageGenerator.SanitizeIdentifier(cn.Name));
                     var signature = MethodSignatures.ForStepOrContainer(name);
                     methods.OpenBlock(signature);
                     foreach (var line in body.Lines) methods.RawLine(line);
@@ -711,7 +936,7 @@ public static class PackageClassEmitter
         run.Line("await using var scope = services.CreateAsyncScope();");
         run.Line("var sp = scope.ServiceProvider;");
         run.Line("var uow = sp.GetRequiredService<IUnitOfWork>();");
-        run.Line("var notifier = sp.GetRequiredService<IPackageResultNotifier>();");
+        if (includeNotifications) run.Line("var notifier = sp.GetRequiredService<IPackageResultNotifier>();");
         run.Line($"var logger = Log<{className}>();");
         run.Blank();
 
@@ -824,7 +1049,8 @@ public static class PackageClassEmitter
         run.Blank();
         if (request.FailureHandlers.Count == 0)
         {
-            run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, false, {resultsExpr}, stopwatch.Elapsed, ex), CancellationToken.None);");
+            if (includeNotifications)
+                run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, false, {resultsExpr}, stopwatch.Elapsed, ex), CancellationToken.None);");
         }
         else
         {
@@ -865,12 +1091,14 @@ public static class PackageClassEmitter
                 run.CloseBlock();
             }
             run.Blank();
-            run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, false, {resultsExpr}, stopwatch.Elapsed, ex) {{ FailureHandlersRun = handlersRun }}, CancellationToken.None);");
+            if (includeNotifications)
+                run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, false, {resultsExpr}, stopwatch.Elapsed, ex) {{ FailureHandlersRun = handlersRun }}, CancellationToken.None);");
         }
         run.Line("return ExitCode.LoadFailed;");
         run.CloseBlock();
         run.Blank();
-        run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, true, {resultsExpr}, stopwatch.Elapsed, null), ct);");
+        if (includeNotifications)
+            run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, true, {resultsExpr}, stopwatch.Elapsed, null), ct);");
         run.Line("foreach (var step in _results) logger.LogInformation(\"{Step}: {Rows:N0} rows loaded\", step.Name, step.RowsWritten);");
         run.Line("return ExitCode.Success;");
 
@@ -884,12 +1112,14 @@ public static class PackageClassEmitter
         if (usesCsv) w2.Line("using Etl.Core.Csv;");
         if (usesSql || usesSqlSink || usesFlatFileSink || usesLookupPreload || usesRowCount || usesExcelWhereFilter || usesStandaloneSort) w2.Line("using Etl.Core.Data;");
         if (usesExcel) w2.Line("using Etl.Core.Excel;");
+        if (usesXml) w2.Line("using Etl.Core.Xml;");
         w2.Line("using Etl.Core.Hosting;");
-        w2.Line("using Etl.Core.Notifications;");
+        if (includeNotifications) w2.Line("using Etl.Core.Notifications;");
         w2.Line("using Etl.Core.Pipeline;");
         if (usesCsv) w2.Line($"using {ns}.Csv;");
         if (usesSql) w2.Line($"using {ns}.Sql;");
         if (usesExcel) w2.Line($"using {ns}.Excel;");
+        if (usesXml) w2.Line($"using {ns}.Xml;");
         if (usesMapping) w2.Line($"using {ns}.Mapping;");
         if (usesScriptTasks) w2.Line($"using {ns}.ScriptTasks;");
         w2.Line($"using {ns}.Model;");
@@ -932,7 +1162,12 @@ public static class PackageClassEmitter
         w2.Line("private string File(string key) => Opt<FileSourceOptions>().Value[key].ResolvedPath;");
         if (secondaryConnectionNames.Count > 0)
             w2.Line("private IConfiguration Config() => services.GetRequiredService<IConfiguration>();");
-        w2.Line("private async Task Step(ILoadTask task, IUnitOfWork uow, CancellationToken ct) => _results.Add(await task.RunAsync(uow, _load, ct));");
+        // No `Step(task, uow, ct)` helper any more (removed 2026-09-11): it hid exactly one line --
+        // `_results.Add(await task.RunAsync(uow, _load, ct))` -- behind a name that revealed neither
+        // that the result was being recorded nor that _load was passed, and it had to be reserved
+        // against every SSIS task name for the privilege. Each generated task method now says
+        // literally what it does instead. Unlike ExecuteSqlStep/DataFlowStep (real runtime
+        // behaviour: timing, logging, lazy streaming, the zero-row guard), this one bought nothing.
         if (hasConcurrency)
         {
             // One independent scope/connection/transaction per concurrent branch -- a SqlTransaction

@@ -273,6 +273,75 @@ public class ExpressionTranslatorTests
     }
 
     [Fact]
+    public void TranslateColumn_TranslatesTheRealDateAddExpression_NestedInsideAnotherCall()
+    {
+        // DailyETLMain.dtsx's own "Calculate ETL Cutoff Time backup" task, verbatim (Phase 2 of
+        // the unsupported-component-types plan, Microsoft.ExpressionTask) -- also proves
+        // GETUTCDATE() nested inside DATEADD's own third argument resolves to ctx.LoadedAtUtc in
+        // a Derived Column context (Microsoft.ExpressionTask itself uses a SEPARATE translator,
+        // ExpressionTaskEmitter, since there is no ctx there at all -- see that type's own doc
+        // comment).
+        var ast = SsisExpression.Parse("DATEADD(\"Minute\",-5,GETUTCDATE())");
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "Cutoff", Refs());
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal("ctx.LoadedAtUtc.AddMinutes(-(5))", ok.CSharpExpression);
+    }
+
+    [Fact]
+    public void TranslateColumn_ReportsAGap_ForADateAddPartThatIsNotOracleVerified()
+    {
+        // Only Minute/mi, Day, Hour, Month, Year, Second are oracle-verified against the real
+        // evaluator (Ssis.Runtime.Expressions.Functions.DateAdd makes the identical restriction)
+        // -- any other part must degrade, never guess.
+        var ast = SsisExpression.Parse("DATEADD(\"Quarter\",1,GETUTCDATE())");
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "Cutoff", Refs());
+
+        var gap = Assert.IsType<NotTranslatable>(result);
+        Assert.Contains("Minute", gap.Reason);
+    }
+
+    [Fact]
+    public void TranslateColumn_TranslatesDateAddMillisecond_ViaTheSsisFnHelper_NotAPlainBclCall()
+    {
+        // "Millisecond"/"ms" is special-cased BEFORE DateAddMethodNames (Phase 6) -- unlike every
+        // other datepart, it does NOT map onto a plain DateTime.AddMilliseconds call, since real
+        // SSIS's own DATEADD("Millisecond",...) quantizes to the nearest 1/300-second tick.
+        var ast = SsisExpression.Parse("DATEADD(\"Millisecond\",500,GETUTCDATE())");
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "Cutoff", Refs());
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal("SsisFn.DateAddMillisecond(ctx.LoadedAtUtc, 500)", ok.CSharpExpression);
+    }
+
+    [Fact]
+    public void TranslateColumn_TranslatesDatePartMillisecond_ViaTheSsisFnHelper()
+    {
+        var ast = SsisExpression.Parse("DATEPART(\"Millisecond\",GETUTCDATE())");
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "Ms", Refs());
+
+        var ok = Assert.IsType<TranslatedOk>(result);
+        Assert.Equal("SsisFn.DatePartMillisecond(ctx.LoadedAtUtc)", ok.CSharpExpression);
+    }
+
+    [Fact]
+    public void TranslateColumn_ReportsAGap_ForADatePartThatIsNotOracleVerified()
+    {
+        // Only "Millisecond"/"ms" is oracle-verified for DATEPART -- any other part must
+        // degrade, never guess a T-SQL-by-analogy value.
+        var ast = SsisExpression.Parse("DATEPART(\"yy\",GETUTCDATE())");
+
+        var result = ExpressionTranslator.TranslateColumn(ast, "Order", "Year", Refs());
+
+        var gap = Assert.IsType<NotTranslatable>(result);
+        Assert.Contains("Millisecond", gap.Reason);
+    }
+
+    [Fact]
     public void TranslateColumn_TranslatesTheRealTenureDaysExpression_WhenSignupDateIsNullableInferred()
     {
         // The nullable-value-typed-column fix (2026-08-27): with IsNullable: true (as

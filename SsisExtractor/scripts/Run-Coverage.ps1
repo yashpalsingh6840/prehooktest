@@ -34,6 +34,14 @@
 
 .EXAMPLE
   .\Run-Coverage.ps1 -GeneratedRoot D:\tmp\sandeep-e2e\gen\generate -Package Package_Advanced,Package_Legacy
+
+.NOTES
+  Exit codes: 0 = every test project passed; 1 = at least one test project failed; 2 = no
+  `{Package}.Tests.csproj` exists at all (or none matched -Package) -- expected, not an error,
+  whenever 0 packages fully generated a wired Program.cs (every flow in the portfolio was blocked
+  on a Tier-3/unfilled-seam gap). This is a plain exit code, never a terminating error -- a caller
+  invoking this via `& Run-Coverage.ps1 ...` from another script must not have that script's own
+  execution aborted just because there was nothing to cover.
 #>
 [CmdletBinding()]
 param(
@@ -72,7 +80,27 @@ if ($Package) {
 }
 
 if (-not $testProjects) {
-    Write-Error "No {Package}.Tests.csproj found directly under $GeneratedRoot (or none matched -Package)." -ErrorAction Stop
+    # Deliberately NOT -ErrorAction Stop, and deliberately not treated as a failure (exit 1) --
+    # this happens whenever 0 packages in the portfolio fully generated a wired Program.cs (every
+    # flow blocked on a Tier-3 gap or an unfilled seam), which is a normal, expected outcome for a
+    # real-world portfolio, not a script error. A caller invoking this script via `& ...` (e.g.
+    # Run-Pipeline.ps1) must be able to read this exit code and continue -- a terminating error
+    # here would otherwise unwind out of that `&` call and kill the CALLER's own script too,
+    # before it ever reaches its own final summary. Still writes a coverage-report.md (below,
+    # with an empty $rows) so a reader has one consistent file to check regardless of outcome.
+    Write-Warning "No {Package}.Tests.csproj found directly under $GeneratedRoot (or none matched -Package) -- nothing to test or cover. Expected when 0 packages fully generated; see generate-report.md for why."
+    $reportPath = Join-Path $GeneratedRoot 'coverage-report.md'
+    Set-Content -Path $reportPath -Value (@(
+        '# Code coverage report',
+        '',
+        "No ``{Package}.Tests.csproj`` was found under ``$GeneratedRoot``$(if ($Package) { " (or none matched -Package $($Package -join ','))" }) -- nothing to test or cover.",
+        '',
+        'This means 0 packages in this portfolio fully generated a wired `Program.cs` (every flow was',
+        'blocked on a Tier-3 gap or an unfilled Tier-1/2 seam). See `generate-report.md` in this same',
+        'folder for why. This is not a script failure.'
+    ) -join "`r`n") -Encoding utf8
+    Write-Host "Coverage report written: $reportPath" -ForegroundColor Green
+    exit 2
 }
 
 $rows = @()

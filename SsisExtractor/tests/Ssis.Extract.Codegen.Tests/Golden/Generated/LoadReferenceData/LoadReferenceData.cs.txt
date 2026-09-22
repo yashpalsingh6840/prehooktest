@@ -4,7 +4,6 @@ using Etl.Core.Abstractions;
 using Etl.Core.Csv;
 using Etl.Core.Data;
 using Etl.Core.Hosting;
-using Etl.Core.Notifications;
 using Etl.Core.Pipeline;
 using LoadReferenceData.Csv;
 using LoadReferenceData.Mapping;
@@ -27,14 +26,12 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
     internal IOptions<T> Opt<T>() where T : class => services.GetRequiredService<IOptions<T>>();
     private DatabaseOptions Db() => Opt<DatabaseOptions>().Value;
     private string File(string key) => Opt<FileSourceOptions>().Value[key].ResolvedPath;
-    private async Task Step(ILoadTask task, IUnitOfWork uow, CancellationToken ct) => _results.Add(await task.RunAsync(uow, _load, ct));
 
     public async Task<int> RunAsync(CancellationToken ct)
     {
         await using var scope = services.CreateAsyncScope();
         var sp = scope.ServiceProvider;
         var uow = sp.GetRequiredService<IUnitOfWork>();
-        var notifier = sp.GetRequiredService<IPackageResultNotifier>();
         var logger = Log<LoadReferenceDataPackage>();
 
         var startedAtUtc = sp.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
@@ -68,11 +65,9 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
             }
             logger.LogError(ex, "{Package} failed after {Steps} step(s); transaction rolled back", PackageName, _results.Count);
 
-            await notifier.NotifyAsync(new PackageResult(PackageName, false, _results, stopwatch.Elapsed, ex), CancellationToken.None);
             return ExitCode.LoadFailed;
         }
 
-        await notifier.NotifyAsync(new PackageResult(PackageName, true, _results, stopwatch.Elapsed, null), ct);
         foreach (var step in _results) logger.LogInformation("{Step}: {Rows:N0} rows loaded", step.Name, step.RowsWritten);
         return ExitCode.Success;
     }
@@ -80,27 +75,27 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
     internal async Task SQL_TruncateTargets(IUnitOfWork uow, CancellationToken ct)
     {
         var step = new ExecuteSqlStep("SQL_TruncateTargets", SQL_TruncateTargetsStatement.BuildStatement(), Log<ExecuteSqlStep>());
-        await Step(step, uow, ct);
+        _results.Add(await step.RunAsync(uow, _load, ct));
     }
 
     internal async Task DFT_LoadDepartment(IUnitOfWork uow, CancellationToken ct)
     {
         var source = FF_SRC_Department();
         var transform = new DepartmentTransform();
-        var sink = DepartmentDestination();
+        var sink = OLEDST_Department();
 
         var step = new DataFlowStep<DepartmentCsvRow, Department>("DFT_LoadDepartment", source, transform, sink, Log<DataFlowStep<DepartmentCsvRow, Department>>());
-        await Step(step, uow, ct);
+        _results.Add(await step.RunAsync(uow, _load, ct));
     }
 
     internal async Task DFT_LoadDesignation(IUnitOfWork uow, CancellationToken ct)
     {
         var source = FF_SRC_Designation();
         var transform = new DesignationTransform();
-        var sink = DesignationDestination();
+        var sink = OLEDST_Designation();
 
         var step = new DataFlowStep<DesignationCsvRow, Designation>("DFT_LoadDesignation", source, transform, sink, Log<DataFlowStep<DesignationCsvRow, Designation>>());
-        await Step(step, uow, ct);
+        _results.Add(await step.RunAsync(uow, _load, ct));
     }
 
     internal IRowSource<DepartmentCsvRow> FF_SRC_Department()
@@ -108,7 +103,7 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
         return new CsvRowSource<DepartmentCsvRow>("FF_SRC_Department", new CsvSourceOptions { FilePath = File("Department") }, new DepartmentCsvRowMap());
     }
 
-    internal IBulkSink<Department> DepartmentDestination()
+    internal IBulkSink<Department> OLEDST_Department()
     {
         return new SqlBulkSink<Department>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<Department>>());
     }
@@ -118,7 +113,7 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
         return new CsvRowSource<DesignationCsvRow>("FF_SRC_Designation", new CsvSourceOptions { FilePath = File("Designation") }, new DesignationCsvRowMap());
     }
 
-    internal IBulkSink<Designation> DesignationDestination()
+    internal IBulkSink<Designation> OLEDST_Designation()
     {
         return new SqlBulkSink<Designation>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<Designation>>());
     }
