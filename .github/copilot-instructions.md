@@ -207,6 +207,15 @@ multi-step read-only workflows, verify each step separately before moving to the
     be fixed. Read the file yourself first if you can (it is short) so you can summarize what it
     says, but never try to guess a fix from it.
 
+19. **`generate`/`apply-fills` each also write a durable log** -- `<out>/generate.log` and
+    `<out>/apply-fills.log`, overwritten fresh every run. Read one of these BEFORE assuming a
+    run "did nothing" or asking the user to re-run with more output -- they already contain
+    everything that scrolled by live, plus (for `apply-fills`) a full per-file trace: every
+    `fills/<Package>/` folder and file scanned, every seam pattern match attempted, and an
+    explicit note when a file has no recognizable `partial` method/class at all. Both logs are
+    safe to read/share -- they contain the same package/column/file names already visible in
+    `generate-report.md`/`fills-applied.json`, nothing more sensitive.
+
 ## The one-sentence workflow
 
 **Survey once (cheap, whole portfolio, read-only) -> generate one package (or a named few) at

@@ -1,0 +1,5 @@
+# generate.log -- 2026-09-22 17:25:33
+generating SyntheticScriptComponentSeams (1 of 1)...
+  done (596ms, 11 file(s), 4 gap(s))
+generate: 19 file(s) written across 1 package(s), 5 gap(s) -- see D:tmpapplyfills-check\generate-report.md
+  2 work packet(s) written to D:tmpapplyfills-check\gaps  (paste one into a chat window; see gaps.json for the index)

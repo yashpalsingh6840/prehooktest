@@ -1,0 +1,54 @@
+[
+  {
+    "EvidenceRefId": null,
+    "EvidenceSha256": null,
+    "ExpectedFileName": null,
+    "GapId": "GAP:SyntheticScriptComponentSeams:DFT_Load",
+    "IsBlocking": false,
+    "Kind": "Unclassified",
+    "Location": "DFT_Load",
+    "Package": "SyntheticScriptComponentSeams",
+    "PacketPath": null,
+    "Reason": "OLE DB Source \u0027OLE DB Source\u0027 uses a SqlCommand -- generated code assumes each result-set column is named/aliased exactly like the pipeline\u0027s own buffer column name; verify before running. This tool never rewrites the author\u0027s own SQL.",
+    "Tier": "Advisory"
+  },
+  {
+    "EvidenceRefId": "Package\\DFT_Load\\SCR_Cleanse",
+    "EvidenceSha256": "d2844e702b62b2bfcf80965720e984f8699410e3dfe5a000876567ce273d6f70",
+    "ExpectedFileName": null,
+    "GapId": "SCRIPT-COLUMN:SyntheticScriptComponentSeams:SyntheticScriptSeamsTarget.SCR_Cleanse",
+    "IsBlocking": true,
+    "Kind": "ScriptComponentColumn",
+    "Location": "SyntheticScriptSeamsTarget.SCR_Cleanse",
+    "Package": "SyntheticScriptComponentSeams",
+    "PacketPath": "SCRIPT-COLUMN_SyntheticScriptComponentSeams_SyntheticScriptSeamsTarget.SCR_Cleanse.md",
+    "Reason": "Script Component \u0027SCR_Cleanse\u0027 produces 2 column(s) (FullName, IsValid) -- emitted as a single \u0060private partial SCR_CleanseResult SCR_Cleanse(SyntheticScriptSeamsTargetSqlRow row, in RowContext ctx)\u0060 seam. The project will not compile (CS8795) until a second part of \u0027SyntheticScriptSeamsTargetTransform\u0027 implements it; apply one with \u0060ssisx apply-fills\u0060.",
+    "Tier": "MissingLogic"
+  },
+  {
+    "EvidenceRefId": "Package\\DFT_Load\\SCR_Cleanse",
+    "EvidenceSha256": "0d21c5fd290f690dfae94552a818fbc65da57b68ce68e860d8c48d3b65cad55b",
+    "ExpectedFileName": null,
+    "GapId": "TEST-ORACLE:SyntheticScriptComponentSeams:SyntheticScriptSeamsTarget.SCR_Cleanse",
+    "IsBlocking": false,
+    "Kind": "TestOracle",
+    "Location": "SyntheticScriptSeamsTarget.SCR_Cleanse",
+    "Package": "SyntheticScriptComponentSeams",
+    "PacketPath": "TEST-ORACLE_SyntheticScriptComponentSeams_SyntheticScriptSeamsTarget.SCR_Cleanse.md",
+    "Reason": "Script Component \u0027SCR_Cleanse\u0027 (SCR_Cleanse) has no generated test at all (a filled seam is human logic -- see the TEST-ORACLE work packet to write one).",
+    "Tier": "MissingDatum"
+  },
+  {
+    "EvidenceRefId": null,
+    "EvidenceSha256": null,
+    "ExpectedFileName": null,
+    "GapId": "GAP:SyntheticScriptComponentSeams:SyntheticScriptComponentSeams.Notification",
+    "IsBlocking": false,
+    "Kind": "Unclassified",
+    "Location": "SyntheticScriptComponentSeams.Notification",
+    "Package": "SyntheticScriptComponentSeams",
+    "PacketPath": null,
+    "Reason": "no notification wiring was generated (IPackageResultNotifier/AddEmailNotifications) -- a .dtsx carries no notification-recipient information at all, so this is opt-in; re-run with --notifications once real recipients/SMTP settings exist",
+    "Tier": "Advisory"
+  }
+]

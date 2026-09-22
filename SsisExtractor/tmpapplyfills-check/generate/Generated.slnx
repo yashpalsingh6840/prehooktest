@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="Etl.Core/Etl.Core.csproj" />
+    <Project Path="SyntheticScriptComponentSeams/SyntheticScriptComponentSeams.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="SyntheticScriptComponentSeams.Tests/SyntheticScriptComponentSeams.Tests.csproj" />
+  </Folder>
+</Solution>

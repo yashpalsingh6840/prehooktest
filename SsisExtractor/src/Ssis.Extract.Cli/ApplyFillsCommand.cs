@@ -132,6 +132,11 @@ internal static class ApplyFillsCommand
         }
 
         outDir = Path.GetFullPath(outDir);
+
+        // A durable, step-by-step trace of every decision this run makes -- see RunLog's own
+        // doc comment. Every `return` below restores Console.Out/Error via this `using`.
+        using var runLog = RunLog.Start(Path.Combine(outDir, "apply-fills.log"));
+
         var gapsPath = Path.Combine(outDir, "gaps.json");
         if (!File.Exists(gapsPath))
         {
@@ -242,6 +247,7 @@ internal static class ApplyFillsCommand
         var localDataOrphaned = new List<string>();
         var localDataFilled = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
 
+        Console.WriteLine($"scanning fills under {fillsDir}...");
         if (Directory.Exists(fillsDir))
         {
             foreach (var packageDir in Directory.EnumerateDirectories(fillsDir).OrderBy(d => d, StringComparer.Ordinal))
@@ -249,13 +255,26 @@ internal static class ApplyFillsCommand
                 var packageName = Path.GetFileName(packageDir);
                 if (!Directory.Exists(Path.Combine(generateDir, packageName)))
                 {
+                    Console.WriteLine($"  {packageName}: no matching folder under {generateDir} -- treating as unknown package");
                     unknownPackages.Add(packageName);
                     continue;
                 }
+                Console.WriteLine($"  {packageName}:");
 
-                foreach (var fillFile in Directory.EnumerateFiles(packageDir, "*.cs").OrderBy(f => f, StringComparer.Ordinal))
+                // Recursive -- NOT top-level only. A fill placed one level deeper than the
+                // documented flat convention (e.g. mirroring the generated project's own
+                // Mapping\ folder) used to be completely invisible here: not applied, not
+                // reported as orphaned, nothing. `Tests\` is excluded because it has its own
+                // separate TEST-ORACLE handling below with different provenance rules -- a file
+                // there must not also be considered by this seam scan.
+                var testsSubdir = Path.Combine(packageDir, "Tests") + Path.DirectorySeparatorChar;
+                foreach (var fillFile in Directory.EnumerateFiles(packageDir, "*.cs", SearchOption.AllDirectories)
+                             .Where(f => !f.StartsWith(testsSubdir, StringComparison.OrdinalIgnoreCase))
+                             .OrderBy(f => f, StringComparer.Ordinal))
                 {
                     var fileName = Path.GetFileName(fillFile);
+                    var relativePath = Path.GetRelativePath(packageDir, fillFile);
+                    Console.WriteLine($"    {relativePath}");
                     var content = File.ReadAllText(fillFile);
                     var known = expected.TryGetValue(packageName, out var byMethod) ? byMethod : [];
                     var knownClasses = expectedScriptTasks.TryGetValue(packageName, out var byClass) ? byClass : [];
@@ -289,12 +308,23 @@ internal static class ApplyFillsCommand
                         }
                     }
 
+                    if (seams.Count == 0)
+                    {
+                        Console.WriteLine(
+                            $"      no 'partial' method/class found in this file -- check it still declares " +
+                            $"'partial <ReturnType> <Method>(...)' (a Script Component seam) or 'partial class " +
+                            $"<Name>' plus 'partial ... RunScriptAsync(...)' (a Script Task seam), exactly as the " +
+                            $"work packet's own seam signature specifies. A missing 'partial' keyword, or a " +
+                            $"renamed method/class, both look like this.");
+                    }
+
                     var recognized = new List<string>();
                     var staleInThisFile = new List<string>();
                     foreach (var (seam, gap) in seams)
                     {
                         if (gap is null)
                         {
+                            Console.WriteLine($"      {seam}: ORPHANED -- no current gap asks for this seam");
                             orphanedMethods.Add($"{packageName}/{fileName}: {seam}");
                             fillRecords.Add(new FillRecordSpec
                             {
@@ -310,6 +340,7 @@ internal static class ApplyFillsCommand
                             && gap.EvidenceSha256 is { Length: > 0 } current
                             && !string.Equals(recorded, current, StringComparison.OrdinalIgnoreCase))
                         {
+                            Console.WriteLine($"      {seam}: STALE ({gap.GapId}) -- recorded {Short(recorded)}... != current {Short(current)}...");
                             staleSeams.Add(
                                 $"{gap.GapId}  ->  {seam}  (written against {Short(recorded)}..., package now hashes {Short(current)}...)");
                             fillRecords.Add(new FillRecordSpec
@@ -326,6 +357,7 @@ internal static class ApplyFillsCommand
                             continue;
                         }
 
+                        Console.WriteLine($"      {seam}: {(provenance is null ? "UNATTRIBUTED" : "APPLIED")} ({gap.GapId})");
                         recognized.Add(seam);
                         fillRecords.Add(new FillRecordSpec
                         {
@@ -347,13 +379,21 @@ internal static class ApplyFillsCommand
                     if (recognized.Count == 0 || staleInThisFile.Count > 0)
                     {
                         if (staleInThisFile.Count == 0 && (seams.Count == 0 || seams.All(s => s.Gap is null)))
+                        {
+                            Console.WriteLine($"      -> file NOT copied (nothing in it matched a current gap)");
                             orphanedFiles.Add($"{packageName}/{fileName}");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"      -> file NOT copied (a stale seam blocks the whole file)");
+                        }
                         continue;
                     }
 
                     var targetDir = Path.Combine(generateDir, packageName, "Fills");
                     Directory.CreateDirectory(targetDir);
                     File.Copy(fillFile, Path.Combine(targetDir, fileName), overwrite: true);
+                    Console.WriteLine($"      -> copied to {targetDir}\\{fileName}");
                     applied.Add($"{packageName}/Fills/{fileName} ({string.Join(", ", recognized)})");
 
                     if (!filledMethods.TryGetValue(packageName, out var set))
@@ -374,11 +414,15 @@ internal static class ApplyFillsCommand
                     foreach (var fillFile in Directory.EnumerateFiles(testsDir, "*.cs").OrderBy(f => f, StringComparer.Ordinal))
                     {
                         var fileName = Path.GetFileName(fillFile);
+                        Console.WriteLine($"    Tests\\{fileName}");
                         var provenance = ExtractLeadingProvenance(File.ReadAllText(fillFile));
                         var gap = provenance?.GapId is { Length: > 0 } gapId && knownOracles.TryGetValue(gapId, out var g) ? g : null;
 
                         if (gap is null)
                         {
+                            Console.WriteLine(provenance?.GapId is null
+                                ? "      ORPHANED -- no leading '// ssisx-fill: GapId=...' comment found"
+                                : $"      ORPHANED -- GapId '{provenance.GapId}' does not match any current TEST-ORACLE gap in this package");
                             testOracleOrphaned.Add($"{packageName}/Tests/{fileName}");
                             fillRecords.Add(new FillRecordSpec
                             {
@@ -393,6 +437,7 @@ internal static class ApplyFillsCommand
                             && provenance!.EvidenceSha256 is { Length: > 0 } recorded
                             && !string.Equals(recorded, current, StringComparison.OrdinalIgnoreCase))
                         {
+                            Console.WriteLine($"      STALE ({gap.GapId}) -- recorded {Short(recorded)}... != current {Short(current)}...");
                             testOracleStale.Add($"{gap.GapId}  ->  Tests/{fileName}  (written against {Short(recorded)}..., package now hashes {Short(current)}...)");
                             fillRecords.Add(new FillRecordSpec
                             {
@@ -409,6 +454,7 @@ internal static class ApplyFillsCommand
                         var testsTargetDir = Path.Combine(generateDir, $"{packageName}.Tests", "Fills");
                         Directory.CreateDirectory(testsTargetDir);
                         File.Copy(fillFile, Path.Combine(testsTargetDir, fileName), overwrite: true);
+                        Console.WriteLine($"      APPLIED ({gap.GapId}) -> {testsTargetDir}\\{fileName}");
                         testOracleApplied.Add($"{packageName}.Tests/Fills/{fileName} ({gap.GapId})");
                         fillRecords.Add(new FillRecordSpec
                         {
@@ -434,8 +480,10 @@ internal static class ApplyFillsCommand
                     foreach (var fillFile in Directory.EnumerateFiles(testDataDir).OrderBy(f => f, StringComparer.Ordinal))
                     {
                         var fileName = Path.GetFileName(fillFile);
+                        Console.WriteLine($"    TestData\\{fileName}");
                         if (!knownLocalData.TryGetValue(fileName, out var gap))
                         {
+                            Console.WriteLine("      ORPHANED -- file name does not match any current gap's own expected TestData\\ name");
                             localDataOrphaned.Add($"{packageName}/TestData/{fileName}");
                             fillRecords.Add(new FillRecordSpec
                             {
@@ -448,6 +496,7 @@ internal static class ApplyFillsCommand
                         var dataTargetDir = Path.Combine(generateDir, packageName, "TestData");
                         Directory.CreateDirectory(dataTargetDir);
                         File.Copy(fillFile, Path.Combine(dataTargetDir, fileName), overwrite: true);
+                        Console.WriteLine($"      APPLIED ({gap.GapId}) -> {dataTargetDir}\\{fileName}");
                         localDataApplied.Add($"{packageName}/TestData/{fileName} ({gap.GapId})");
                         fillRecords.Add(new FillRecordSpec
                         {

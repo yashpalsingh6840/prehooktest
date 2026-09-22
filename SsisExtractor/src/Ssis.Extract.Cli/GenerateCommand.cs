@@ -82,13 +82,18 @@ internal static class GenerateCommand
                         break;
                     case "--namespace-prefix": namespacePrefix = RequireValue(args, ref i, "--namespace-prefix"); break;
                     case "--seams": seams = true; break;
-                    // Opts back into the pre-this-flip behavior: a Script Task/Script
-                    // Component's logic is silently dropped -- the generated project builds
-                    // and runs cleanly with those columns/tasks missing, no compile-time
-                    // signal at all. Named "unsafe" deliberately, not "--no-seams" or
-                    // "--skip-seams", so the risk is visible at the call site, not just in
-                    // --help.
-                    case "--unsafe-skip-seams": seams = false; break;
+                    // DISABLED (2026-09-22, on the user's own explicit call): this used to opt
+                    // back into the pre-seams behavior for a Script Component's own produced
+                    // columns -- silently omitted, no compile-time signal at all. That capability
+                    // is now turned OFF: the flag is still accepted (so an old script/doc that
+                    // passes it doesn't break), but it no longer has any effect -- seams are
+                    // always emitted, exactly like the default. A Script Task's own seam was
+                    // NEVER affected by this flag in the first place (ScriptTaskEmitter.Emit is
+                    // unconditional -- see its own doc comment). If a real need to skip seams
+                    // ever comes back, re-enable by setting `seams = false` here again.
+                    case "--unsafe-skip-seams":
+                        Console.Error.WriteLine("warning: --unsafe-skip-seams is currently disabled -- seams are always emitted regardless of this flag.");
+                        break;
                     case "--skip-tests": skipTests = true; break;
                     case "--notifications": includeNotifications = true; break;
                     case "--fills": fillsDir = RequireValue(args, ref i, "--fills"); break;
@@ -124,6 +129,11 @@ internal static class GenerateCommand
             Console.Error.WriteLine("error: --input and --out are required. Run 'ssisx --help'.");
             return 2;
         }
+
+        // A durable copy of this run's own console narration (see RunLog's own doc comment) --
+        // every `return` below restores Console.Out/Error via this `using` regardless of where
+        // it happens to exit.
+        using var runLog = RunLog.Start(Path.Combine(outDir, "generate.log"));
 
         PackageLoader.LoadResult loaded;
         try
@@ -163,10 +173,14 @@ internal static class GenerateCommand
             packageOrdinal++;
             var decisions = LoadDecisions(fillsDir, package.ObjectName);
 
+            Console.WriteLine($"generating {package.ObjectName} ({packageOrdinal} of {loaded.Packages.Count})...");
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
             PackageGenerateResult result;
             try
             {
                 result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests, includeNotifications);
+                Console.WriteLine($"  done ({stopwatch.ElapsedMilliseconds}ms, {result.Files.Count} file(s), {result.Gaps.Count} gap(s))");
             }
             catch (Exception ex)
             {

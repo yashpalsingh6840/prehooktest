@@ -249,6 +249,10 @@ internal static class Program
             --namespace-prefix roots every generated namespace under a prefix (e.g.
             "Contoso.Etl") instead of just the package name. Generated code under
             <out>/generate/ has no hand-editing expectation -- rerun freely.
+            Every run also writes <out>/generate.log -- a durable copy of the console
+            output above (per-package timing, file/gap counts, any crash detail) for when
+            this is run through something like GitHub Copilot chat and the live terminal
+            output has already scrolled past by the time you want to look at it.
             Seams are ON BY DEFAULT: the two things whose logic this tool cannot translate,
             but whose source IS in the .dtsx, become `private partial` methods for a human
             to implement instead of being silently omitted -- a Script Component becomes ONE
@@ -258,11 +262,15 @@ internal static class Program
             position in the step order, and its port gets the package's shared variables).
             This deliberately makes the generated project FAIL to build (CS8795) until every
             seam is filled -- the alternative is a package that builds clean while silently
-            missing those columns and skipping those tasks entirely, which is exactly the
-            failure class this tool otherwise refuses to allow. --seams is accepted as a
-            no-op (it's already the default). --unsafe-skip-seams opts back into the old
-            silent-omission behavior -- named to make that risk visible at the call site,
-            not just here. Fills live outside <out>/generate/ and ARE hand-maintained, the
+            missing those columns, which is exactly the failure class this tool otherwise
+            refuses to allow. A Script Task's own seam is ALWAYS generated unconditionally
+            (it can never be silently dropped, regardless of any flag). --seams is accepted
+            as a no-op (it's already the default). --unsafe-skip-seams is ALSO currently
+            accepted as a no-op (disabled 2026-09-22, on the user's own explicit call) --
+            it used to opt back into a silent-omission behavior for a Script Component's own
+            produced columns, but that capability is turned off, so nothing generate ever
+            does can silently drop ported logic today. Fills live
+            outside <out>/generate/ and ARE hand-maintained, the
             same way `extract`'s own gate-1 claims are: --fills points at that directory
             (default <out>/fills/), which ssisx only ever READS -- both the seam parts
             applied by 'apply-fills' and <Package>.decisions.json.
@@ -289,6 +297,15 @@ internal static class Program
             <out>/conformance/claims/, the same default `extract` itself uses), this also
             names the gate-1 ScriptCode RuleId that translation answers and its current claim
             status -- read-only, never written; only a human updates the claims file.
+            The main seam scan is RECURSIVE under each <out>/fills/<Package>/ (excluding its
+            own Tests/ subfolder, handled separately below) -- a fill placed one level deeper
+            than the documented flat convention (e.g. mirroring the generated project's own
+            Mapping/ folder) is still found. Every run also writes <out>/apply-fills.log -- a
+            durable, step-by-step trace of every folder/file scanned, every seam pattern
+            match attempted (including an explicit note when a file has NO 'partial'
+            method/class at all -- the exact shape a missing 'partial' keyword or a renamed
+            seam produces), and every resulting Applied/Stale/Orphaned/Unattributed decision,
+            for exactly this kind of "ran apply-fills, nothing happened, no idea why" case.
             Exits 1 on an orphan, 3 while any seam is unfilled or stale.
 
               ssisx apply-tests --out <dir> [--fills <dir>]
