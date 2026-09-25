@@ -91,7 +91,7 @@ public class RobustnessTests : IDisposable
     // nonexistent executable. Today: silently dropped by BuildDag, and the package turns
     // into a concurrent Task.WhenAll wave with no gap at all.
     // ---------------------------------------------------------------------
-    [Fact(Skip = "Phase 2.2")]
+    [Fact]
     public void DanglingConstraint_ReportsABlockingGap_InsteadOfBecomingAConcurrentWave()
     {
         var outDir = NewOutDir();

@@ -637,9 +637,12 @@ public static partial class DtsxPackageReader
     /// Kahn's algorithm for topological order, plus a longest-path "level" for each node
     /// (see <see cref="ControlFlowDagSpec.ParallelLevels"/> for what that grouping does and
     /// doesn't guarantee). Constraints referencing a refId outside <paramref name="nodeRefIds"/>
-    /// are silently excluded from the graph rather than treated as an error -- shouldn't
-    /// happen for a well-formed .dtsx, but a hand-edited or corrupted file shouldn't crash
-    /// the whole extraction over one dangling reference.
+    /// are excluded from the graph itself (so they can't corrupt the topological order or the
+    /// levels) but collected into <see cref="ControlFlowDagSpec.DanglingConstraints"/> rather than
+    /// silently dropped -- shouldn't happen for a well-formed .dtsx, but a hand-edited or
+    /// corrupted file shouldn't crash the whole extraction over one dangling reference, and a
+    /// codegen-side consumer still needs to know it happened rather than treat the orphaned node
+    /// as a genuinely independent, concurrent root.
     /// </summary>
     internal static ControlFlowDagSpec BuildDag(List<string> nodeRefIds, List<PrecedenceConstraintSpec> constraints)
     {
@@ -651,11 +654,13 @@ public static partial class DtsxPackageReader
         var nodes = new HashSet<string>(nodeRefIds);
         var adjacency = nodeRefIds.ToDictionary(n => n, _ => new List<string>());
         var inDegree = nodeRefIds.ToDictionary(n => n, _ => 0);
+        var danglingConstraints = new List<PrecedenceConstraintSpec>();
 
         foreach (var c in constraints)
         {
             if (!nodes.Contains(c.From) || !nodes.Contains(c.To))
             {
+                danglingConstraints.Add(c);
                 continue;
             }
             adjacency[c.From].Add(c.To);
@@ -692,7 +697,7 @@ public static partial class DtsxPackageReader
         var hasCycle = topoOrder.Count != nodeRefIds.Count;
         if (hasCycle)
         {
-            return new ControlFlowDagSpec { HasCycle = true };
+            return new ControlFlowDagSpec { HasCycle = true, DanglingConstraints = danglingConstraints };
         }
 
         var parallelLevels = levels
@@ -706,6 +711,7 @@ public static partial class DtsxPackageReader
             TopologicalOrder = topoOrder,
             ParallelLevels = parallelLevels,
             HasCycle = false,
+            DanglingConstraints = danglingConstraints,
         };
     }
 

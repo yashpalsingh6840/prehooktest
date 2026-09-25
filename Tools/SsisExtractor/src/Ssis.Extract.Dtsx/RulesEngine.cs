@@ -280,6 +280,33 @@ public static class RulesEngine
             }
         }
 
+        // A precedence constraint whose own From/To refId doesn't match any child of the
+        // container it's declared in (BuildDag's own ControlFlowDagSpec.DanglingConstraints) --
+        // a hand-edited/corrupted .dtsx, not a well-formed one. Checked at the package root, at
+        // every container (a Sequence Container is itself an ExecutableSpec with its own Dag, so
+        // allExecutables already covers nested ones), and at every event handler's own root.
+        foreach (var dangling in package.Dag.DanglingConstraints)
+        {
+            Add(findings, "dangling-precedence-constraint", "DeadOrSuspicious", "Warning", package.ObjectName, dangling.ObjectName ?? dangling.RefId ?? "(package)",
+                $"Precedence constraint references an executable this container doesn't have (From='{dangling.From}', To='{dangling.To}') -- the .dtsx may be hand-edited or corrupted; the referenced ordering is not enforceable.");
+        }
+        foreach (var ex in allExecutables)
+        {
+            foreach (var dangling in ex.Dag.DanglingConstraints)
+            {
+                Add(findings, "dangling-precedence-constraint", "DeadOrSuspicious", "Warning", package.ObjectName, dangling.ObjectName ?? dangling.RefId ?? ex.RefId,
+                    $"Precedence constraint inside '{ex.RefId}' references an executable that container doesn't have (From='{dangling.From}', To='{dangling.To}') -- the .dtsx may be hand-edited or corrupted; the referenced ordering is not enforceable.");
+            }
+        }
+        foreach (var eh in package.EventHandlers)
+        {
+            foreach (var dangling in eh.Dag.DanglingConstraints)
+            {
+                Add(findings, "dangling-precedence-constraint", "DeadOrSuspicious", "Warning", package.ObjectName, dangling.ObjectName ?? dangling.RefId ?? eh.RefId,
+                    $"Precedence constraint inside event handler '{eh.EventName}' references an executable that container doesn't have (From='{dangling.From}', To='{dangling.To}') -- the .dtsx may be hand-edited or corrupted; the referenced ordering is not enforceable.");
+            }
+        }
+
         var referencedConnectionDtsIds = allExecutables
             .Where(e => e.ExecuteSqlTask?.ConnectionRefRaw is not null)
             .Select(e => e.ExecuteSqlTask!.ConnectionRefRaw!)

@@ -1669,16 +1669,44 @@ public static class PackagePlanner
         // as an in-edge with no matching topological-order entry) has no valid execution order
         // at all -- SSIS's own designer prevents authoring one, but a hand-edited/corrupted
         // .dtsx can still contain it. Before this check, WalkContainer fell through to
-        // declaration order below and silently generated the WRONG order with no gap at all
-        // (measured against a real cyclic fixture: DTExec itself refuses to even validate the
-        // package). Reported once per container, at the exact point that container's own walk
-        // would otherwise begin -- nothing in it (or nested inside it) is generated.
+        // declaration order below and silently generated the WRONG order with no gap at all.
+        // (Measured against a real cyclic fixture via DTExec: it did NOT reject the package at
+        // validation -- it ran, and failed later on an unrelated task's own missing database
+        // connection, which never exercised the cyclic pair specifically. Reported here anyway,
+        // independent of what dtexec's own runtime engine tolerates: SSDT's designer refuses to
+        // author this shape at all, and this tool has no evidence for what execution order a
+        // real cyclic package's own two mutually-constrained tasks would run in, so generating
+        // an order this tool invented would be a guess, not a translation.)
+        // Reported once per container, at the exact point that container's own walk would
+        // otherwise begin -- nothing in it (or nested inside it) is generated.
         if (dag.HasCycle)
         {
             var cyclicContainerName = containerPath.Count > 0 ? containerPath[^1] : "Package";
             gaps.Add(new GenerationGap(
                 $"{cyclicContainerName}.PrecedenceConstraints",
                 "precedence constraints form a cycle -- SSIS rejects this at validation; not generated"));
+            return;
+        }
+
+        // A precedence constraint whose own From/To refId doesn't match any child in THIS
+        // container was excluded from the graph by BuildDag (so it can't corrupt the topological
+        // order/levels) but is reported here rather than silently dropped -- before this, the
+        // orphaned node kept in-degree 0 and was treated as a genuinely independent, concurrent
+        // root (a Task.WhenAll wave) with no gap at all, even though the .dtsx itself declares an
+        // ordering relationship for it that just can't be resolved. Same refusal shape as the
+        // HasCycle check above, and for the identical reason: this tool has no evidence for what
+        // ordering the author actually intended for the dangling side, so treating the node as
+        // either "ordered as declared" or "independent/concurrent" would both be guesses -- the
+        // whole container is refused rather than picking one.
+        if (dag.DanglingConstraints.Count > 0)
+        {
+            var owningContainerName = containerPath.Count > 0 ? containerPath[^1] : "Package";
+            foreach (var dangling in dag.DanglingConstraints)
+            {
+                gaps.Add(new GenerationGap(
+                    $"{owningContainerName}.{dangling.ObjectName ?? dangling.RefId ?? $"{dangling.From}->{dangling.To}"}",
+                    $"precedence constraint references unknown executable (From='{dangling.From}', To='{dangling.To}') -- container not generated"));
+            }
             return;
         }
 
