@@ -14,9 +14,5 @@
   "TargetDatabase": {
     "AuthMode": "Windows",
     "ApplicationName": "LoadReferenceData"
-  },
-  "Notification": {
-    "OnFailureRecipients": [],
-    "OnSuccessRecipients": []
   }
 }

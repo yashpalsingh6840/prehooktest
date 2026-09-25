@@ -196,8 +196,9 @@ public static class AiPacketEmitter
         | `Dts.Variables["System::PackageName"]` | `ctx.Load.PackageName` (also `RunId`, `StartedAtUtc`) |
         | `Dts.Variables["User::Whatever"]` | `ctx.Variables.Get<T>(name)` / `.Set(name, value)`, shared with every other ported Script Task in this package |
         | `Dts.Connections[...].ConnectionString`, or any other configured value | resolve it from `ctx.Services` (e.g. `IOptions<FileSourceOptions>`) |
-        | `Dts.Events.FireError` + `Dts.TaskResult = Failure` | throw -- the run's transaction rolls back |
+        | `Dts.Events.FireError` + `Dts.TaskResult = Failure` | `throw` -- this is this rewrite's OWN documented equivalent of a Script Task `Failure` result, not merely "seemed reasonable": an unhandled exception from `RunAsync` triggers the same rollback + `FailureHandlers` path a `Value=Failure` precedence constraint or `OnError` handler would, and fails the whole run the same way SSIS's own task-failure semantics do. Treat this as settled unless the packet says otherwise. |
         | `Dts.Events.FireInformation` | an `ILogger` resolved from `ctx.Services` |
+        | `DateTime.Now` / `DateTime.UtcNow` | `DateTime.UtcNow` directly -- there is no per-call "now" on `ctx` (`ctx.Load.StartedAtUtc` is fixed at the whole RUN's start, not this task's own execution moment, and would silently collapse a real elapsed-time computation to ~0). Call out the local-to-UTC timezone change; do not assume it is inconsequential. |
 
         Note the transaction difference and do not try to work around it: this task's SQL joins the
         package's single all-or-nothing transaction, whereas SSIS auto-committed per task.
@@ -231,8 +232,19 @@ public static class AiPacketEmitter
 
         The Script Component's full source is below -- port the WHOLE component, computing all of its
         columns from the one method (they came from one script; there is exactly one work packet for
-        it, not one per column). `ctx` carries the run identity (`ctx.LoadedAtUtc` is the run's own
-        UTC timestamp, the correct stand-in for a script that stamped `DateTime.Now`).
+        it, not one per column).
+
+        This method is itself called once PER ROW -- it is exactly where `Input0_ProcessInputRow` ran
+        in the original. So if the original script called `DateTime.Now`/`DateTime.UtcNow` inside that
+        per-row callback, calling `DateTime.UtcNow` directly inside THIS method is the faithful port:
+        it still evaluates fresh per row, only switching local time to UTC (call that timezone change
+        out; do not assume it is inconsequential). Reach for `ctx.LoadedAtUtc` instead only when the
+        original value was clearly meant to be ONE shared instant for the whole load -- e.g. it
+        reproduces an SSIS built-in expression like `GETUTCDATE()`, which this tool's own expression
+        translator already makes deterministic per load elsewhere, by design. Using `ctx.LoadedAtUtc`
+        as a substitute for a per-row `DateTime.Now` changes the actual VALUES stored on every row, not
+        just an implementation detail -- if you choose it anyway, say so explicitly, don't substitute
+        silently.
 
         """;
 

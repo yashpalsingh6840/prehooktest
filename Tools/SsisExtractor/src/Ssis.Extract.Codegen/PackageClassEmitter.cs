@@ -130,6 +130,7 @@ public static class PackageClassEmitter
             if (source is AggregateFlowSource agg) allSources.Add(agg.InnerSource);
             if (source is UnionFlowSource union) allSources.AddRange(union.Sides);
         }
+        var includeNotifications = request.IncludeNotifications;
         var usesCsv = allSources.Any(s => s is CsvFlowSource or FixedWidthFlowSource) || dataFlowLoops.Count > 0 || forLoops.Count > 0;
         var usesExcel = allSources.Any(s => s is ExcelFlowSource);
         var usesXml = allSources.Any(s => s is XmlFlowSource);
@@ -935,7 +936,7 @@ public static class PackageClassEmitter
         run.Line("await using var scope = services.CreateAsyncScope();");
         run.Line("var sp = scope.ServiceProvider;");
         run.Line("var uow = sp.GetRequiredService<IUnitOfWork>();");
-        run.Line("var notifier = sp.GetRequiredService<IPackageResultNotifier>();");
+        if (includeNotifications) run.Line("var notifier = sp.GetRequiredService<IPackageResultNotifier>();");
         run.Line($"var logger = Log<{className}>();");
         run.Blank();
 
@@ -1048,7 +1049,8 @@ public static class PackageClassEmitter
         run.Blank();
         if (request.FailureHandlers.Count == 0)
         {
-            run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, false, {resultsExpr}, stopwatch.Elapsed, ex), CancellationToken.None);");
+            if (includeNotifications)
+                run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, false, {resultsExpr}, stopwatch.Elapsed, ex), CancellationToken.None);");
         }
         else
         {
@@ -1089,12 +1091,14 @@ public static class PackageClassEmitter
                 run.CloseBlock();
             }
             run.Blank();
-            run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, false, {resultsExpr}, stopwatch.Elapsed, ex) {{ FailureHandlersRun = handlersRun }}, CancellationToken.None);");
+            if (includeNotifications)
+                run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, false, {resultsExpr}, stopwatch.Elapsed, ex) {{ FailureHandlersRun = handlersRun }}, CancellationToken.None);");
         }
         run.Line("return ExitCode.LoadFailed;");
         run.CloseBlock();
         run.Blank();
-        run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, true, {resultsExpr}, stopwatch.Elapsed, null), ct);");
+        if (includeNotifications)
+            run.Line($"await notifier.NotifyAsync(new PackageResult(PackageName, true, {resultsExpr}, stopwatch.Elapsed, null), ct);");
         run.Line("foreach (var step in _results) logger.LogInformation(\"{Step}: {Rows:N0} rows loaded\", step.Name, step.RowsWritten);");
         run.Line("return ExitCode.Success;");
 
@@ -1110,7 +1114,7 @@ public static class PackageClassEmitter
         if (usesExcel) w2.Line("using Etl.Core.Excel;");
         if (usesXml) w2.Line("using Etl.Core.Xml;");
         w2.Line("using Etl.Core.Hosting;");
-        w2.Line("using Etl.Core.Notifications;");
+        if (includeNotifications) w2.Line("using Etl.Core.Notifications;");
         w2.Line("using Etl.Core.Pipeline;");
         if (usesCsv) w2.Line($"using {ns}.Csv;");
         if (usesSql) w2.Line($"using {ns}.Sql;");

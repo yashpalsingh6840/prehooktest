@@ -492,13 +492,16 @@ the client's `.dtsx` files, and `<out>` with wherever you want output written (e
 **Build suddenly fails with `CS8795` for seams that were already filled:**
 > The generated solution fails with `CS8795` ("must have an implementation part") for seams I
 > already ported. Do NOT re-port anything yet. First run
-> `ssisx apply-fills --out <out> --fills fills-library` and show me its output. If it says "0
-> fills applied," check TWO things before assuming the fill content is wrong: (1) does
-> `fills-library\<PackageName>\` still have files in it at all, and (2) did the command actually
-> include `--fills fills-library`. **Never delete `fills-library\`, `<out>\generate\Etl.Core\`,
-> `<out>\generate\*\TestData\`, or `<out>` itself to "start clean"** -- re-running `generate`/
-> `apply-fills` overwrites what needs overwriting on its own; deleting first only risks losing a
-> hand-supplied `LOCAL-DATA` file or a fill nobody re-typed a copy of.
+> `ssisx apply-fills --out <out> --fills fills-library` and show me its output, then read
+> `<out>\apply-fills.log` -- it traces every folder/file `apply-fills` actually scanned and
+> what it decided for each one, which is the fastest way to see WHY a fill wasn't picked up
+> (wrong folder depth, a missing `partial` keyword, a stale evidence hash, ...) rather than
+> guessing. If it says "0 fills applied," check TWO things before assuming the fill content is
+> wrong: (1) does `fills-library\<PackageName>\` still have files in it at all, and (2) did the
+> command actually include `--fills fills-library`. **Never delete `fills-library\`,
+> `<out>\generate\Etl.Core\`, `<out>\generate\*\TestData\`, or `<out>` itself to "start clean"**
+> -- re-running `generate`/`apply-fills` overwrites what needs overwriting on its own; deleting
+> first only risks losing a hand-supplied `LOCAL-DATA` file or a fill nobody re-typed a copy of.
 
 **Work a Tier-2 gap (Script Task/Component port):**
 > Open the work packet at `<out>\gaps\<PackageName>\<GapId>.md`. Write the fill it describes

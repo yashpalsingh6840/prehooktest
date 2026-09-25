@@ -38,7 +38,10 @@ check the `GapId`'s own prefix (`TEST-ORACLE:...` / `LOCAL-DATA:...`) or the gap
   filename **is** the only identity it has).
 
 Read one packet per gap here (unlike Tier-2 seams, these do not usually share evidence across
-multiple gaps the way one Script Component's several columns do).
+multiple gaps the way one Script Component's several columns do). Even so, do not read a
+packet whole if you don't need its own copy of the pinned testing-API block — a `TEST-ORACLE`
+packet's evidence/case-expression content is what varies per gap; its testing-API block is
+identical boilerplate.
 
 ## Step 2 -- write the fills
 
@@ -89,13 +92,18 @@ plainly instead of inventing a plausible assertion.**
 
 ## Step 3 -- apply, build, and test
 
-Resolve `$ssisx`/`$dotnet` via the bootstrap block in `ssisx-extract.prompt.md` (Step 1), then:
+Resolve `$ssisx`/`$dotnet` via the bootstrap block in `ssisx-extract.prompt.md` (Step 1) —
+**reuse that same resolved path here; never `dotnet run --project ...` for the CLI**, which
+pays a full restore/build check on every call — then:
 
 ```powershell
 & $ssisx apply-fills --out out --fills fills-library
-& $dotnet build out/generate/Generated.slnx --nologo
-& $dotnet test out/generate/Generated.slnx --filter Category!=Integration --nologo
+& $dotnet build out/generate/Generated.slnx --nologo -v minimal
+& $dotnet test out/generate/Generated.slnx --filter Category!=Integration --nologo -v minimal
 ```
+
+Read only the final outcome lines (`Build succeeded`/`Build FAILED`, the test pass/fail
+summary) plus any `error`/`FAILED` lines — do not tail the full restore/compile transcript.
 
 `apply-fills` reports `Applied`/`Stale`/`Orphaned` per fill -- same discipline as a Tier-2 seam.
 A `TestOracle`/`LocalFileSourceData` gap left unfilled is **non-blocking** (the package still

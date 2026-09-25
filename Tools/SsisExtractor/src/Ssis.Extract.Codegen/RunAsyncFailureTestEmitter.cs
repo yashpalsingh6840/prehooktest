@@ -31,8 +31,13 @@ public static class RunAsyncFailureTestEmitter
     /// ConnectTimeoutSeconds=1 comment). That real failure -- not a ThrowOnGetBindToken fault
     /// injection, which such a package's RunAsync never even reaches -- is what this test exercises,
     /// and it means BeginAsync itself never ran, so nothing was ever rolled back.</param>
+    /// <param name="includeNotifications">Mirrors PackageGenerator.Generate's own parameter of the
+    /// same name -- when false, the generated RunAsync never calls IPackageResultNotifier at all,
+    /// so `harness.Notifier.Result` stays null on every path and these assertions must be
+    /// skipped rather than asserted against.</param>
     public static GeneratedFile Emit(
-        string rootNamespace, string packageClassName, bool hasFailureHandlers, bool supportsHappyPath, bool usesLookupPreload)
+        string rootNamespace, string packageClassName, bool hasFailureHandlers, bool supportsHappyPath, bool usesLookupPreload,
+        bool includeNotifications = false)
     {
         var lines = new List<string>
         {
@@ -74,8 +79,11 @@ public static class RunAsyncFailureTestEmitter
             lines.Add("        Assert.False(uow.BeginCalled);");
             lines.Add("        Assert.False(uow.RollbackCalled);");
             lines.Add("        Assert.False(uow.CommitCalled);");
-            lines.Add("        Assert.NotNull(harness.Notifier.Result);");
-            lines.Add("        Assert.False(harness.Notifier.Result!.Succeeded);");
+            if (includeNotifications)
+            {
+                lines.Add("        Assert.NotNull(harness.Notifier.Result);");
+                lines.Add("        Assert.False(harness.Notifier.Result!.Succeeded);");
+            }
 
             if (hasFailureHandlers)
             {
@@ -83,7 +91,8 @@ public static class RunAsyncFailureTestEmitter
                 lines.Add("        // opened -- ExecuteSqlWithoutTransactionAsync's own precondition only blocks a");
                 lines.Add("        // CURRENTLY active transaction, which this state (BeginAsync never reached) is not.");
                 lines.Add("        Assert.NotEmpty(uow.ExecutedSqlWithoutTransaction);");
-                lines.Add("        Assert.NotEmpty(harness.Notifier.Result!.FailureHandlersRun);");
+                if (includeNotifications)
+                    lines.Add("        Assert.NotEmpty(harness.Notifier.Result!.FailureHandlersRun);");
             }
 
             lines.Add("    }");
@@ -102,8 +111,11 @@ public static class RunAsyncFailureTestEmitter
             lines.Add("        var uow = Assert.Single(harness.CreatedUnitsOfWork);");
             lines.Add("        Assert.True(uow.RollbackCalled);");
             lines.Add("        Assert.False(uow.CommitCalled);");
-            lines.Add("        Assert.NotNull(harness.Notifier.Result);");
-            lines.Add("        Assert.False(harness.Notifier.Result!.Succeeded);");
+            if (includeNotifications)
+            {
+                lines.Add("        Assert.NotNull(harness.Notifier.Result);");
+                lines.Add("        Assert.False(harness.Notifier.Result!.Succeeded);");
+            }
 
             if (hasFailureHandlers)
             {
@@ -112,7 +124,8 @@ public static class RunAsyncFailureTestEmitter
                 lines.Add("        // rollback (FakeUnitOfWork.ExecuteSqlWithoutTransactionAsync's own precondition),");
                 lines.Add("        // never before it.");
                 lines.Add("        Assert.NotEmpty(uow.ExecutedSqlWithoutTransaction);");
-                lines.Add("        Assert.NotEmpty(harness.Notifier.Result!.FailureHandlersRun);");
+                if (includeNotifications)
+                    lines.Add("        Assert.NotEmpty(harness.Notifier.Result!.FailureHandlersRun);");
             }
 
             lines.Add("    }");
@@ -140,9 +153,12 @@ public static class RunAsyncFailureTestEmitter
             lines.Add("            Assert.True(uow.CommitCalled);");
             lines.Add("            Assert.False(uow.RollbackCalled);");
             lines.Add("        });");
-            lines.Add("        Assert.NotNull(harness.Notifier.Result);");
-            lines.Add("        Assert.True(harness.Notifier.Result!.Succeeded);");
-            lines.Add("        Assert.Empty(harness.Notifier.Result!.FailureHandlersRun);");
+            if (includeNotifications)
+            {
+                lines.Add("        Assert.NotNull(harness.Notifier.Result);");
+                lines.Add("        Assert.True(harness.Notifier.Result!.Succeeded);");
+                lines.Add("        Assert.Empty(harness.Notifier.Result!.FailureHandlersRun);");
+            }
             lines.Add("    }");
         }
 

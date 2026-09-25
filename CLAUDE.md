@@ -9009,6 +9009,83 @@ see above), Data Conversion target types other than the now-nine closed (`str` a
 and the numeric-passthrough-coercion gap for every pairing beyond the six already closed. SCD
 reading a Data-Conversion-produced attribute column, named above, is now closed.
 
+### A durable run log for `generate`/`apply-fills`, and a real silent-failure bug fixed in `apply-fills` (2026-09-22)
+
+Prompted by a real client-env session (driven via GitHub Copilot, no way to ask a live
+follow-up once terminal output scrolls past): a package with a Script Component seam never got
+filled, and `ssisx apply-fills` gave no visible clue why — no error, no orphan report, nothing.
+
+**Two things were found, only one of which was a bug.** `ReportCommand.cs`'s `scripts\` folder
+writer is stale for Script Components — a Script Task's real file names (`ScriptMain.cs`, etc.)
+are preserved verbatim, but a Script Component's source is still written via the old raw
+`SourceCodeItems` list with generic `source-{i}.cs` naming, never updated to use the newer
+`SourceFiles` (parsed name/encoding/content triples) the way `AiPacketEmitter.cs`'s own work
+packet already does. Not fixed this round — Copilot is meant to read the work packet
+(`<out>/gaps/<Package>/<GapId>.md`), not `scripts\`, to port a Script Component, so this is
+informational-only, not the actual blocker.
+
+**The real, confirmed, 100%-silent bug**: `ApplyFillsCommand.cs`'s main seam scan
+(`Directory.EnumerateFiles(packageDir, "*.cs")`) was NOT recursive. A fill placed one level
+deeper than the documented flat `fills-library\<Package>\<File>.cs` convention — e.g. mirroring
+the generated project's own `Mapping\` folder, an easy mistake for an LLM not following the
+convention exactly — was invisible: not applied, not reported as orphaned, not mentioned
+anywhere. Every OTHER failure mode (orphan, stale, unattributed, unknown package) was already
+reported; this one specific placement mistake was the sole silent gap. Fixed: the scan is now
+recursive under each package folder, excluding its own `Tests\` subfolder (which has separate
+TEST-ORACLE handling with different provenance rules, and must not be double-processed).
+
+**New shared `RunLog` utility** (`Ssis.Extract.Cli/RunLog.cs`) — a `TextWriter` that duplicates
+every write to both the real console and a file, with a static `RunLog.Start(path)` returning an
+`IDisposable` that redirects `Console.Out`/`Console.Error` and restores them on dispose. Used as
+`using var _ = RunLog.Start(Path.Combine(outDir, "<name>.log"));` at the top of a command's
+`Run()`. Safe alongside a test that has already redirected `Console.Out` to its own
+`StringWriter` — it wraps whatever the current writer is, so that writer still gets everything,
+just duplicated to the file too.
+
+Scoped deliberately differently for the two commands, decided with the user directly rather than
+assumed: `generate` gets a SHALLOW log (`<out>/generate.log` — the same console narration already
+printed, plus a new per-package `Stopwatch` timing line; `generate-report.md`/`gaps.json` remain
+the source of truth for *why* a gap exists). Deep instrumentation of `PackageGenerator.Generate`
+itself (the ~2800-line core, this project's largest/most-tested file) was explicitly ruled out as
+a separate, much larger, higher-risk change if ever wanted. `apply-fills` gets a DEEP log
+(`<out>/apply-fills.log`) — new `Console.WriteLine` trace lines (previously nothing was printed
+until the final summary) at every decision point: which `fills\` folder is scanned, every package
+subfolder found (matched vs. unknown), every `.cs` file found (now recursively) with its relative
+path, an explicit message when a file has NO recognizable `partial` method/class at all ("check it
+still declares `partial <ReturnType> <Method>(...)`... exactly as the work packet's own seam
+signature specifies" — the shape a missing `partial` keyword or a renamed seam produces), and each
+seam's resolved status (Applied/Stale/Orphaned/Unattributed) with its GapId. Same trace treatment
+extended to the `Tests\` (TEST-ORACLE) and `TestData\` (LOCAL-DATA) loops. No change to the
+existing `Report()` function, `fills-applied.json`'s shape, or any exit code — purely additive.
+
+**Verified for real, not just built clean**: generated a real fixture with a Script Component seam
+(`SyntheticScriptComponentSeams.dtsx`), confirmed `generate.log` captures the per-package timing
+line; wrote a correct fill nested one level deep (`fills\<Package>\Mapping\<Class>.Fills.cs`,
+the exact real-world mistake this round exists to catch) and confirmed `apply-fills` now finds and
+applies it — both console and `apply-fills.log` show the full trace matching exactly what
+happened. Then wrote a second fill missing the `partial` keyword and confirmed the new explicit
+diagnostic fires instead of the bare "orphaned, nothing matched" message. Full suite green
+afterward with no regressions: 181/181 `Ssis.Runtime.Expressions.Tests`, 177/177
+`Ssis.Extract.Tests`, 25/25 `Ssis.Extract.Cli.Tests`, 457/457 `Ssis.Extract.Codegen.Tests` (the
+2 pre-existing `GenerateGoldenFileTests` failures from the SCD round above are gone too — a
+separate, unrelated fix landed in between). `Program.cs`'s own `--help` text and
+`Tools/.github/copilot-instructions.md`/`Tools/COPILOT_GUIDE.md` updated to point at both logs.
+
+**Separately, still open (raised the same session, deferred at the user's own request, not yet
+built):** consolidating `ssisx extract`/`report`/`graph`'s own ~28 loose report/analysis files
+(inventory, findings, portfolio-digest, primary-keys, datatouch, effects, expressions,
+dependencies, sql-analysis, unmapped, nondeterministic, `_meta.json`, load-failures, `scripts\`,
+`sql\`, `graph\`/`lineage\`, `conformance\`, `testgen\`) into a `<out>/metadata/` subfolder,
+keeping only `packages\` (svk's contract) and `gen\`/`svk\` (separate pipeline stages) directly
+under `--out`. Confirmed directly: `generate` never reads `--out` at all, and `svk` reads only
+`<spec>/packages/*.spec.json` — nothing else in that list is consumed downstream by any later
+step, so this is a pure decluttering move with no coupling risk. A background Explore agent
+confirmed no test in the repo asserts a path for any of the 28 files. Full design already written
+up (files to change in `ExtractCommand.cs`/`ReportCommand.cs`/`GraphCommand.cs`/
+`ConformanceCommand.cs`/`TestgenCommand.cs`, `Program.cs`'s help text, `Run-Pipeline.ps1`/
+`Run-Survey.ps1`, and every doc that names one of these paths) — pick this back up before
+re-deriving it from scratch.
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

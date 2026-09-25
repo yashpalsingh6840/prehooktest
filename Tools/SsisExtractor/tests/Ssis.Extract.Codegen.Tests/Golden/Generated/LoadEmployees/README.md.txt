@@ -86,5 +86,5 @@ fully generatable without it.
 | Location | Reason | Blocking |
 |---|---|---|
 | Employee | 'Employee' has no real data yet -- its own Integration-tagged read test needs a REALISTIC file matching this connection manager's own declared schema at `TestData/Employees.csv` (see the LOCAL-DATA work packet; a schema-correct but synthetic reference was written to `SampleData/Employee.csv` as a starting point, not a substitute). | no |
-| LoadEmployees.Notification | a .dtsx carries no notification-recipient information -- OnSuccessRecipients/OnFailureRecipients were generated empty; fill in appsettings.json manually | no |
+| LoadEmployees.Notification | no notification wiring was generated (IPackageResultNotifier/AddEmailNotifications) -- a .dtsx carries no notification-recipient information at all, so this is opt-in; re-run with --notifications once real recipients/SMTP settings exist | no |
 

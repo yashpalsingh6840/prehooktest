@@ -1,5 +1,4 @@
 using Etl.Core.Hosting;
-using Etl.Core.Notifications;
 using LoadReferenceData;
 using LoadReferenceData.Model;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,7 +7,6 @@ const string PackageName = "LoadReferenceData";
 
 var builder = EtlHost.Create(args, PackageName);
 builder.Services.AddEtlDbContext<LoadReferenceDataDbContext>();
-builder.Services.AddEmailNotifications(builder.Configuration);
 
 using var host = builder.Build();
 return await new LoadReferenceDataPackage(host.Services).RunAsync(CancellationToken.None);

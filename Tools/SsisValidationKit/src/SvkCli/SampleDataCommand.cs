@@ -1,3 +1,4 @@
+using Ssis.Extract.Model.Diagnostics;
 using Svk.Core;
 
 namespace Svk.Cli;
@@ -49,24 +50,44 @@ public static class SampleDataCommand
         }
 
         var reportLines = new List<string> { "# Sample data -- portfolio report", "" };
+        var crashCount = 0;
+        var ordinal = 0;
         foreach (var pkg in loaded)
         {
-            var plan = SampleDataPlanner.Plan(pkg);
-            var pkgOut = Path.Combine(outDir, "sampledata", pkg.ObjectName);
-            var written = SampleDataWriter.Write(plan, pkgOut, rows, seed);
+            ordinal++;
+            try
+            {
+                var plan = SampleDataPlanner.Plan(pkg);
+                var pkgOut = Path.Combine(outDir, "sampledata", pkg.ObjectName);
+                var written = SampleDataWriter.Write(plan, pkgOut, rows, seed);
 
-            reportLines.Add($"## {pkg.ObjectName}");
-            reportLines.Add($"- Sources: {plan.Sources.Count}, Destinations: {plan.Destinations.Count}, Lookups: {plan.Lookups.Count}");
-            reportLines.AddRange(written.Select(w => $"- {w}"));
-            reportLines.Add("");
+                reportLines.Add($"## {pkg.ObjectName}");
+                reportLines.Add($"- Sources: {plan.Sources.Count}, Destinations: {plan.Destinations.Count}, Lookups: {plan.Lookups.Count}");
+                reportLines.AddRange(written.Select(w => $"- {w}"));
+                reportLines.Add("");
 
-            Console.WriteLine($"{pkg.ObjectName}: {plan.Sources.Count} source(s), {plan.Destinations.Count} destination(s), {plan.Lookups.Count} lookup(s) -> {pkgOut}");
+                Console.WriteLine($"{pkg.ObjectName}: {plan.Sources.Count} source(s), {plan.Destinations.Count} destination(s), {plan.Lookups.Count} lookup(s) -> {pkgOut}");
+            }
+            catch (Exception ex)
+            {
+                // One package's crash must not cost every other package's sample data --
+                // capture a client-data-free diagnostic (ordinal only, never the package name)
+                // and move on to the next package.
+                crashCount++;
+                var scrubbed = DiagnosticReport.ScrubArgs("svk", "sampledata", args);
+                var diagPath = DiagnosticReport.Capture(
+                    "svk", scrubbed, "sampledata", ex,
+                    context: [("Package", $"{ordinal} of {loaded.Count}")],
+                    outDir: outDir);
+                Console.Error.WriteLine($"error: package {ordinal} of {loaded.Count} hit an unexpected internal error generating sample data -- skipped, continuing with the rest.");
+                Console.Error.WriteLine($"  A diagnostic file with no client data was written to: {diagPath}");
+            }
         }
 
         var sampleDataRoot = Path.Combine(outDir, "sampledata");
         Directory.CreateDirectory(sampleDataRoot);
         File.WriteAllText(Path.Combine(sampleDataRoot, "sampledata-report.md"), string.Join("\n", reportLines));
-        return 0;
+        return crashCount > 0 ? 98 : 0;
     }
 
     private static void PrintHelp() => Console.WriteLine("""

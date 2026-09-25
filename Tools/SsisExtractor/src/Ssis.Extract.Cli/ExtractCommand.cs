@@ -1,5 +1,6 @@
 using System.Globalization;
 using Ssis.Extract.Dtsx;
+using Ssis.Extract.Model.Diagnostics;
 using Ssis.Extract.Model.Meta;
 using Ssis.Extract.Model.Package;
 using Ssis.Extract.Model.Serialization;
@@ -162,6 +163,16 @@ internal static class ExtractCommand
         catch (Exception ex)
         {
             Console.Error.WriteLine($"error: {ex.Message}");
+            // PackageLoader already catches every per-package load problem it expects into
+            // loaded.Failures/load-failures.md (a bad .dtsx never throws) -- an exception
+            // reaching this catch is therefore most likely a genuine, unexpected ssisx bug, not
+            // a normal "bad input" condition. Also write a compact, client-data-free diagnostic
+            // (never ex.Message, which is already printed above and may embed the real path/
+            // value that triggered this) so it can be screenshotted and shared even though
+            // nothing else can leave a client machine.
+            var scrubbed = DiagnosticReport.ScrubArgs("ssisx", "extract", args);
+            var diagPath = DiagnosticReport.Capture("ssisx", scrubbed, "extract", ex, outDir: outDir);
+            Console.Error.WriteLine($"A diagnostic file with no client data was written to: {diagPath}");
             return 2;
         }
 

@@ -101,7 +101,14 @@ public static partial class PackageGenerator
     /// otherwise always produces. Defaults to false (tests on) so every existing caller/test is
     /// unaffected -- named plainly, unlike `--unsafe-skip-seams`, because skipping tests loses
     /// coverage but can never produce silently WRONG code the way skipping a seam can.</param>
-    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix, GapDecisions? decisions = null, bool emitSeams = false, bool skipTests = false)
+    /// <param name="includeNotifications">Whether to wire IPackageResultNotifier/
+    /// AddEmailNotifications at all. Defaults to false: a .dtsx carries no notification-recipient
+    /// information at all (see the {Package}.Notification gap below), so wiring an email-sending
+    /// hook on every generated package by default would add a capability the original SSIS
+    /// package never had any equivalent of, on the strength of nothing but "maybe someone
+    /// configures it later." Opt in via `ssisx generate --notifications` once real recipients/SMTP
+    /// settings actually exist.</param>
+    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix, GapDecisions? decisions = null, bool emitSeams = false, bool skipTests = false, bool includeNotifications = false)
     {
         decisions ??= GapDecisions.None;
         var ns = namespacePrefix is null ? package.ObjectName : $"{namespacePrefix}.{package.ObjectName}";
@@ -790,6 +797,7 @@ public static partial class PackageGenerator
             {
                 VariableSeeds = plan.VariableSeeds,
                 FailureHandlers = plan.FailureHandlers,
+                IncludeNotifications = includeNotifications,
             };
             Merge(files, gaps, ProgramEmitter.Emit(programRequest));
             Merge(files, gaps, PackageClassEmitter.Emit(programRequest, out methodInventory, out var supportsFakeHappyPath, out var usesLookupPreload));
@@ -927,7 +935,7 @@ public static partial class PackageGenerator
             }
             foreach (var f in TestDoublesEmitter.Emit(ns, className, dbContextTypeName, testDataFileEntries, sinkFileKeys, distinctFileSystemTaskKeys, forEachLoopKeys, secondaryConnections.Keys.ToList(), sampleDataFallbackEntries).Files)
                 testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
-            var runAsyncTest = RunAsyncFailureTestEmitter.Emit(ns, className, plan.FailureHandlers.Count > 0, supportsFakeHappyPath, usesLookupPreload);
+            var runAsyncTest = RunAsyncFailureTestEmitter.Emit(ns, className, plan.FailureHandlers.Count > 0, supportsFakeHappyPath, usesLookupPreload, includeNotifications);
             var runAsyncTestFinal = runAsyncTest with { RelativePath = $"{package.ObjectName}.Tests/{runAsyncTest.RelativePath}" };
             testFiles.Add(runAsyncTestFinal);
             NoteTest(testCoverageNotes, runAsyncTestFinal, "RunAsync",
@@ -1249,9 +1257,21 @@ public static partial class PackageGenerator
                 DatabaseAuth: new DatabaseAuthRequest(authMode, userId),
                 OnSuccessRecipients: [],
                 OnFailureRecipients: [],
-                SecondaryConnections: secondaryConnections.Values.ToList())));
+                SecondaryConnections: secondaryConnections.Values.ToList())
+            {
+                IncludeNotifications = includeNotifications,
+            }));
 
-            gaps.Add(new GenerationGap($"{package.ObjectName}.Notification", "a .dtsx carries no notification-recipient information -- OnSuccessRecipients/OnFailureRecipients were generated empty; fill in appsettings.json manually", IsBlocking: false));
+            // Reported either way, wording tied to what was actually generated -- with
+            // --notifications, IPackageResultNotifier/AddEmailNotifications are wired but
+            // recipients are empty (the .dtsx has no notion of them); without it (the default),
+            // no notification code was generated at all, and this gap is how a human finds out
+            // that's an opt-in, not an oversight.
+            gaps.Add(new GenerationGap($"{package.ObjectName}.Notification",
+                includeNotifications
+                    ? "a .dtsx carries no notification-recipient information -- OnSuccessRecipients/OnFailureRecipients were generated empty; fill in appsettings.json manually"
+                    : "no notification wiring was generated (IPackageResultNotifier/AddEmailNotifications) -- a .dtsx carries no notification-recipient information at all, so this is opt-in; re-run with --notifications once real recipients/SMTP settings exist",
+                IsBlocking: false));
         }
         else if (testFiles.Count > 0)
         {

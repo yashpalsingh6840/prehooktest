@@ -505,6 +505,15 @@ public sealed record ProgramRequest(
     /// been rolled back, each isolated so a throwing handler never replaces the original
     /// exception.</summary>
     public IReadOnlyList<FailureHandlerPlan> FailureHandlers { get; init; } = [];
+
+    /// <summary>Whether to wire <c>IPackageResultNotifier</c>/<c>AddEmailNotifications</c> at all.
+    /// Defaults to false -- a .dtsx carries no notification-recipient information (see the
+    /// {Package}.Notification gap), so unconditionally emitting this hook on every generated
+    /// package would wire an email-sending call the ORIGINAL SSIS package never had any equivalent
+    /// of, on the strength of nothing but "maybe someone will configure it later." Opt in via
+    /// `ssisx generate --notifications` once real recipients/SMTP settings actually exist to
+    /// configure.</summary>
+    public bool IncludeNotifications { get; init; }
 }
 
 /// <summary>
@@ -526,7 +535,7 @@ public static class ProgramEmitter
         var className = PackageClassEmitter.ClassName(request.PackageName);
         var w = new CodeWriter();
         w.Line("using Etl.Core.Hosting;");
-        w.Line("using Etl.Core.Notifications;");
+        if (request.IncludeNotifications) w.Line("using Etl.Core.Notifications;");
         w.Line($"using {request.RootNamespace};");
         w.Line($"using {request.RootNamespace}.Model;");
         w.Line("using Microsoft.Extensions.DependencyInjection;");
@@ -535,7 +544,7 @@ public static class ProgramEmitter
         w.Blank();
         w.Line("var builder = EtlHost.Create(args, PackageName);");
         w.Line($"builder.Services.AddEtlDbContext<{request.DbContextTypeName}>();");
-        w.Line("builder.Services.AddEmailNotifications(builder.Configuration);");
+        if (request.IncludeNotifications) w.Line("builder.Services.AddEmailNotifications(builder.Configuration);");
         w.Blank();
         w.Line("using var host = builder.Build();");
         w.Line($"return await new {className}(host.Services).RunAsync(CancellationToken.None);");

@@ -20,7 +20,8 @@ public class RunAsyncFailureTestEmitterTests
     public void Emit_AssertsBeginNeverCalled_WhenThePackageUsesLookupPreload()
     {
         var file = RunAsyncFailureTestEmitter.Emit(
-            "MyPackage", "MyPackagePackage", hasFailureHandlers: false, supportsHappyPath: false, usesLookupPreload: true);
+            "MyPackage", "MyPackagePackage", hasFailureHandlers: false, supportsHappyPath: false, usesLookupPreload: true,
+            includeNotifications: true);
 
         // No fault is injected -- the real, unfakeable Lookup connectivity failure is the fault.
         Assert.DoesNotContain("harness.ThrowOnGetBindToken =", file.Content);
@@ -35,7 +36,8 @@ public class RunAsyncFailureTestEmitterTests
     public void Emit_AssertsFailureHandlersStillRun_WhenThePackageUsesLookupPreloadAndDeclaresHandlers()
     {
         var file = RunAsyncFailureTestEmitter.Emit(
-            "MyPackage", "MyPackagePackage", hasFailureHandlers: true, supportsHappyPath: false, usesLookupPreload: true);
+            "MyPackage", "MyPackagePackage", hasFailureHandlers: true, supportsHappyPath: false, usesLookupPreload: true,
+            includeNotifications: true);
 
         Assert.Contains("Assert.False(uow.BeginCalled);", file.Content);
         Assert.Contains("Assert.False(uow.RollbackCalled);", file.Content);

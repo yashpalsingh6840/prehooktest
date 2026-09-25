@@ -4,7 +4,6 @@ using Etl.Core.Abstractions;
 using Etl.Core.Csv;
 using Etl.Core.Data;
 using Etl.Core.Hosting;
-using Etl.Core.Notifications;
 using Etl.Core.Pipeline;
 using LoadReferenceData.Csv;
 using LoadReferenceData.Mapping;
@@ -33,7 +32,6 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
         await using var scope = services.CreateAsyncScope();
         var sp = scope.ServiceProvider;
         var uow = sp.GetRequiredService<IUnitOfWork>();
-        var notifier = sp.GetRequiredService<IPackageResultNotifier>();
         var logger = Log<LoadReferenceDataPackage>();
 
         var startedAtUtc = sp.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
@@ -67,11 +65,9 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
             }
             logger.LogError(ex, "{Package} failed after {Steps} step(s); transaction rolled back", PackageName, _results.Count);
 
-            await notifier.NotifyAsync(new PackageResult(PackageName, false, _results, stopwatch.Elapsed, ex), CancellationToken.None);
             return ExitCode.LoadFailed;
         }
 
-        await notifier.NotifyAsync(new PackageResult(PackageName, true, _results, stopwatch.Elapsed, null), ct);
         foreach (var step in _results) logger.LogInformation("{Step}: {Rows:N0} rows loaded", step.Name, step.RowsWritten);
         return ExitCode.Success;
     }

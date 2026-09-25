@@ -49,7 +49,10 @@ public class ProjectEmitterTests
             ],
             new DatabaseAuthRequest("Windows", UserId: null),
             OnSuccessRecipients: ["reports@example.local"],
-            OnFailureRecipients: ["oncall@example.local"]);
+            OnFailureRecipients: ["oncall@example.local"])
+        {
+            IncludeNotifications = true,
+        };
 
         var result = ProjectEmitter.Emit(request);
         var appsettings = result.Files.Single(f => f.RelativePath == "appsettings.json");

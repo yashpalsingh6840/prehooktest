@@ -475,6 +475,25 @@ more gaps, `apply-fills`/`apply-tests`... left something unfilled, or `extract -
 not met. Exit `3` from `generate` is the **normal**, expected result of a real portfolio -- not a
 failure to fix before moving on.
 
+`98`/`99` mean something different from all of the above: a genuine, unexpected bug in `ssisx`/
+`svk` itself (never a real client-package condition, which always has its own named exit code
+above). `98` (`generate`/`svk` only) means one or more packages hit this and were skipped, while
+every OTHER package still ran normally. `99` means the whole run crashed before finishing at all.
+See "If `ssisx`/`svk` itself crashes" below for what to do when you see either one.
+
+### If `ssisx`/`svk` itself crashes (exit 98 or 99)
+
+This is a bug in the tool, not a problem with the client's packages -- and since nothing else can
+leave a client machine, there is no way to just email a repro. Both exit codes above write a
+compact `ssisx-diagnostic-<timestamp>.txt` (or `svk-diagnostic-...`) to the SAME `--out` directory
+(or the current folder, if the crash happened before `--out` was even parsed), and the console
+output names its exact path. **That file contains no package/column/table/file names, no SQL
+text, and no command-line argument VALUES** -- only the exception type, a stack trace filtered to
+this tool's own source (bare file name + line number, never a client path), and which package
+ORDINAL (never its name) was being processed. It is typically under 15 lines. Take a screenshot of
+it, or paste its text, and share that back -- that is enough to fix the underlying bug without
+anything client-specific ever leaving the machine.
+
 ## What's deliberately not here
 
 The gate-3 golden-corpus comparison harness lives at the repo root's own `Validation/` folder,

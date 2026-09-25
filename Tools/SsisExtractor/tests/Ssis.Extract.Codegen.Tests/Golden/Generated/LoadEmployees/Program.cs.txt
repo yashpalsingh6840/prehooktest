@@ -1,5 +1,4 @@
 using Etl.Core.Hosting;
-using Etl.Core.Notifications;
 using LoadEmployees;
 using LoadEmployees.Model;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,7 +7,6 @@ const string PackageName = "LoadEmployees";
 
 var builder = EtlHost.Create(args, PackageName);
 builder.Services.AddEtlDbContext<LoadEmployeesDbContext>();
-builder.Services.AddEmailNotifications(builder.Configuration);
 
 using var host = builder.Build();
 return await new LoadEmployeesPackage(host.Services).RunAsync(CancellationToken.None);

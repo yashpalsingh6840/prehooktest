@@ -175,6 +175,47 @@ multi-step read-only workflows, verify each step separately before moving to the
     do not run `apply-tests` as part of `/ssisx-rewrite` (that pipeline's own "done" signal is
     about closing gaps, not about this).
 
+17. **Read work packets and run build/test commands economically -- this directly affects how
+    much of a task fits in your own context/token budget, not just politeness.**
+    - A packet's own "SSIS semantics you must preserve" and "Respond with" sections are
+      IDENTICAL boilerplate repeated verbatim across every packet from the same run (rule 11
+      already says this for `TEST-ORACLE`; it applies to every packet kind). Never open/read a
+      work packet whole -- extract only its "Evidence"/"What you need to produce" sections,
+      e.g. `sed -n '/## Evidence/,/## Respond with/p' out/gaps/<Package>/<file>.md`, or a
+      targeted file read using an offset/limit that skips the boilerplate block.
+    - Resolve `$ssisx`/`$dotnet` to a BUILT exe once per task (the bootstrap block in
+      `ssisx-extract.prompt.md` already does this) and reuse that same path for every later
+      command -- `apply-fills`, `build`, `test`. Never `dotnet run --project ...` for the CLI
+      on a repeat call; that pays a full restore/build check every single invocation for no
+      benefit once a built exe already exists.
+    - Before writing a fill that references a generated type, grep that generated file's own
+      `namespace`/class declaration first rather than guessing the `using` it needs -- a wrong
+      guess is only caught by a full build, costing an entire extra solution build+test cycle
+      to fix and re-verify.
+    - Pipe every `dotnet build`/`dotnet test` through `--nologo -v minimal` and read only the
+      final outcome line (`Build succeeded`/`Build FAILED`, the test pass/fail summary) plus
+      any `error`/`FAILED` lines -- never tail or dump the full restore/compile transcript into
+      the conversation.
+
+18. **Exit code 98 or 99 from `ssisx`/`svk` means a genuine bug in the TOOL itself, not a problem
+    with this client's packages.** Do not try to fix, patch, or work around it yourself (this
+    repeats rule 1 for a different failure shape). Both codes write a compact
+    `ssisx-diagnostic-<timestamp>.txt` (or `svk-diagnostic-...`) to the `--out` directory (or the
+    current folder) -- point the user at that exact file and tell them plainly: it contains no
+    package/column/file names or other client data, only the exception type and a stack trace
+    filtered to this tool's own source, so it is safe to screenshot and share back for the tool to
+    be fixed. Read the file yourself first if you can (it is short) so you can summarize what it
+    says, but never try to guess a fix from it.
+
+19. **`generate`/`apply-fills` each also write a durable log** -- `<out>/generate.log` and
+    `<out>/apply-fills.log`, overwritten fresh every run. Read one of these BEFORE assuming a
+    run "did nothing" or asking the user to re-run with more output -- they already contain
+    everything that scrolled by live, plus (for `apply-fills`) a full per-file trace: every
+    `fills/<Package>/` folder and file scanned, every seam pattern match attempted, and an
+    explicit note when a file has no recognizable `partial` method/class at all. Both logs are
+    safe to read/share -- they contain the same package/column/file names already visible in
+    `generate-report.md`/`fills-applied.json`, nothing more sensitive.
+
 ## The one-sentence workflow
 
 **Survey once (cheap, whole portfolio, read-only) -> generate one package (or a named few) at

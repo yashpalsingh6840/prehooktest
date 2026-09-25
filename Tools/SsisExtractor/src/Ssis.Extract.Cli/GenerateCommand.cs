@@ -5,6 +5,8 @@ using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Package;
 using Ssis.Extract.Model.Serialization;
 
+using Ssis.Extract.Model.Diagnostics;
+
 namespace Ssis.Extract.Cli;
 
 /// <summary>
@@ -41,6 +43,13 @@ internal static class GenerateCommand
         // this tool produce silently WRONG code, so it carries none of that flag's own warning
         // framing.
         var skipTests = false;
+        // Off by default -- a .dtsx carries no notification-recipient information at all, so
+        // wiring IPackageResultNotifier/AddEmailNotifications unconditionally would add an
+        // email-sending call the original SSIS package never had any equivalent of, on the
+        // strength of nothing but "maybe someone configures it later" (see the {Package}.
+        // Notification gap, only reported when this is set). Opt in once real recipients/SMTP
+        // settings actually exist to configure.
+        var includeNotifications = false;
         string? fillsDir = null;
         string? etlCorePath = null;
         var packageNames = new List<string>();
@@ -73,14 +82,20 @@ internal static class GenerateCommand
                         break;
                     case "--namespace-prefix": namespacePrefix = RequireValue(args, ref i, "--namespace-prefix"); break;
                     case "--seams": seams = true; break;
-                    // Opts back into the pre-this-flip behavior: a Script Task/Script
-                    // Component's logic is silently dropped -- the generated project builds
-                    // and runs cleanly with those columns/tasks missing, no compile-time
-                    // signal at all. Named "unsafe" deliberately, not "--no-seams" or
-                    // "--skip-seams", so the risk is visible at the call site, not just in
-                    // --help.
-                    case "--unsafe-skip-seams": seams = false; break;
+                    // DISABLED (2026-09-22, on the user's own explicit call): this used to opt
+                    // back into the pre-seams behavior for a Script Component's own produced
+                    // columns -- silently omitted, no compile-time signal at all. That capability
+                    // is now turned OFF: the flag is still accepted (so an old script/doc that
+                    // passes it doesn't break), but it no longer has any effect -- seams are
+                    // always emitted, exactly like the default. A Script Task's own seam was
+                    // NEVER affected by this flag in the first place (ScriptTaskEmitter.Emit is
+                    // unconditional -- see its own doc comment). If a real need to skip seams
+                    // ever comes back, re-enable by setting `seams = false` here again.
+                    case "--unsafe-skip-seams":
+                        Console.Error.WriteLine("warning: --unsafe-skip-seams is currently disabled -- seams are always emitted regardless of this flag.");
+                        break;
                     case "--skip-tests": skipTests = true; break;
+                    case "--notifications": includeNotifications = true; break;
                     case "--fills": fillsDir = RequireValue(args, ref i, "--fills"); break;
                     // Folds the "copy Etl.Core alongside the generated output" step into this
                     // command instead of leaving it as a separate manual step someone (a human,
@@ -115,6 +130,11 @@ internal static class GenerateCommand
             return 2;
         }
 
+        // A durable copy of this run's own console narration (see RunLog's own doc comment) --
+        // every `return` below restores Console.Out/Error via this `using` regardless of where
+        // it happens to exit.
+        using var runLog = RunLog.Start(Path.Combine(outDir, "generate.log"));
+
         PackageLoader.LoadResult loaded;
         try
         {
@@ -146,10 +166,40 @@ internal static class GenerateCommand
         var allGaps = new List<GapSpec>();
         var decisionOutcomes = new List<(string Package, GapDecisionOutcome Outcome)>();
 
+        var crashCount = 0;
+        var packageOrdinal = 0;
         foreach (var package in loaded.Packages)
         {
+            packageOrdinal++;
             var decisions = LoadDecisions(fillsDir, package.ObjectName);
-            var result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests);
+
+            Console.WriteLine($"generating {package.ObjectName} ({packageOrdinal} of {loaded.Packages.Count})...");
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            PackageGenerateResult result;
+            try
+            {
+                result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests, includeNotifications);
+                Console.WriteLine($"  done ({stopwatch.ElapsedMilliseconds}ms, {result.Files.Count} file(s), {result.Gaps.Count} gap(s))");
+            }
+            catch (Exception ex)
+            {
+                // A real crash generating ONE package must never cost every other package in
+                // the batch -- the same "one bad package never costs you the rest" rule this
+                // tool already applies to a package that fails to LOAD (PackageLoader's own
+                // load-failures.md). Capture a client-data-free diagnostic (ordinal position
+                // only, never the package name/path) and move on to the next package.
+                crashCount++;
+                var scrubbed = DiagnosticReport.ScrubArgs("ssisx", "generate", args);
+                var diagPath = DiagnosticReport.Capture(
+                    "ssisx", scrubbed, "package-generation", ex,
+                    context: [("Package", $"{packageOrdinal} of {loaded.Packages.Count}")],
+                    outDir: outDir);
+                Console.Error.WriteLine($"error: package {packageOrdinal} of {loaded.Packages.Count} hit an unexpected internal error during generation -- skipped, continuing with the rest.");
+                Console.Error.WriteLine($"  A diagnostic file with no client data was written to: {diagPath}");
+                continue;
+            }
+
             results.Add(result);
             decisionOutcomes.AddRange(decisions.Outcomes.Concat(decisions.Orphans())
                 .Select(o => (package.ObjectName, o)));
@@ -215,7 +265,12 @@ internal static class GenerateCommand
                               $"{(refused > 0 ? $", {refused} NOT used -- see the report" : "")}");
         }
 
-        return totalGaps > 0 ? 3 : 0;
+        if (crashCount > 0)
+        {
+            Console.WriteLine($"  {crashCount} package(s) crashed during generation and were skipped -- see the diagnostic file(s) reported above");
+        }
+
+        return crashCount > 0 ? 98 : (totalGaps > 0 ? 3 : 0);
     }
 
     /// <summary>

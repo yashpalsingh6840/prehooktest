@@ -240,7 +240,10 @@ public class ConditionalConstraintTests
     {
         var package = LoadSyntheticFixture("SyntheticFailureHandler.dtsx");
 
-        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+        // includeNotifications: true -- this test specifically asserts the emitted
+        // FailureHandlersRun-carrying NotifyAsync call, which only exists when notifications
+        // are wired (see PackageGenerator.Generate's own includeNotifications parameter).
+        var result = PackageGenerator.Generate(package, namespacePrefix: null, includeNotifications: true);
 
         var classFile = Assert.Single(result.Files, f => f.RelativePath.EndsWith("SyntheticFailureHandler.cs"));
         // Run strictly after the rollback, inside the catch block's own try/catch-per-handler loop
