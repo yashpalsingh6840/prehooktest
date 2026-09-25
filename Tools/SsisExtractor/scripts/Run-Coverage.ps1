@@ -109,14 +109,19 @@ foreach ($proj in $testProjects) {
     Write-Host ""
     Write-Host "=== $pkgName ===" -ForegroundColor Cyan
 
-    & dotnet test $proj.FullName -c $Configuration --filter 'Category!=Integration' --collect:"XPlat Code Coverage" |
+    $runStartUtc = [DateTime]::UtcNow
+    & dotnet test $proj.FullName -c $Configuration -nodeReuse:false --filter 'Category!=Integration' --collect:"XPlat Code Coverage" |
         ForEach-Object { Write-Host $_ }
     $testExit = $LASTEXITCODE
 
     $resultsDir = Join-Path $proj.Directory.FullName 'TestResults'
     $coverageFile = $null
     if (Test-Path $resultsDir) {
+        # Only a file THIS run produced -- an older TestResults\ folder from a prior run (this
+        # script never deletes one, by design) can otherwise be picked up instead, showing stale
+        # percentages next to a run that just failed before ever reaching coverage collection.
         $coverageFile = Get-ChildItem -Path $resultsDir -Filter 'coverage.cobertura.xml' -Recurse |
+            Where-Object { $_.LastWriteTimeUtc -ge $runStartUtc } |
             Sort-Object LastWriteTime -Descending | Select-Object -First 1
     }
 
@@ -135,7 +140,10 @@ foreach ($proj in $testProjects) {
         $isCore = $class.filename -match 'Etl\.Core'
         $lines = $class.SelectNodes('lines/line')
         $valid = $lines.Count
-        $covered = ($lines | Where-Object { [int]$_.hits -gt 0 }).Count
+        # @(...) : a Where-Object result with exactly one match is unwrapped to a bare element
+        # with no .Count member (PowerShell 5.1) -- silently reading $null as the covered count
+        # for a class with exactly 1 covered line, understating its own coverage. Same bug as R4.
+        $covered = @($lines | Where-Object { [int]$_.hits -gt 0 }).Count
         if ($isCore) { $coreCovered += $covered; $coreValid += $valid }
         else { $ownCovered += $covered; $ownValid += $valid }
     }
@@ -180,6 +188,10 @@ Set-Content -Path $reportPath -Value ($lines -join "`r`n") -Encoding utf8
 Write-Host ""
 Write-Host "Coverage report written: $reportPath" -ForegroundColor Green
 
-$anyTestFailed = ($rows | Where-Object { $_.TestExit -ne 0 }).Count -gt 0
+# R4: with exactly one row (one package), a Where-Object match unwraps to a bare PSCustomObject
+# with no .Count member, so the old `(...).Count -gt 0` compared `$null -gt 0` (always false) and
+# this script silently exited 0 even though that one package's own test run just failed. @(...)
+# forces a real array, whose .Count is always correct regardless of match count.
+$anyTestFailed = @($rows | Where-Object { $_.TestExit -ne 0 }).Count -gt 0
 if ($anyTestFailed) { exit 1 }
 exit 0

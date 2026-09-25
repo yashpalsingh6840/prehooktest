@@ -280,7 +280,10 @@ Write-Host "     test+coverage: exit $coverageExit $(if ($coverageExit -eq 2) {'
 $gapsJsonPath = Join-Path $genOut 'gaps.json'
 if (Test-Path $gapsJsonPath) {
     try {
-        $gaps = Get-Content $gapsJsonPath -Raw | ConvertFrom-Json
+        # @(...): ConvertFrom-Json on a single-element JSON array returns a bare PSCustomObject in
+        # PowerShell 5.1, not a 1-element array -- .Count would then be $null (the same class of
+        # bug as R4/Run-Coverage.ps1). Force a real array so .Count is always correct.
+        $gaps = @(Get-Content $gapsJsonPath -Raw | ConvertFrom-Json)
         $byTier = $gaps | Group-Object Tier | Sort-Object Name
         Write-Host "  gaps by tier  : $(($byTier | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ', ') (total $($gaps.Count))"
     }
