@@ -82,7 +82,24 @@ public static partial class DtsxPackageReader
         var (executables, precedenceConstraints, dag) = ReadContainerBody(root, cmDtsIdToName, cmRefIdToName, coverage);
         var eventHandlers = ReadEventHandlers(root, cmDtsIdToName, cmRefIdToName, coverage);
 
-        AddUnmappedIfPresent(root, Dts + "Configurations", "Package/Configurations", "legacy Package-Deployment-Model configurations not yet modeled (plan §4.2)", unmapped, coverage, excluded: false);
+        // Phase 2.4 (C3) of the independent-review fix plan. Confirmed real from
+        // RBC_Demo_ETL's own Package_Legacy.dtsx: <DTS:Configuration DTS:ConfigurationString=
+        // "...\Package_Legacy.dtsConfig" DTS:ConfigurationType="1" DTS:ObjectName=
+        // "LegacyXmlConfig" /> -- a legacy Package-Deployment-Model configuration override that
+        // is applied by the SSIS runtime BEFORE the package runs, and this tool has no evidence
+        // of what the referenced file/registry-key/parent-variable/SQL-table actually contains,
+        // so PackagePlanner reports one gap per configuration rather than silently ignoring it
+        // (see the model type's own doc comment for why this was left unwired until now).
+        var configurations = (root.Element(Dts + "Configurations")?.Elements(Dts + "Configuration") ?? [])
+            .Select(el => new PackageConfigurationSpec
+            {
+                ObjectName = el.Attr(Dts + "ObjectName"),
+                ConfigurationType = el.Attr(Dts + "ConfigurationType"),
+                ConnectionString = el.Attr(Dts + "ConnectionString"),
+                ConfigurationString = el.Attr(Dts + "ConfigurationString"),
+            })
+            .ToList();
+
         AddDesignTimePropertiesPlaceholder(root, unmapped, coverage);
 
         var executionSemantics = new ExecutionSemanticsSpec
@@ -146,7 +163,7 @@ public static partial class DtsxPackageReader
             Parameters = parameters,
             ConnectionManagers = connectionManagers,
             Variables = variables,
-            Configurations = [],
+            Configurations = configurations,
             EnableConfigurations = root.AttrBoolOrFalse(Dts + "EnableConfigurations"),
             Executables = executables,
             PrecedenceConstraints = precedenceConstraints,

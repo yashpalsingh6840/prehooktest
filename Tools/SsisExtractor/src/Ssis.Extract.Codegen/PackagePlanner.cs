@@ -764,6 +764,21 @@ public static class PackagePlanner
         var flows = new List<DataFlowPlan>();
         var steps = new List<PackageStep>();
 
+        // Phase 2.4 (C3) of the independent-review fix plan: a legacy Package-Deployment-Model
+        // configuration (an external .dtsConfig file, a registry key, a parent variable, or a SQL
+        // config table -- see PackageConfigurationSpec's own doc comment) is applied by the SSIS
+        // runtime BEFORE the package runs, overriding whatever property/connection-string value it
+        // targets. This tool has no access to the referenced source's own contents, so generated
+        // code would silently run with the DESIGN-TIME value baked in wherever that source
+        // actually overrides something at runtime -- reported as one blocking gap per entry
+        // instead of a guess.
+        foreach (var config in package.Configurations)
+        {
+            gaps.Add(new GenerationGap(
+                $"Package.Configuration.{config.ObjectName ?? "(unnamed)"}",
+                $"package configuration override ('{config.ObjectName ?? "(unnamed)"}', type {config.ConfigurationType ?? "?"}, source '{config.ConfigurationString ?? config.ConnectionString ?? "?"}') is not applied by generated code -- its target property/connection-string value is whatever this .dtsx's own design-time default says, not what the configuration source would set at runtime"));
+        }
+
         // Resolved BEFORE the walk so each step can be created already carrying its guard --
         // attaching one afterwards would mean matching steps back to executables, which only
         // FlowStep/ScriptTaskStep even retain enough identity to do.

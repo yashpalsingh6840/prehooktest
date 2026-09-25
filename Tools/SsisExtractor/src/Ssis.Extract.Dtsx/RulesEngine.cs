@@ -244,8 +244,10 @@ public static class RulesEngine
                 $"Connection manager '{cm.ObjectName}' carries a DPAPI-encrypted sensitive value ({propertyList}), undecryptable outside the original author's Windows account. This extractor never reads the ciphertext or reports a value -- a human must supply the real credential out of band before any rewrite of this package's connection can authenticate. Silently missing this is the risk: a clean-looking extraction with no visible sign a credential ever existed.");
         }
 
-        var configsEntry = package.Unmapped.FirstOrDefault(u => u.Location == "Package/Configurations");
-        if (configsEntry is not null)
+        // Phase 2.4 (C3): package.Configurations is now actually populated by DtsxPackageReader
+        // (previously this checked package.Unmapped for a "Package/Configurations" entry, back
+        // when the whole <DTS:Configurations> subtree fell through unmodeled).
+        if (package.Configurations.Count > 0)
         {
             Add(findings, "legacy-package-configurations", "EnvironmentCoupling", "Warning", package.ObjectName, "(package)",
                 "Legacy Package-Deployment-Model configurations present alongside (or instead of) project parameters -- an older, less structured environment-coupling mechanism; verify it isn't the package's real source of truth for connection/path values before assuming project parameters (plan §4.1/§4.2) cover everything.");

@@ -28,6 +28,26 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ReportsABlockingGap_ForAPackageLevelLegacyConfiguration()
+    {
+        // Phase 2.4 (C3) of the independent-review fix plan. SyntheticPackageConfiguration.dtsx
+        // is a byte-preserving derivative of SyntheticPostFlowSql.dtsx with a real-shaped
+        // <DTS:Configurations> block spliced in, copied verbatim from RBC_Demo_ETL's own
+        // Package_Legacy.dtsx (ConfigurationType=1, LegacyXmlConfig, pointing at an external
+        // .dtsConfig file this tool cannot read). The rest of the flow is unaffected --
+        // generated code would silently run with this package's own design-time defaults
+        // wherever the configuration source overrides something at runtime, so the gap is
+        // reported independently of everything else the package does.
+        var package = LoadSyntheticFixture("SyntheticPackageConfiguration.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Contains(plan.Gaps, g => g.IsBlocking
+            && g.Location == "Package.Configuration.LegacyXmlConfig"
+            && g.Reason.Contains("not applied by generated code", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Plan_RecursesIntoASequenceContainer_ForTheSyntheticNestedContainerFixture()
     {
         var package = LoadSyntheticFixture("SyntheticNestedContainer.dtsx");
