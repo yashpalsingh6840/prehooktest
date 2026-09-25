@@ -1665,6 +1665,23 @@ public static class PackagePlanner
         Dictionary<string, GuardVariable> variables,
         int? inheritedWave = null)
     {
+        // A cyclic precedence-constraint graph (including a self-loop, which BuildDag counts
+        // as an in-edge with no matching topological-order entry) has no valid execution order
+        // at all -- SSIS's own designer prevents authoring one, but a hand-edited/corrupted
+        // .dtsx can still contain it. Before this check, WalkContainer fell through to
+        // declaration order below and silently generated the WRONG order with no gap at all
+        // (measured against a real cyclic fixture: DTExec itself refuses to even validate the
+        // package). Reported once per container, at the exact point that container's own walk
+        // would otherwise begin -- nothing in it (or nested inside it) is generated.
+        if (dag.HasCycle)
+        {
+            var cyclicContainerName = containerPath.Count > 0 ? containerPath[^1] : "Package";
+            gaps.Add(new GenerationGap(
+                $"{cyclicContainerName}.PrecedenceConstraints",
+                "precedence constraints form a cycle -- SSIS rejects this at validation; not generated"));
+            return;
+        }
+
         var byRefId = children.ToDictionary(e => e.RefId);
 
         // dag.TopologicalOrder is empty by design for 0-1 children (that type's own doc

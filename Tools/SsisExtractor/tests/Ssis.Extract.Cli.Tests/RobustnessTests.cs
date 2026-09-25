@@ -65,7 +65,7 @@ public class RobustnessTests : IDisposable
     // After 2.1: a blocking "...PrecedenceConstraints" gap naming the cycle, nothing generated
     // for that container.
     // ---------------------------------------------------------------------
-    [Fact(Skip = "Phase 2.1")]
+    [Fact]
     public void Cycle_ReportsABlockingGap_InsteadOfGeneratingTheWrongOrder()
     {
         var outDir = NewOutDir();
@@ -76,7 +76,7 @@ public class RobustnessTests : IDisposable
         Assert.True(exit is 3 or 4, $"expected a blocking-gap exit, got {exit}");
     }
 
-    [Fact(Skip = "Phase 2.1")]
+    [Fact]
     public void SelfLoop_IsTreatedAsACycleToo()
     {
         var outDir = NewOutDir();
