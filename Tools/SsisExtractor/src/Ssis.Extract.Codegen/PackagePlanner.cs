@@ -2318,8 +2318,69 @@ public static class PackagePlanner
         return (pathRaw, null);
     }
 
+    /// <summary>Component types this tool models with dedicated planner logic elsewhere in this
+    /// method (each resolved via its own Plan* helper, not TransformEmitter's passthrough gate)
+    /// -- Phase 2.3 (C2/C4) of the independent-review fix plan needs the FULL recognized set,
+    /// which is this list plus <see cref="TransformEmitter.IsRecognizedPassthroughComponent"/>'s
+    /// own (sources/destinations/structural pass-throughs).</summary>
+    private static readonly HashSet<string> ModelledTransformComponentClassIds =
+    [
+        "Microsoft.DerivedColumn",
+        "Microsoft.DataConvert",
+        "Microsoft.Lookup",
+        "Microsoft.Aggregate",
+        "Microsoft.SCD",
+        "Microsoft.CopyMap",
+        "Microsoft.PctSampling",
+    ];
+
+    /// <summary>
+    /// Phase 2.3 (C2/C4) of the independent-review fix plan. TransformEmitter's own per-column
+    /// "unrecognized component" gate (<c>unrecognizedComponentColumns</c>) only ever fires when a
+    /// DESTINATION column happens to share a name with something the unrecognized component
+    /// itself produced or rewrote -- it has NO way to notice a component that declares no output
+    /// columns at all. Confirmed real from SyntheticScriptComponent.dtsx: a pure-passthrough
+    /// Script Component (<c>synchronousInputId</c> set, an empty
+    /// <c>&lt;outputColumns/&gt;</c> -- no NEW column, and its INPUT columns are all plain
+    /// <c>usageType="readOnly"</c>, not <c>readWrite</c> either) is completely invisible to that
+    /// gate, so this tool generates 13 clean files with zero gaps about it, and whatever that
+    /// script's own per-row logic actually does (filter rows, mutate a value some other way, a
+    /// side-effect write) silently vanishes.
+    ///
+    /// <para>Deliberately scoped to a component that is BOTH unrecognized AND has nothing at all
+    /// for the existing per-column gate to key off (no non-error output column, no readWrite
+    /// input column) -- a Script Component that DOES synthesize new columns (RBC_Demo_ETL's own
+    /// SCR_CleanseCustomerRow/SCR_ComputeCustomerTier, the real, heavily-tested Tier-2-seam case)
+    /// is left entirely alone here: it already gets a precise per-column gap from the existing
+    /// mechanism, plus a compile-enforced seam once <c>--seams</c> is used, and this new check
+    /// must not double-report or otherwise disturb that.</para>
+    /// </summary>
+    private static void ReportInvisibleUnrecognizedComponents(string taskName, PipelineSpec pipeline, List<GenerationGap> gaps)
+    {
+        foreach (var comp in pipeline.Components)
+        {
+            if (TransformEmitter.IsRecognizedPassthroughComponent(comp)) continue;
+            if (ModelledTransformComponentClassIds.Contains(comp.ComponentClassId)) continue;
+
+            var hasOwnOutputColumns = comp.Outputs.Any(o => o.IsErrorOut != true && o.Columns.Count > 0);
+            var hasReadWriteInputColumn = comp.Inputs.Any(i => i.Columns.Any(c => string.Equals(c.UsageType, "readWrite", StringComparison.OrdinalIgnoreCase)));
+            if (hasOwnOutputColumns || hasReadWriteInputColumn) continue; // already named by TransformEmitter's own per-column gate, if anything downstream actually references it
+
+            gaps.Add(new GenerationGap(
+                $"{taskName}.{comp.Name}",
+                $"component '{comp.Name}' ({comp.ComponentClassId}) is not translated and declares no output column or in-place modification this tool can detect -- its per-row behaviour (row count changes, filtering, in-place mutation, or side effects) is not reproduced by generated code at all",
+                // Tier-2-eligible only for a Script Component -- its real source is present
+                // (SourceFiles), so a human can actually port the logic; any OTHER unrecognized
+                // type has no source this tool can hand to a work packet at all.
+                Kind: comp.ScriptComponent is not null ? GapKind.ScriptComponentColumn : GapKind.Unclassified,
+                EvidenceRefId: comp.RefId));
+        }
+    }
+
     private static DataFlowPlan? PlanDataFlow(string taskName, PipelineSpec pipeline, List<GenerationGap> gaps)
     {
+        ReportInvisibleUnrecognizedComponents(taskName, pipeline, gaps);
+
         // Computed up front (moved ahead of the MergeJoin/Union carve-outs below, which used to
         // return before this was ever consulted) so BOTH of those can check their own resolved
         // input count against the TOTAL source count in the pipeline -- a real, previously-SILENT

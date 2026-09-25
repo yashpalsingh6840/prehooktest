@@ -1062,7 +1062,11 @@ public static class TransformEmitter
         "Microsoft.FlatFileDestination",
     ];
 
-    private static bool IsRecognizedPassthroughComponent(PipelineComponentSpec component) =>
+    /// <summary>Internal (not private) so PackagePlanner's own top-level "every pipeline
+    /// component must be something this tool understands" check (Phase 2.3 of the
+    /// independent-review fix plan) can reuse the identical recognition list -- one set, not
+    /// two that could drift apart.</summary>
+    internal static bool IsRecognizedPassthroughComponent(PipelineComponentSpec component) =>
         RecognizedPassthroughComponentClassIds.Contains(component.ComponentClassId)
         || SourceInfo.IsSqlSource(component)
         || component.AdoNetDestination is not null

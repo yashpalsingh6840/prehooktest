@@ -48,6 +48,50 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ReportsAGap_ForAPureScriptComponentPassthrough_WithNoOutputColumnsAtAll()
+    {
+        // Phase 2.3 (C2/C4) of the independent-review fix plan. SyntheticScriptComponent.dtsx's
+        // own Script Component (DFT_ScriptComponentDemo) has a synchronousInputId and an EMPTY
+        // <outputColumns/> -- no new column, and none of its input columns are usageType=
+        // "readWrite" either -- so TransformEmitter's own per-column "unrecognized component"
+        // gate (keyed on a DESTINATION column matching something the component itself produced
+        // or rewrote) has literally nothing to key off, and this whole component -- and whatever
+        // its script actually does per row -- was completely invisible before this fix: 0 gaps,
+        // 13 files generated as if it were a plain passthrough.
+        var package = LoadSyntheticFixture("SyntheticScriptComponent.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        var gap = Assert.Single(plan.Gaps, g => g.Reason.Contains("is not translated and declares no output column", StringComparison.Ordinal));
+        Assert.True(gap.IsBlocking);
+        Assert.Equal(GapKind.ScriptComponentColumn, gap.Kind);
+        Assert.EndsWith(".Script Component", gap.Location, StringComparison.Ordinal);
+        Assert.NotNull(gap.EvidenceRefId);
+        // The flow itself still generates -- this is a per-component gap, not a whole-flow
+        // refusal (unlike the Phase 2.1/2.2/2.5 items, there IS something else in this flow that
+        // remains safe to generate: the OLE DB Source -> Destination columns the script never
+        // touches).
+        Assert.Single(plan.Flows);
+    }
+
+    [Fact]
+    public void Plan_ReportsNoInvisibleComponentGap_ForARealScriptComponentThatProducesColumns()
+    {
+        // The negative case, and the one that must NOT regress: a Script Component that
+        // genuinely synthesizes new columns (SyntheticScriptComponentSeams.dtsx -- the same
+        // real-world shape as RBC_Demo_ETL's own SCR_CleanseCustomerRow) is already correctly
+        // named by the pre-existing per-column gate/seam mechanism. This new, coarser
+        // whole-component check must stay silent for it -- double-reporting (or, worse, this
+        // new check ever refusing the whole flow) would regress the heavily-tested Tier-2 seam
+        // workflow this project's own AI-assisted gap filling depends on.
+        var package = LoadSyntheticFixture("SyntheticScriptComponentSeams.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.DoesNotContain(plan.Gaps, g => g.Reason.Contains("is not translated and declares no output column", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Plan_RecursesIntoASequenceContainer_ForTheSyntheticNestedContainerFixture()
     {
         var package = LoadSyntheticFixture("SyntheticNestedContainer.dtsx");
