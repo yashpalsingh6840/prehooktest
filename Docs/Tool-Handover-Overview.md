@@ -96,9 +96,18 @@ everything," simply because a real portfolio can be dozens of packages and revie
 at a time is more manageable — though "generate everything" is one flag away if that's what's
 wanted.
 
-**Exit codes worth knowing:** `0` = clean, zero gaps. `3` = code was written but there's
-follow-up work (this is the *normal*, expected result on a real package — not a failure). `2` =
-you typed something wrong. `1` = a real problem (e.g. a check failed).
+**Exit codes worth knowing:** `0` = clean, zero *blocking* gaps. `3` = real files were written but
+at least one blocking (Tier-1/2/3, not Advisory) gap remains (this is the *normal*, expected
+result on a real package — not a failure). `4` (`generate` only) = ZERO files were written at
+all — every package/flow was blocked, distinct from `3` so a caller can tell "partial success"
+apart from "nothing here" without re-parsing `generate-report.md`. `2` = you typed something
+wrong (a bad flag, a missing input path, an explicitly-given `--etl-core`/`--fills`/`--out` that
+doesn't exist, `--package` matching nothing). `1` = a real problem a check found (`extract
+--check`, `--diff-against`, an orphaned fill). `98` (`generate` only) = one or more packages hit
+a genuine internal ssisx crash during generation and were skipped, but every other package still
+generated normally — a real ssisx defect, not a gap. `99` = an unexpected internal error crashed
+the whole run before it could finish. Both `98`/`99` write a compact, client-data-free diagnostic
+file naming what to screenshot and share.
 
 ---
 

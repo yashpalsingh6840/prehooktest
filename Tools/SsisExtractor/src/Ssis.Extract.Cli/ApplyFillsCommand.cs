@@ -218,6 +218,15 @@ internal static class ApplyFillsCommand
             byFileName[gap.ExpectedFileName!] = gap;
         }
 
+        // Phase 1.5 (R6): an EXPLICITLY given --fills that doesn't exist is a typo -- a hard
+        // usage error (exit 2), not a silent "nothing to apply" (exit 3 with no explanation at
+        // all, as it used to be). The default location (no --fills given) is deliberately NOT
+        // held to this: it's entirely normal for fills/ to not exist yet on a fresh --out.
+        if (fillsDir is not null && !Directory.Exists(fillsDir))
+        {
+            Console.Error.WriteLine($"error: --fills '{fillsDir}' does not exist.");
+            return ExitCodes.UsageOrInputError;
+        }
         fillsDir = Path.GetFullPath(fillsDir ?? Path.Combine(outDir, "fills"));
         // Same default `ssisx conformance` itself uses -- read-only here, and silently absent
         // (never an error) when nobody has run `conformance` for this --out at all.

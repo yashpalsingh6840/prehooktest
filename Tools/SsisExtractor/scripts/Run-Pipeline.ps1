@@ -223,12 +223,14 @@ Write-Banner "==================================================================
 Write-Banner " Step 3/5 -- generate (framework: $Framework)"
 Write-Banner "==================================================================="
 $generateExit = Invoke-Tool $ssisx (@('generate', '--input', $InputPath, '--out', $genOut, '--recursive', '--etl-core', $EtlCorePath, '--framework', $Framework, '--fills', $FillsPath) + $packageArgs)
-# 98 = one or more packages crashed during generation but the rest were still written (see
-# GenerateCommand.cs's own crashCount) -- exactly like 3 (blocking gaps), this is a loud warning
-# about a PARTIAL result, not a reason to abort the whole pipeline: Steps 4/5 should still run
-# against whatever DID generate, the same as a plain gap-blocked package would.
-if ($generateExit -ne 0 -and $generateExit -ne 3 -and $generateExit -ne 98) { Write-Error "ssisx generate failed with exit code $generateExit." -ErrorAction Stop }
+# Per ExitCodes.cs (Phase 1.5): 3 = blocking gaps, files still written; 4 = nothing written at
+# all; 98 = one or more packages crashed during generation but the rest were still written.
+# None of these are fatal to the PIPELINE -- Steps 4/5 should still run against whatever DID
+# generate (which may be nothing, for 4 -- Run-Coverage.ps1 already handles "no test projects"
+# as its own non-fatal exit 2).
+if ($generateExit -notin 0, 3, 4, 98) { Write-Error "ssisx generate failed with exit code $generateExit." -ErrorAction Stop }
 if ($generateExit -eq 3) { Write-Warning "generate reported blocking gaps -- see $genOut\generate-report.md. Steps 4/5 still run against whatever DID generate." }
+if ($generateExit -eq 4) { Write-Warning "generate wrote NOTHING -- every package/flow was blocked. See $genOut\generate-report.md. Steps 4/5 will have nothing to build." }
 if ($generateExit -eq 98) { Write-Warning "generate: one or more packages crashed during generation -- see $genOut\generate-report.md for which, and the diagnostic file(s) it names. Steps 4/5 still run against whatever DID generate." }
 if (-not (Test-Path $generateDir)) { Write-Error "generate produced no output at $generateDir." -ErrorAction Stop }
 
@@ -274,7 +276,7 @@ Write-Banner "==================================================================
 Write-Host "  1. extract      : exit $extractExit"
 Write-Host "  2. walkthrough  : exit $walkthroughExit (advisory)"
 Write-Host "     sampledata   : exit $sampledataExit (advisory)"
-$generateNote = if ($generateExit -eq 3) { '(gaps reported -- see generate-report.md)' } elseif ($generateExit -eq 98) { '(one or more packages crashed -- see generate-report.md)' } else { '' }
+$generateNote = if ($generateExit -eq 3) { '(gaps reported -- see generate-report.md)' } elseif ($generateExit -eq 4) { '(nothing written -- see generate-report.md)' } elseif ($generateExit -eq 98) { '(one or more packages crashed -- see generate-report.md)' } else { '' }
 Write-Host "  3. generate     : exit $generateExit $generateNote"
 Write-Host "  4. apply-fills  : exit $applyFillsExit $(if ($applyFillsExit -eq 3) {'(seams still open)'})"
 Write-Host "  5. build        : exit $buildExit"

@@ -130,6 +130,20 @@ internal static class GenerateCommand
             return 2;
         }
 
+        // Phase 1.5 (R6): an EXPLICITLY given --etl-core that doesn't exist is a typo -- a hard
+        // usage error up front, not a soft advisory discovered only after Generated.slnx has
+        // already been written referencing an Etl.Core/ directory nothing ever put there
+        // (confirmed as exactly this shape: WriteFixedFiles's own try/catch around the copy
+        // only ever fires for a permission-style failure, not a straightforwardly-missing
+        // source directory, which Directory copy helpers tend to treat as "0 files", not an
+        // exception). Checked here, before anything is written, rather than folded into that
+        // later try/catch.
+        if (etlCorePath is not null && !Directory.Exists(etlCorePath))
+        {
+            Console.Error.WriteLine($"error: --etl-core '{etlCorePath}' does not exist.");
+            return ExitCodes.UsageOrInputError;
+        }
+
         // A durable copy of this run's own console narration (see RunLog's own doc comment) --
         // every `return` below restores Console.Out/Error via this `using` regardless of where
         // it happens to exit.
@@ -277,7 +291,17 @@ internal static class GenerateCommand
             Console.WriteLine($"  {crashCount} package(s) crashed during generation and were skipped -- see the diagnostic file(s) reported above");
         }
 
-        return crashCount > 0 ? 98 : (totalGaps > 0 ? 3 : 0);
+        // Phase 1.5 (R6): the exit-code contract, see ExitCodes.cs. Two real bugs here before
+        // this fix:
+        //  - `totalGaps` counted EVERY gap, including non-blocking Advisory ones (the always-
+        //    present {Package}.Notification gap alone made a clean 0/BlockingGaps outcome
+        //    unreachable for any real package -- confirmed across all 83 tracked fixtures).
+        //  - There was no way to tell "wrote real files, some gaps remain" (exit 3, meaningful)
+        //    apart from "wrote NOTHING at all" (also exit 3) without re-parsing generate-report.md.
+        var totalBlockingGaps = results.Sum(r => r.Gaps.Count(g => g.IsBlocking)) + fixedFileGaps.Count(g => g.IsBlocking);
+        if (crashCount > 0) return ExitCodes.PartialCrash;
+        if (totalFiles == 0) return ExitCodes.NothingWritten;
+        return totalBlockingGaps > 0 ? ExitCodes.BlockingGaps : ExitCodes.Ok;
     }
 
     /// <summary>
