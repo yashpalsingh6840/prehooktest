@@ -140,7 +140,11 @@ internal static class PackageLoader
             {
                 result.Failures.Add(new LoadFailure(pkg.SourceDtsxPath, "duplicate-name",
                     $"another package already loaded with ObjectName '{pkg.ObjectName}' (from {firstPath}); reports are keyed by package name, so this copy was skipped"));
-                Console.Error.WriteLine($"warning: duplicate package name '{pkg.ObjectName}' -- kept {firstPath}, skipped {pkg.SourceDtsxPath}");
+                // Console.Out, not Console.Error (Phase 1.6 / L4): this is a benign, already-
+                // recovered-from skip (see ReportCommand's own Phase-1.2 fix), not a real error --
+                // on stderr, PowerShell renders it as a NativeCommandError even though nothing
+                // actually failed.
+                Console.WriteLine($"warning: duplicate package name '{pkg.ObjectName}' -- kept {firstPath}, skipped {pkg.SourceDtsxPath}");
                 continue;
             }
             seen[pkg.ObjectName] = pkg.SourceDtsxPath;

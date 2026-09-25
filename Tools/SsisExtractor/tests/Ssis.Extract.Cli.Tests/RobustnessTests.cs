@@ -128,7 +128,7 @@ public class RobustnessTests : IDisposable
     // Phase 1.6 (L4) -- the duplicate-name warning goes to Console.Error today, which
     // PowerShell renders as a NativeCommandError even though it's benign. After 1.6: Console.Out.
     // ---------------------------------------------------------------------
-    [Fact(Skip = "Phase 1.6")]
+    [Fact]
     public void DuplicateNameWarning_GoesToStdOut_NotStdErr()
     {
         var outDir = NewOutDir();
