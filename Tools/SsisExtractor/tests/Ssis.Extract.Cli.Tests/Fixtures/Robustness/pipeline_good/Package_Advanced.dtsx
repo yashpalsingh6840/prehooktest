@@ -1,0 +1,828 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:refId="Package"
+  DTS:CreationDate="8/17/2026 11:43:16 AM"
+  DTS:CreationName="Microsoft.Package"
+  DTS:CreatorComputerName="IRIS-CSG-8043"
+  DTS:CreatorName="IRISSOFTWARE\sandeep.tuli"
+  DTS:DelayValidation="True"
+  DTS:DTSID="{6D166935-E278-48A7-AC2F-86588B321610}"
+  DTS:ExecutableType="Microsoft.Package"
+  DTS:LastModifiedProductVersion="16.0.1000.6"
+  DTS:LocaleID="1033"
+  DTS:ObjectName="Package_Advanced"
+  DTS:VersionGUID="{1AFC3004-9203-4249-8B30-9B9F588F15F9}">
+  <DTS:Property
+    DTS:Name="PackageFormatVersion">8</DTS:Property>
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_EXCEL_Drip]"
+      DTS:CreationName="EXCEL"
+      DTS:DTSID="{A9740337-19F9-4E49-A6AA-DF80A0E7B23E}"
+      DTS:ObjectName="CM_EXCEL_Drip">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectRetryCount="0"
+          DTS:ConnectRetryInterval="0"
+          DTS:ConnectionString="Provider=Microsoft.ACE.OLEDB.12.0;Data Source=D:\OneDrive\OneDrive - Iris Software Inc\KT\RBC\SSIS\sample-data\DripEligibility.xlsx;Extended Properties=&quot;EXCEL 12.0 XML;HDR=YES&quot;;" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_FILE_ArchivedWorkbook]"
+      DTS:CreationName="FILE"
+      DTS:DTSID="{CD9AD68D-B858-422C-A340-1040879AA721}"
+      DTS:ObjectName="CM_FILE_ArchivedWorkbook">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:FileUsageType="1"
+          DTS:ConnectionString="D:\OneDrive\OneDrive - Iris Software Inc\KT\RBC\SSIS\output\archived-DripEligibility.xlsx" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_FILE_SourceWorkbook]"
+      DTS:CreationName="FILE"
+      DTS:DTSID="{9DDB0FC9-4483-47C0-9FD4-FE127E27E195}"
+      DTS:ObjectName="CM_FILE_SourceWorkbook">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectionString="D:\OneDrive\OneDrive - Iris Software Inc\KT\RBC\SSIS\sample-data\DripEligibility.xlsx" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_SQL_SSISDemo]"
+      DTS:CreationName="OLEDB"
+      DTS:DTSID="{C43B25F8-2685-4555-A052-CF8FF8B65E7A}"
+      DTS:ObjectName="CM_SQL_SSISDemo">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectRetryCount="1"
+          DTS:ConnectRetryInterval="5"
+          DTS:ConnectionString="Data Source=localhost,1433;User ID=sa;Initial Catalog=SSISDemo;Provider=MSOLEDBSQL.1;Persist Security Info=True;">
+          <DTS:Password
+            DTS:Name="Password"
+            Sensitive="1"
+            Encrypted="1">AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA4aVja4Hhk0yrqzaTZU74NAAAAAAIAAAARABUAFMAAAAQZgAAAAEAACAAAADcN1zgZbMTVU4h5sTIAhSYpnm8q26UWRrDnXSpSqJraAAAAAAOgAAAAAIAACAAAAAJYfmfGPgckYdVH8/uZqmHgtUHyYY2QSHUb/cSdS8cljAAAAD/sWAVnl/apENbr8g0Rm2pih+0eWkXeAv/o3rP+HIrEgCgNA5joRaGi/wlWPGtKf9AAAAA3jIVBAVR72P6G/5yqDXIc+BkJYQxZlOGQ6D59d+1HLbgIPm0wk5BK6BdVx/HZ9nZWu6mAmC5Gau73v1bVmPLNA</DTS:Password>
+        </DTS:ConnectionManager>
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:LogProviders>
+    <DTS:LogProvider
+      DTS:ConfigString="CM_SQL_SSISDemo"
+      DTS:CreationName="DTS.LogProviderSQLServer"
+      DTS:DTSID="{EFE577B2-C439-4FE0-9306-681AFE6E4338}"
+      DTS:ObjectName="LP_SqlServer">
+      <DTS:ObjectData>
+        <InnerObject />
+      </DTS:ObjectData>
+    </DTS:LogProvider>
+  </DTS:LogProviders>
+  <DTS:PackageParameters>
+    <DTS:PackageParameter
+      DTS:CreationName=""
+      DTS:DataType="8"
+      DTS:DTSID="{27CF61D0-EA31-4B1B-B8AD-1296AE7116A9}"
+      DTS:ObjectName="BatchLabel">
+      <DTS:Property
+        DTS:DataType="8"
+        DTS:Name="ParameterValue">nightly</DTS:Property>
+    </DTS:PackageParameter>
+    <DTS:PackageParameter
+      DTS:CreationName=""
+      DTS:DataType="8"
+      DTS:DTSID="{5B7919C3-0DF5-4B28-97FB-E7963A16E10C}"
+      DTS:ObjectName="ExcelFilePath">
+      <DTS:Property
+        DTS:DataType="8"
+        DTS:Name="ParameterValue">D:\OneDrive\OneDrive - Iris Software Inc\KT\RBC\SSIS\sample-data\DripEligibility.xlsx</DTS:Property>
+    </DTS:PackageParameter>
+  </DTS:PackageParameters>
+  <DTS:Variables>
+    <DTS:Variable
+      DTS:CreationName=""
+      DTS:DTSID="{7B912E6F-249C-4D7F-8F57-C7ABFFD970C0}"
+      DTS:IncludeInDebugDump="2345"
+      DTS:Namespace="User"
+      DTS:ObjectName="CurrentFile">
+      <DTS:VariableValue
+        DTS:DataType="8"
+        xml:space="preserve"></DTS:VariableValue>
+    </DTS:Variable>
+  </DTS:Variables>
+  <DTS:LoggingOptions
+    DTS:FilterKind="0"
+    DTS:LoggingMode="1">
+    <DTS:Property
+      DTS:DataType="8"
+      DTS:Name="EventFilter">3,7,OnError,9,OnWarning,12,OnTaskFailed</DTS:Property>
+    <DTS:SelectedLogProviders>
+      <DTS:SelectedLogProvider
+        DTS:InstanceID="{EFE577B2-C439-4FE0-9306-681AFE6E4338}" />
+    </DTS:SelectedLogProviders>
+  </DTS:LoggingOptions>
+  <DTS:Executables>
+    <DTS:Executable
+      DTS:refId="Package\DFT_ExcelImport"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:DelayValidation="True"
+      DTS:DTSID="{F2E8DC14-54D2-4F70-818A-9E41AA4E8E15}"
+      DTS:ExecutableType="Microsoft.Pipeline"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="DFT_ExcelImport"
+      DTS:TaskContact="Performs high-performance data extraction, transformation and loading;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <pipeline
+          version="1">
+          <components>
+            <component
+              refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip"
+              componentClassID="Microsoft.ExcelSource"
+              contactInfo="Excel Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;1"
+              description="Excel Source"
+              name="EXCEL_SRC_Drip"
+              usesDispositions="true"
+              version="1">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset">DripEligibility$</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor"></property>
+                <property
+                  dataType="System.String"
+                  description="The variable that contains the SQL command to be executed."
+                  name="SqlCommandVariable"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">0</property>
+                <property
+                  dataType="System.String"
+                  description="The mapping from parameters in the SQL command to variables."
+                  name="ParameterMapping"></property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_EXCEL_Drip]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_EXCEL_Drip]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <outputs>
+                <output
+                  refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output]"
+                  name="Excel Source Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].Columns[CustomerID]"
+                      dataType="r8"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].ExternalColumns[CustomerID]"
+                      lineageId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].Columns[CustomerID]"
+                      name="CustomerID"
+                      truncationRowDisposition="FailComponent" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].Columns[DripEligible]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].ExternalColumns[DripEligible]"
+                      length="255"
+                      lineageId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].Columns[DripEligible]"
+                      name="DripEligible"
+                      truncationRowDisposition="FailComponent" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].Columns[ReviewedBy]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].ExternalColumns[ReviewedBy]"
+                      length="255"
+                      lineageId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].Columns[ReviewedBy]"
+                      name="ReviewedBy"
+                      truncationRowDisposition="FailComponent" />
+                  </outputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].ExternalColumns[CustomerID]"
+                      dataType="r8"
+                      name="CustomerID" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].ExternalColumns[DripEligible]"
+                      dataType="wstr"
+                      length="255"
+                      name="DripEligible" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].ExternalColumns[ReviewedBy]"
+                      dataType="wstr"
+                      length="255"
+                      name="ReviewedBy" />
+                  </externalMetadataColumns>
+                </output>
+                <output
+                  refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Error Output]"
+                  isErrorOut="true"
+                  name="Excel Source Error Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Error Output].Columns[CustomerID]"
+                      dataType="r8"
+                      lineageId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Error Output].Columns[CustomerID]"
+                      name="CustomerID" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Error Output].Columns[DripEligible]"
+                      dataType="wstr"
+                      length="255"
+                      lineageId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Error Output].Columns[DripEligible]"
+                      name="DripEligible" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Error Output].Columns[ReviewedBy]"
+                      dataType="wstr"
+                      length="255"
+                      lineageId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Error Output].Columns[ReviewedBy]"
+                      name="ReviewedBy" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_ExcelImport\OLEDST_Drip"
+              componentClassID="Microsoft.OLEDBDestination"
+              contactInfo="OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4"
+              description="OLE DB Destination"
+              name="OLEDST_Drip"
+              usesDispositions="true"
+              version="4">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset">[dbo].[DripEligibility]</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Forces the use of the DefaultCodePage property value when describing character data."
+                  name="AlwaysUseDefaultCodePage">false</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">3</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the values supplied for identity columns will be copied to the destination. If false, values for identity columns will be auto-generated at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepIdentity">false</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Indicates whether the columns containing null will have null inserted in the destination. If false, columns containing null will have their default values inserted at the destination. Applies only if fast load is turned on."
+                  name="FastLoadKeepNulls">false</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies options to be used with fast load.  Applies only if fast load is turned on."
+                  name="FastLoadOptions"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies when commits are issued during data insertion.  A value of 0 specifies that one commit will be issued at the end of data insertion.  Applies only if fast load is turned on."
+                  name="FastLoadMaxInsertCommitSize">2147483647</property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_ExcelImport\OLEDST_Drip.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_SQL_SSISDemo]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_SQL_SSISDemo]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <inputs>
+                <input
+                  refId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input]"
+                  errorOrTruncationOperation="Insert"
+                  errorRowDisposition="FailComponent"
+                  hasSideEffects="true"
+                  name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input].Columns[CustomerID]"
+                      cachedDataType="r8"
+                      cachedName="CustomerID"
+                      externalMetadataColumnId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]"
+                      lineageId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].Columns[CustomerID]" />
+                    <inputColumn
+                      refId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input].Columns[DripEligible]"
+                      cachedDataType="wstr"
+                      cachedLength="255"
+                      cachedName="DripEligible"
+                      externalMetadataColumnId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input].ExternalColumns[DripEligible]"
+                      lineageId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].Columns[DripEligible]" />
+                    <inputColumn
+                      refId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input].Columns[ReviewedBy]"
+                      cachedDataType="wstr"
+                      cachedLength="255"
+                      cachedName="ReviewedBy"
+                      externalMetadataColumnId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input].ExternalColumns[ReviewedBy]"
+                      lineageId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output].Columns[ReviewedBy]" />
+                  </inputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]"
+                      dataType="i4"
+                      name="CustomerID" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input].ExternalColumns[DripEligible]"
+                      dataType="wstr"
+                      length="5"
+                      name="DripEligible" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input].ExternalColumns[ReviewedBy]"
+                      dataType="wstr"
+                      length="50"
+                      name="ReviewedBy" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input].ExternalColumns[ImportedAt]"
+                      dataType="dbTimeStamp"
+                      name="ImportedAt" />
+                  </externalMetadataColumns>
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_ExcelImport\OLEDST_Drip.Outputs[OLE DB Destination Error Output]"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="OLE DB Destination Error Output"
+                  synchronousInputId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_ExcelImport\OLEDST_Drip.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ExcelImport\OLEDST_Drip.Outputs[OLE DB Destination Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_ExcelImport\OLEDST_Drip.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_ExcelImport\OLEDST_Drip.Outputs[OLE DB Destination Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+          </components>
+          <paths>
+            <path
+              refId="Package\DFT_ExcelImport.Paths[Excel Source Output]"
+              endId="Package\DFT_ExcelImport\OLEDST_Drip.Inputs[OLE DB Destination Input]"
+              name="Excel Source Output"
+              startId="Package\DFT_ExcelImport\EXCEL_SRC_Drip.Outputs[Excel Source Output]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\DFT_FlagCustomers"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:DelayValidation="True"
+      DTS:DTSID="{95FE2A7C-765B-4177-80FB-A01DC21D1C95}"
+      DTS:ExecutableType="Microsoft.Pipeline"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="DFT_FlagCustomers"
+      DTS:TaskContact="Performs high-performance data extraction, transformation and loading;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <pipeline
+          version="1">
+          <components>
+            <component
+              refId="Package\DFT_FlagCustomers\OLECMD_SetFlag"
+              componentClassID="Microsoft.OLEDBCommand"
+              contactInfo="OLE DB Command;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;2"
+              description="Runs an SQL statement for each row in a data flow. For example, call a 'new employee setup' stored procedure for each row in the 'new employees' table. Note: running an SQL statement for each row of a large data flow may take a long time."
+              name="OLECMD_SetFlag"
+              usesDispositions="true"
+              version="2">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  expressionType="Notify"
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor">EXEC dbo.usp_SetCustomerFlag ?, N'flagged'</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_SQL_SSISDemo]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_SQL_SSISDemo]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <inputs>
+                <input
+                  refId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Inputs[OLE DB Command Input]"
+                  errorOrTruncationOperation="Command Execution"
+                  errorRowDisposition="FailComponent"
+                  hasSideEffects="true"
+                  name="OLE DB Command Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Inputs[OLE DB Command Input].Columns[CustomerID]"
+                      cachedDataType="i4"
+                      cachedName="CustomerID"
+                      externalMetadataColumnId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Inputs[OLE DB Command Input].ExternalColumns[@CustomerID]"
+                      lineageId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Output].Columns[CustomerID]" />
+                  </inputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Inputs[OLE DB Command Input].ExternalColumns[@CustomerID]"
+                      dataType="i4"
+                      name="@CustomerID">
+                      <properties>
+                        <property
+                          dataType="System.Int32"
+                          description="Parameter information.  Matches OLE DB's DBPARAMFLAGSENUM values."
+                          name="DBParamInfoFlags">81</property>
+                      </properties>
+                    </externalMetadataColumn>
+                  </externalMetadataColumns>
+                </input>
+              </inputs>
+              <outputs>
+                <output
+                  refId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Outputs[OLE DB Command Output]"
+                  exclusionGroup="1"
+                  name="OLE DB Command Output"
+                  synchronousInputId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Inputs[OLE DB Command Input]">
+                  <externalMetadataColumns />
+                </output>
+                <output
+                  refId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Outputs[OLE DB Command Error Output]"
+                  exclusionGroup="1"
+                  isErrorOut="true"
+                  name="OLE DB Command Error Output"
+                  synchronousInputId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Inputs[OLE DB Command Input]">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Outputs[OLE DB Command Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Outputs[OLE DB Command Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Outputs[OLE DB Command Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Outputs[OLE DB Command Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+            <component
+              refId="Package\DFT_FlagCustomers\OLESRC_CustomerIds"
+              componentClassID="Microsoft.OLEDBSource"
+              contactInfo="OLE DB Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;7"
+              description="OLE DB Source"
+              name="OLESRC_CustomerIds"
+              usesDispositions="true"
+              version="7">
+              <properties>
+                <property
+                  dataType="System.Int32"
+                  description="The number of seconds before a command times out.  A value of 0 indicates an infinite time-out."
+                  name="CommandTimeout">0</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of the database object used to open a rowset."
+                  name="OpenRowset"></property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the variable that contains the name of the database object used to open a rowset."
+                  name="OpenRowsetVariable"></property>
+                <property
+                  dataType="System.String"
+                  description="The SQL command to be executed."
+                  name="SqlCommand"
+                  UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor">SELECT DISTINCT CustomerID FROM dbo.Orders</property>
+                <property
+                  dataType="System.String"
+                  description="The variable that contains the SQL command to be executed."
+                  name="SqlCommandVariable"></property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the column code page to use when code page information is unavailable from the data source."
+                  name="DefaultCodePage">1252</property>
+                <property
+                  dataType="System.Boolean"
+                  description="Forces the use of the DefaultCodePage property value when describing character data."
+                  name="AlwaysUseDefaultCodePage">false</property>
+                <property
+                  dataType="System.Int32"
+                  description="Specifies the mode used to access the database."
+                  name="AccessMode"
+                  typeConverter="AccessMode">2</property>
+                <property
+                  dataType="System.String"
+                  description="The mappings between the parameters in the SQL command and variables."
+                  name="ParameterMapping"></property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Connections[OleDbConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_SQL_SSISDemo]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_SQL_SSISDemo]"
+                  description="The OLE DB runtime connection used to access the database."
+                  name="OleDbConnection" />
+              </connections>
+              <outputs>
+                <output
+                  refId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Output]"
+                  name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Output].Columns[CustomerID]"
+                      dataType="i4"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Output].ExternalColumns[CustomerID]"
+                      lineageId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Output].Columns[CustomerID]"
+                      name="CustomerID"
+                      truncationRowDisposition="FailComponent" />
+                  </outputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Output].ExternalColumns[CustomerID]"
+                      dataType="i4"
+                      name="CustomerID" />
+                  </externalMetadataColumns>
+                </output>
+                <output
+                  refId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Error Output]"
+                  isErrorOut="true"
+                  name="OLE DB Source Error Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Error Output].Columns[CustomerID]"
+                      dataType="i4"
+                      lineageId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Error Output].Columns[CustomerID]"
+                      name="CustomerID" />
+                    <outputColumn
+                      refId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Error Output].Columns[ErrorCode]"
+                      dataType="i4"
+                      lineageId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Error Output].Columns[ErrorCode]"
+                      name="ErrorCode"
+                      specialFlags="1" />
+                    <outputColumn
+                      refId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Error Output].Columns[ErrorColumn]"
+                      dataType="i4"
+                      lineageId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Error Output].Columns[ErrorColumn]"
+                      name="ErrorColumn"
+                      specialFlags="2" />
+                  </outputColumns>
+                  <externalMetadataColumns />
+                </output>
+              </outputs>
+            </component>
+          </components>
+          <paths>
+            <path
+              refId="Package\DFT_FlagCustomers.Paths[OLE DB Source Output]"
+              endId="Package\DFT_FlagCustomers\OLECMD_SetFlag.Inputs[OLE DB Command Input]"
+              name="OLE DB Source Output"
+              startId="Package\DFT_FlagCustomers\OLESRC_CustomerIds.Outputs[OLE DB Source Output]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\FEL_SampleFiles"
+      DTS:CreationName="STOCK:FOREACHLOOP"
+      DTS:DTSID="{B4508DF0-E16F-46F3-A676-B46B497E4239}"
+      DTS:ExecutableType="STOCK:FOREACHLOOP"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="FEL_SampleFiles">
+      <DTS:ForEachEnumerator
+        DTS:CreationName="Microsoft.ForEachFileEnumerator"
+        DTS:DTSID="{C6609641-311C-4506-9983-58755763B6CE}"
+        DTS:ObjectName="{C6609641-311C-4506-9983-58755763B6CE}">
+        <DTS:ObjectData>
+          <ForEachFileEnumeratorProperties>
+            <FEFEProperty
+              Folder="D:\OneDrive\OneDrive - Iris Software Inc\KT\RBC\SSIS\sample-data" />
+            <FEFEProperty
+              FileSpec="*.csv" />
+            <FEFEProperty
+              FileNameRetrievalType="1" />
+            <FEFEProperty
+              Recurse="0" />
+          </ForEachFileEnumeratorProperties>
+        </DTS:ObjectData>
+      </DTS:ForEachEnumerator>
+      <DTS:Variables />
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:refId="Package\FEL_SampleFiles\SQL_LogFileName"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:DTSID="{CB1336A7-4507-44FD-98BD-DA746C4837CD}"
+          DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+          DTS:LocaleID="-1"
+          DTS:ObjectName="SQL_LogFileName"
+          DTS:ThreadHint="0">
+          <DTS:Variables />
+          <DTS:PropertyExpression
+            DTS:Name="SqlStatementSource">"INSERT INTO dbo.EtlRunLog (PackageName, SourceName, EventType, MessageText) VALUES (N'Package_Advanced', N'FEL_SampleFiles', N'FileFound', N'" + @[User::CurrentFile] + "');"</DTS:PropertyExpression>
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              SQLTask:Connection="{C43B25F8-2685-4555-A052-CF8FF8B65E7A}"
+              SQLTask:SqlStatementSource="INSERT INTO dbo.EtlRunLog (PackageName, SourceName, EventType, MessageText) VALUES (N'Package_Advanced', N'FEL_SampleFiles', N'FileFound', N'');" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+      <DTS:ForEachVariableMappings>
+        <DTS:ForEachVariableMapping
+          DTS:CreationName=""
+          DTS:DTSID="{14546C91-30C2-4925-9C2C-A1A9FECBCC77}"
+          DTS:ObjectName="{14546C91-30C2-4925-9C2C-A1A9FECBCC77}"
+          DTS:ValueIndex="0"
+          DTS:VariableName="User::CurrentFile" />
+      </DTS:ForEachVariableMappings>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\SEQ_Prepare"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:DTSID="{FC8BE946-DB8E-4C68-854B-BF430392499D}"
+      DTS:ExecutableType="STOCK:SEQUENCE"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="SEQ_Prepare"
+      DTS:TransactionOption="0">
+      <DTS:Variables />
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:refId="Package\SEQ_Prepare\FST_ArchiveWorkbook"
+          DTS:CreationName="Microsoft.FileSystemTask"
+          DTS:DTSID="{FF4B8665-3CB9-45FF-B557-3873EE302BFF}"
+          DTS:ExecutableType="Microsoft.FileSystemTask"
+          DTS:LocaleID="-1"
+          DTS:ObjectName="FST_ArchiveWorkbook"
+          DTS:TaskContact="File System Task;Microsoft Corporation; SQL Server 2022; © 2022 Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1"
+          DTS:ThreadHint="0">
+          <DTS:Variables />
+          <DTS:ObjectData>
+            <FileSystemData
+              TaskOverwriteDestFile="True"
+              TaskSourcePath="{9DDB0FC9-4483-47C0-9FD4-FE127E27E195}"
+              TaskDestinationPath="{CD9AD68D-B858-422C-A340-1040879AA721}" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+        <DTS:Executable
+          DTS:refId="Package\SEQ_Prepare\SQL_TruncateTargets"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:DTSID="{68CB75CB-6552-4268-9F7B-AD59E1D8E799}"
+          DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+          DTS:LocaleID="-1"
+          DTS:ObjectName="SQL_TruncateTargets"
+          DTS:ThreadHint="0">
+          <DTS:Variables />
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              SQLTask:Connection="{C43B25F8-2685-4555-A052-CF8FF8B65E7A}"
+              SQLTask:SqlStatementSource="TRUNCATE TABLE dbo.DripEligibility; UPDATE dbo.CustomerFlag SET FlagValue='unset';" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+      <DTS:PrecedenceConstraints>
+        <DTS:PrecedenceConstraint
+          DTS:refId="Package\SEQ_Prepare.PrecedenceConstraints[{6CFFB78C-5A73-41BE-B817-523CB84E6A4B\}]"
+          DTS:CreationName=""
+          DTS:DTSID="{6CFFB78C-5A73-41BE-B817-523CB84E6A4B}"
+          DTS:From="Package\SEQ_Prepare\SQL_TruncateTargets"
+          DTS:LogicalAnd="True"
+          DTS:ObjectName="{6CFFB78C-5A73-41BE-B817-523CB84E6A4B}"
+          DTS:To="Package\SEQ_Prepare\FST_ArchiveWorkbook" />
+      </DTS:PrecedenceConstraints>
+    </DTS:Executable>
+  </DTS:Executables>
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[{1A722047-0D48-4C10-BB2B-640351E5C0D7\}]"
+      DTS:CreationName=""
+      DTS:DTSID="{1A722047-0D48-4C10-BB2B-640351E5C0D7}"
+      DTS:From="Package\SEQ_Prepare"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="{1A722047-0D48-4C10-BB2B-640351E5C0D7}"
+      DTS:To="Package\DFT_FlagCustomers" />
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[{252E8251-F655-432D-8BDA-1202302695C3\}]"
+      DTS:CreationName=""
+      DTS:DTSID="{252E8251-F655-432D-8BDA-1202302695C3}"
+      DTS:From="Package\SEQ_Prepare"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="{252E8251-F655-432D-8BDA-1202302695C3}"
+      DTS:To="Package\DFT_ExcelImport" />
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[{474D0091-B6CF-4569-B768-7F746604D842\}]"
+      DTS:CreationName=""
+      DTS:DTSID="{474D0091-B6CF-4569-B768-7F746604D842}"
+      DTS:From="Package\SEQ_Prepare"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="{474D0091-B6CF-4569-B768-7F746604D842}"
+      DTS:To="Package\FEL_SampleFiles" />
+  </DTS:PrecedenceConstraints>
+  <DTS:EventHandlers>
+    <DTS:EventHandler
+      DTS:refId="Package.EventHandlers[OnError]"
+      DTS:CreationName="OnError"
+      DTS:DTSID="{675128B8-71EA-4ABF-AC59-313035CA9060}"
+      DTS:EventID="843132209"
+      DTS:EventName="OnError"
+      DTS:LocaleID="-1">
+      <DTS:Variables>
+        <DTS:Variable
+          DTS:CreationName=""
+          DTS:Description="The propagate property of the event"
+          DTS:DTSID="{D7BC9131-559C-4104-944C-762932FA5010}"
+          DTS:IncludeInDebugDump="6789"
+          DTS:Namespace="System"
+          DTS:ObjectName="Propagate">
+          <DTS:VariableValue
+            DTS:DataType="11">-1</DTS:VariableValue>
+        </DTS:Variable>
+      </DTS:Variables>
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:refId="Package.EventHandlers[OnError]\SQL_LogOnError"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:DTSID="{8AD6102F-D143-4946-A5E2-58BADE98CF7C}"
+          DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+          DTS:LocaleID="-1"
+          DTS:ObjectName="SQL_LogOnError">
+          <DTS:Variables />
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              SQLTask:Connection="{C43B25F8-2685-4555-A052-CF8FF8B65E7A}"
+              SQLTask:SqlStatementSource="INSERT INTO dbo.EtlRunLog (PackageName, SourceName, EventType, MessageText) VALUES (N'Package_Advanced', N'(event handler)', N'OnError', N'An error was raised.');" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+  </DTS:EventHandlers>
+</DTS:Executable>

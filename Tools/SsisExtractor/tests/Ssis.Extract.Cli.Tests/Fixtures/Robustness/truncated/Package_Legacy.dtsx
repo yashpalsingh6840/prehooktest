@@ -1,0 +1,362 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:refId="Package"
+  DTS:CreationDate="8/17/2026 11:59:11 AM"
+  DTS:CreationName="Microsoft.Package"
+  DTS:CreatorComputerName="IRIS-CSG-8043"
+  DTS:CreatorName="IRISSOFTWARE\sandeep.tuli"
+  DTS:DelayValidation="True"
+  DTS:DTSID="{49DDF805-BDFF-4A89-8191-8F8EBB847C73}"
+  DTS:EnableConfig="True"
+  DTS:ExecutableType="Microsoft.Package"
+  DTS:LastModifiedProductVersion="16.0.1000.6"
+  DTS:LocaleID="1033"
+  DTS:ObjectName="Package_Legacy"
+  DTS:VersionGUID="{DB471034-360B-4811-A32B-7EC4E17299C6}">
+  <DTS:Property
+    DTS:Name="PackageFormatVersion">8</DTS:Property>
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_FF_AuditTrail]"
+      DTS:CreationName="FLATFILE"
+      DTS:DTSID="{319DB62A-43DA-4F18-983B-D94E3285DF78}"
+      DTS:ObjectName="CM_FF_AuditTrail">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:Format="Delimited"
+          DTS:LocaleID="1033"
+          DTS:HeaderRowDelimiter="_x000D__x000A_"
+          DTS:RowDelimiter="_x000D__x000A_"
+          DTS:TextQualifier=""
+          DTS:CodePage="1252"
+          DTS:ConnectionString="D:\OneDrive\OneDrive - Iris Software Inc\KT\RBC\SSIS\output\legacy-audit-trail.txt">
+          <DTS:FlatFileColumns>
+            <DTS:FlatFileColumn
+              DTS:ColumnType="Delimited"
+              DTS:ColumnDelimiter="_x002C_"
+              DTS:MaximumWidth="10"
+              DTS:DataType="130"
+              DTS:ObjectName="CustomerID"
+              DTS:DTSID="{582CE960-F0DD-4A67-8D34-2AEAB5ED5D02}"
+              DTS:CreationName="" />
+            <DTS:FlatFileColumn
+              DTS:ColumnType="Delimited"
+              DTS:ColumnDelimiter="_x000D__x000A_"
+              DTS:MaximumWidth="4"
+              DTS:DataType="130"
+              DTS:ObjectName="CountryCode"
+              DTS:DTSID="{3DE8091F-9206-42ED-92F8-0978184A8BD9}"
+              DTS:CreationName="" />
+          </DTS:FlatFileColumns>
+        </DTS:ConnectionManager>
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_FF_CustomersFixed]"
+      DTS:CreationName="FLATFILE"
+      DTS:DTSID="{46AE2E28-6B51-4414-A5AB-960D058CCC6A}"
+      DTS:ObjectName="CM_FF_CustomersFixed">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:Format="RaggedRight"
+          DTS:LocaleID="1033"
+          DTS:HeaderRowsToSkip="1"
+          DTS:HeaderRowDelimiter="_x000D__x000A_"
+          DTS:RowDelimiter="_x000D__x000A_"
+          DTS:TextQualifier=""
+          DTS:CodePage="1252"
+          DTS:ConnectionString="D:\OneDrive\OneDrive - Iris Software Inc\KT\RBC\SSIS\sample-data\CustomersFixed.txt">
+          <DTS:FlatFileColumns>
+            <DTS:FlatFileColumn
+              DTS:ColumnDelimiter=""
+              DTS:ColumnWidth="10"
+              DTS:MaximumWidth="10"
+              DTS:DataType="130"
+              DTS:ObjectName="CustomerID"
+              DTS:DTSID="{C2F3763B-B71A-4C7C-8BF9-0CC5974D1493}"
+              DTS:CreationName="" />
+            <DTS:FlatFileColumn
+              DTS:ColumnDelimiter=""
+              DTS:ColumnWidth="30"
+              DTS:MaximumWidth="30"
+              DTS:DataType="130"
+              DTS:ObjectName="FullName"
+              DTS:DTSID="{0FC64333-36FA-4839-8091-352976D058E3}"
+              DTS:CreationName="" />
+            <DTS:FlatFileColumn
+              DTS:ColumnDelimiter=""
+              DTS:ColumnWidth="40"
+              DTS:MaximumWidth="40"
+              DTS:DataType="130"
+              DTS:ObjectName="Email"
+              DTS:DTSID="{F400D485-9C6E-4D5B-A372-434139B78776}"
+              DTS:CreationName="" />
+            <DTS:FlatFileColumn
+              DTS:ColumnType="Delimited"
+              DTS:ColumnDelimiter="_x000D__x000A_"
+              DTS:MaximumWidth="4"
+              DTS:DataType="130"
+              DTS:ObjectName="CountryCode"
+              DTS:DTSID="{D91015A2-5449-4420-9367-220F544DD387}"
+              DTS:CreationName="" />
+          </DTS:FlatFileColumns>
+        </DTS:ConnectionManager>
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_SQL_SSISDemo]"
+      DTS:CreationName="OLEDB"
+      DTS:DTSID="{E5BB63DC-9A93-417B-B7A5-0C337CA34F0D}"
+      DTS:ObjectName="CM_SQL_SSISDemo">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectRetryCount="1"
+          DTS:ConnectRetryInterval="5"
+          DTS:ConnectionString="Data Source=localhost,1433;User ID=sa;Initial Catalog=SSISDemo;Provider=MSOLEDBSQL.1;Persist Security Info=True;">
+          <DTS:Password
+            DTS:Name="Password"
+            Sensitive="1"
+            Encrypted="1">AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA4aVja4Hhk0yrqzaTZU74NAAAAAAIAAAARABUAFMAAAAQZgAAAAEAACAAAACH78Iv0EqqzGXc62fseN5mo0wk4PXFAWr5so1RWol10wAAAAAOgAAAAAIAACAAAACxbidwEyC9GslUb/AMkVJcAPMNkToUyS+DIZwz2Mp/4TAAAAB/VrIfcoooyn1n8IqbI8J9PsBBk//lspxr0E8Q+APkAac+DeSD2Juwa051wKiXRAFAAAAATVbuU+bLwJdIq5AnzpKztR56g2s+6Dlhi1X8bwSqYgF/PRdmlNwJDURpNLTKg3UUC1b1FcNJwRdwGedfN3ZU8A</DTS:Password>
+        </DTS:ConnectionManager>
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[CM_SQL_SSISDemoCache]"
+      DTS:CreationName="OLEDB"
+      DTS:DTSID="{0B70F85F-8A24-4B7C-9EA2-50E195905B51}"
+      DTS:ObjectName="CM_SQL_SSISDemoCache">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectRetryCount="1"
+          DTS:ConnectRetryInterval="5"
+          DTS:ConnectionString="Data Source=localhost,1433;User ID=sa;Initial Catalog=SSISDemoCache;Provider=MSOLEDBSQL.1;Persist Security Info=True;">
+          <DTS:Password
+            DTS:Name="Password"
+            Sensitive="1"
+            Encrypted="1">AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA4aVja4Hhk0yrqzaTZU74NAAAAAAIAAAARABUAFMAAAAQZgAAAAEAACAAAAD39PzevSfRVDgdJTO2ZIPk+fm5Om/AkmX3ATY0AgIdxgAAAAAOgAAAAAIAACAAAACrypxozJETunWxSsVUMIafPn65K1m4zKl/wKI++Hh4rzAAAACKdoB9D7wrGEKQ7VyiDjddLPB+r1gQvUr2ipoc2e2KYd0Jqn+g6dGXW0shgvdN/wZAAAAAcFEogDtz8RRmYEEk+KxiQUuSvwYxxXzpPMMzsCr5iGYXEOCnieDZBHZyxrUC1xTLDd2mQNmc7/Kdc6Yrg+FaYg</DTS:Password>
+        </DTS:ConnectionManager>
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Configurations>
+    <DTS:Configuration
+      DTS:ConfigurationString="D:\OneDrive\OneDrive - Iris Software Inc\KT\RBC\SSIS\config\Package_Legacy.dtsConfig"
+      DTS:ConfigurationType="1"
+      DTS:CreationName=""
+      DTS:DTSID="{4C6DBCAC-B91E-4412-98DD-512F52E4F2B7}"
+      DTS:ObjectName="LegacyXmlConfig" />
+  </DTS:Configurations>
+  <DTS:Variables />
+  <DTS:Executables>
+    <DTS:Executable
+      DTS:refId="Package\DFT_FixedWidthImport"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:DelayValidation="True"
+      DTS:DTSID="{36B2742F-9A3D-456A-9BCF-1F27CBD2B01B}"
+      DTS:ExecutableType="Microsoft.Pipeline"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="DFT_FixedWidthImport"
+      DTS:TaskContact="Performs high-performance data extraction, transformation and loading;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <pipeline
+          version="1">
+          <components>
+            <component
+              refId="Package\DFT_FixedWidthImport\FFDST_AuditTrail_APPEND"
+              componentClassID="Microsoft.FlatFileDestination"
+              contactInfo="Flat File Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;1"
+              description="Flat File Destination"
+              localeId="1033"
+              name="FFDST_AuditTrail_APPEND"
+              version="1">
+              <properties>
+                <property
+                  dataType="System.Boolean"
+                  description="Specifies whether the data will overwrite or append to the destination file."
+                  name="Overwrite">false</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the text to write to the destination file before any data is written."
+                  expressionType="Notify"
+                  name="Header"></property>
+                <property
+                  dataType="System.Boolean"
+                  description="When text qualifier is enabled, specifies whether the text qualifier in the data written to the destination file will be escaped or not."
+                  name="EscapeQualifier">false</property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_FixedWidthImport\FFDST_AuditTrail_APPEND.Connections[FlatFileConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_FF_AuditTrail]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_FF_AuditTrail]"
+                  name="FlatFileConnection" />
+              </connections>
+              <inputs>
+                <input
+                  refId="Package\DFT_FixedWidthImport\FFDST_AuditTrail_APPEND.Inputs[Flat File Destination Input]"
+                  hasSideEffects="true"
+                  name="Flat File Destination Input">
+                  <inputColumns>
+                    <inputColumn
+                      refId="Package\DFT_FixedWidthImport\FFDST_AuditTrail_APPEND.Inputs[Flat File Destination Input].Columns[CustomerID]"
+                      cachedDataType="wstr"
+                      cachedLength="10"
+                      cachedName="CustomerID"
+                      externalMetadataColumnId="Package\DFT_FixedWidthImport\FFDST_AuditTrail_APPEND.Inputs[Flat File Destination Input].ExternalColumns[CustomerID]"
+                      lineageId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].Columns[CustomerID]" />
+                    <inputColumn
+                      refId="Package\DFT_FixedWidthImport\FFDST_AuditTrail_APPEND.Inputs[Flat File Destination Input].Columns[CountryCode]"
+                      cachedDataType="wstr"
+                      cachedLength="4"
+                      cachedName="CountryCode"
+                      externalMetadataColumnId="Package\DFT_FixedWidthImport\FFDST_AuditTrail_APPEND.Inputs[Flat File Destination Input].ExternalColumns[CountryCode]"
+                      lineageId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].Columns[CountryCode]" />
+                  </inputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_FixedWidthImport\FFDST_AuditTrail_APPEND.Inputs[Flat File Destination Input].ExternalColumns[CustomerID]"
+                      dataType="wstr"
+                      length="10"
+                      name="CustomerID" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_FixedWidthImport\FFDST_AuditTrail_APPEND.Inputs[Flat File Destination Input].ExternalColumns[CountryCode]"
+                      dataType="wstr"
+                      length="4"
+                      name="CountryCode" />
+                  </externalMetadataColumns>
+                </input>
+              </inputs>
+            </component>
+            <component
+              refId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed"
+              componentClassID="Microsoft.FlatFileSource"
+              contactInfo="Flat File Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;1"
+              description="Flat File Source"
+              localeId="1033"
+              name="FF_SRC_CustomersFixed"
+              usesDispositions="true"
+              version="1">
+              <properties>
+                <property
+                  dataType="System.Boolean"
+                  description="Specifies whether zero-length columns are treated as null."
+                  name="RetainNulls">false</property>
+                <property
+                  dataType="System.String"
+                  description="Specifies the name of an output column containing the file name. If no name is specified, no output column containing the file name will be generated."
+                  name="FileNameColumnName"></property>
+              </properties>
+              <connections>
+                <connection
+                  refId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Connections[FlatFileConnection]"
+                  connectionManagerID="Package.ConnectionManagers[CM_FF_CustomersFixed]"
+                  connectionManagerRefId="Package.ConnectionManagers[CM_FF_CustomersFixed]"
+                  name="FlatFileConnection" />
+              </connections>
+              <outputs>
+                <output
+                  refId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output]"
+                  name="Flat File Source Output">
+                  <outputColumns>
+                    <outputColumn
+                      refId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].Columns[CustomerID]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].ExternalColumns[CustomerID]"
+                      length="10"
+                      lineageId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].Columns[CustomerID]"
+                      name="CustomerID"
+                      truncationRowDisposition="FailComponent">
+                      <properties>
+                        <property
+                          dataType="System.Boolean"
+                          description="Indicates whether the column uses the faster, locale-neutral parsing routines."
+                          name="FastParse">false</property>
+                        <property
+                          dataType="System.Boolean"
+                          description="Indicates whether the data is in binary format."
+                          name="UseBinaryFormat">false</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].Columns[FullName]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].ExternalColumns[FullName]"
+                      length="30"
+                      lineageId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].Columns[FullName]"
+                      name="FullName"
+                      truncationRowDisposition="FailComponent">
+                      <properties>
+                        <property
+                          dataType="System.Boolean"
+                          description="Indicates whether the column uses the faster, locale-neutral parsing routines."
+                          name="FastParse">false</property>
+                        <property
+                          dataType="System.Boolean"
+                          description="Indicates whether the data is in binary format."
+                          name="UseBinaryFormat">false</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].Columns[Email]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].ExternalColumns[Email]"
+                      length="40"
+                      lineageId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].Columns[Email]"
+                      name="Email"
+                      truncationRowDisposition="FailComponent">
+                      <properties>
+                        <property
+                          dataType="System.Boolean"
+                          description="Indicates whether the column uses the faster, locale-neutral parsing routines."
+                          name="FastParse">false</property>
+                        <property
+                          dataType="System.Boolean"
+                          description="Indicates whether the data is in binary format."
+                          name="UseBinaryFormat">false</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].Columns[CountryCode]"
+                      dataType="wstr"
+                      errorOrTruncationOperation="Conversion"
+                      errorRowDisposition="FailComponent"
+                      externalMetadataColumnId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].ExternalColumns[CountryCode]"
+                      length="4"
+                      lineageId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].Columns[CountryCode]"
+                      name="CountryCode"
+                      truncationRowDisposition="FailComponent">
+                      <properties>
+                        <property
+                          dataType="System.Boolean"
+                          description="Indicates whether the column uses the faster, locale-neutral parsing routines."
+                          name="FastParse">false</property>
+                        <property
+                          dataType="System.Boolean"
+                          description="Indicates whether the data is in binary format."
+                          name="UseBinaryFormat">false</property>
+                      </properties>
+                    </outputColumn>
+                  </outputColumns>
+                  <externalMetadataColumns
+                    isUsed="True">
+                    <externalMetadataColumn
+                      refId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].ExternalColumns[CustomerID]"
+                      dataType="wstr"
+                      length="10"
+                      name="CustomerID" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].ExternalColumns[FullName]"
+                      dataType="wstr"
+                      length="30"
+                      name="FullName" />
+                    <externalMetadataColumn
+                      refId="Package\DFT_FixedWidthImport\FF_SRC_CustomersFixed.Outputs[Flat File Source Output].ExternalColumns[Email]"
+                      dataType="

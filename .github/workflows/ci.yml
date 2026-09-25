@@ -1,0 +1,54 @@
+name: ci
+
+# Phase 0.5 of the independent-review fix plan (`C:\Users\yashpal.singh01\.claude\plans\
+# snappy-skipping-grove.md`). windows-latest is required: the SsisExtractor solution's own object-
+# model probing paths, GAC-adjacent projects, and the byte-for-byte-preserving fixture edits this
+# repo's own tests read back all assume Windows, and Tools/SsisExtractor/scripts/*.ps1 are
+# Windows PowerShell scripts, not pwsh-portable ones.
+#
+# Etl.Core.Tests (the sibling D:\PoC\SSIS_Rewrite repo) is deliberately NOT run here -- that repo
+# is not checked into this one; CLAUDE.md's own "Etl.Core changes go in Tools/Etl.Core and must be
+# mirrored to D:\PoC\SSIS_Rewrite\src\Etl.Core by hand" note means CI here can only ever exercise
+# the ssisx-side half of a change. Bringing Etl.Core.Tests into this repo (so both halves are
+# covered by one CI run) is deliberately left as a separate decision -- see Phase 0.5's own line
+# in the plan -- and NOT attempted here.
+
+on:
+  push:
+    branches: [main, phase0-extractor]
+  pull_request:
+    branches: [main, phase0-extractor]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      # -nodeReuse:false is a standing rule in this repo (CLAUDE.md, and the fix plan's own
+      # "Standing rules for the fixer") -- a reused MSBuild node can inherit and hold open the
+      # stdout/stderr pipe handles of the process that spawned it, hanging a CI runner that has
+      # no interactive way to notice or kill it.
+      - name: dotnet test (SsisExtractor.slnx)
+        run: |
+          dotnet test Tools/SsisExtractor/SsisExtractor.slnx -c Release -nodeReuse:false --logger "console;verbosity=normal"
+
+      # Phase 0.4's own script-level regression guard for R4 (Run-Coverage.ps1's exit-code bug).
+      # Not a .NET test project -- there is no C# code path into a .ps1 file -- so it is its own
+      # CI step with its own pass/fail exit code.
+      - name: Run-Coverage.ps1 regression guard (R4)
+        run: |
+          & "Tools/SsisExtractor/scripts/tests/Run-Coverage.Tests.ps1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

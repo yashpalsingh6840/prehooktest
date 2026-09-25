@@ -23,3 +23,7 @@ out-*/
 scripts/*
 !scripts/*.ps1
 !scripts/*.bat
+# scripts/tests/ holds this repo's own script-level regression tests (Phase 0.4 of the
+# independent-review fix plan) -- source, not output, so it needs the same re-inclusion.
+!scripts/tests/
+!scripts/tests/*.ps1
