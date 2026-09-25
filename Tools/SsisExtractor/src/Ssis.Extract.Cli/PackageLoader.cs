@@ -309,6 +309,17 @@ internal static class PackageLoader
 
         result.Projects.Add((dtprojPath, project));
 
+        // A .conmgr that failed to load (missing or corrupt) is named here rather than
+        // silently dropped or, for a corrupt one, letting the exception propagate out of
+        // DtprojReader.Read and reject the whole .dtproj -- DtprojReader now isolates each
+        // .conmgr in its own try/catch, so the project's OTHER connection managers, and every
+        // package it lists, still load.
+        foreach (var cmError in project.ConnectionManagerLoadErrors)
+        {
+            result.Failures.Add(new LoadFailure(cmError.Path, "conmgr", cmError.Reason));
+            Console.Error.WriteLine($"warning: could not load connection manager {Path.GetFileName(cmError.Path)} ({cmError.Reason}) -- the project's other connection managers and packages still loaded");
+        }
+
         foreach (var pkgEntry in project.Packages)
         {
             var dtsxPath = Path.Combine(projectDir, pkgEntry.Name);

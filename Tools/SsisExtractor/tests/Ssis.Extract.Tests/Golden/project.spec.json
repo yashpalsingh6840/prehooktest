@@ -6,6 +6,7 @@
       "TargetServerVersion": "SQLServer2025"
     }
   ],
+  "ConnectionManagerLoadErrors": [],
   "ConnectionManagers": [],
   "CreationDate": "2026-08-07T17:03:01.4047283\u002B05:30",
   "CreatorComputerName": "IRIS-CSG-7247",

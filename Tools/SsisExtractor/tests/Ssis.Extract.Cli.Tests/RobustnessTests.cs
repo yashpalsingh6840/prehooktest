@@ -163,7 +163,7 @@ public class RobustnessTests : IDisposable
     // After 2.9: a named LoadFailure(kind "conmgr") naming the .conmgr path, and the project's
     // other connection managers / packages still load.
     // ---------------------------------------------------------------------
-    [Fact(Skip = "Phase 2.9")]
+    [Fact]
     public void MissingConmgr_ReportsANamedFailure_AndTheProjectStillLoads()
     {
         var outDir = NewOutDir();
@@ -174,7 +174,7 @@ public class RobustnessTests : IDisposable
         Assert.True(File.Exists(Path.Combine(outDir, "packages", "Package_Exports.spec.json")));
     }
 
-    [Fact(Skip = "Phase 2.9")]
+    [Fact]
     public void CorruptConmgr_ReportsANamedFailure_AndTheProjectStillLoads()
     {
         var outDir = NewOutDir();
