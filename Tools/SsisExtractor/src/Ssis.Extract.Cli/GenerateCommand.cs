@@ -167,6 +167,7 @@ internal static class GenerateCommand
         var decisionOutcomes = new List<(string Package, GapDecisionOutcome Outcome)>();
 
         var crashCount = 0;
+        var crashedPackages = new List<(string Package, string DiagnosticPath)>();
         var packageOrdinal = 0;
         foreach (var package in loaded.Packages)
         {
@@ -195,6 +196,12 @@ internal static class GenerateCommand
                     "ssisx", scrubbed, "package-generation", ex,
                     context: [("Package", $"{packageOrdinal} of {loaded.Packages.Count}")],
                     outDir: outDir);
+                // Phase 1.3(d): a crashed package used to be visible only as a console line and a
+                // diagnostic file -- generate-report.md, the one file this tool writes for someone
+                // to read AFTER the run, said nothing about it at all, so a package silently
+                // missing from the "Files written" table looked identical to one that was never
+                // in --input to begin with.
+                crashedPackages.Add((package.ObjectName, diagPath));
                 Console.Error.WriteLine($"error: package {packageOrdinal} of {loaded.Packages.Count} hit an unexpected internal error during generation -- skipped, continuing with the rest.");
                 Console.Error.WriteLine($"  A diagnostic file with no client data was written to: {diagPath}");
                 continue;
@@ -241,7 +248,7 @@ internal static class GenerateCommand
         StableJsonWriter.WriteToFile(allGaps, gapsPath);
 
         var reportPath = Path.Combine(outDir, "generate-report.md");
-        WriteReport(reportPath, results, loaded.Failures, fixedFileGaps, allGaps, decisionOutcomes);
+        WriteReport(reportPath, results, loaded.Failures, crashedPackages, fixedFileGaps, allGaps, decisionOutcomes);
 
         // Written unconditionally, at the --out ROOT (not inside generate/, not inside gaps/)
         // specifically so it is the first thing visible to anyone -- a person or an AI coding
@@ -524,7 +531,7 @@ internal static class GenerateCommand
         return copied;
     }
 
-    private static void WriteReport(string path, List<PackageGenerateResult> results, List<PackageLoader.LoadFailure> loadFailures, List<GenerationGap> fixedFileGaps, List<GapSpec> allGaps, List<(string Package, GapDecisionOutcome Outcome)> decisionOutcomes)
+    private static void WriteReport(string path, List<PackageGenerateResult> results, List<PackageLoader.LoadFailure> loadFailures, List<(string Package, string DiagnosticPath)> crashedPackages, List<GenerationGap> fixedFileGaps, List<GapSpec> allGaps, List<(string Package, GapDecisionOutcome Outcome)> decisionOutcomes)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# ssisx generate -- report");
@@ -534,7 +541,8 @@ internal static class GenerateCommand
 
         var totalFiles = results.Sum(r => r.Files.Count + r.SiblingFiles.Count);
         var totalGaps = results.Sum(r => r.Gaps.Count) + fixedFileGaps.Count;
-        sb.AppendLine($"**{totalFiles} file(s) written across {results.Count} package(s), {totalGaps} gap(s).**");
+        sb.AppendLine($"**{totalFiles} file(s) written across {results.Count} package(s), {totalGaps} gap(s).**"
+            + (crashedPackages.Count > 0 ? $" **{crashedPackages.Count} package(s) crashed during generation -- see below.**" : ""));
         sb.AppendLine();
 
         sb.AppendLine("| Package | Files written | Starter tests | Gaps |");
@@ -580,6 +588,22 @@ internal static class GenerateCommand
             sb.AppendLine("|---|---|---|---|");
             foreach (var (pkg, outcome) in decisionOutcomes)
                 sb.AppendLine($"| {pkg} | {outcome.Status} | `{outcome.GapId}` | {outcome.Detail} |");
+            sb.AppendLine();
+        }
+
+        if (crashedPackages.Count > 0)
+        {
+            sb.AppendLine("## Packages that crashed during generation -- an internal ssisx bug, not a gap");
+            sb.AppendLine();
+            sb.AppendLine("Loaded successfully but generation itself threw an unexpected exception -- this is a real,");
+            sb.AppendLine("unclassified ssisx defect, not a reported gap. Every OTHER package in this run still");
+            sb.AppendLine("generated normally (one package crashing never costs the rest). Check the named diagnostic");
+            sb.AppendLine("file for the real exception, and consider filing it.");
+            sb.AppendLine();
+            sb.AppendLine("| Package | Diagnostic file |");
+            sb.AppendLine("|---|---|");
+            foreach (var (pkg, diagPath) in crashedPackages)
+                sb.AppendLine($"| {pkg} | {diagPath} |");
             sb.AppendLine();
         }
 

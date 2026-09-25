@@ -223,8 +223,13 @@ Write-Banner "==================================================================
 Write-Banner " Step 3/5 -- generate (framework: $Framework)"
 Write-Banner "==================================================================="
 $generateExit = Invoke-Tool $ssisx (@('generate', '--input', $InputPath, '--out', $genOut, '--recursive', '--etl-core', $EtlCorePath, '--framework', $Framework, '--fills', $FillsPath) + $packageArgs)
-if ($generateExit -ne 0 -and $generateExit -ne 3) { Write-Error "ssisx generate failed with exit code $generateExit." -ErrorAction Stop }
+# 98 = one or more packages crashed during generation but the rest were still written (see
+# GenerateCommand.cs's own crashCount) -- exactly like 3 (blocking gaps), this is a loud warning
+# about a PARTIAL result, not a reason to abort the whole pipeline: Steps 4/5 should still run
+# against whatever DID generate, the same as a plain gap-blocked package would.
+if ($generateExit -ne 0 -and $generateExit -ne 3 -and $generateExit -ne 98) { Write-Error "ssisx generate failed with exit code $generateExit." -ErrorAction Stop }
 if ($generateExit -eq 3) { Write-Warning "generate reported blocking gaps -- see $genOut\generate-report.md. Steps 4/5 still run against whatever DID generate." }
+if ($generateExit -eq 98) { Write-Warning "generate: one or more packages crashed during generation -- see $genOut\generate-report.md for which, and the diagnostic file(s) it names. Steps 4/5 still run against whatever DID generate." }
 if (-not (Test-Path $generateDir)) { Write-Error "generate produced no output at $generateDir." -ErrorAction Stop }
 
 Write-Banner ""
@@ -241,10 +246,10 @@ Write-Banner " Step 5/5 -- build + test + coverage"
 Write-Banner "==================================================================="
 $slnx = Join-Path $generateDir 'Generated.slnx'
 if ($logFilePath) {
-    & dotnet build $slnx -c Release *>&1 | ForEach-Object { Add-Content -Path $logFilePath -Value $_ }
+    & dotnet build $slnx -c Release -nodeReuse:false *>&1 | ForEach-Object { Add-Content -Path $logFilePath -Value $_ }
 }
 else {
-    & dotnet build $slnx -c Release
+    & dotnet build $slnx -c Release -nodeReuse:false
 }
 $buildExit = $LASTEXITCODE
 if ($buildExit -ne 0) {
@@ -269,7 +274,8 @@ Write-Banner "==================================================================
 Write-Host "  1. extract      : exit $extractExit"
 Write-Host "  2. walkthrough  : exit $walkthroughExit (advisory)"
 Write-Host "     sampledata   : exit $sampledataExit (advisory)"
-Write-Host "  3. generate     : exit $generateExit $(if ($generateExit -eq 3) {'(gaps reported -- see generate-report.md)'})"
+$generateNote = if ($generateExit -eq 3) { '(gaps reported -- see generate-report.md)' } elseif ($generateExit -eq 98) { '(one or more packages crashed -- see generate-report.md)' } else { '' }
+Write-Host "  3. generate     : exit $generateExit $generateNote"
 Write-Host "  4. apply-fills  : exit $applyFillsExit $(if ($applyFillsExit -eq 3) {'(seams still open)'})"
 Write-Host "  5. build        : exit $buildExit"
 Write-Host "     test+coverage: exit $coverageExit $(if ($coverageExit -eq 2) {'(no test projects -- 0 packages fully generated)'}) -- see $generateDir\coverage-report.md"
