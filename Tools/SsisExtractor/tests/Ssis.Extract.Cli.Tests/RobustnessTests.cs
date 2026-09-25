@@ -143,7 +143,7 @@ public class RobustnessTests : IDisposable
     // Today: ReportCommand returns 2 on ANY loaded.Failures.Count > 0, and ExtractCommand
     // propagates that as an early `return 2`, so graph/conformance/testgen never run.
     // ---------------------------------------------------------------------
-    [Fact(Skip = "Phase 1.2")]
+    [Fact]
     public void DuplicateNames_ExitsZero_AndStillRunsEveryDownstreamStage()
     {
         var outDir = NewOutDir();

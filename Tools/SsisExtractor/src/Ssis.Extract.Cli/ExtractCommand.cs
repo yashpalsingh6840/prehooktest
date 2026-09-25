@@ -198,11 +198,15 @@ internal static class ExtractCommand
         }
 
         // --- everything below is the former report/graph/conformance/testgen/diff commands,
-        // called with the same --input/--out/--recursive/--package this step already validated,
-        // so a hard failure here (exit 2) genuinely means one of THEIR OWN checks failed
-        // (e.g. a malformed --weights file), not a repeat of a check already passed above. ---
+        // called with the same --input/--out/--recursive/--package this step already validated.
+        // Every stage runs regardless of an earlier one's own exit code -- each independently
+        // re-parses --input (see this class's own header comment) and writes its own output, so
+        // one stage's own hard failure (e.g. a malformed --weights file) says nothing about
+        // whether the OTHERS can still produce something useful. The final exit is the worst of
+        // every stage's own result, computed once at the end, not the first non-zero one seen. ---
 
         var packageArgs = BuildPackageArgs(packageNames);
+        var hardFailure = false;
 
         Console.WriteLine();
         Console.WriteLine("--- portfolio report (former `ssisx report`) ---");
@@ -211,7 +215,7 @@ internal static class ExtractCommand
         if (recursive) reportArgs.Add("--recursive");
         if (weightsPath is not null) reportArgs.AddRange(["--weights", weightsPath]);
         var reportExit = ReportCommand.Run([.. reportArgs]);
-        if (reportExit == 2) return 2;
+        if (reportExit == 2) hardFailure = true;
 
         Console.WriteLine();
         Console.WriteLine("--- column lineage diagrams (former `ssisx graph`) ---");
@@ -219,7 +223,7 @@ internal static class ExtractCommand
         graphArgs.AddRange(packageArgs);
         if (recursive) graphArgs.Add("--recursive");
         var graphExit = GraphCommand.Run([.. graphArgs]);
-        if (graphExit == 2) return 2;
+        if (graphExit == 2) hardFailure = true;
 
         Console.WriteLine();
         Console.WriteLine("--- gate 1: migration conformance (former `ssisx conformance`) ---");
@@ -229,7 +233,7 @@ internal static class ExtractCommand
         if (claimsDir is not null) conformanceArgs.AddRange(["--claims", claimsDir]);
         if (check) conformanceArgs.Add("--check");
         var conformanceExit = ConformanceCommand.Run([.. conformanceArgs]);
-        if (conformanceExit == 2) return 2;
+        if (conformanceExit == 2) hardFailure = true;
         var gateFailed = conformanceExit == 1;
 
         Console.WriteLine();
@@ -238,7 +242,7 @@ internal static class ExtractCommand
         testgenArgs.AddRange(packageArgs);
         if (recursive) testgenArgs.Add("--recursive");
         var testgenExit = TestGenCommand.Run([.. testgenArgs]);
-        if (testgenExit == 2) return 2;
+        if (testgenExit == 2) hardFailure = true;
 
         if (diffAgainst is not null)
         {
@@ -248,10 +252,11 @@ internal static class ExtractCommand
             diffArgs.AddRange(packageArgs);
             diffArgs.AddRange(["--out", Path.Combine(outDir, "diff-report.md")]);
             var diffExit = DiffCommand.Run([.. diffArgs]);
-            if (diffExit == 2) return 2;
+            if (diffExit == 2) hardFailure = true;
             if (diffExit == 1) gateFailed = true;
         }
 
+        if (hardFailure) return 2;
         if (gateFailed) return 1;
 
         if (failUnder is not null)

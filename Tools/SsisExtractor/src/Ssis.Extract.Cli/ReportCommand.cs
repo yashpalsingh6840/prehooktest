@@ -288,10 +288,18 @@ internal static class ReportCommand
         if (loaded.Failures.Count > 0)
         {
             Console.Error.WriteLine($"warning: {loaded.Failures.Count} input(s) could not be read and are ABSENT from this report -- see load-failures.md");
-            return 2;
         }
 
-        return 0;
+        // Phase 1.2 of the independent-review fix plan: a "duplicate-name"/"package-not-found"
+        // failure is a BENIGN, already-warned-about skip -- the exact rule PackageLoader's own
+        // callers already distinguish (Run-Pipeline.ps1's own hard-failure-row parsing does the
+        // identical filter). Returning 2 for one of these used to mean `ssisx extract` (which
+        // chains report/graph/conformance/testgen after this) aborted every later stage the
+        // moment two packages merely SHARED a name -- exit 2 must mean "you typed something
+        // wrong" or "a genuinely unreadable file", never "ran clean, minus a name collision
+        // already reported in load-failures.md".
+        var hardFailureCount = loaded.Failures.Count(f => f.Kind is not ("duplicate-name" or "package-not-found"));
+        return hardFailureCount > 0 ? 2 : 0;
     }
 
     /// <summary>Always written, including on a clean run, so its absence means the run died before finishing rather than "nothing failed".</summary>
