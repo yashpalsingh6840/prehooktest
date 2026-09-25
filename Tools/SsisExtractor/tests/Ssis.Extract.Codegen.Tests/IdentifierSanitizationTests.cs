@@ -226,4 +226,57 @@ public class IdentifierSanitizationTests
         Assert.Contains("entity.Property(e => e.LastCostPrice).HasColumnName(\"Last Cost Price\")", dbContextFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(dbContextFile.Content);
     }
+
+    // -------------------------------------------------------------------
+    // Phase 2.5 (D1) of the independent-review fix plan.
+    // -------------------------------------------------------------------
+
+    // SyntheticCollide.dtsx lives in THIS project's own Fixtures folder (Phase 0.1 of the fix
+    // plan copied it here specifically for this item), not the shared Ssis.Extract.Tests one
+    // LoadSyntheticFixture above points at.
+    private static PackageSpec LoadLocalFixture(string dtsxFileName)
+    {
+        var fixturesDir = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(ThisFilePath())!, "Fixtures"));
+        return DtsxPackageReader.Read(Path.Combine(fixturesDir, dtsxFileName), noRedact: false);
+    }
+
+    [Fact]
+    public void Generate_ReportsABlockingGap_WhenTwoDestinationColumnsSanitizeToTheSameIdentifier()
+    {
+        // SyntheticCollide.dtsx: OLE DB Source (SELECT ID AS LastCostPrice, [Last Cost Price] ...)
+        // -> Derived Column (LoadedAtUtc) -> OLE DB Destination whose two real columns are
+        // "LastCostPrice" (int, renamed from "ID") and "Last Cost Price" (decimal) -- both
+        // sanitize to the identical "LastCostPrice". Before this fix, MakeColumnIdentifierResolver
+        // correctly disambiguated the DECLARATION (int LastCostPrice / decimal LastCostPrice_2),
+        // but TransformEmitter's own bare SanitizeIdentifier("Last Cost Price") reference site
+        // resolved to the SAME "LastCostPrice" as the FIRST column, silently assigning the int
+        // ID's value into the decimal price property -- compiles, runs, wrong data on every row.
+        var package = LoadLocalFixture("SyntheticCollide.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        // The flow itself is refused -- no Mapping/Model/Sql file for it, no wired
+        // Program.cs-equivalent step -- but package-level scaffolding (README, TestDoubles,
+        // etc.) still gets written regardless of whether any flow wired, same as any other
+        // fully-gapped package.
+        Assert.DoesNotContain(result.Files, f => f.RelativePath.StartsWith("Mapping/", StringComparison.Ordinal)
+            || f.RelativePath.StartsWith("Model/", StringComparison.Ordinal)
+            || f.RelativePath.StartsWith("Sql/", StringComparison.Ordinal));
+        Assert.Contains(result.Gaps, g => g.IsBlocking
+            && g.Reason.Contains("both sanitize to 'LastCostPrice'", StringComparison.Ordinal)
+            && g.Reason.Contains("generation refused to avoid mis-wiring", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Generate_IsUnaffected_ForTheNonCollidingControlFixture()
+    {
+        // SyntheticIdentifierSanitization.dtsx has exactly one space-containing column and no
+        // collision at all -- confirms the new check doesn't false-positive on the ordinary case.
+        var package = LoadSyntheticFixture("SyntheticIdentifierSanitization.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        Assert.DoesNotContain(result.Gaps, g => g.Reason.Contains("both sanitize to", StringComparison.Ordinal));
+        Assert.NotEmpty(result.Files);
+    }
 }

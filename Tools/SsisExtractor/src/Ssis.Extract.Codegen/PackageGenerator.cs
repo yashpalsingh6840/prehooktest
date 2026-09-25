@@ -264,6 +264,38 @@ public static partial class PackageGenerator
 
         foreach (var flow in plan.Flows)
         {
+            // Phase 2.5 (D1) of the independent-review fix plan, checked before EVERYTHING else
+            // for this flow. Every row/entity DECLARATION site (SqlRowEmitter/EntityEmitter/
+            // DbContextEmitter/...) resolves an identifier via MakeColumnIdentifierResolver
+            // (memoized per raw name, so a genuine collision between two DIFFERENT raw names
+            // gets disambiguated with a _2 suffix there) -- but every REFERENCE site
+            // (TransformEmitter/RouterEmitter/ColumnExpressionBuilders/PackageClassEmitter's own
+            // selectors/the starter-test emitters) calls bare SanitizeIdentifier instead, with no
+            // memoization and so no disambiguation. Confirmed real via SyntheticCollide.dtsx (a
+            // destination with two real columns, "LastCostPrice" (int, renamed from "ID") and
+            // "Last Cost Price" (decimal) -- both sanitize to the identical "LastCostPrice"):
+            // declaration sites correctly emit "int LastCostPrice" / "decimal LastCostPrice_2",
+            // but a reference site's own bare SanitizeIdentifier("Last Cost Price") also resolves
+            // to "LastCostPrice" -- the WRONG (first-declared, int) property -- so the transform
+            // silently assigns the int ID's value into the decimal price property. It compiles
+            // and runs; it reads the wrong column into the wrong property on every row.
+            //
+            // The lowest-risk fix, per the plan's own recommendation: refuse the whole flow
+            // rather than thread one shared resolver map through every reference site (~10
+            // emitters) for a collision that has never yet been observed on a real portfolio.
+            // Checked here uniformly via flow.DestinationComponent -- for a Conditional Split/
+            // Multicast/PctSampling/SCD flow this is only that shape's own "non-authoritative
+            // placeholder" destination (see DataFlowPlan.DestinationComponent's own doc comment),
+            // not necessarily every branch's own destination -- deliberately NOT extended to walk
+            // every branch too, matching the plan's own "defer it unless a real portfolio hits
+            // collisions" call.
+            if (FindColumnIdentifierCollision(flow.DestinationComponent) is { } collision)
+            {
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"columns '{collision.RawA}' and '{collision.RawB}' both sanitize to '{collision.Identifier}'; generation refused to avoid mis-wiring (a reference to one could silently resolve to the other's declared property)"));
+                continue;
+            }
+
             // Checked before ConditionalSplit and before any entity-name/source resolution --
             // SyntheticLookupSplit.dtsx has BOTH a Lookup and a Conditional Split in the same
             // flow, and the Lookup's own unrecoverable join key makes the whole flow unsafe to
@@ -1530,6 +1562,34 @@ public static partial class PackageGenerator
             resolvedByRaw[raw] = name;
             return name;
         };
+    }
+
+    private readonly record struct ColumnIdentifierCollision(string RawA, string RawB, string Identifier);
+
+    /// <summary>Phase 2.5 (D1) of the independent-review fix plan -- see the per-flow loop's own
+    /// call site for the full reasoning. Two genuinely different raw external column names that
+    /// <see cref="SanitizeIdentifier"/> maps to the identical identifier (a declaration site
+    /// disambiguates this via <see cref="MakeColumnIdentifierResolver"/>'s own suffix; a bare
+    /// reference site does not, and can silently resolve to the WRONG one). Returns the first such
+    /// pair found, in the destination's own declared column order, or null when there is none.</summary>
+    private static ColumnIdentifierCollision? FindColumnIdentifierCollision(PipelineComponentSpec destinationComponent)
+    {
+        var seen = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var column in PipelineResolver.ResolveDestinationInput(destinationComponent).Columns)
+        {
+            var raw = column.ExternalColumnName;
+            var identifier = SanitizeIdentifier(raw);
+            if (seen.TryGetValue(identifier, out var firstRaw))
+            {
+                if (!string.Equals(firstRaw, raw, StringComparison.Ordinal))
+                {
+                    return new ColumnIdentifierCollision(firstRaw, raw, identifier);
+                }
+                continue;
+            }
+            seen[identifier] = raw;
+        }
+        return null;
     }
 
     /// <summary>Evidence-based, not a fact lookup -- see NullabilityInference's own doc comment
