@@ -110,7 +110,7 @@ public class RobustnessTests : IDisposable
     // wins, so the "...WORKING" copy beats the real one. After 2.8: the real rule (a
     // .dtproj-loaded package wins; then filename==ObjectName; then newest; then path order).
     // ---------------------------------------------------------------------
-    [Fact(Skip = "Phase 2.8")]
+    [Fact]
     public void DuplicateNames_KeepsPackageDtsx_NotTheWorkingCopy()
     {
         var outDir = NewOutDir();
