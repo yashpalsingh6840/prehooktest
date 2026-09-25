@@ -435,9 +435,12 @@ internal static class PipelineReader
             // evidenced outputs' own externalMetadataColumns are empty). SamplingValue/
             // SamplingSeed are plain System.Int32 custom properties, confirmed via a live
             // object-model probe (Ssis.Extract.FixtureBuilder's own ProbePctSampling).
+            // SamplingValue stays null (not defaulted) when the property is genuinely absent --
+            // see PctSamplingPayload.SamplingValue's own doc comment for why "?? 0" was a real
+            // bug (0 means "route everything to Unselected", silently dropping every row).
             pctSampling = new PctSamplingPayload
             {
-                SamplingValue = ParseInt(GetProperty(properties, "SamplingValue")) ?? 0,
+                SamplingValue = ParseInt(GetProperty(properties, "SamplingValue")),
                 SamplingSeed = ParseInt(GetProperty(properties, "SamplingSeed")) ?? 0,
             };
         }

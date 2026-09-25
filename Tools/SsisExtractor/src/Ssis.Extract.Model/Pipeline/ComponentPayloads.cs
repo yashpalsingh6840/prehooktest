@@ -728,7 +728,15 @@ public sealed class RowCountPayload
 /// </summary>
 public sealed class PctSamplingPayload
 {
-    public int SamplingValue { get; init; }
+    /// <summary>
+    /// Null when the component declares no <c>SamplingValue</c> custom property at all --
+    /// before this was made nullable, a missing value silently became <c>0</c> (via <c>?? 0</c>
+    /// in the reader), which SSIS's own real semantics reads as "route every row to the
+    /// Unselected output" -- i.e. every row silently dropped from the Selected branch, with no
+    /// gap reported. The planner now refuses to guess and reports a gap instead of assuming
+    /// either 0 or the schema's own documented default (10).
+    /// </summary>
+    public int? SamplingValue { get; init; }
     public int SamplingSeed { get; init; }
 }
 

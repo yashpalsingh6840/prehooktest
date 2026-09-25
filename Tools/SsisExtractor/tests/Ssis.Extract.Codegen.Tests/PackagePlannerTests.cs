@@ -1049,6 +1049,24 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ReportsABlockingGap_ForAPercentageSampling_WithNoDeclaredSamplingValue()
+    {
+        // Phase 2.6 (R9/R10) of the independent-review fix plan: SyntheticPctSamplingNoValue.dtsx
+        // is a byte-preserving derivative of SyntheticPctSampling.dtsx with the whole
+        // SamplingValue <property> element removed. Before this fix, PipelineReader defaulted a
+        // missing SamplingValue to 0 via "?? 0" -- and 0 means "route every row to the Unselected
+        // output" (see PctSamplingRouterEmitter's own generated condition), silently dropping
+        // every row from the Selected branch with zero gaps reported. Now refused outright rather
+        // than guessed at 0 or the schema's own documented default (10).
+        var package = LoadSyntheticFixture("SyntheticPctSamplingNoValue.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Contains(plan.Gaps, g => g.IsBlocking && g.Reason.Contains("declares no SamplingValue", StringComparison.Ordinal));
+        Assert.Empty(plan.Flows);
+    }
+
+    [Fact]
     public void Plan_ResolvesAScd_WithAllFiveTrackedOutputsWiredToTheirOwnDestination_AndAdvisesOnTheDeadInferredOutput()
     {
         // SyntheticScdProbe.dtsx (Phase 7 of the unsupported-component-types plan): OLE DB Source

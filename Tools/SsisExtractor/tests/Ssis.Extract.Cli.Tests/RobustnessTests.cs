@@ -273,7 +273,7 @@ public class RobustnessTests : IDisposable
     // Phase 2.6 (R9) -- SSIS persists a boolean variable default as "-1" (or "1"), not just
     // the literal string "True" this code currently accepts exclusively.
     // ---------------------------------------------------------------------
-    [Fact(Skip = "Phase 2.6")]
+    [Fact]
     public void BooleanGuardVariable_AcceptsNegativeOneAsTrue()
     {
         var outDir = NewOutDir();

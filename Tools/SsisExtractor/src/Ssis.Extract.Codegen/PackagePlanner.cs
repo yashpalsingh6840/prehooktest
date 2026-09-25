@@ -1422,16 +1422,41 @@ public static class PackagePlanner
             "Int64" => IntegralGuard(SsisType.I8, "long", designTimeValue),
             "String" => new GuardVariable(SsisType.WStr, "string",
                 ProgramEmitter.CSharpStringLiteral(designTimeValue ?? "")),
-            "Boolean" => new GuardVariable(SsisType.Bool, "bool",
-                string.Equals(designTimeValue, "True", StringComparison.OrdinalIgnoreCase) ? "true" : "false"),
+            "Boolean" => new GuardVariable(SsisType.Bool, "bool", BooleanLiteral(designTimeValue)),
             "DateTime" => DateTimeGuard(designTimeValue),
             _ => null,
         };
 
+    /// <summary>
+    /// SSIS persists a Boolean variable's design-time default as the string "True"/"False" in
+    /// SOME contexts, but as the raw OLE Automation VARIANT_BOOL numeral (<c>-1</c> for true,
+    /// <c>0</c> for false) in others -- confirmed real, not assumed, from a checked-in fixture
+    /// (<c>Package_Advanced.dtsx</c>'s own <c>DTS:VariableValue</c> for a Boolean variable is
+    /// literally <c>-1</c>). Before this, only the literal string "True" (case-insensitive) was
+    /// ever recognized as true, so a "-1"-persisted variable silently guarded as false.
+    /// </summary>
+    private static string BooleanLiteral(string? designTimeValue) =>
+        designTimeValue is "-1" or "1" || string.Equals(designTimeValue, "True", StringComparison.OrdinalIgnoreCase)
+            ? "true"
+            : "false";
+
+    /// <summary>
+    /// Parses per the variable's own CLR width rather than always through <c>long.TryParse</c> --
+    /// the earlier version accepted any value that fits in a <c>long</c> regardless of whether
+    /// the variable is actually declared <c>Int16</c>/<c>Int32</c>, so a design-time default that
+    /// overflows the real declared type (e.g. 40000 for an Int16) would still emit a literal that
+    /// doesn't compile against the narrower type. A value that genuinely doesn't fit degrades to
+    /// the existing "no resolvable declared type" gap path (returning null) rather than being
+    /// guessed at or silently truncated.
+    /// </summary>
     private static GuardVariable? IntegralGuard(SsisType type, string clrTypeName, string? designTimeValue) =>
-        long.TryParse(designTimeValue, out var parsed)
-            ? new GuardVariable(type, clrTypeName, clrTypeName == "long" ? $"{parsed}L" : $"{parsed}")
-            : null;
+        clrTypeName switch
+        {
+            "short" => short.TryParse(designTimeValue, out var s) ? new GuardVariable(type, clrTypeName, $"{s}") : null,
+            "int" => int.TryParse(designTimeValue, out var i) ? new GuardVariable(type, clrTypeName, $"{i}") : null,
+            "long" => long.TryParse(designTimeValue, out var l) ? new GuardVariable(type, clrTypeName, $"{l}L") : null,
+            _ => null,
+        };
 
     private static GuardVariable? DateTimeGuard(string? designTimeValue) =>
         DateTime.TryParse(designTimeValue, System.Globalization.CultureInfo.InvariantCulture,
@@ -3460,6 +3485,15 @@ public static class PackagePlanner
         {
             gaps.Add(new GenerationGap(taskName,
                 $"Percentage Sampling '{pctSamplingComponent.Name}' does not declare both its 'Sampling Selected Output' and 'Sampling Unselected Output' outputs -- not supported"));
+            return null;
+        }
+
+        // A missing SamplingValue is refused rather than guessed at 0 or the schema's own
+        // documented default (10) -- see PctSamplingPayload.SamplingValue's own doc comment.
+        if (pctSamplingComponent.PctSampling?.SamplingValue is null)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Percentage Sampling '{pctSamplingComponent.Name}' declares no SamplingValue -- not generated (would otherwise be guessed)"));
             return null;
         }
 
