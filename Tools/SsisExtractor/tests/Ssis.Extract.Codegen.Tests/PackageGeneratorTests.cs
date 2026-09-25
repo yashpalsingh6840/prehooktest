@@ -1153,11 +1153,17 @@ public class PackageGeneratorTests
             statementFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(statementFile.Content);
 
-        // Only two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption on
-        // DFT_Load's own source, and Notification. The old parallelism advisory is gone now that
-        // DFT_Load/FEL_SampleFiles run as real concurrency; no ForEach-Loop-specific gap either.
-        Assert.Equal(2, result.Gaps.Count);
+        // Three unavoidable/non-blocking gaps -- the SqlCommand column-name assumption on
+        // DFT_Load's own source, Notification, and (Phase 2.7 of the independent-review fix
+        // plan) the string-built-SQL quote-splice advisory: the same real repro the fix plan's
+        // own R7/S2 item names (Mapping/SQL_LogFileNameStatement.cs's "...N'" + currentFile +
+        // "');" -- a file name containing a single quote, e.g. O'Brien.csv, breaks or injects the
+        // resulting SQL, same as the real SSIS package). The old parallelism advisory is gone now
+        // that DFT_Load/FEL_SampleFiles run as real concurrency; no ForEach-Loop-specific
+        // BLOCKING gap either -- this one is deliberately advisory, not a "fix".
+        Assert.Equal(3, result.Gaps.Count);
         Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("splices the loop's own variable inside a quoted literal", StringComparison.Ordinal));
     }
 
     [Fact]

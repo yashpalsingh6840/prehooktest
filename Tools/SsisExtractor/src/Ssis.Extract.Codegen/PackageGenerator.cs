@@ -4385,6 +4385,15 @@ public static partial class PackageGenerator
             return null;
         }
 
+        // Phase 2.7 (S2): reported, never silently "fixed" -- see
+        // ForEachLoopEmitter.IsSplicedInsideAQuotedSqlLiteral's own doc comment.
+        if (ForEachLoopEmitter.IsSplicedInsideAQuotedSqlLiteral(loop.SqlTemplate, loop.VariableName))
+        {
+            gaps.Add(new GenerationGap(loop.TaskName,
+                $"{loop.InnerTaskName}: string-built SQL splices the loop's own variable inside a quoted literal -- a value containing ' breaks or injects the resulting SQL, same as the original SSIS package",
+                IsBlocking: false));
+        }
+
         var nameMode = ResolveForEachFileNameMode(loop.NameRetrievalTypeRaw, loop.TaskName, gaps);
         if (nameMode is null) return null;
 
