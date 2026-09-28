@@ -496,6 +496,30 @@ public class ApplyFillsCommandTests : IDisposable
         Assert.Equal(LocalDataGapId, record.GapId);
         // No staleness concept for a raw data file -- see LocalFileSourceDataContract's own doc.
         Assert.Null(record.RecordedEvidenceSha256);
+        // No .provenance sidecar was written -- a hand-supplied fill is never mistaken for one
+        // auto-closed by `svk sampledata --for-gaps` (Phase 5.2, G1).
+        Assert.False(record.Synthetic);
+    }
+
+    [Fact]
+    public void Run_MarksALocalDataFillSynthetic_WhenItsOwnProvenanceSidecarIsPresent()
+    {
+        // Phase 5.2 (G1): `svk sampledata --for-gaps` auto-closes a LOCAL-DATA gap from its own
+        // sample data and marks the copy with a `<file>.provenance` sidecar -- ApplyFillsCommand
+        // must record that distinction (never conflate a synthetic fill with a hand-supplied,
+        // reviewed one) and must never treat the sidecar itself as its own orphaned data file.
+        WriteGaps(LocalDataGap());
+        var dataPath = WriteSubFill("TestData", "Foo.csv", "ID,Name\r\n1,Alice\r\n");
+        File.WriteAllText(dataPath + ".provenance", "Synthetic: svk sampledata seed=20260903\n");
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(0, exitCode);
+        Assert.True(File.Exists(Path.Combine(_root, "generate", Package, "TestData", "Foo.csv")));
+
+        var record = Assert.Single(ReadManifest());
+        Assert.Equal(FillStatus.Applied, record.Status);
+        Assert.True(record.Synthetic);
     }
 
     [Fact]

@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Diagnostics;
 using Svk.Core;
 
@@ -11,6 +13,11 @@ public static class SampleDataCommand
         var packages = new List<string>();
         var rows = 20;
         var seed = 20260903;
+        // Phase 5.2 (G1): when given, every LocalFileSourceData gap in this file is auto-closed
+        // from svk's own sample data (see GapFillWriter's own doc comment) instead of leaving it
+        // for a human/AI to hand-supply. Requires --fills too -- there is nowhere else a fill
+        // this command writes could safely land.
+        string? forGaps = null, fillsDir = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -21,6 +28,8 @@ public static class SampleDataCommand
                 case "--package": packages.AddRange(CliArgs.SplitPackages(CliArgs.Require(args, ref i))); break;
                 case "--rows": rows = int.Parse(CliArgs.Require(args, ref i)); break;
                 case "--seed": seed = int.Parse(CliArgs.Require(args, ref i)); break;
+                case "--for-gaps": forGaps = CliArgs.Require(args, ref i); break;
+                case "--fills": fillsDir = CliArgs.Require(args, ref i); break;
                 case "--help": PrintHelp(); return 0;
                 default: Console.Error.WriteLine($"error: unknown option '{args[i]}'."); return 2;
             }
@@ -30,6 +39,32 @@ public static class SampleDataCommand
         {
             Console.Error.WriteLine("error: --spec and --out are required. Run 'svk sampledata --help'.");
             return 2;
+        }
+
+        if (forGaps is not null && fillsDir is null)
+        {
+            Console.Error.WriteLine("error: --for-gaps also requires --fills (where to write the auto-closed TestData/ files). Run 'svk sampledata --help'.");
+            return 2;
+        }
+
+        List<GapSpec> gaps = [];
+        if (forGaps is not null)
+        {
+            if (!File.Exists(forGaps))
+            {
+                Console.Error.WriteLine($"error: --for-gaps '{forGaps}' does not exist.");
+                return 2;
+            }
+
+            try
+            {
+                gaps = JsonSerializer.Deserialize<List<GapSpec>>(File.ReadAllText(forGaps)) ?? [];
+            }
+            catch (JsonException ex)
+            {
+                Console.Error.WriteLine($"error: --for-gaps '{forGaps}' is not valid gaps.json: {ex.Message}");
+                return 2;
+            }
         }
 
         List<Ssis.Extract.Model.Package.PackageSpec> loaded;
@@ -64,6 +99,17 @@ public static class SampleDataCommand
                 reportLines.Add($"## {pkg.ObjectName}");
                 reportLines.Add($"- Sources: {plan.Sources.Count}, Destinations: {plan.Destinations.Count}, Lookups: {plan.Lookups.Count}");
                 reportLines.AddRange(written.Select(w => $"- {w}"));
+
+                if (forGaps is not null)
+                {
+                    var outcomes = GapFillWriter.WriteForGaps(pkg, gaps, pkgOut, fillsDir!, seed);
+                    if (outcomes.Count > 0)
+                    {
+                        reportLines.Add($"- LOCAL-DATA gaps: {outcomes.Count(o => o.Written)} auto-closed, {outcomes.Count(o => !o.Written)} left open");
+                        reportLines.AddRange(outcomes.Select(o => $"  - {o.GapId}: {o.Message}"));
+                    }
+                }
+
                 reportLines.Add("");
 
                 Console.WriteLine($"{pkg.ObjectName}: {plan.Sources.Count} source(s), {plan.Destinations.Count} destination(s), {plan.Lookups.Count} lookup(s) -> {pkgOut}");
@@ -92,6 +138,7 @@ public static class SampleDataCommand
 
     private static void PrintHelp() => Console.WriteLine("""
         svk sampledata --spec <extract-out-dir> --out <dir> [--package <name>[,<name>...]] [--rows N=20] [--seed N]
+                        [--for-gaps <out>/gaps.json --fills <fills-dir>]
 
         Reads packages/<Package>.spec.json under --spec (from a prior `ssisx extract` run)
         and writes deterministic, schema-correct synthetic CSV/SQL sample data under
@@ -99,5 +146,10 @@ public static class SampleDataCommand
         Lookup with a resolvable join key) a reference table seeded so both the match and
         no-match paths get exercised. Re-running with the same --seed reproduces byte-
         identical output.
+
+        --for-gaps (requires --fills): auto-closes every LocalFileSourceData gap in the given
+        gaps.json (from a prior `ssisx generate` run) by copying the matching svk sample into
+        <fills-dir>/<Package>/TestData/<the gap's own expected file name>, tagged Synthetic via
+        a .provenance sidecar. Never overwrites a file already there.
         """);
 }

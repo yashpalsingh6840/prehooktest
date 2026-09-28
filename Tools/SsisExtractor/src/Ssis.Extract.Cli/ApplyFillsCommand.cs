@@ -546,10 +546,17 @@ internal static class ApplyFillsCommand
                 var knownLocalData = expectedLocalData.TryGetValue(packageName, out var byFileName) ? byFileName : [];
                 if (Directory.Exists(testDataDir))
                 {
-                    foreach (var fillFile in Directory.EnumerateFiles(testDataDir).OrderBy(f => f, StringComparer.Ordinal))
+                    // Phase 5.2 (G1): `svk sampledata --for-gaps` marks a file it auto-closed with
+                    // a sidecar `<file>.provenance` -- itself never a data file to apply, so it is
+                    // excluded from the scan up front rather than showing up as its own, nonsense
+                    // "orphaned" entry.
+                    foreach (var fillFile in Directory.EnumerateFiles(testDataDir)
+                                 .Where(f => !f.EndsWith(".provenance", StringComparison.OrdinalIgnoreCase))
+                                 .OrderBy(f => f, StringComparer.Ordinal))
                     {
                         var fileName = Path.GetFileName(fillFile);
-                        Console.WriteLine($"    TestData\\{fileName}");
+                        var synthetic = File.Exists(fillFile + ".provenance");
+                        Console.WriteLine($"    TestData\\{fileName}" + (synthetic ? " (synthetic -- svk sampledata --for-gaps)" : ""));
                         if (!knownLocalData.TryGetValue(fileName, out var gapsForFile))
                         {
                             // Phase 4.6 (P5/a): distinguish "genuinely unknown" from "right file,
@@ -571,7 +578,7 @@ internal static class ApplyFillsCommand
                             fillRecords.Add(new FillRecordSpec
                             {
                                 Package = packageName, FileName = $"TestData/{fileName}", Seam = "(data file)",
-                                GapId = null, Status = FillStatus.Orphaned,
+                                GapId = null, Status = FillStatus.Orphaned, Synthetic = synthetic,
                             });
                             continue;
                         }
@@ -585,11 +592,11 @@ internal static class ApplyFillsCommand
                         Console.WriteLine($"      APPLIED ({string.Join(", ", gapsForFile.Select(g => g.GapId))}) -> {dataTargetDir}\\{fileName}");
                         foreach (var gap in gapsForFile)
                         {
-                            localDataApplied.Add($"{packageName}/TestData/{fileName} ({gap.GapId})");
+                            localDataApplied.Add($"{packageName}/TestData/{fileName} ({gap.GapId})" + (synthetic ? " [synthetic]" : ""));
                             fillRecords.Add(new FillRecordSpec
                             {
                                 Package = packageName, FileName = $"TestData/{fileName}", Seam = "(data file)", GapId = gap.GapId,
-                                Status = FillStatus.Applied,
+                                Status = FillStatus.Applied, Synthetic = synthetic,
                             });
                         }
                         if (!localDataFilled.TryGetValue(packageName, out var dataSet))

@@ -85,4 +85,14 @@ public sealed class FillRecordSpec
     /// <see cref="FillStatus.Orphaned"/> seam (no gap, so no rule to point at).
     /// </summary>
     public string? ConformanceRuleId { get; init; }
+
+    /// <summary>
+    /// True when this <c>TestData/</c> entry was auto-closed by <c>svk sampledata --for-gaps</c>
+    /// (Phase 5.2, G1) rather than hand-supplied -- detected from a <c>&lt;file&gt;.provenance</c>
+    /// sidecar written alongside it, the only provenance mechanism a raw data file can carry
+    /// (see the doc comment on the TestData scan in <c>ApplyFillsCommand</c> for why there is no
+    /// staleness check to go with it). Always false for a Script Task/Component/TEST-ORACLE fill,
+    /// which use the <c>// ssisx-fill:</c> comment convention instead.
+    /// </summary>
+    public bool Synthetic { get; init; }
 }
