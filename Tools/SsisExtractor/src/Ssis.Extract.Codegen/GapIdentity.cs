@@ -49,9 +49,15 @@ public static class GapIdentity
         _ => gap.IsBlocking ? GapTier.MissingToolSupport : GapTier.Advisory,
     };
 
-    /// <summary>Only Tier 1/2 gaps get a work packet. Tier 3 deliberately does NOT -- see <see cref="GapTier.MissingToolSupport"/>'s own doc comment.</summary>
+    /// <summary>Only Tier 1/2 gaps get a work packet. Tier 3 deliberately does NOT -- see <see cref="GapTier.MissingToolSupport"/>'s own doc comment.
+    /// Phase 5.3 (P3) of the independent-review fix plan: <see cref="GapKind.EncryptedConnectionManagerSecret"/>
+    /// is Tier 1 (a missing datum) but deliberately gets NO per-gap packet either -- a portfolio can carry
+    /// one of these per connection manager, and every packet says the identical thing ("supply the real
+    /// value via User Secrets"). They are answered once, portfolio-wide, from <c>secrets-checklist.md</c>
+    /// (written by <c>GenerateCommand</c>, not a packet) instead.</summary>
     public static bool HasWorkPacket(GenerationGap gap) =>
-        TierOf(gap) is GapTier.MissingDatum or GapTier.MissingLogic;
+        TierOf(gap) is GapTier.MissingDatum or GapTier.MissingLogic
+        && gap.Kind is not GapKind.EncryptedConnectionManagerSecret;
 
     /// <summary>
     /// <c>&lt;KIND&gt;:&lt;Package&gt;:&lt;Location&gt;</c>. Two gaps in one package genuinely

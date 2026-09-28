@@ -293,6 +293,12 @@ internal static class GenerateCommand
         var reportPath = Path.Combine(outDir, "generate-report.md");
         WriteReport(reportPath, results, loaded.Failures, crashedPackages, fixedFileGaps, allGaps, decisionOutcomes);
 
+        // Phase 5.3 (P3): an EncryptedConnectionManagerSecret gap gets no per-gap packet any more
+        // (GapIdentity.HasWorkPacket) -- every one of them says the identical thing, so N copies
+        // of the same contract is pure token cost. One portfolio-wide table instead. The gaps
+        // themselves are untouched: still in gaps.json, still blocking, still need acknowledging.
+        WriteSecretsChecklist(Path.Combine(outDir, "secrets-checklist.md"), loaded.Packages, results, allGaps);
+
         // Written unconditionally, at the --out ROOT (not inside generate/, not inside gaps/)
         // specifically so it is the first thing visible to anyone -- a person or an AI coding
         // assistant -- who opens this output folder directly, regardless of which repo/workspace
@@ -764,6 +770,107 @@ internal static class GenerateCommand
     /// this file now says so explicitly and gives the exact command to use, so a reader has no
     /// way to fall back to the wrong default by omission.
     /// </summary>
+    /// <summary>
+    /// Phase 5.3 (P3): one portfolio-wide table for every <see cref="GapKind.EncryptedConnectionManagerSecret"/>
+    /// gap, replacing what used to be one near-identical work packet per connection manager. The
+    /// gaps themselves are unchanged (still blocking, still in gaps.json/generate-report.md) --
+    /// this file only changes WHERE the "what do I do about this" answer lives.
+    /// </summary>
+    private static void WriteSecretsChecklist(string path, List<PackageSpec> packages, List<PackageGenerateResult> results, List<GapSpec> allGaps)
+    {
+        var packagesByName = packages.ToDictionary(p => p.ObjectName);
+        var resultsByPackage = results.ToDictionary(r => r.PackageName);
+        var rows = allGaps
+            .Where(g => g.Kind == GapKind.EncryptedConnectionManagerSecret)
+            .OrderBy(g => g.Package, StringComparer.Ordinal)
+            .ThenBy(g => g.Location, StringComparer.Ordinal)
+            .ToList();
+
+        var sb = new StringBuilder();
+        sb.AppendLine("# Encrypted connection-manager secrets -- checklist");
+        sb.AppendLine();
+        sb.AppendLine("Every row below carries a DPAPI-encrypted sensitive value in its own .dtsx --");
+        sb.AppendLine("undecryptable outside the original author's Windows account, so this tool never");
+        sb.AppendLine("extracts the ciphertext or guesses the real value. Each one is still a blocking");
+        sb.AppendLine("`EncryptedConnectionManagerSecret` gap in gaps.json/generate-report.md -- this file is");
+        sb.AppendLine("just the one place to work through all of them, instead of N near-identical packets.");
+        sb.AppendLine();
+
+        if (rows.Count == 0)
+        {
+            sb.AppendLine("No encrypted connection-manager secrets found in this run.");
+        }
+        else
+        {
+            sb.AppendLine("| Package | Connection Manager | Encrypted Properties | User Secrets key | How to acknowledge |");
+            sb.AppendLine("|---|---|---|---|---|");
+            foreach (var gap in rows)
+            {
+                var properties = "(see gaps.json)";
+                if (packagesByName.TryGetValue(gap.Package, out var pkg))
+                {
+                    var cm = pkg.ConnectionManagers.FirstOrDefault(c => c.ObjectName == gap.Location);
+                    if (cm is { EncryptedProperties.Count: > 0 })
+                        properties = string.Join(", ", cm.EncryptedProperties);
+                }
+
+                var key = ResolveSecretsUserSecretsKey(resultsByPackage, gap.Package, gap.Location);
+                sb.AppendLine($"| {gap.Package} | {gap.Location} | {properties} | `{key}` | `fills-library/{gap.Package}.decisions.json`, GapId `{gap.GapId}` |");
+            }
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("Acknowledging a row does not supply the secret -- it only records that a human reviewed");
+        sb.AppendLine("it (see the ENCRYPTED-SECRET work-packet contract for the exact decisions.json shape).");
+        sb.AppendLine("The real value always goes into User Secrets/an environment variable at the key shown,");
+        sb.AppendLine("**never** into a tracked decisions.json file.");
+
+        File.WriteAllText(path, sb.ToString());
+    }
+
+    /// <summary>
+    /// Best-effort: reads the SAME <c>appsettings.json</c> this run already generated for the
+    /// package (in <see cref="PackageGenerateResult.Files"/>) to say which User Secrets key a
+    /// connection manager's real value actually resolves to -- <c>SecondaryConnections:&lt;CM&gt;
+    /// :Password</c> when the CM shows up there, else <c>TargetDatabase:Password</c> when the
+    /// package's primary connection is SQL-authenticated. Deliberately conservative: nothing in
+    /// the generated output records WHICH connection manager fed <c>TargetDatabase</c> (only that
+    /// something did), so that half is phrased as "if this is the primary connection" rather than
+    /// asserted outright -- a wrong guess here would send someone to edit the wrong secret.
+    /// </summary>
+    private static string ResolveSecretsUserSecretsKey(Dictionary<string, PackageGenerateResult> resultsByPackage, string package, string connectionManagerName)
+    {
+        if (!resultsByPackage.TryGetValue(package, out var result))
+            return "(see appsettings.json / the generate report)";
+
+        var appsettings = result.Files.FirstOrDefault(f => f.RelativePath == "appsettings.json");
+        if (appsettings is null)
+            return "(see appsettings.json / the generate report)";
+
+        try
+        {
+            using var doc = JsonDocument.Parse(appsettings.Content);
+            if (doc.RootElement.TryGetProperty("SecondaryConnections", out var secondary)
+                && secondary.TryGetProperty(connectionManagerName, out _))
+            {
+                return $"SecondaryConnections:{connectionManagerName}:Password";
+            }
+
+            if (doc.RootElement.TryGetProperty("TargetDatabase", out var target)
+                && target.TryGetProperty("AuthMode", out var authMode)
+                && authMode.GetString() == "SqlServer")
+            {
+                return "TargetDatabase:Password (if this is the package's primary connection -- confirm against appsettings.json)";
+            }
+        }
+        catch (JsonException)
+        {
+            // Fall through to the generic pointer below.
+        }
+
+        return "not wired to any generated connection (not used by any wired flow -- see the gap's own reason)";
+    }
+
     private static void WriteAiAssistantGuide(string path, List<GapSpec> allGaps, string fillsDir, string outDir)
     {
         var fillable = allGaps.Where(g => g.Tier is GapTier.MissingDatum or GapTier.MissingLogic).ToList();
@@ -828,6 +935,8 @@ internal static class GenerateCommand
         sb.AppendLine("  half in the fills directory above -- that failure is intentional, not something to patch");
         sb.AppendLine("  around here.");
         sb.AppendLine("- `generate-report.md` / `gaps.json` -- the full gap list, with every `GapId` and tier.");
+        sb.AppendLine("- `secrets-checklist.md` -- every `EncryptedConnectionManagerSecret` gap, portfolio-wide,");
+        sb.AppendLine("  one table instead of N near-identical packets.");
         sb.AppendLine();
 
         if (fillable.Count == 0)
@@ -847,20 +956,29 @@ internal static class GenerateCommand
             sb.AppendLine("|---|---|---|---|---|");
             foreach (var g in fillable.OrderBy(g => g.Package, StringComparer.Ordinal).ThenBy(g => g.GapId, StringComparer.Ordinal))
             {
-                var packetRef = g.PacketPath is not null ? $"`{g.PacketPath}`" : "_(none)_";
+                // Phase 5.3 (P3): EncryptedConnectionManagerSecret gets no per-gap packet any
+                // more -- point at the one portfolio-wide checklist instead of "(none)", which
+                // used to read as though the gap had simply lost its packet.
+                var packetRef = g.Kind == GapKind.EncryptedConnectionManagerSecret
+                    ? "`secrets-checklist.md`"
+                    : g.PacketPath is not null ? $"`{g.PacketPath}`" : "_(none)_";
                 sb.AppendLine($"| {g.Package} | {(g.Tier == GapTier.MissingDatum ? "1 -- datum" : "2 -- logic")} | {g.Kind} | `{g.GapId}` | {packetRef} |");
             }
             sb.AppendLine();
             sb.AppendLine("## What to actually do for each tier");
             sb.AppendLine();
-            sb.AppendLine("**Tier 1 is one workflow with THREE different answer shapes -- check the Kind column above");
+            sb.AppendLine("**Tier 1 is one workflow with FOUR different answer shapes -- check the Kind column above");
             sb.AppendLine("before writing anything, they are not interchangeable:**");
             sb.AppendLine();
-            sb.AppendLine("- **`LookupJoinKey` / `EncryptedConnectionManagerSecret`** (a missing FACT, or an");
-            sb.AppendLine("  acknowledgment): open the work packet, read its exact question, do **not** guess a");
-            sb.AppendLine("  confident-sounding answer -- confirm it with a human if you're not certain. Write the");
-            sb.AppendLine($"  answer into `{fillsDir}\\<Package>.decisions.json`, in the exact JSON shape the packet");
-            sb.AppendLine("  shows, with a real `ConfirmedBy`.");
+            sb.AppendLine("- **`LookupJoinKey`** (a missing FACT): open the work packet, read its exact question, do");
+            sb.AppendLine("  **not** guess a confident-sounding answer -- confirm it with a human if you're not");
+            sb.AppendLine($"  certain. Write the answer into `{fillsDir}\\<Package>.decisions.json`, in the exact JSON");
+            sb.AppendLine("  shape the packet shows, with a real `ConfirmedBy`.");
+            sb.AppendLine("- **`EncryptedConnectionManagerSecret`** (an acknowledgment, never a value): read");
+            sb.AppendLine("  `secrets-checklist.md` at this file's own level, NOT a per-gap packet -- there isn't");
+            sb.AppendLine("  one; every instance of this kind says the identical thing, so they're all answered from");
+            sb.AppendLine("  that one table instead. It names the real User Secrets key to supply the value at; the");
+            sb.AppendLine($"  acknowledgment itself (never the secret) still goes into `{fillsDir}\\<Package>.decisions.json`.");
             sb.AppendLine("- **`TestOracle`** (a starter test the deterministic emitter could not itself derive --");
             sb.AppendLine("  a Conditional Split case, or a test for a filled Script Task/Component seam): the packet");
             sb.AppendLine("  asks for a WHOLE new xUnit test file, not a value in a JSON file. Write it under");

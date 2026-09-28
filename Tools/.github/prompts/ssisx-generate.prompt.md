@@ -47,7 +47,10 @@ Group the gaps by tier and report:
   naming the `GapId`. Do not attempt a workaround.
 - **Tier 1 (`MissingDatum`)** — a human must supply a fact. Name the `GapId` and the exact
   question. **Do not invent a plausible value.** Answers go in
-  `fills-library/<Package>.decisions.json`.
+  `fills-library/<Package>.decisions.json`. Exception: `EncryptedConnectionManagerSecret` gaps
+  get NO per-gap packet — they're all answered from one portfolio-wide `secrets-checklist.md` at
+  the `--out` root instead (every instance says the identical thing, so N packets would be pure
+  duplication).
 - **Tier 2 (`MissingLogic`)** — portable by hand. Just count them and name the seams; use the
   `/ssisx-fill` prompt to actually port them.
 - **Advisory** — summarize in one line each; these do not block a build.

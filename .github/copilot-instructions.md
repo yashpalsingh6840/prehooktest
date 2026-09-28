@@ -76,7 +76,8 @@ that folder's own `HOW-TO-FILL-GAPS.md`. This file assumes `Tools\` itself is op
 | Tier | Kind | What to do |
 |---|---|---|
 | 3 `MissingToolSupport` | -- | Nothing to fill. Report "needs a tool enhancement" + `GapId`. |
-| 1 `MissingDatum` | `LOOKUP-JOIN-KEY:`/`ENCRYPTED-SECRET:` | Confirm in `fills-library/<Pkg>.decisions.json`. Never guess. |
+| 1 `MissingDatum` | `LOOKUP-JOIN-KEY:` | Confirm in `fills-library/<Pkg>.decisions.json`. Never guess. |
+| 1 `MissingDatum` | `ENCRYPTED-SECRET:` | No per-gap packet -- read `secrets-checklist.md` (one table, all of them); acknowledge in `fills-library/<Pkg>.decisions.json`. |
 | 1 `MissingDatum` | `TEST-ORACLE:`/`LOCAL-DATA:` | `/ssisx-test` -- new test file / sample data file. |
 | 2 `MissingLogic` | Script Task/Component | `/ssisx-fill` -- port to a partial-class seam. |
 
