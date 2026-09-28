@@ -45,23 +45,13 @@ identical boilerplate.
 
 ## Step 2 -- write the fills
 
-Known-good testing API -- **do not read `TestDoubles/PackageHarness.cs` to confirm any of
-this** (same pinned block every `TEST-ORACLE` packet already embeds):
-
-```
-FakeUnitOfWork      : ExecutedSql | ExecutedParameterizedSql | ExecutedSqlWithoutTransaction
-                    | BulkInserts | fault injection (ThrowOnStep) | mirrors real preconditions
-                      (ExecuteSqlWithoutTransactionAsync throws unless RollbackCalled;
-                      GetBindTokenAsync caches)
-RecordingNotifier   : captures the PackageResult
-PackageHarness      : a ServiceProvider with a fresh FakeUnitOfWork per scope, NullLogger, a
-                      fixed TimeProvider, FileSourceOptions -> SampleData/, BulkCopyOptions,
-                      DatabaseOptions, IConfiguration (secondary connections only).
-                      Exposes .Package() plus the recorded uows.
-[Trait("Category", "Integration")] on any test that genuinely needs a real database, a real
-   .xlsx file, or a real secondary-connection server -- everything else must pass with
-   `dotnet test --filter Category!=Integration` and NO server reachable.
-```
+**Do not read `TestDoubles/PackageHarness.cs` or reconstruct the testing API from memory here.**
+The `TEST-ORACLE` packet you just read in Step 1 already carries the ONE authoritative,
+pinned testing-API block (`AiPacketEmitter.PinnedTestingApiBlock`) -- `FakeUnitOfWork`'s real
+public surface, `PackageHarness`'s constructor and members, and the `Category=Integration`
+convention, all copied verbatim from what `TestDoublesEmitter` actually generates. Use that
+copy, not a paraphrase of it: any member name not spelled exactly as the packet shows it is
+either wrong or has drifted.
 
 Generated projects build with `Nullable=enable` **and `TreatWarningsAsErrors=true`** -- an
 unused `using` or an unreachable warning fails the build here.

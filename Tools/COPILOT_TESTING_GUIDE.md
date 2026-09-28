@@ -37,7 +37,10 @@ Every generated `{Package}.Tests` project carries its own `TestDoubles/` folder
 regenerated fresh every `generate` run, the same pattern `Ssis/SsisFn.cs` already uses. Its full
 public surface:
 
-- `using var harness = new PackageHarness();` -- one per test, disposed at the end.
+- `using var harness = new PackageHarness();` -- one per test, disposed at the end. Pass
+  `new PackageHarness(useSampleDataForFileSources: true)` instead for a happy-path `RunAsync`
+  test on a CSV/fixed-width-sourced package -- it points those sources at the already-generated
+  Tier-A `SampleData/` files rather than `TestData/`, so no real data has to be supplied.
 - `harness.Package()` -- a fresh instance of the generated `{Package}Package` class, wired to
   fakes: no database, no real file server, no real Script Task connections, no real secondary
   connection.
@@ -52,10 +55,17 @@ public surface:
     run AFTER rollback
   - `BulkInserts` (`List<BulkInsertCall>`, each with `DestinationTable`/`ColumnMappings`/
     `RowsWritten`) -- what a sink actually wrote
-  - `ThrowOnGetBindToken` (settable) -- makes the very next `GetBindTokenAsync` call throw; the
-    universal, package-shape-agnostic fault-injection point `RunAsync`'s own failure-path test
-    uses, since every generated `RunAsync` calls it unconditionally, right after `BeginAsync`,
-    before any step runs.
+  - `ThrowOnGetBindToken` (`Exception?`, settable) -- makes the very next `GetBindTokenAsync`
+    call throw it; the universal, package-shape-agnostic fault-injection point `RunAsync`'s own
+    failure-path test uses, since every generated `RunAsync` calls it unconditionally, right
+    after `BeginAsync`, before any step runs.
+  - `ThrowOnSqlWithoutTransactionContaining` (`string?`, settable) -- makes the next
+    `ExecuteSqlWithoutTransactionAsync` call whose SQL contains this substring throw, for
+    testing a failure handler that itself fails.
+- `harness.NewRealUnitOfWorkAsync()` -- a REAL `UnitOfWork` against an actual SQL Server, built
+  from this file's own `_databaseOptions` field (points at an unreachable server by default --
+  edit that one line for a local run against a real database). Only ever used from a test
+  carrying `[Trait("Category", "Integration")]`.
 - `harness.CreatedUnitsOfWork` (`ConcurrentBag<FakeUnitOfWork>`) -- every `FakeUnitOfWork`
   actually resolved from DI so far, one per scope. Only relevant when asserting on a run made
   through `RunAsync` itself (not a direct method call): a concurrent wave resolves more than one
