@@ -534,4 +534,99 @@ public class ApplyFillsCommandTests : IDisposable
         var record = Assert.Single(ReadManifest());
         Assert.Equal(FillStatus.Orphaned, record.Status);
     }
+
+    // -----------------------------------------------------------------
+    // Phase 4.6 (P5) of the independent-review fix plan
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public void Run_ReportsNoSeamFound_ForAFileWithNoRecognizablePartialDeclarationAtAll_DistinctFromOrphaned()
+    {
+        WriteGaps(ScriptComponentColumnGap(CurrentHash));
+        // Missing the 'partial' keyword -- a real, plausible typo, not a seam that simply doesn't
+        // match a current gap (the pre-existing "Orphaned" case, which DOES declare a real seam).
+        WriteFill("Foo.Fills.cs", """
+            namespace Pkg.Mapping;
+            public sealed class FooTransform
+            {
+                private FooResult SCR_Bar(Row row, in RowContext ctx) => new();
+            }
+            """);
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(1, exitCode);
+        Assert.False(Directory.Exists(Path.Combine(_root, "generate", Package, "Fills")));
+        // No FillRecordSpec at all for this case -- unlike a seam that IS recognized but doesn't
+        // match a current gap (the "Orphaned" seam-name case), a file with no recognizable seam
+        // declaration never enters the per-seam loop that would produce one.
+        Assert.Empty(ReadManifest());
+    }
+
+    [Fact]
+    public void Run_AppliesOneLocalDataFile_ToEveryGapThatSharesItsExpectedFileName()
+    {
+        // Two DIFFERENT gaps (different Location/RefId) can legitimately expect the SAME real
+        // TestData file name -- e.g. the same raw source read by more than one flow. One file
+        // must answer both, not silently collapse to whichever gap was enumerated last.
+        var second = new GapSpec
+        {
+            GapId = "LOCAL-DATA:Pkg:FF_SRC_Bar", Package = Package, Kind = GapKind.LocalFileSourceData,
+            Tier = GapTier.MissingDatum, Location = "FF_SRC_Bar", Reason = "still reads a deterministic synthetic sample",
+            IsBlocking = false, ExpectedFileName = "Foo.csv",
+        };
+        WriteGaps(LocalDataGap(), second);
+        WriteSubFill("TestData", "Foo.csv", "ID,Name\r\n1,Alice\r\n");
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(0, exitCode);
+        var records = ReadManifest();
+        Assert.Equal(2, records.Count);
+        Assert.Contains(records, r => r.GapId == LocalDataGapId && r.Status == FillStatus.Applied);
+        Assert.Contains(records, r => r.GapId == "LOCAL-DATA:Pkg:FF_SRC_Bar" && r.Status == FillStatus.Applied);
+    }
+
+    [Fact]
+    public void Run_ReportsACaseOnlyMismatch_ForALocalDataFile_AndDoesNotCopyIt()
+    {
+        // Expected "Foo.csv"; the fill is named "foo.CSV" -- differs only by case. Must be
+        // refused, not silently applied with the wrong casing preserved on disk (which used to
+        // ALSO show up as "still open" for the identical gap -- both true at once).
+        WriteGaps(LocalDataGap());
+        WriteSubFill("TestData", "foo.CSV", "ID,Name\r\n1,Alice\r\n");
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(1, exitCode);
+        Assert.False(File.Exists(Path.Combine(_root, "generate", Package, "TestData", "foo.CSV")));
+        Assert.False(File.Exists(Path.Combine(_root, "generate", Package, "TestData", "Foo.csv")));
+        var record = Assert.Single(ReadManifest());
+        Assert.Equal(FillStatus.Orphaned, record.Status);
+    }
+
+    [Fact]
+    public void Run_RefusesBothFiles_WhenTwoFillsUnderDifferentSubfoldersFlattenToTheSameName()
+    {
+        WriteGaps(ScriptComponentColumnGap(CurrentHash));
+        var fillBody = """
+            // ssisx-fill: GapId=__GAPID__ Author=me Date=2026-09-28 EvidenceSha256=__HASH__
+            namespace Pkg.Mapping;
+            public sealed partial class FooTransform
+            {
+                private partial FooResult SCR_Bar(Row row, in RowContext ctx) => new();
+            }
+            """.Replace("__GAPID__", GapId).Replace("__HASH__", CurrentHash);
+        WriteSubFill("Mapping", "Foo.Fills.cs", fillBody);
+        WriteSubFill("Sql", "Foo.Fills.cs", fillBody);
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(1, exitCode);
+        Assert.False(Directory.Exists(Path.Combine(_root, "generate", Package, "Fills")));
+        var records = ReadManifest();
+        Assert.Equal(2, records.Count);
+        Assert.All(records, r => Assert.Equal(FillStatus.Orphaned, r.Status));
+        Assert.All(records, r => Assert.Equal("(name collision)", r.Seam));
+    }
 }
