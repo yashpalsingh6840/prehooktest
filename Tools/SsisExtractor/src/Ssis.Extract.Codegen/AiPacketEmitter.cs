@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using Ssis.Extract.Dtsx;
 using Ssis.Extract.Model.Analysis;
 using Ssis.Extract.Model.Package;
@@ -30,8 +31,15 @@ public sealed record AiPacketResult(List<GeneratedFile> Packets, List<GapSpec> G
 /// </summary>
 public static class AiPacketEmitter
 {
-    public static AiPacketResult Emit(PackageSpec package, IReadOnlyList<GenerationGap> gaps)
+    /// <summary><paramref name="generatedFiles"/> is the SAME <c>PackageGenerateResult.Files</c>
+    /// list <c>ssisx generate</c> is about to write to disk -- passed through purely so a
+    /// Script Task/Script Component packet can quote that class's own real <c>using</c> lines and
+    /// namespace verbatim (Phase 4.1, P1) instead of a generic placeholder a literal answer can't
+    /// compile against. Optional (defaults to empty) so an existing caller that only has the gaps,
+    /// not the files, still gets a packet -- just without the resolved skeleton.</summary>
+    public static AiPacketResult Emit(PackageSpec package, IReadOnlyList<GenerationGap> gaps, IReadOnlyList<GeneratedFile>? generatedFiles = null)
     {
+        generatedFiles ??= [];
         var packets = new List<GeneratedFile>();
         var specs = new List<GapSpec>();
 
@@ -46,7 +54,7 @@ public static class AiPacketEmitter
 
             var evidence = BuildEvidence(package, gap);
             var fileName = GapIdentity.ToFileName(gapId) + ".md";
-            packets.Add(new GeneratedFile(fileName, BuildPacket(package, gapId, gap, tier, evidence)));
+            packets.Add(new GeneratedFile(fileName, BuildPacket(package, gapId, gap, tier, evidence, generatedFiles)));
             specs.Add(NewSpec(gapId, package, gap, tier, fileName, GapIdentity.Sha256(evidence)));
         }
 
@@ -100,7 +108,7 @@ public static class AiPacketEmitter
         return excelCm?.Parsed?.FilePath is { Length: > 0 } excelPath ? Path.GetFileName(excelPath) : null;
     }
 
-    private static string BuildPacket(PackageSpec package, string gapId, GenerationGap gap, GapTier tier, string evidence)
+    private static string BuildPacket(PackageSpec package, string gapId, GenerationGap gap, GapTier tier, string evidence, IReadOnlyList<GeneratedFile> generatedFiles)
     {
         var sb = new StringBuilder();
         sb.Append($"# Work packet: `{gapId}`\n\n");
@@ -111,7 +119,7 @@ public static class AiPacketEmitter
         sb.Append("## Why `ssisx generate` stopped here\n\n");
         sb.Append(gap.Reason);
         sb.Append("\n\n## What you need to produce\n\n");
-        sb.Append(Contract(gap));
+        sb.Append(Contract(gap, generatedFiles, gapId, GapIdentity.Sha256(evidence)));
         sb.Append("\n## Evidence from the package\n\n");
         sb.Append(evidence);
         sb.Append('\n');
@@ -132,16 +140,189 @@ public static class AiPacketEmitter
         _ => tier.ToString(),
     };
 
-    private static string Contract(GenerationGap gap) => gap.Kind switch
+    private static string Contract(GenerationGap gap, IReadOnlyList<GeneratedFile> generatedFiles, string gapId, string evidenceHash) => gap.Kind switch
     {
         GapKind.LookupJoinKey => LookupContract,
-        GapKind.ScriptTask => ScriptTaskContract,
-        GapKind.ScriptComponentColumn => ScriptComponentContract,
+        GapKind.ScriptTask => BuildScriptSeamContract(gap, generatedFiles, isScriptTask: true, gapId, evidenceHash),
+        GapKind.ScriptComponentColumn => BuildScriptSeamContract(gap, generatedFiles, isScriptTask: false, gapId, evidenceHash),
         GapKind.EncryptedConnectionManagerSecret => EncryptedSecretContract,
         GapKind.TestOracle => TestOracleContract,
         GapKind.LocalFileSourceData => LocalFileSourceDataContract,
         _ => "_(no contract defined for this gap kind)_\n",
     };
+
+    /// <summary>The real <c>using</c> lines, namespace, and class name this seam's OWN generated
+    /// file already declares -- extracted so <see cref="BuildScriptSeamContract"/> can quote them
+    /// verbatim instead of a `&lt;Package&gt;` placeholder a literal answer can't compile against
+    /// (Phase 4.1, P1). The seam's own exact signature is pulled from the gap's OWN reason text
+    /// (both <c>ScriptTaskEmitter</c>/<c>TransformEmitter</c> already state it there, backtick-quoted,
+    /// word for word) rather than re-derived from the file, so it can never disagree with what the
+    /// generated class actually declares.</summary>
+    private static SeamSkeleton? ResolveSeamSkeleton(GenerationGap gap, IReadOnlyList<GeneratedFile> generatedFiles)
+    {
+        var signatureMatch = Regex.Match(gap.Reason, "`(private partial [^`]+)`");
+        if (!signatureMatch.Success) return null;
+
+        string? className = gap.Kind switch
+        {
+            // TransformEmitter's own text: "...second part of '{TransformClassName}' implements it".
+            GapKind.ScriptComponentColumn => Regex.Match(gap.Reason, "second part of '([^']+)'") is { Success: true } m ? m.Groups[1].Value : null,
+            // ScriptTaskEmitter's own text: "...seam on '{ns}.{className}'." -- the class name is
+            // the LAST dotted segment; the namespace is read straight off the file below instead
+            // of parsed out of this same string, so the two can never disagree.
+            GapKind.ScriptTask => Regex.Match(gap.Reason, "seam on '([^']+)'") is { Success: true } m ? m.Groups[1].Value.Split('.')[^1] : null,
+            _ => null,
+        };
+        if (className is null) return null;
+
+        var file = generatedFiles.FirstOrDefault(f => Path.GetFileNameWithoutExtension(f.RelativePath) == className);
+        if (file is null) return null;
+
+        var lines = file.Content.Replace("\r\n", "\n").Split('\n');
+        var usings = lines.Where(l => l.TrimStart().StartsWith("using ", StringComparison.Ordinal)).ToList();
+        var namespaceMatch = lines.Select(l => Regex.Match(l, @"^\s*namespace\s+([\w.]+)\s*;")).FirstOrDefault(m => m.Success);
+        if (namespaceMatch is null) return null;
+
+        return new SeamSkeleton(usings, namespaceMatch.Groups[1].Value, className, signatureMatch.Groups[1].Value);
+    }
+
+    private sealed record SeamSkeleton(List<string> Usings, string Namespace, string ClassName, string Signature);
+
+    /// <summary>
+    /// Renders a COMPLETE, compilable skeleton -- real <c>using</c> lines, real namespace, real
+    /// class name, real seam signature, all copied verbatim from the generated file itself -- with
+    /// only the method/class BODY left as a TODO. `ssisx apply-fills` copies a fill file whole
+    /// (<c>File.Copy</c>), so a literal answer to the OLD bare-method template could never compile
+    /// on its own; this is what actually fixes that (Phase 4.1, P1). Falls back to a generic,
+    /// placeholder-bearing template (the pre-4.1 shape) only when the skeleton can't be resolved --
+    /// e.g. a caller that built the packet without passing <c>generatedFiles</c> at all.
+    /// </summary>
+    private static string BuildScriptSeamContract(GenerationGap gap, IReadOnlyList<GeneratedFile> generatedFiles, bool isScriptTask, string gapId, string evidenceHash)
+    {
+        var skeleton = ResolveSeamSkeleton(gap, generatedFiles);
+        if (skeleton is null) return isScriptTask ? ScriptTaskContractFallback : ScriptComponentContractFallback;
+
+        var usings = string.Join("\n", skeleton.Usings);
+        // "private partial Task RunScriptAsync(...)" / "private partial FooResult Foo(...)" ->
+        // the same declaration with its trailing ";" replaced by a body -- the exact signature the
+        // generated class already declares, word for word.
+        var bodySignature = skeleton.Signature.TrimEnd();
+        // GapId/EvidenceSha256 are filled in HERE, not left as "<from the heading above>" -- this
+        // packet already knows both, and a human transcribing them by hand is exactly the kind of
+        // avoidable mistake `ssisx apply-fills`' own staleness check exists to catch, not invite.
+        //
+        // WHERE this comment goes differs between the two branches below, and that is NOT
+        // arbitrary: ApplyFillsCommand.ExtractProvenance searches backward from a DIFFERENT
+        // declaration line for each kind -- the CLASS line for a Script Task
+        // (ScriptTaskFillClassPattern), but the METHOD line for a Script Component
+        // (ScriptComponentSeamPattern) -- and it stops at the first non-blank line, matching or
+        // not. Put it one line too high for either kind and the fill is silently reported
+        // UNATTRIBUTED (still applied, just with no staleness protection) instead of APPLIED.
+        var provenanceComment = $"// ssisx-fill: GapId={gapId} Author=<you> Date=<yyyy-mm-dd> EvidenceSha256={evidenceHash}";
+
+        if (isScriptTask)
+        {
+            return $$"""
+                A **second `partial` part** of the class `ssisx generate --seams` already emitted for this
+                task, implementing its one unimplemented seam. Do NOT write the `ILoadTask` implementation,
+                the `Name` property, or the `StepResult` -- all of that is generated already. The skeleton
+                below is the COMPLETE file to respond with (same `using`s, same namespace, same class name
+                the generated class itself declares) -- only the body of `{{bodySignature}}` is yours to write:
+
+                ```csharp
+                {{usings}}
+
+                namespace {{skeleton.Namespace}};
+
+                {{provenanceComment}}
+                public sealed partial class {{skeleton.ClassName}}
+                {
+                    // Fields are allowed here -- this is a class part, not a bare method body. A compiled
+                    // Regex, a constant, a helper method: all fine.
+
+                    {{bodySignature}}
+                    {
+                        // ported logic here
+                    }
+                }
+                ```
+
+                What the original script's `Dts.*` calls map to, all reachable from `ctx`:
+
+                | SSIS | here |
+                |---|---|
+                | `Dts.Connections[...].AcquireConnection` for SQL | `ctx.Uow` -- the package's one shared connection/transaction (`ExecuteSqlAsync`) |
+                | `Dts.Variables["System::PackageName"]` | `ctx.Load.PackageName` (also `RunId`, `StartedAtUtc`) |
+                | `Dts.Variables["User::Whatever"]` | `ctx.Variables.Get<T>(name)` / `.Set(name, value)`, shared with every other ported Script Task in this package |
+                | `Dts.Connections[...].ConnectionString`, or any other configured value | resolve it from `ctx.Services` (e.g. `IOptions<FileSourceOptions>`) -- add `using Microsoft.Extensions.DependencyInjection;` for `GetRequiredService` |
+                | `Dts.Events.FireError` + `Dts.TaskResult = Failure` | `throw` -- this is this rewrite's OWN documented equivalent of a Script Task `Failure` result, not merely "seemed reasonable": an unhandled exception from `RunAsync` triggers the same rollback + `FailureHandlers` path a `Value=Failure` precedence constraint or `OnError` handler would, and fails the whole run the same way SSIS's own task-failure semantics do. Treat this as settled unless the packet says otherwise. |
+                | `Dts.Events.FireInformation` | an `ILogger` resolved from `ctx.Services` |
+                | `DateTime.Now` / `DateTime.UtcNow` | `DateTime.UtcNow` directly -- there is no per-call "now" on `ctx` (`ctx.Load.StartedAtUtc` is fixed at the whole RUN's start, not this task's own execution moment, and would silently collapse a real elapsed-time computation to ~0). Call out the local-to-UTC timezone change; do not assume it is inconsequential. |
+
+                Note the transaction difference and do not try to work around it: this task's SQL joins the
+                package's single all-or-nothing transaction, whereas SSIS auto-committed per task.
+
+                **If the task's real logic cannot be reproduced against these abstractions**, say so
+                explicitly instead of inventing a substitute. That answer is more useful than a plausible one.
+
+                """;
+        }
+
+        var returnTypeMatch = Regex.Match(bodySignature, @"private partial (\S+) \S+\(");
+        var returnType = returnTypeMatch.Success ? returnTypeMatch.Groups[1].Value : "the result type";
+        var columnsMatch = Regex.Match(gap.Reason, @"column\(s\) \(([^)]+)\)");
+        var columnHint = columnsMatch.Success ? columnsMatch.Groups[1].Value : "one per produced column";
+
+        return $$"""
+            The body of ONE method computing EVERY column this Script Component produces, together, for
+            a single row -- not one method per column. The skeleton below is the COMPLETE file to respond
+            with (same `using`s, same namespace, same class name the generated class itself declares) --
+            only the body of `{{bodySignature}}` is yours to write:
+
+            ```csharp
+            {{usings}}
+
+            namespace {{skeleton.Namespace}};
+
+            public sealed partial class {{skeleton.ClassName}}
+            {
+                // Fields are allowed here -- this is a class part, not a bare method body.
+
+                {{provenanceComment}}
+                {{bodySignature}}
+                {
+                    // TODO: return new {{returnType}}(...) -- one named argument per column: {{columnHint}}
+                }
+            }
+            ```
+
+            `{{returnType}}` is already declared in the generated file, in this SAME namespace --
+            do not redeclare it. Leaving the `return` out (as shown) is deliberate: `{{returnType}}` is
+            a `record struct`, which -- unlike a record CLASS -- always has an implicit PARAMETERLESS
+            constructor too, so `return new {{returnType}}();` would compile silently with every column
+            zeroed out rather than failing loudly until you actually supply real values.
+
+            The Script Component's full source is below -- port the WHOLE component, computing all of its
+            columns from the one method (they came from one script; there is exactly one work packet for
+            it, not one per column).
+
+            This method is itself called once PER ROW -- it is exactly where `Input0_ProcessInputRow` ran
+            in the original. So if the original script called `DateTime.Now`/`DateTime.UtcNow` inside that
+            per-row callback, calling `DateTime.UtcNow` directly inside THIS method is the faithful port:
+            it still evaluates fresh per row, only switching local time to UTC (call that timezone change
+            out; do not assume it is inconsequential). Reach for `ctx.LoadedAtUtc` instead only when the
+            original value was clearly meant to be ONE shared instant for the whole load -- e.g. it
+            reproduces an SSIS built-in expression like `GETUTCDATE()`, which this tool's own expression
+            translator already makes deterministic per load elsewhere, by design. Using `ctx.LoadedAtUtc`
+            as a substitute for a per-row `DateTime.Now` changes the actual VALUES stored on every row, not
+            just an implementation detail -- if you choose it anyway, say so explicitly, don't substitute
+            silently.
+
+            """;
+    }
+
+    private const string ScriptTaskContractFallback = ScriptTaskContract;
+    private const string ScriptComponentContractFallback = ScriptComponentContract;
 
     private const string LookupContract = """
         The join key this Lookup uses. SSIS normally records it on the joining input column (a
@@ -441,24 +622,25 @@ public static class AiPacketEmitter
         instead). No provenance comment -- see the contract above for why none is possible here.
         """;
 
+    /// <summary>Phase 4.1 (P1): this used to say "no `using` directives (the generated file
+    /// already has them)" -- true of the file the seam is SPLICED into at build time, but
+    /// directly false of the FILL FILE `ssisx apply-fills` copies whole (<c>File.Copy</c>): that
+    /// file has no other source of `using`s at all. The skeleton above already reproduces the
+    /// real ones verbatim, so the fix is simply to ask for the whole thing back, unchanged except
+    /// for the body.</summary>
     private const string CodeResponseFormat = """
 
         ## Respond with
 
-        A single fenced `csharp` block containing only the code asked for above -- no prose around it,
-        no `using` directives (the generated file already has them), no explanation inside the block.
-        Put any caveats AFTER the block, and say plainly if the port is not faithful.
+        A single fenced `csharp` block containing the WHOLE skeleton shown above -- the same `using`
+        lines, namespace, and class declaration, unchanged -- with the method (or class) body filled
+        in. Nothing outside that block; no prose inside it. Put any caveats AFTER the block, and say
+        plainly if the port is not faithful.
 
-        Immediately above the method (or `partial class`) declaration, on its own line, include:
-
-        ```
-        // ssisx-fill: GapId=<this gap's id, from the heading above> Author=<your name or email> Date=<yyyy-mm-dd> EvidenceSha256=<the Evidence SHA-256 from the heading above>
-        ```
-
+        The `// ssisx-fill: ...` comment shown above the class already has GapId/EvidenceSha256 filled
+        in for you from this packet's own heading -- copy it verbatim, and set `Author`/`Date` yourself.
         This is what lets `ssisx apply-fills` tell this port apart from a stale one on a later run,
-        after the .dtsx has changed underneath it -- without it the fill is still applied (most fills
-        predate this), just reported as unattributed rather than checked. Copy the id and hash
-        verbatim from the heading above; do not compute or guess either.
+        after the .dtsx has changed underneath it.
         """;
 
     /// <summary>

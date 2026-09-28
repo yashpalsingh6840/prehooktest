@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 
 // Measured, not assumed: this project's own test suite ran 1m21s-1m28s in isolation but 10+
 // minutes to 2.5h+ when run as part of the WHOLE Ssis.Extract.Codegen.Tests project, even after
@@ -238,6 +239,107 @@ public class GeneratedSolutionBuildTests
             // Only seam errors left? Then assert that is genuinely the reason, so a future
             // failure whose error lines this parser does not recognise cannot pass silently.
             if (build.ExitCode != 0) Assert.Contains("CS8795", build.Output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            TryDelete(work);
+        }
+    }
+
+    /// <summary>
+    /// Phase 4.1 (P1) of the independent-review fix plan: a Script Task/Script Component work
+    /// packet's own "What you need to produce" skeleton must be a COMPLETE, compilable file (real
+    /// `using`s, real namespace, real class name) -- <c>ssisx apply-fills</c> copies a fill file
+    /// WHOLE (<c>File.Copy</c>), so a literal answer to the old bare-method template could never
+    /// compile on its own. Takes the packet's OWN fenced code block verbatim (not hand-written),
+    /// applies it unmodified first (expecting it to fail ONLY on the still-`TODO` body -- proving
+    /// everything else about the skeleton is genuinely correct), then again with a trivial
+    /// <c>return default!;</c> body (expecting a clean build).
+    /// </summary>
+    [Theory]
+    [InlineData("SyntheticScriptComponentSeams.dtsx", "SCRIPT-COLUMN")]
+    [InlineData("SyntheticScriptTaskSeams.dtsx", "SCRIPT-TASK")]
+    public void ScriptSeamPacket_SkeletonIsCompleteAndCompilable(string fixtureName, string gapIdPrefix)
+    {
+        var fixturePath = Path.Combine(FixturesDir, fixtureName);
+        Assert.True(File.Exists(fixturePath), $"fixture missing: {fixturePath}");
+
+        var ssisx = FindSsisx();
+        if (ssisx is null || !Directory.Exists(EtlCoreProjectDir)) return; // see class doc comment
+
+        var work = Path.Combine(Path.GetTempPath(), "ssisx-buildtest", Path.GetRandomFileName());
+        try
+        {
+            var gen = Run(ssisx, $"generate --input \"{fixturePath}\" --out \"{work}\"");
+            Assert.True(gen.ExitCode is 0 or 3, $"ssisx generate failed ({gen.ExitCode}):{Environment.NewLine}{gen.Output}");
+
+            var gapsDir = Path.Combine(work, "gaps");
+            // A fixture may declare more than one seam of this kind (SyntheticScriptTaskSeams has
+            // two Script Tasks) -- every one of them must be filled before a "must compile clean"
+            // build makes sense, so this loops over ALL of them, not just the first.
+            var packetFiles = Directory.GetFiles(gapsDir, $"{gapIdPrefix}_*.md", SearchOption.AllDirectories);
+            Assert.True(packetFiles.Length > 0, $"no {gapIdPrefix} work packet found under {gapsDir}");
+
+            var generateDir = Path.Combine(work, "generate");
+            var solution = Path.Combine(generateDir, "Generated.slnx");
+            Assert.True(File.Exists(solution), $"{fixtureName}: expected a Generated.slnx (this fixture has real wired flows besides the seam)");
+            CopyEtlCore(generateDir);
+
+            var packageName = Path.GetFileNameWithoutExtension(fixtureName);
+            var fillsDir = Path.Combine(work, "fills-library", packageName);
+            Directory.CreateDirectory(fillsDir);
+            var fillsLibraryRoot = Path.Combine(work, "fills-library");
+
+            var skeletons = packetFiles.Select(packetFile =>
+            {
+                var packetText = File.ReadAllText(packetFile);
+                var codeBlockMatch = Regex.Match(packetText, "```csharp\r?\n(.*?)```", RegexOptions.Singleline);
+                Assert.True(codeBlockMatch.Success, $"no fenced csharp block found in {packetFile}");
+                return (Name: Path.GetFileNameWithoutExtension(packetFile), Skeleton: codeBlockMatch.Groups[1].Value);
+            }).ToList();
+
+            // Pass 1: every packet's own skeleton, UNMODIFIED (still carries its own TODO body).
+            // Expected to fail ONLY on that -- any OTHER error (a missing `using`, an unresolved
+            // namespace/class/type) would mean the skeleton itself is not actually complete.
+            foreach (var (name, skeleton) in skeletons)
+                File.WriteAllText(Path.Combine(fillsDir, $"{name}.Fills.cs"), skeleton);
+            var apply1 = Run(ssisx, $"apply-fills --out \"{work}\" --fills \"{fillsLibraryRoot}\"");
+            Assert.True(apply1.Output.Contains("APPLIED", StringComparison.Ordinal), $"apply-fills (pass 1) did not report APPLIED:{Environment.NewLine}{apply1.Output}");
+
+            var build1 = Run("dotnet", $"build \"{solution}\" --nologo -v quiet -nodeReuse:false {OfflineRestoreSourcesArg}");
+            Assert.NotEqual(0, build1.ExitCode); // the TODO body must still fail to compile
+            var unexpectedErrors = build1.Output
+                .Split('\n')
+                // Both placeholder bodies (Script Task's bare comment, Script Component's
+                // deliberately-return-less TODO comment -- see AiPacketEmitter's own doc comment
+                // on why it is NOT `return new(...)`) fail the exact same way: "not all code
+                // paths return a value". Anything else means the skeleton itself isn't complete.
+                .Where(l => l.Contains(": error ", StringComparison.Ordinal) && !l.Contains("CS0161", StringComparison.Ordinal))
+                .Select(l => l.Trim())
+                .Distinct()
+                .ToList();
+            Assert.True(unexpectedErrors.Count == 0,
+                $"{fixtureName}: the packet's own skeleton failed for a reason OTHER than its placeholder body ({unexpectedErrors.Count} error(s)):{Environment.NewLine}"
+                + string.Join(Environment.NewLine, unexpectedErrors.Take(10)));
+
+            // Pass 2: the exact same skeletons with a trivial, uniformly-valid body -- must compile
+            // clean. Deliberately a targeted STRING replace of the one placeholder comment LINE,
+            // not a brace-matching regex over the whole skeleton -- the class's own "Fields are
+            // allowed here" comment sits inside an outer `{ ... }` too, and a generic `{ // ... }`
+            // pattern would just as happily (and wrongly) match THAT instead of the seam's own body.
+            foreach (var (name, skeleton) in skeletons)
+            {
+                var filled = skeleton.Contains("// ported logic here", StringComparison.Ordinal)
+                    ? skeleton.Replace("// ported logic here", "return default!;")
+                    : Regex.Replace(skeleton, @"// TODO:.*", "return default!;");
+                Assert.NotEqual(skeleton, filled); // fail loudly if neither placeholder was found
+                File.WriteAllText(Path.Combine(fillsDir, $"{name}.Fills.cs"), filled);
+            }
+            var apply2 = Run(ssisx, $"apply-fills --out \"{work}\" --fills \"{fillsLibraryRoot}\"");
+            Assert.Contains("APPLIED", apply2.Output, StringComparison.Ordinal);
+
+            var build2 = Run("dotnet", $"build \"{solution}\" --nologo -v quiet -nodeReuse:false {OfflineRestoreSourcesArg}");
+            Assert.True(build2.ExitCode == 0, $"{fixtureName}: the packet's own skeleton with a trivial body did not compile:{Environment.NewLine}{build2.Output}");
         }
         finally
         {

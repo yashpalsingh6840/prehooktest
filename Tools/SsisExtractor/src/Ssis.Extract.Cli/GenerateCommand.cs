@@ -268,7 +268,7 @@ internal static class GenerateCommand
             // Work packets live under <out>/gaps/, deliberately NOT inside <out>/generate/ --
             // that tree is "the buildable solution" and nothing else, so a stray .md never ends up
             // in a project directory someone is about to `dotnet build`.
-            var packetResult = AiPacketEmitter.Emit(package, result.Gaps);
+            var packetResult = AiPacketEmitter.Emit(package, result.Gaps, result.Files);
             allGaps.AddRange(packetResult.Gaps);
             foreach (var packet in packetResult.Packets)
             {

@@ -32,14 +32,13 @@ is **per script component/task**:
   ```
   (stop the range one line before `## SSIS semantics` — everything from there to the end of
   the file is the boilerplate to skip).
-- The exact seam signature (return type, parameter types, class, namespace) is already quoted
-  in the packet's own reason text. **Do not open the generated `.cs` file to look it up.**
-- **Exception, do open the generated file for this:** before writing `using`s, grep the
-  generated row/entity type file(s) the packet references (e.g. `grep -n "^namespace"
-  out/generate/<Package>/{Sql,Csv,Model}/<Type>.cs`) for their real namespace — guessing wrong
-  here is only caught by a full build, costing an entire extra build+test cycle.
+- The packet's own "What you need to produce" section already renders a COMPLETE, compilable
+  skeleton — the real `using` lines, real namespace, real class name, and the exact seam
+  signature, all copied verbatim from the generated file itself (Phase 4.1 of the
+  independent-review fix plan). **Never open the generated `.cs` file to look any of this up** —
+  copy the skeleton as shown and write only the method/class body.
 
-Only open a generated file for the reason above, or if a packet is genuinely ambiguous.
+Only open a generated file if a packet is genuinely ambiguous.
 
 ## Step 2 — write the fills
 
