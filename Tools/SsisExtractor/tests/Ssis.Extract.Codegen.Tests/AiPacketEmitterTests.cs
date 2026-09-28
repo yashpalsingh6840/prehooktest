@@ -47,6 +47,43 @@ public class AiPacketEmitterTests
     }
 
     [Fact]
+    public void Emit_MergesAScriptTaskSeamAndItsCompanionTestOracleGap_IntoOnePacketFile()
+    {
+        // Phase 5.4 (G5): PackageGenerator.Generate against a real seam-bearing fixture already
+        // produces a ScriptTask gap and its own companion TestOracle gap (same Location, per
+        // ScriptTaskEmitter.cs's own doc comment) -- confirm AiPacketEmitter folds them into ONE
+        // file rather than two, with both GapIds still present and pointing at it.
+        var package = LoadSyntheticFixture("SyntheticScriptTaskSeams.dtsx");
+        var generated = PackageGenerator.Generate(package, namespacePrefix: null, emitSeams: true);
+        var scriptTaskGaps = generated.Gaps.Where(g => g.Kind == GapKind.ScriptTask).ToList();
+        Assert.NotEmpty(scriptTaskGaps); // sanity: this fixture genuinely has one, or the test is vacuous.
+        var seamGap = scriptTaskGaps[0];
+        var companionGap = Assert.Single(generated.Gaps, g => g.Kind == GapKind.TestOracle && g.Location == seamGap.Location);
+
+        var result = AiPacketEmitter.Emit(package, generated.Gaps, generated.Files);
+
+        var seamSpec = Assert.Single(result.Gaps, g => g.Kind == GapKind.ScriptTask && g.Location == seamGap.Location);
+        var testSpec = Assert.Single(result.Gaps, g => g.Kind == GapKind.TestOracle && g.Location == companionGap.Location);
+        Assert.NotNull(seamSpec.PacketPath);
+        Assert.Equal(seamSpec.PacketPath, testSpec.PacketPath); // same file.
+        // Each gap's own evidence hash is still independently computed -- the merge only changes
+        // where the text is PRINTED, never what ApplyFillsCommand checks a fill's hash against.
+        Assert.NotEqual(seamSpec.EvidenceSha256, testSpec.EvidenceSha256);
+
+        var packet = Assert.Single(result.Packets, p => p.RelativePath == seamSpec.PacketPath);
+        Assert.Contains($"`{seamSpec.GapId}` + `{testSpec.GapId}`", packet.Content);
+        Assert.Contains("## Answer 1", packet.Content);
+        Assert.Contains("## Answer 2", packet.Content);
+        // The evidence section (which embeds the real script source) appears exactly once, not
+        // duplicated across two answer sections.
+        Assert.Equal(1, packet.Content.Split("## Evidence from the package").Length - 1);
+
+        // Only ONE .md file was written for this seam+companion pair, not two -- the file count
+        // is strictly less than the count of gaps that carry a packet.
+        Assert.True(result.Packets.Count < result.Gaps.Count(g => g.PacketPath is not null));
+    }
+
+    [Fact]
     public void Emit_BuildsALookupPacket_FromTheRealReferenceQueryAndColumns()
     {
         var package = LoadSyntheticFixture("SyntheticLookupSplit.dtsx");

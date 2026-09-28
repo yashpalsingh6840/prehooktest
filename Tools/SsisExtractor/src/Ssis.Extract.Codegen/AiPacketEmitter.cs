@@ -42,9 +42,26 @@ public static class AiPacketEmitter
         generatedFiles ??= [];
         var packets = new List<GeneratedFile>();
         var specs = new List<GapSpec>();
+        var assigned = GapIdentity.AssignIds(package.ObjectName, gaps);
 
-        foreach (var (gapId, gap) in GapIdentity.AssignIds(package.ObjectName, gaps))
+        // Phase 5.4 (G5): a ScriptTask/ScriptComponentColumn seam gap and its own companion
+        // TestOracle gap (ScriptTaskEmitter.cs/TransformEmitter.cs both add them as a pair,
+        // SAME Location, different GapId prefix) are merged into ONE file with two answer
+        // sections instead of two near-duplicate ones -- both repeat the identical script
+        // source and SSIS-semantics boilerplate today, which is most of the ~67% cross-packet
+        // duplication this phase exists to cut. Built as a lookup up front (not inline in the
+        // loop below) since a companion can be assigned its id before OR after its seam,
+        // depending on gap list order.
+        var testOracleCompanionByLocation = assigned
+            .Where(p => p.Gap.Kind == GapKind.TestOracle)
+            .ToDictionary(p => p.Gap.Location, p => p, StringComparer.Ordinal);
+        var mergedIntoCompanion = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var (gapId, gap) in assigned)
         {
+            if (gap.Kind == GapKind.TestOracle && mergedIntoCompanion.Contains(gapId))
+                continue; // Already folded into its seam's own packet below.
+
             var tier = GapIdentity.TierOf(gap);
             if (!GapIdentity.HasWorkPacket(gap))
             {
@@ -52,10 +69,25 @@ public static class AiPacketEmitter
                 continue;
             }
 
+            if (gap.Kind is GapKind.ScriptTask or GapKind.ScriptComponentColumn
+                && testOracleCompanionByLocation.TryGetValue(gap.Location, out var companion))
+            {
+                var (testGapId, testGap) = companion;
+                var seamEvidence = BuildEvidence(package, gap);
+                var testEvidence = BuildEvidence(package, testGap);
+                var fileName = GapIdentity.ToFileName(gapId) + ".md";
+                packets.Add(new GeneratedFile(fileName,
+                    BuildMergedPacket(package, gapId, gap, tier, seamEvidence, testGapId, testGap, GapIdentity.Sha256(testEvidence), generatedFiles)));
+                specs.Add(NewSpec(gapId, package, gap, tier, fileName, GapIdentity.Sha256(seamEvidence)));
+                specs.Add(NewSpec(testGapId, package, testGap, GapIdentity.TierOf(testGap), fileName, GapIdentity.Sha256(testEvidence)));
+                mergedIntoCompanion.Add(testGapId);
+                continue;
+            }
+
             var evidence = BuildEvidence(package, gap);
-            var fileName = GapIdentity.ToFileName(gapId) + ".md";
-            packets.Add(new GeneratedFile(fileName, BuildPacket(package, gapId, gap, tier, evidence, generatedFiles)));
-            specs.Add(NewSpec(gapId, package, gap, tier, fileName, GapIdentity.Sha256(evidence)));
+            var plainFileName = GapIdentity.ToFileName(gapId) + ".md";
+            packets.Add(new GeneratedFile(plainFileName, BuildPacket(package, gapId, gap, tier, evidence, generatedFiles)));
+            specs.Add(NewSpec(gapId, package, gap, tier, plainFileName, GapIdentity.Sha256(evidence)));
         }
 
         return new AiPacketResult(packets, specs);
@@ -133,6 +165,54 @@ public static class AiPacketEmitter
         if (tier == GapTier.MissingLogic) sb.Append(SsisSemanticsAppendix);
 
         sb.Append(ResponseFormat(gap));
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Phase 5.4 (G5): one file answering BOTH a Script Task/Component seam gap and its own
+    /// companion TestOracle gap. The two share nearly all their evidence today (the companion's
+    /// own <c>TestOracleEvidence</c> is literally "this is the companion test... the source below
+    /// is that SAME script" followed by the identical text <paramref name="seamEvidence"/> already
+    /// carries) -- printed once here instead of twice. <paramref name="testEvidenceHash"/> is
+    /// still computed from the companion's OWN evidence text (not reused from the seam's), so a
+    /// human's fill for the TEST-ORACLE gap still carries the exact hash <c>ApplyFillsCommand</c>
+    /// expects, even though that text is never reprinted.
+    /// </summary>
+    private static string BuildMergedPacket(PackageSpec package, string seamGapId, GenerationGap seamGap, GapTier seamTier, string seamEvidence,
+        string testGapId, GenerationGap testGap, string testEvidenceHash, IReadOnlyList<GeneratedFile> generatedFiles)
+    {
+        var seamKindLabel = seamGap.Kind == GapKind.ScriptTask ? "Script Task" : "Script Component";
+        var seamEvidenceHash = GapIdentity.Sha256(seamEvidence);
+
+        var sb = new StringBuilder();
+        sb.Append($"# Work packet: `{seamGapId}` + `{testGapId}`\n\n");
+        sb.Append($"_Merged: this one packet answers TWO gaps -- porting the {seamKindLabel}, and writing its\n");
+        sb.Append("companion test. They share the identical evidence below (a test for a filled seam exercises\n");
+        sb.Append("the PORTED C#, not the original script directly), so it is shown once._\n\n");
+        sb.Append($"- **Package:** `{package.ObjectName}`\n");
+        sb.Append($"- **Location:** `{seamGap.Location}`\n\n");
+
+        sb.Append("## Why `ssisx generate` stopped here\n\n");
+        sb.Append(seamGap.Reason);
+        sb.Append("\n\n");
+        sb.Append(testGap.Reason);
+        sb.Append("\n\n## Evidence from the package\n\n");
+        sb.Append(seamEvidence);
+        sb.Append('\n');
+        sb.Append(SsisSemanticsAppendix);
+
+        sb.Append($"\n## Answer 1 -- port the {seamKindLabel} (`{seamGapId}`, {TierDescription(seamTier, seamGap.Kind)})\n\n");
+        sb.Append($"- **Evidence SHA-256 for this answer's own provenance comment:** `{seamEvidenceHash}`\n\n");
+        sb.Append(Contract(seamGap, generatedFiles, seamGapId, seamEvidenceHash));
+        sb.Append(ResponseFormat(seamGap));
+
+        sb.Append($"\n## Answer 2 -- write the companion test (`{testGapId}`, {TierDescription(GapTier.MissingDatum, GapKind.TestOracle)})\n\n");
+        sb.Append("_Exercises the PORTED C# from Answer 1 once it exists (a real `PackageHarness`/call into the\n");
+        sb.Append("seam's own method) -- never the original SSIS script text directly._\n\n");
+        sb.Append($"- **Evidence SHA-256 for THIS answer's own provenance comment:** `{testEvidenceHash}`\n\n");
+        sb.Append(Contract(testGap, generatedFiles, testGapId, testEvidenceHash));
+        sb.Append(ResponseFormat(testGap));
+
         return sb.ToString();
     }
 
