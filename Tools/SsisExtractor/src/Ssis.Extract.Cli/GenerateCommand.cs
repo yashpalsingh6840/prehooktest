@@ -149,6 +149,17 @@ internal static class GenerateCommand
         // it happens to exit.
         using var runLog = RunLog.Start(Path.Combine(outDir, "generate.log"));
 
+        // Phase 3.2 (R8): delete the three summary files FIRST, not last. They are written fresh
+        // at the very end of a successful run (below) -- that ordering alone means a run killed
+        // or crashed partway through used to leave the PREVIOUS run's generate-report.md/
+        // gaps.json/Generated.slnx sitting next to a half-written (or entirely stale) generate/
+        // tree, looking like a complete, trustworthy result when it no longer describes what's
+        // actually on disk. Deleting them here instead makes "these three files exist and agree
+        // with generate/" true only when a run actually finished.
+        DeleteIfExists(Path.Combine(outDir, "generate-report.md"));
+        DeleteIfExists(Path.Combine(outDir, "gaps.json"));
+        DeleteIfExists(Path.Combine(outDir, "generate", "Generated.slnx"));
+
         PackageLoader.LoadResult loaded;
         try
         {
@@ -225,6 +236,17 @@ internal static class GenerateCommand
             decisionOutcomes.AddRange(decisions.Outcomes.Concat(decisions.Orphans())
                 .Select(o => (package.ObjectName, o)));
 
+            // Phase 3.1 (R2): clean this package's own PREVIOUS output before writing this run's
+            // -- otherwise a component the package no longer has (renamed, disabled, or removed
+            // since the last `ssisx generate` into this same --out) leaves a stale Mapping/*.cs
+            // sitting next to this run's own files, and the two together produce confusing
+            // compile errors that read like a generator bug, not a stale-output problem. Fills/
+            // and TestData/ are explicitly preserved -- both are hand-maintained work product
+            // this tool only ever reads, never something it generates, so they must survive a
+            // clean the exact same way a conformance claims file survives re-running
+            // `conformance`.
+            CleanPreviousPackageOutput(generateDir, gapsDir, package.ObjectName);
+
             foreach (var file in result.Files)
             {
                 var path = Path.Combine(generateDir, package.ObjectName, file.RelativePath);
@@ -255,6 +277,13 @@ internal static class GenerateCommand
                 File.WriteAllText(path, packet.Content);
             }
         }
+
+        // Phase 3.1 (R2): a package this run never touched (renamed since a previous run into
+        // this same --out, or scoped out via --package this time) still has its OLD folder on
+        // disk, unreferenced by the Generated.slnx this run is about to write -- reported, never
+        // auto-deleted, since it's the only place a since-descoped package's own hand-written
+        // fills might still live.
+        ReportStalePackageFolders(generateDir, results);
 
         var fixedFileGaps = WriteFixedFiles(generateDir, loaded.Packages, results, etlCorePath, framework);
 
@@ -302,6 +331,74 @@ internal static class GenerateCommand
         if (crashCount > 0) return ExitCodes.PartialCrash;
         if (totalFiles == 0) return ExitCodes.NothingWritten;
         return totalBlockingGaps > 0 ? ExitCodes.BlockingGaps : ExitCodes.Ok;
+    }
+
+    private static void DeleteIfExists(string path)
+    {
+        if (File.Exists(path)) File.Delete(path);
+    }
+
+    /// <summary>
+    /// Phase 3.1 (R2): removes everything this tool itself generated for one package on a PRIOR
+    /// run, so this run's own output is never mixed with a leftover file (e.g. Mapping/*.cs for
+    /// a component the package no longer has). Fills/ and TestData/ are preserved untouched --
+    /// see <see cref="CleanDirectoryPreserving"/>. Also removes gaps/&lt;Pkg&gt;/ entirely (that
+    /// tree carries no hand-maintained content at all -- every file in it is a generated work
+    /// packet, safe to fully replace).
+    /// </summary>
+    private static void CleanPreviousPackageOutput(string generateDir, string gapsDir, string packageName)
+    {
+        CleanDirectoryPreserving(Path.Combine(generateDir, packageName), "Fills", "TestData");
+        CleanDirectoryPreserving(Path.Combine(generateDir, $"{packageName}.Tests"), "Fills", "TestData");
+
+        var gapsPkgDir = Path.Combine(gapsDir, packageName);
+        if (Directory.Exists(gapsPkgDir)) Directory.Delete(gapsPkgDir, recursive: true);
+    }
+
+    /// <summary>
+    /// Deletes every file and subdirectory directly under <paramref name="dir"/> EXCEPT the
+    /// named subdirectories (kept, and left completely untouched, contents included). A no-op if
+    /// <paramref name="dir"/> doesn't exist -- the ordinary case for a package this --out has
+    /// never generated before.
+    /// </summary>
+    private static void CleanDirectoryPreserving(string dir, params string[] preserve)
+    {
+        if (!Directory.Exists(dir)) return;
+
+        var preserveSet = new HashSet<string>(preserve, StringComparer.OrdinalIgnoreCase);
+        foreach (var file in Directory.EnumerateFiles(dir))
+            File.Delete(file);
+        foreach (var subDir in Directory.EnumerateDirectories(dir))
+        {
+            if (preserveSet.Contains(Path.GetFileName(subDir))) continue;
+            Directory.Delete(subDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Phase 3.1 (R2): a package folder under generate/ that this run neither cleaned nor wrote
+    /// to (renamed since a previous run into this same --out, or scoped out of this run via
+    /// --package) is dead weight Generated.slnx no longer references -- reported so a human
+    /// notices, never deleted automatically, since it may be the only place that package's own
+    /// hand-written Fills/TestData still live.
+    /// </summary>
+    private static void ReportStalePackageFolders(string generateDir, List<PackageGenerateResult> results)
+    {
+        if (!Directory.Exists(generateDir)) return;
+
+        var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Etl.Core", "Shared" };
+        foreach (var r in results)
+        {
+            known.Add(r.PackageName);
+            known.Add($"{r.PackageName}.Tests");
+        }
+
+        foreach (var dir in Directory.EnumerateDirectories(generateDir))
+        {
+            var name = Path.GetFileName(dir);
+            if (known.Contains(name)) continue;
+            Console.WriteLine($"warning: stale package folder '{name}' under {generateDir} is not referenced by Generated.slnx (from a previous run, or a package not generated this time) -- not deleted automatically; remove it by hand once you've confirmed nothing in it (e.g. hand-written Fills/) is still needed.");
+        }
     }
 
     /// <summary>

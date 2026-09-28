@@ -254,7 +254,7 @@ public class RobustnessTests : IDisposable
     // After 3.1: the package's own generate/<Pkg>/** (minus Fills/TestData) is cleaned
     // before writing, so no stale file survives a structural change.
     // ---------------------------------------------------------------------
-    [Fact(Skip = "Phase 3.1")]
+    [Fact]
     public void RegeneratingAfterDisablingADataFlowTask_LeavesNoStaleMappingFile()
     {
         var outDir = NewOutDir();
@@ -267,6 +267,82 @@ public class RobustnessTests : IDisposable
         RunCaptured(() => GenerateCommand.Run(["--input", CaseDir("disable_dft"), "--out", outDir, "--package", "Package_Transforms"]));
 
         Assert.False(File.Exists(derEnrichPath), "stale Mapping/DER_Enrich.cs from the first run must not survive a structural regenerate");
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 3.1 (R2) -- the clean above must not touch hand-maintained work product: Fills/ and
+    // TestData/ are the two directories under a package's own generate/<Pkg>/ this tool only
+    // ever READS (a decisions.json/seam fill, a locally-supplied sample file), never generates.
+    // ---------------------------------------------------------------------
+    [Fact]
+    public void RegeneratingAPackage_PreservesFillsAndTestDataButRemovesEverythingElse()
+    {
+        var outDir = NewOutDir();
+        RunCaptured(() => GenerateCommand.Run(["--input", CaseDir("pipeline_good"), "--out", outDir, "--recursive", "--package", "Package_Transforms"]));
+
+        var pkgDir = Path.Combine(outDir, "generate", "Package_Transforms");
+        var fillsDir = Path.Combine(pkgDir, "Fills");
+        var testDataDir = Path.Combine(pkgDir, "TestData");
+        Directory.CreateDirectory(fillsDir);
+        Directory.CreateDirectory(testDataDir);
+        File.WriteAllText(Path.Combine(fillsDir, "Hand.Fills.cs"), "// hand-written, must survive");
+        File.WriteAllText(Path.Combine(testDataDir, "sample.csv"), "a,b\r\n1,2\r\n");
+
+        RunCaptured(() => GenerateCommand.Run(["--input", CaseDir("pipeline_good"), "--out", outDir, "--recursive", "--package", "Package_Transforms"]));
+
+        Assert.True(File.Exists(Path.Combine(fillsDir, "Hand.Fills.cs")), "Fills/ must survive a regenerate of its own package");
+        Assert.True(File.Exists(Path.Combine(testDataDir, "sample.csv")), "TestData/ must survive a regenerate of its own package");
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 3.1 (R2) -- a whole package folder Generated.slnx no longer references (renamed
+    // since a previous run into this same --out, or scoped out via --package this time) is
+    // reported so a human notices it, never silently deleted -- it may be the only place that
+    // package's own hand-written Fills/TestData still live.
+    // ---------------------------------------------------------------------
+    [Fact]
+    public void AStalePackageFolder_IsReportedButNeverDeleted()
+    {
+        var outDir = NewOutDir();
+        RunCaptured(() => GenerateCommand.Run(["--input", CaseDir("pipeline_good"), "--out", outDir, "--recursive", "--package", "Package_Transforms"]));
+
+        var staleDir = Path.Combine(outDir, "generate", "SomePackageThatNoLongerExists");
+        Directory.CreateDirectory(staleDir);
+        File.WriteAllText(Path.Combine(staleDir, "old.cs"), "// old, from a previous run");
+
+        var (_, stdout, _) = RunCaptured(() => GenerateCommand.Run(["--input", CaseDir("pipeline_good"), "--out", outDir, "--recursive", "--package", "Package_Transforms"]));
+
+        Assert.Contains("stale package folder 'SomePackageThatNoLongerExists'", stdout);
+        Assert.True(File.Exists(Path.Combine(staleDir, "old.cs")), "a stale package folder must be reported, never auto-deleted");
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 3.2 (R8) -- generate-report.md/gaps.json/Generated.slnx are deleted at the START of
+    // a run, not just written at the end, so a run that aborts before writing anything new can
+    // never leave a PREVIOUS run's stale summary sitting next to a --out that no longer reflects
+    // what's actually on disk.
+    // ---------------------------------------------------------------------
+    [Fact]
+    public void ARunThatAbortsBeforeWritingAnything_StillRemovesThePreviousRunsStaleSummaryFiles()
+    {
+        var outDir = NewOutDir();
+
+        RunCaptured(() => GenerateCommand.Run(["--input", CaseDir("pipeline_good"), "--out", outDir, "--recursive", "--package", "Package_Transforms"]));
+        var reportPath = Path.Combine(outDir, "generate-report.md");
+        var gapsPath = Path.Combine(outDir, "gaps.json");
+        var slnxPath = Path.Combine(outDir, "generate", "Generated.slnx");
+        Assert.True(File.Exists(reportPath));
+        Assert.True(File.Exists(gapsPath));
+        Assert.True(File.Exists(slnxPath));
+
+        // A typo'd --package matches nothing -- aborts with a usage error before ever reaching
+        // PackageLoader's success path, let alone writing anything new.
+        var (exit, _, _) = RunCaptured(() => GenerateCommand.Run(["--input", CaseDir("pipeline_good"), "--out", outDir, "--recursive", "--package", "NoSuchPackage"]));
+        Assert.Equal(2, exit);
+
+        Assert.False(File.Exists(reportPath), "a stale generate-report.md from a previous run must not survive an aborted re-run");
+        Assert.False(File.Exists(gapsPath), "a stale gaps.json from a previous run must not survive an aborted re-run");
+        Assert.False(File.Exists(slnxPath), "a stale Generated.slnx from a previous run must not survive an aborted re-run");
     }
 
     // ---------------------------------------------------------------------

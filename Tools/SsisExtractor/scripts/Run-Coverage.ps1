@@ -61,8 +61,17 @@ $ErrorActionPreference = 'Continue'
 if (-not (Test-Path $GeneratedRoot)) { Write-Error "GeneratedRoot not found: $GeneratedRoot" -ErrorAction Stop }
 $GeneratedRoot = (Resolve-Path $GeneratedRoot).Path
 
-$testProjects = Get-ChildItem -Path $GeneratedRoot -Filter '*.Tests.csproj' -Recurse -Depth 1 |
-    Where-Object { $_.Directory.Parent.FullName -eq $GeneratedRoot }
+# Phase 3.1 (R2): read the project list from Generated.slnx itself, not a filesystem glob -- a
+# stale *.Tests.csproj left on disk from a renamed/removed package (ssisx generate now cleans a
+# package's OWN prior output, but a whole folder for a package no longer generated at all is
+# reported, not deleted -- see GenerateCommand.ReportStalePackageFolders) must not be picked up
+# here and tested against code that no longer matches what ssisx actually produced this run.
+$slnxPath = Join-Path $GeneratedRoot 'Generated.slnx'
+if (-not (Test-Path $slnxPath)) { Write-Error "Generated.slnx not found under $GeneratedRoot -- run 'ssisx generate' first." -ErrorAction Stop }
+[xml]$slnx = Get-Content $slnxPath -Raw
+$testProjects = $slnx.SelectNodes('//Project') |
+    Where-Object { $_.Path -like '*.Tests/*.Tests.csproj' } |
+    ForEach-Object { Get-Item (Join-Path $GeneratedRoot ($_.Path -replace '/', '\')) }
 
 if ($Package) {
     # Normalize by splitting every element on ',' too, not just joining -- when this script (or

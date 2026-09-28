@@ -148,7 +148,13 @@ multi-step read-only workflows, verify each step separately before moving to the
     to.** This applies to a client's own supplied real data just as much as to this tool's own
     disposable `<out>/generate/` tree. If a genuinely clean run is needed, that is its own
     explicit request from the human -- never something to do on your own judgement as part of
-    "running the tool" or "cleaning up."
+    "running the tool" or "cleaning up." **One narrow, tool-owned exception**: `ssisx generate`
+    itself now cleans a package's own PREVIOUS output (everything under `generate/<Pkg>/` and
+    `generate/<Pkg>.Tests/` except `Fills/`/`TestData/`, which are always preserved) before
+    writing that package's new output, so a stale file from an earlier run never gets mixed in
+    with this run's. This is the tool's own, scoped, always-on behavior -- not something you
+    invoke or decide to do; a WHOLE package folder Generated.slnx no longer references is only
+    ever reported as stale, never deleted.
 15. **`.github/prompts/ssisx-rewrite.prompt.md` (`/ssisx-rewrite`) is the STANDARD thing to run
     whenever asked to "run the tool" / "generate this package" / "process this folder", in THIS
     chat session** -- it now covers one package, a named few, or a whole folder (leave `package`
