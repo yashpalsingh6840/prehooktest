@@ -867,11 +867,40 @@ public static class AiPacketEmitter
             sb.Append($"- **Format:** `{format.Format ?? "(not set)"}`\n");
             sb.Append($"- **Column delimiter:** `{format.Columns.FirstOrDefault()?.ColumnDelimiterDisplay ?? "(fixed-width -- see MaximumWidth per column)"}`\n");
             sb.Append($"- **Row delimiter:** `{(string.IsNullOrEmpty(format.RowDelimiterDisplay) ? "(not set -- see the last column's own delimiter, which usually carries it)" : format.RowDelimiterDisplay)}`\n");
-            sb.Append($"- **Header row present:** `{format.ColumnNamesInFirstDataRow == true}`\n\n");
+            sb.Append($"- **Header row present:** `{format.ColumnNamesInFirstDataRow == true}`\n");
+            // Phase 4.2 (G2): a fixed-width file with a leading control/header record this tool
+            // does not treat as column names (FlatFileRuntimeShape's own doc comment -- a real
+            // evidenced case skips a "CUVHDR ... HDR" line this way) is otherwise invisible here,
+            // and a data file supplied without skipping it lands its very first real row shifted
+            // by one, silently.
+            if (format.HeaderRowsToSkip is > 0 and var skip)
+                sb.Append($"- **Rows to skip before data (HeaderRowsToSkip):** {skip}\n");
+            sb.Append('\n');
             sb.Append("### Columns, in file order\n\n");
             sb.Append("| Column | SSIS type | Width | Delimiter |\n|---|---|---|---|\n");
             foreach (var col in format.Columns)
                 sb.Append($"| `{col.ObjectName}` | `{col.DataTypeName}` | {(col.MaximumWidth is > 0 ? col.MaximumWidth.ToString() : "-")} | `{col.ColumnDelimiterDisplay ?? "(row delimiter)"}` |\n");
+
+            // The literal first two lines a schema-correct file looks like -- reusing the exact
+            // same synthesis `svk sampledata`/the Tier-A starter test already trust, rather than
+            // describing the shape in prose and leaving the reader to imagine what it produces.
+            var sourceComponent = PackageTree.AllExecutables(package)
+                .Select(e => e.DataFlowTask?.Pipeline)
+                .Where(p => p is not null)
+                .SelectMany(p => p!.Components)
+                .FirstOrDefault(c => c.FlatFileSource is not null && c.FlatFileSource.ConnectionName == cm.ObjectName);
+            var sample = FlatFileRuntimeShape.IsFixedWidthWithoutHeader(format)
+                ? SampleDataEmitter.EmitFixedWidth(gap.Location, cm)
+                : SampleDataEmitter.EmitCsv(gap.Location, cm, sourceComponent);
+            if (sample is not null)
+            {
+                var previewLines = sample.File.Content.Replace("\r\n", "\n").Split('\n').Take(2).ToList();
+                sb.Append("\n### What a schema-correct file looks like (synthesized, not real data)\n\n");
+                sb.Append("```\n");
+                sb.Append(string.Join('\n', previewLines));
+                sb.Append("\n```\n");
+            }
+
             return sb.ToString();
         }
 

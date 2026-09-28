@@ -360,6 +360,28 @@ public class RobustnessTests : IDisposable
     }
 
     // ---------------------------------------------------------------------
+    // Phase 4.2 (G2) -- a LOCAL-DATA work packet's evidence names how many rows to skip
+    // before the real data starts, and shows what a schema-correct file's own first two
+    // lines look like, reusing the exact same synthesis `SampleDataEmitter` already trusts.
+    // Package_Legacy's own real CM_FF_CustomersFixed (RaggedRight, HeaderRowsToSkip=1) is
+    // the one real evidenced case for this shape in the tracked portfolio.
+    // ---------------------------------------------------------------------
+    [Fact]
+    public void LocalFileSourceDataPacket_NamesHeaderRowsToSkip_AndShowsASchemaCorrectPreview()
+    {
+        var outDir = NewOutDir();
+        RunCaptured(() => GenerateCommand.Run(["--input", CaseDir("pipeline_good"), "--out", outDir, "--recursive", "--package", "Package_Legacy"]));
+
+        var packetPath = Directory.EnumerateFiles(Path.Combine(outDir, "gaps", "Package_Legacy"), "LOCAL-DATA_*.md").FirstOrDefault();
+        Assert.True(packetPath is not null, "expected a LOCAL-DATA work packet for Package_Legacy's own fixed-width source");
+        var content = File.ReadAllText(packetPath!);
+
+        Assert.Contains("**Rows to skip before data (HeaderRowsToSkip):** 1", content);
+        Assert.Contains("### What a schema-correct file looks like (synthesized, not real data)", content);
+        Assert.Contains("SKIP", content); // the real control record's own first synthesized line
+    }
+
+    // ---------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------
     private static List<JsonElement> ReadGaps(string outDir)
