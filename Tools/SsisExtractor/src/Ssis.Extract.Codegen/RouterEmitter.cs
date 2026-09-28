@@ -40,6 +40,89 @@ public static class RouterEmitter
                 $"Conditional Split '{splitComponent.Name}' has {splitComponent.Inputs.Count} input(s), expected exactly 1")]), new HashSet<string>());
         }
 
+        var references = ResolveReferences(splitComponent, pipeline, dataConversion, copyMap);
+
+        // split.Branches[^1] is always the default (no condition of its own, see
+        // PackagePlanner.PlanConditionalSplit); every earlier entry is a case, already in
+        // EvaluationOrder.
+        var conditions = new List<string>();
+        var functionsUsed = new HashSet<string>();
+        for (var i = 0; i < split.Branches.Count - 1; i++)
+        {
+            var branch = split.Branches[i];
+            if (branch.FriendlyExpression is null)
+            {
+                return new RouterEmitResult(new EmitResult([], [new GenerationGap(routerClassName,
+                    $"case '{branch.OutputName}' has no FriendlyExpression to translate")]), new HashSet<string>());
+            }
+
+            ExprNode ast;
+            try
+            {
+                ast = SsisExpression.Parse(branch.FriendlyExpression);
+            }
+            catch (SsisExpressionError ex)
+            {
+                return new RouterEmitResult(new EmitResult([], [new GenerationGap(routerClassName,
+                    $"case '{branch.OutputName}': could not parse expression '{branch.FriendlyExpression}': {ex.Message}")]), new HashSet<string>());
+            }
+
+            var translated = ExpressionTranslator.TranslateCondition(ast, references);
+            if (translated is NotTranslatable notTranslatable)
+            {
+                return new RouterEmitResult(new EmitResult([], [new GenerationGap(routerClassName,
+                    $"case '{branch.OutputName}': {notTranslatable.Reason}")]), new HashSet<string>());
+            }
+
+            var conditionExpr = ((TranslatedOk)translated).CSharpExpression;
+            TransformEmitter.CollectSsisFunctions(conditionExpr, functionsUsed);
+            conditions.Add(conditionExpr);
+        }
+
+        var defaultIndex = split.Branches.Count - 1;
+        var lines = new List<string>
+        {
+            $"using {rowTypeNamespace};",
+            "using Etl.Core.Abstractions;",
+        };
+        if (functionsUsed.Count > 0) lines.Add($"using {ssisFnNamespace};");
+        lines.Add("");
+        lines.Add($"namespace {ns};");
+        lines.Add("");
+        lines.Add($"public sealed class {routerClassName} : IRowRouter<{rowTypeName}>");
+        lines.Add("{");
+        lines.Add($"    public int SelectBranch({rowTypeName} row, in RowContext ctx)");
+        lines.Add("    {");
+        for (var i = 0; i < conditions.Count; i++)
+            lines.Add($"        if ({conditions[i]}) return {i};");
+        lines.Add($"        return {defaultIndex}; // {split.Branches[defaultIndex].OutputName}");
+        lines.Add("    }");
+        lines.Add("}");
+
+        return new RouterEmitResult(
+            new EmitResult([new GeneratedFile($"Mapping/{routerClassName}.cs", Rendering.JoinLines(lines))], []),
+            functionsUsed);
+    }
+
+    /// <summary>
+    /// Resolves every one of a Conditional Split's own single input column to the C# expression
+    /// (and <see cref="SsisType"/>) the GENERATED router actually uses to reference it -- a plain
+    /// `row.{Name}` passthrough for an ordinary buffer column, or `SsisFn.ToNullable*(row.{RawName})`
+    /// for one produced by an upstream Data Conversion/Copy Map, exactly the resolution
+    /// <see cref="Emit"/> itself performs. Extracted (Phase 4.3, G4/d of the independent-review
+    /// fix plan) so <c>AiPacketEmitter</c>'s own TEST-ORACLE evidence can list a router's inputs
+    /// from what the GENERATED ROW TYPE actually exposes, not from raw pipeline buffer names/types
+    /// that may not even resolve to a real row property -- the real, previously-shipped bug this
+    /// closes: a Conditional Split condition referencing a Data-Conversion-produced column showed
+    /// its BUFFER name/type (e.g. <c>CustomerID_i4 : int</c>) in the packet's own evidence table,
+    /// while the actual generated router reads `SsisFn.ToNullableI4(row.CustomerID)` off a
+    /// `string`-typed row property named `CustomerID` -- nothing a reader could have guessed from
+    /// the table shown.
+    /// </summary>
+    internal static Dictionary<string, ColumnReference> ResolveReferences(
+        PipelineComponentSpec splitComponent, PipelineSpec? pipeline,
+        PipelineComponentSpec? dataConversion, PipelineComponentSpec? copyMap)
+    {
         // A Conditional Split input column produced by a Data Conversion component (e.g.
         // RBC_Demo_ETL's CSPLIT_Validity referencing CustomerID_i4) has no row-type property of
         // its own -- same "computed inline from its RAW source column" shape TransformEmitter's
@@ -108,65 +191,6 @@ public static class RouterEmitter
             references[inputColumn.CachedName] = new ColumnReference($"row.{PackageGenerator.SanitizeIdentifier(inputColumn.CachedName)}", mapped.Value);
         }
 
-        // split.Branches[^1] is always the default (no condition of its own, see
-        // PackagePlanner.PlanConditionalSplit); every earlier entry is a case, already in
-        // EvaluationOrder.
-        var conditions = new List<string>();
-        var functionsUsed = new HashSet<string>();
-        for (var i = 0; i < split.Branches.Count - 1; i++)
-        {
-            var branch = split.Branches[i];
-            if (branch.FriendlyExpression is null)
-            {
-                return new RouterEmitResult(new EmitResult([], [new GenerationGap(routerClassName,
-                    $"case '{branch.OutputName}' has no FriendlyExpression to translate")]), new HashSet<string>());
-            }
-
-            ExprNode ast;
-            try
-            {
-                ast = SsisExpression.Parse(branch.FriendlyExpression);
-            }
-            catch (SsisExpressionError ex)
-            {
-                return new RouterEmitResult(new EmitResult([], [new GenerationGap(routerClassName,
-                    $"case '{branch.OutputName}': could not parse expression '{branch.FriendlyExpression}': {ex.Message}")]), new HashSet<string>());
-            }
-
-            var translated = ExpressionTranslator.TranslateCondition(ast, references);
-            if (translated is NotTranslatable notTranslatable)
-            {
-                return new RouterEmitResult(new EmitResult([], [new GenerationGap(routerClassName,
-                    $"case '{branch.OutputName}': {notTranslatable.Reason}")]), new HashSet<string>());
-            }
-
-            var conditionExpr = ((TranslatedOk)translated).CSharpExpression;
-            TransformEmitter.CollectSsisFunctions(conditionExpr, functionsUsed);
-            conditions.Add(conditionExpr);
-        }
-
-        var defaultIndex = split.Branches.Count - 1;
-        var lines = new List<string>
-        {
-            $"using {rowTypeNamespace};",
-            "using Etl.Core.Abstractions;",
-        };
-        if (functionsUsed.Count > 0) lines.Add($"using {ssisFnNamespace};");
-        lines.Add("");
-        lines.Add($"namespace {ns};");
-        lines.Add("");
-        lines.Add($"public sealed class {routerClassName} : IRowRouter<{rowTypeName}>");
-        lines.Add("{");
-        lines.Add($"    public int SelectBranch({rowTypeName} row, in RowContext ctx)");
-        lines.Add("    {");
-        for (var i = 0; i < conditions.Count; i++)
-            lines.Add($"        if ({conditions[i]}) return {i};");
-        lines.Add($"        return {defaultIndex}; // {split.Branches[defaultIndex].OutputName}");
-        lines.Add("    }");
-        lines.Add("}");
-
-        return new RouterEmitResult(
-            new EmitResult([new GeneratedFile($"Mapping/{routerClassName}.cs", Rendering.JoinLines(lines))], []),
-            functionsUsed);
+        return references;
     }
 }

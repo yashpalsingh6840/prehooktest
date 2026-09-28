@@ -114,7 +114,7 @@ public static class AiPacketEmitter
         sb.Append($"# Work packet: `{gapId}`\n\n");
         sb.Append($"- **Package:** `{package.ObjectName}`\n");
         sb.Append($"- **Location:** `{gap.Location}`\n");
-        sb.Append($"- **Tier:** {TierDescription(tier)}\n");
+        sb.Append($"- **Tier:** {TierDescription(tier, gap.Kind)}\n");
         sb.Append($"- **Evidence SHA-256:** `{GapIdentity.Sha256(evidence)}`\n\n");
         sb.Append("## Why `ssisx generate` stopped here\n\n");
         sb.Append(gap.Reason);
@@ -124,19 +124,30 @@ public static class AiPacketEmitter
         sb.Append(evidence);
         sb.Append('\n');
 
-        // Only a Tier-2 answer is CODE, so only Tier 2 needs the semantics appendix. A Tier-1
-        // answer is a single fact; handing its reviewer a page of expression-language rules would
-        // be noise.
+        // Only a PORTED-EXPRESSION answer needs SSIS semantics rules -- Tier 2 (a Script Task/
+        // Component port) always does; a Tier-1 answer is usually a bare fact (Lookup key,
+        // secret acknowledgment) with nothing to port at all. TEST-ORACLE is the one Tier-1
+        // exception: it IS code, but it exercises the ALREADY-PORTED C# (or an already-generated
+        // router), never raw SSIS expression text -- the appendix would describe semantics that
+        // don't apply to what it's actually testing.
         if (tier == GapTier.MissingLogic) sb.Append(SsisSemanticsAppendix);
 
         sb.Append(ResponseFormat(gap));
         return sb.ToString();
     }
 
-    private static string TierDescription(GapTier tier) => tier switch
+    /// <summary>Phase 4.3 (G4/a): TEST-ORACLE and LOCAL-DATA are BOTH <see cref="GapTier.MissingDatum"/>
+    /// (see <see cref="GapIdentity.TierOf"/>) alongside LookupJoinKey/EncryptedConnectionManagerSecret
+    /// -- but "Supply one FACT... Do not write code for this" is directly wrong for either: a
+    /// TEST-ORACLE answer IS a whole test file, and a LOCAL-DATA answer IS a whole data file, not a
+    /// bare fact plugged into an otherwise-generated line. Each gets its own accurate banner instead
+    /// of sharing the "one fact" framing that only really describes the other two kinds.</summary>
+    private static string TierDescription(GapTier tier, GapKind kind) => (tier, kind) switch
     {
-        GapTier.MissingDatum => "1 -- missing datum. Supply one FACT; the generator writes all the code. Do not write code for this.",
-        GapTier.MissingLogic => "2 -- missing logic. The real source IS below; port it. Reviewed by a human, then verified by gate 3.",
+        (GapTier.MissingDatum, GapKind.TestOracle) => "1 -- missing datum (test coverage). Supply a whole test FILE; nothing here generates it for you.",
+        (GapTier.MissingDatum, GapKind.LocalFileSourceData) => "1 -- missing datum (sample data). Supply a data FILE matching the schema below; nothing here invents realistic values for you.",
+        (GapTier.MissingDatum, _) => "1 -- missing datum. Supply one FACT; the generator writes all the code. Do not write code for this.",
+        (GapTier.MissingLogic, _) => "2 -- missing logic. The real source IS below; port it. Reviewed by a human, then verified by gate 3.",
         _ => tier.ToString(),
     };
 
@@ -443,13 +454,23 @@ public static class AiPacketEmitter
         - `using var harness = new PackageHarness();` -- one per test, disposed at the end (a `using`
           statement is enough). `harness.Package()` returns a fresh instance of the generated package
           class, wired to fakes (no database, no real file server, no real Script Task connections).
+          Pass `new PackageHarness(useSampleDataForFileSources: true)` instead for a happy-path
+          `RunAsync` test on a CSV/fixed-width-sourced package -- it points those sources at the
+          already-generated Tier-A `SampleData/` files rather than `TestData/`, which needs no real
+          data supplied at all.
         - `harness.NewUnitOfWork()` -- a standalone `FakeUnitOfWork` for calling one method directly
           (`await package.SomeMethod(uow, CancellationToken.None)`), without going through `RunAsync`.
           Its public surface: `BeginCalled`/`CommitCalled`/`RollbackCalled` (bool), `ExecutedSql`
           (`List<string>`), `ExecutedParameterizedSql` (`List<ParameterizedSqlCall>`),
           `ExecutedSqlWithoutTransaction` (`List<string>`), `BulkInserts` (`List<BulkInsertCall>`,
           each with `DestinationTable`/`ColumnMappings`/`RowsWritten`). Set `ThrowOnGetBindToken`
-          before the call to make the very next `GetBindTokenAsync` throw.
+          (an `Exception?`) before the call to make the very next `GetBindTokenAsync` throw it,
+          or `ThrowOnSqlWithoutTransactionContaining` (a `string?` substring match) to make the
+          next `ExecuteSqlWithoutTransactionAsync` whose SQL contains it throw instead.
+        - `harness.NewRealUnitOfWorkAsync()` -- a REAL `UnitOfWork` against an actual SQL Server
+          (the connection string comes from this file's own `_databaseOptions` field, unreachable
+          by default -- edit that one line for a local run). Only for an `[Trait("Category",
+          "Integration")]` test; never call it from an always-green test.
         - `harness.CreatedUnitsOfWork` -- every `FakeUnitOfWork` actually resolved via DI so far (one
           per scope), for asserting on a run made through `RunAsync` itself rather than a direct call.
         - `harness.Notifier.Result` -- the captured `PackageResult` after a `RunAsync` call.
@@ -737,9 +758,28 @@ public static class AiPacketEmitter
                 sb.Append($"| {i} | `{split.Cases[i].OutputName}` | `{split.Cases[i].FriendlyExpression ?? "(none)"}` |\n");
             sb.Append($"| {split.Cases.Count} (default) | `{split.DefaultOutputName}` | _(always matches if nothing above did)_ |\n");
 
-            sb.Append("\n### This case's own input columns\n\n");
-            sb.Append(ColumnTable(component.Inputs.SelectMany(i => i.Columns)
-                .Select(c => (c.CachedName, c.CachedDataType, c.CachedLength))));
+            // Phase 4.3 (G4/d): listed from what the GENERATED ROW TYPE actually exposes -- a
+            // plain `row.{Name}` property for an ordinary passthrough column, or the exact
+            // `SsisFn.ToNullable*(row.{RawName})` expression for one produced by an upstream Data
+            // Conversion/Copy Map -- never the split's own raw pipeline buffer name/type, which
+            // may not even correspond to a real row property at all (see
+            // RouterEmitter.ResolveReferences's own doc comment for the real, previously-shipped
+            // bug this replaces: a Data-Conversion-produced input used to show its BUFFER name/
+            // type, e.g. `CustomerID_i4 : int`, while the actual generated router reads
+            // `SsisFn.ToNullableI4(row.CustomerID)` off a `string`-typed row property).
+            var pipeline = FindPipeline(package, gap.EvidenceRefId!);
+            var dataConversionSibling = pipeline?.Components.FirstOrDefault(c => c.DataConvert is not null);
+            var copyMapSibling = pipeline?.Components.FirstOrDefault(c => c.CopyMap is not null);
+            var references = RouterEmitter.ResolveReferences(component, pipeline, dataConversionSibling, copyMapSibling);
+
+            sb.Append("\n### Inputs available on `row` (as the GENERATED router actually references them)\n\n");
+            sb.Append("| SSIS name (used in the condition) | C# expression | Resolved type |\n|---|---|---|\n");
+            foreach (var inputColumn in component.Inputs.SelectMany(i => i.Columns))
+            {
+                sb.Append(references.TryGetValue(inputColumn.CachedName, out var reference)
+                    ? $"| `{inputColumn.CachedName}` | `{reference.CSharpExpression}` | `{reference.Type}{(reference.IsNullable ? "?" : "")}` |\n"
+                    : $"| `{inputColumn.CachedName}` | _(no resolvable row-type reference -- unmapped buffer type `{inputColumn.CachedDataType}`)_ | - |\n");
+            }
             return sb.ToString();
         }
 
@@ -1058,6 +1098,24 @@ public static class AiPacketEmitter
         sb.Append("the join key is almost always in this list -- often it is the only entry.\n\n");
         sb.Append(ColumnTable(component.Inputs.SelectMany(i => i.Columns)
             .Select(c => (c.CachedName, c.CachedDataType, c.CachedLength))));
+
+        // Phase 4.4 (P2): the join key must be an input column the Lookup ALREADY kept (above),
+        // but confirming a candidate is genuinely a real, available column -- not something only
+        // a Derived Column/Data Conversion computes further upstream -- needs seeing what the
+        // component feeding this Lookup's own input actually produces. Resolved the same way a
+        // <path> connects any two pipeline components: this Lookup's own single input's RefId is
+        // the path's EndId; the matching path's StartId is the producing component's OUTPUT RefId.
+        var pipeline = FindPipeline(package, component.RefId);
+        var feedingInputRefId = component.Inputs.FirstOrDefault()?.RefId;
+        var feedingPath = pipeline?.Paths.FirstOrDefault(p => p.EndId == feedingInputRefId);
+        var upstreamComponent = feedingPath is null ? null : pipeline!.Components
+            .FirstOrDefault(c => c.Outputs.Any(o => o.RefId == feedingPath.StartId));
+        if (upstreamComponent is not null && feedingPath is not null)
+        {
+            var upstreamOutput = upstreamComponent.Outputs.First(o => o.RefId == feedingPath.StartId);
+            sb.Append($"\n### Upstream columns available to join on (from `{upstreamComponent.Name}`, feeding this Lookup)\n\n");
+            sb.Append(ColumnTable(upstreamOutput.Columns.Select(c => (c.Name, c.DataType, c.Length))));
+        }
 
         sb.Append("\n### Columns the Lookup ADDS to matched rows\n\n");
         sb.Append(ColumnTable(component.Outputs.Where(o => o.IsErrorOut != true).SelectMany(o => o.Columns)
