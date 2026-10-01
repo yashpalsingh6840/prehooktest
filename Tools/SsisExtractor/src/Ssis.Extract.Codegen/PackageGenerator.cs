@@ -875,6 +875,23 @@ public static partial class PackageGenerator
             // to test against (each is a local function inside the owning flow's one method, e.g.
             // AGG_ByRegion()'s own BuildRawSource()) -- that remains the allWiredSources loop's
             // own documented, separate limitation below.
+            // Phase 5.5 (P4/G3): a LOCAL-DATA gap only earns its keep when some GENERATED
+            // Integration test would actually read the file it names -- a source nested inside a
+            // Merge Join/Union/Aggregate side gets its own TestData/appsettings wiring (needed to
+            // avoid the KeyNotFoundException bug fixed above) but never its own top-level starter
+            // source test (see the same "a source nested inside a Merge Join/Union/Aggregate side
+            // is still deliberately NOT covered here" comment two paragraphs up), so asking a
+            // human/AI for a real file nobody's test reads is pure waste. Real case that motivated
+            // this: RBC's own CustomerContacts.csv, read only by a Merge Join side. Computed from
+            // the exact same four wired-flow dictionaries `allWiredSources` below builds from --
+            // matched by component name, not FileSourceKey, since that's what FlowSourceSpec
+            // itself carries.
+            var testedSourceComponentNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var w in wiredFlows.Values) testedSourceComponentNames.Add(w.Source.ComponentName);
+            foreach (var w in wiredSplits.Values) testedSourceComponentNames.Add(w.Source.ComponentName);
+            foreach (var w in wiredMulticasts.Values) testedSourceComponentNames.Add(w.Source.ComponentName);
+            foreach (var w in wiredOleDbCommands.Values) testedSourceComponentNames.Add(w.Source.ComponentName);
+
             var sampleDataByKey = new Dictionary<string, SampleDataResult>();
             var testDataFileEntries = new List<(string Key, string FileName)>();
             foreach (var candidate in csvSampleCandidates)
@@ -902,9 +919,14 @@ public static partial class PackageGenerator
                 // "LocalFileSourceData" taxonomy row (Docs/Generated-Tests-Plan.md's own Tier B):
                 // this is now the ONLY way this source's own Integration-tagged read test gets
                 // real data to run against, not an optional upgrade over an already-passing test.
-                gaps.Add(new GenerationGap(candidate.FileSourceKey,
-                    $"'{candidate.FileSourceKey}' has no real data yet -- its own Integration-tagged read test needs a REALISTIC file matching this connection manager's own declared schema at `TestData/{realFileName}` (see the LOCAL-DATA work packet; a schema-correct but synthetic reference was written to `SampleData/{sample?.FileName ?? candidate.FileSourceKey}` as a starting point, not a substitute).",
-                    IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: candidate.ConnectionManager.RefId));
+                // Phase 5.5 (P4/G3): only reported when a generated Integration test actually
+                // exists to read it -- see testedSourceComponentNames' own doc comment above.
+                if (testedSourceComponentNames.Contains(candidate.ComponentName))
+                {
+                    gaps.Add(new GenerationGap(candidate.FileSourceKey,
+                        $"'{candidate.FileSourceKey}' has no real data yet -- its own Integration-tagged read test needs a REALISTIC file matching this connection manager's own declared schema at `TestData/{realFileName}` (see the LOCAL-DATA work packet; a schema-correct but synthetic reference was written to `SampleData/{sample?.FileName ?? candidate.FileSourceKey}` as a starting point, not a substitute).",
+                        IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: candidate.ConnectionManager.RefId));
+                }
             }
             foreach (var sample in sampleDataByKey.Values)
                 testFiles.Add(sample.File with { RelativePath = $"{package.ObjectName}.Tests/{sample.File.RelativePath}" });

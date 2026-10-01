@@ -117,12 +117,18 @@ public class AiPacketEmitterTests
     }
 
     [Fact]
-    public void Emit_BuildsAScriptComponentPacket_WithTheSemanticsAppendixAndTheColumnTables()
+    public void Emit_BuildsAScriptComponentPacket_WithTheColumnTables_ButOmitsTheSemanticsAppendix_WhenTheScriptIsAlreadyCSharp()
     {
+        // Phase 5.5 (P4/G3): SyntheticScriptComponent.dtsx's own Script Component declares
+        // Language="CSharp" -- a script already written in C# has no SSIS expression logic to
+        // reproduce, so IsCSharpScript gates the appendix off entirely here (see AiPacketEmitter's
+        // own doc comment). The VB counterpart (appendix stays) is asserted by
+        // Emit_BuildsAScriptTaskPacket_KeepsTheSemanticsAppendix_WhenTheScriptIsVisualBasic below.
         var package = LoadSyntheticFixture("SyntheticScriptComponent.dtsx");
         var component = package.Executables
             .SelectMany(e => e.DataFlowTask?.Pipeline.Components ?? [])
             .Single(c => c.ScriptComponent is not null);
+        Assert.Equal("CSharp", component.ScriptComponent!.Language); // sanity: this fixture is genuinely C#, or the test is vacuous.
         var gaps = new List<GenerationGap>
         {
             new("Target.SomeColumn", "produced by a Script Component", true, GapKind.ScriptComponentColumn, component.RefId),
@@ -133,10 +139,31 @@ public class AiPacketEmitterTests
 
         Assert.Contains("### Input columns available on `row`", content);
         Assert.Contains("### Columns this component produces", content);
-        // A Tier-2 answer IS code, so it gets the measured-semantics appendix and asks for C#.
-        Assert.Contains("SSIS semantics you must preserve", content);
-        Assert.Contains("rounds half-to-EVEN", content);
+        Assert.DoesNotContain("SSIS semantics you must preserve", content);
+        Assert.DoesNotContain("rounds half-to-EVEN", content);
         Assert.Contains("fenced `csharp` block", content);
+    }
+
+    [Fact]
+    public void Emit_BuildsAScriptTaskPacket_KeepsTheSemanticsAppendix_WhenTheScriptIsVisualBasic()
+    {
+        // The mirror-image case: a VB script still has SSIS-expression-shaped logic worth
+        // measuring against (e.g. the DT_I4 half-to-even rounding rule), so the appendix must
+        // stay for it.
+        var package = LoadSyntheticFixture("SyntheticScriptTaskSeams.dtsx");
+        var generated = PackageGenerator.Generate(package, namespacePrefix: null, emitSeams: true);
+        var scriptTaskGaps = generated.Gaps.Where(g => g.Kind == GapKind.ScriptTask).ToList();
+        Assert.NotEmpty(scriptTaskGaps); // sanity: this fixture genuinely has at least one, or the test is vacuous.
+        var seamGap = scriptTaskGaps[0];
+        var task = PackageTree.AllExecutables(package).Single(e => e.RefId == seamGap.EvidenceRefId);
+        Assert.Equal("VisualBasic", task.ScriptTask!.Language); // sanity: this fixture is genuinely VB, or the test is vacuous.
+
+        var result = AiPacketEmitter.Emit(package, generated.Gaps, generated.Files);
+        var gapSpec = result.Gaps.Single(g => g.Kind == GapKind.ScriptTask && g.Location == seamGap.Location);
+        var packet = Assert.Single(result.Packets, p => p.RelativePath == gapSpec.PacketPath);
+
+        Assert.Contains("SSIS semantics you must preserve", packet.Content);
+        Assert.Contains("rounds half-to-EVEN", packet.Content);
     }
 
     /// <summary>

@@ -57,10 +57,23 @@ public static class AiPacketEmitter
             .ToDictionary(p => p.Gap.Location, p => p, StringComparer.Ordinal);
         var mergedIntoCompanion = new HashSet<string>(StringComparer.Ordinal);
 
+        // Phase 5.5 (P4/G3): several LocalFileSourceData gaps often share the identical
+        // ExpectedFileName -- the same CSV/Excel/fixed-width source read by more than one
+        // destination/flow -- so their evidence (the connection manager's own schema) is
+        // identical too. Grouped up front the same way as the seam+companion lookup above.
+        var localDataGroupsByFileName = assigned
+            .Where(p => p.Gap.Kind == GapKind.LocalFileSourceData)
+            .GroupBy(p => LocalFileSourceDataExpectedFileName(package, p.Gap))
+            .Where(g => g.Key is not null && g.Count() > 1)
+            .ToDictionary(g => g.Key!, g => g.ToList());
+        var mergedIntoLocalDataGroup = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var (gapId, gap) in assigned)
         {
             if (gap.Kind == GapKind.TestOracle && mergedIntoCompanion.Contains(gapId))
                 continue; // Already folded into its seam's own packet below.
+            if (gap.Kind == GapKind.LocalFileSourceData && mergedIntoLocalDataGroup.Contains(gapId))
+                continue; // Already folded into its own file-name group's packet below.
 
             var tier = GapIdentity.TierOf(gap);
             if (!GapIdentity.HasWorkPacket(gap))
@@ -84,6 +97,23 @@ public static class AiPacketEmitter
                 continue;
             }
 
+            if (gap.Kind == GapKind.LocalFileSourceData
+                && LocalFileSourceDataExpectedFileName(package, gap) is { } expectedFileName
+                && localDataGroupsByFileName.TryGetValue(expectedFileName, out var group)
+                && group[0].GapId == gapId) // build the group's ONE packet from its first member only
+            {
+                var canonicalEvidence = BuildEvidence(package, gap);
+                var fileName = GapIdentity.ToFileName(gapId) + ".md";
+                packets.Add(new GeneratedFile(fileName, BuildMergedLocalDataPacket(package, group, canonicalEvidence, generatedFiles)));
+                foreach (var (memberGapId, memberGap) in group)
+                {
+                    var memberEvidence = memberGapId == gapId ? canonicalEvidence : BuildEvidence(package, memberGap);
+                    specs.Add(NewSpec(memberGapId, package, memberGap, GapTier.MissingDatum, fileName, GapIdentity.Sha256(memberEvidence)));
+                    mergedIntoLocalDataGroup.Add(memberGapId);
+                }
+                continue;
+            }
+
             var evidence = BuildEvidence(package, gap);
             var plainFileName = GapIdentity.ToFileName(gapId) + ".md";
             packets.Add(new GeneratedFile(plainFileName, BuildPacket(package, gapId, gap, tier, evidence, generatedFiles)));
@@ -91,6 +121,39 @@ public static class AiPacketEmitter
         }
 
         return new AiPacketResult(packets, specs);
+    }
+
+    /// <summary>
+    /// Phase 5.5 (P4/G3): one packet for every <see cref="GapKind.LocalFileSourceData"/> gap that
+    /// shares the same <see cref="GapSpec.ExpectedFileName"/> -- the same file read by more than
+    /// one destination/flow has identical schema evidence, so N near-duplicate files was pure
+    /// waste. Every member's own Reason is still listed (each names its own reader), but the
+    /// schema evidence -- the connection manager's own columns/format -- is shown once.
+    /// </summary>
+    private static string BuildMergedLocalDataPacket(PackageSpec package, List<(string GapId, GenerationGap Gap)> members, string evidence, IReadOnlyList<GeneratedFile> generatedFiles)
+    {
+        var (canonicalGapId, canonicalGap) = members[0];
+        var sb = new StringBuilder();
+        sb.Append($"# Work packet: {string.Join(" + ", members.Select(m => $"`{m.GapId}`"))}\n\n");
+        sb.Append($"_Merged: these {members.Count} gaps all read the SAME file -- their schema evidence\n");
+        sb.Append("(the connection manager's own columns/format) is identical, so it is shown once._\n\n");
+        sb.Append($"- **Package:** `{package.ObjectName}`\n");
+        sb.Append($"- **Read by:** {string.Join(", ", members.Select(m => $"`{m.Gap.Location}`"))}\n");
+        sb.Append($"- **Tier:** {TierDescription(GapTier.MissingDatum, GapKind.LocalFileSourceData)}\n\n");
+        sb.Append("## Why `ssisx generate` stopped here\n\n");
+        foreach (var (_, memberGap) in members)
+        {
+            sb.Append($"- **{memberGap.Location}:** ");
+            sb.Append(memberGap.Reason);
+            sb.Append('\n');
+        }
+        sb.Append("\n## What you need to produce\n\n");
+        sb.Append(Contract(package, canonicalGap, generatedFiles, canonicalGapId, GapIdentity.Sha256(evidence)));
+        sb.Append("\n## Evidence from the package\n\n");
+        sb.Append(evidence);
+        sb.Append('\n');
+        sb.Append(ResponseFormat(canonicalGap));
+        return sb.ToString();
     }
 
     private static GapSpec NewSpec(string gapId, PackageSpec package, GenerationGap gap, GapTier tier, string? packetPath, string? evidenceHash) =>
@@ -151,7 +214,7 @@ public static class AiPacketEmitter
         sb.Append("## Why `ssisx generate` stopped here\n\n");
         sb.Append(gap.Reason);
         sb.Append("\n\n## What you need to produce\n\n");
-        sb.Append(Contract(gap, generatedFiles, gapId, GapIdentity.Sha256(evidence)));
+        sb.Append(Contract(package, gap, generatedFiles, gapId, GapIdentity.Sha256(evidence)));
         sb.Append("\n## Evidence from the package\n\n");
         sb.Append(evidence);
         sb.Append('\n');
@@ -162,7 +225,13 @@ public static class AiPacketEmitter
         // exception: it IS code, but it exercises the ALREADY-PORTED C# (or an already-generated
         // router), never raw SSIS expression text -- the appendix would describe semantics that
         // don't apply to what it's actually testing.
-        if (tier == GapTier.MissingLogic) sb.Append(SsisSemanticsAppendix);
+        //
+        // Phase 5.5 (P4/G3): a script whose own declared Language is ALREADY C# has no SSIS
+        // expression logic to reproduce at all -- the appendix's own closing sentence already
+        // said as much ("these rules apply to SSIS expression logic being reproduced, not to C#
+        // that was already C#"), but still printed the whole thing regardless. Omit it entirely
+        // for a C# script instead of trusting the reader to notice that one caveat sentence.
+        if (tier == GapTier.MissingLogic && !IsCSharpScript(package, gap)) sb.Append(SsisSemanticsAppendix);
 
         sb.Append(ResponseFormat(gap));
         return sb.ToString();
@@ -199,18 +268,20 @@ public static class AiPacketEmitter
         sb.Append("\n\n## Evidence from the package\n\n");
         sb.Append(seamEvidence);
         sb.Append('\n');
-        sb.Append(SsisSemanticsAppendix);
+        // Phase 5.5 (P4/G3): same C#-script omission as BuildPacket -- a seam whose own source
+        // is already C# has no SSIS expression logic to reproduce.
+        if (!IsCSharpScript(package, seamGap)) sb.Append(SsisSemanticsAppendix);
 
         sb.Append($"\n## Answer 1 -- port the {seamKindLabel} (`{seamGapId}`, {TierDescription(seamTier, seamGap.Kind)})\n\n");
         sb.Append($"- **Evidence SHA-256 for this answer's own provenance comment:** `{seamEvidenceHash}`\n\n");
-        sb.Append(Contract(seamGap, generatedFiles, seamGapId, seamEvidenceHash));
+        sb.Append(Contract(package, seamGap, generatedFiles, seamGapId, seamEvidenceHash));
         sb.Append(ResponseFormat(seamGap));
 
         sb.Append($"\n## Answer 2 -- write the companion test (`{testGapId}`, {TierDescription(GapTier.MissingDatum, GapKind.TestOracle)})\n\n");
         sb.Append("_Exercises the PORTED C# from Answer 1 once it exists (a real `PackageHarness`/call into the\n");
         sb.Append("seam's own method) -- never the original SSIS script text directly._\n\n");
         sb.Append($"- **Evidence SHA-256 for THIS answer's own provenance comment:** `{testEvidenceHash}`\n\n");
-        sb.Append(Contract(testGap, generatedFiles, testGapId, testEvidenceHash));
+        sb.Append(Contract(package, testGap, generatedFiles, testGapId, testEvidenceHash));
         sb.Append(ResponseFormat(testGap));
 
         return sb.ToString();
@@ -231,13 +302,13 @@ public static class AiPacketEmitter
         _ => tier.ToString(),
     };
 
-    private static string Contract(GenerationGap gap, IReadOnlyList<GeneratedFile> generatedFiles, string gapId, string evidenceHash) => gap.Kind switch
+    private static string Contract(PackageSpec package, GenerationGap gap, IReadOnlyList<GeneratedFile> generatedFiles, string gapId, string evidenceHash) => gap.Kind switch
     {
         GapKind.LookupJoinKey => LookupContract,
         GapKind.ScriptTask => BuildScriptSeamContract(gap, generatedFiles, isScriptTask: true, gapId, evidenceHash),
         GapKind.ScriptComponentColumn => BuildScriptSeamContract(gap, generatedFiles, isScriptTask: false, gapId, evidenceHash),
         GapKind.EncryptedConnectionManagerSecret => EncryptedSecretContract,
-        GapKind.TestOracle => TestOracleContract,
+        GapKind.TestOracle => TestOracleContractFor(package, gap),
         GapKind.LocalFileSourceData => LocalFileSourceDataContract,
         _ => "_(no contract defined for this gap kind)_\n",
     };
@@ -522,7 +593,7 @@ public static class AiPacketEmitter
 
     /// <summary>
     /// The ONE pinned reference block for writing a generated test, defined once here and reused
-    /// VERBATIM by <see cref="TestOracleContract"/>, <c>Tools/.github/prompts/ssisx-test.prompt.md</c>
+    /// VERBATIM by <see cref="TestOracleContractFor"/>, <c>Tools/.github/prompts/ssisx-test.prompt.md</c>
     /// (a later phase), and <c>Tools/COPILOT_TESTING_GUIDE.md</c> -- so all three cannot silently
     /// drift out of agreement with each other or with what <see cref="TestDoublesEmitter"/> actually
     /// emits. Covers exactly what a TEST-ORACLE packet's own reader needs and nothing else: this is
@@ -623,49 +694,113 @@ public static class AiPacketEmitter
 
         """;
 
-    private const string TestOracleContract = """
-        A whole, self-contained xUnit test FILE -- not a seam spliced into existing generated code
-        (there is nothing to splice into here; unlike a Script Task/Component gap, this one has no
-        `partial` method waiting for you). It will be copied verbatim into
-        `<Package>.Tests/Fills/` by `ssisx apply-fills`, alongside the generated starter tests.
+    /// <summary>Phase 5.5 (P4/G3): emits only the ONE bullet actually applicable to this gap,
+    /// not all five -- <see cref="ResolveTestOracleShape"/> mirrors <see cref="TestOracleEvidence"/>'s
+    /// own dispatch order exactly, so the shape named here always matches the evidence printed
+    /// below it in the same packet.</summary>
+    private static string TestOracleContractFor(PackageSpec package, GenerationGap gap)
+    {
+        var sb = new StringBuilder();
+        sb.Append("""
+            A whole, self-contained xUnit test FILE -- not a seam spliced into existing generated code
+            (there is nothing to splice into here; unlike a Script Task/Component gap, this one has no
+            `partial` method waiting for you). It will be copied verbatim into
+            `<Package>.Tests/Fills/` by `ssisx apply-fills`, alongside the generated starter tests.
 
-        """ + PinnedTestingApiBlock + """
+            """);
+        sb.Append(PinnedTestingApiBlock);
+        sb.Append("\n\n");
+        sb.Append(ResolveTestOracleShape(package, gap) switch
+        {
+            TestOracleShape.ConditionalSplit => """
+                This is a Conditional Split case this pilot's own oracle-based evaluator could not resolve to a
+                boolean for a representative row (see the reason above). Construct your OWN representative
+                row (you are not limited to the pilot's single hard-coded row) and assert
+                `new <RouterClass>().SelectBranch(row, ctx)` lands in the branch you expect, with a comment
+                explaining WHY that branch is correct for that input.
+                """,
+            TestOracleShape.ScriptTask => """
+                This is a Script Task seam, once it is filled. Call the generated task directly through a
+                `PackageHarness`-backed `IUnitOfWork` and assert its real, observable effect (a row it wrote
+                via `uow.ExecutedSql`, a variable it set via `ctx.Variables` if you construct the context
+                yourself, etc.) -- not merely that it does not throw.
+                """,
+            TestOracleShape.ScriptComponent => """
+                This is a Script Component seam, once it is filled. The seam is `private`, so it is never
+                directly callable from a separate `.Tests` project -- construct a representative row and
+                call `new <TransformClass>().Map(row, ctx)` instead, then assert the exact expected value(s)
+                on the returned entity for however many of the component's own columns you can verify --
+                state your reasoning for what "correct" means for each, since nothing here computes it for
+                you the way `TransformTestEmitter`'s own oracle-verified assertions do.
+                """,
+            TestOracleShape.Aggregate => """
+                This is an Aggregate GroupBy/count source, whose own starter test could not be generated
+                because its GroupBy key resolves through a Lookup cache rather than a plain row property.
+                Construct a real `AggregateRowSource<TSourceRow,TKey,TRow>` directly (the same class
+                production code uses), feeding it a small in-memory fake `IRowSource<TSourceRow>` and a
+                key-selector function using a plain dictionary as a stand-in for the Lookup cache (no real
+                database needed) -- then assert the grouped/counted output rows.
+                """,
+            TestOracleShape.ForEachDataFlowLoop => """
+                This is a ForEach-Loop-over-a-Data-Flow-Task's own loop body, whose per-iteration source has no
+                static Tier-A sample file to point a test at (its path is computed fresh each iteration, not
+                a fixed location). Write two small temp files into `harness.ForEachLoopFolder(key)` (the
+                evidence below names the real folder/file-spec/destination the real package uses) and assert
+                the destination sink receives rows from both.
+                """,
+            _ => """
+                The evidence below should make clear what this gap is actually testing -- if it genuinely
+                doesn't, report this (it is likely a bug in AiPacketEmitter). Otherwise: construct a
+                representative input, call the relevant generated method/type directly, and assert its
+                real, observable behaviour.
+                """,
+        });
+        sb.Append("""
 
 
-        The evidence below tells you WHICH of five shapes this is -- read it before writing anything:
+            **If you cannot determine a correct expected value with confidence, say so instead of
+            guessing one** -- a test asserting a wrong value is worse than no test at all, since it looks
+            like proof of something that was never actually checked.
 
-        - **A Conditional Split case** this pilot's own oracle-based evaluator could not resolve to a
-          boolean for a representative row (see the reason above). Construct your OWN representative
-          row (you are not limited to the pilot's single hard-coded row) and assert
-          `new <RouterClass>().SelectBranch(row, ctx)` lands in the branch you expect, with a comment
-          explaining WHY that branch is correct for that input.
-        - **A Script Task seam**, once it is filled. Call the generated task directly through a
-          `PackageHarness`-backed `IUnitOfWork` and assert its real, observable effect (a row it wrote
-          via `uow.ExecutedSql`, a variable it set via `ctx.Variables` if you construct the context
-          yourself, etc.) -- not merely that it does not throw.
-        - **A Script Component seam**, once it is filled. The seam is `private`, so it is never
-          directly callable from a separate `.Tests` project -- construct a representative row and
-          call `new <TransformClass>().Map(row, ctx)` instead, then assert the exact expected value(s)
-          on the returned entity for however many of the component's own columns you can verify --
-          state your reasoning for what "correct" means for each, since nothing here computes it for
-          you the way `TransformTestEmitter`'s own oracle-verified assertions do.
-        - **An Aggregate GroupBy/count source**, whose own starter test could not be generated
-          because its GroupBy key resolves through a Lookup cache rather than a plain row property.
-          Construct a real `AggregateRowSource<TSourceRow,TKey,TRow>` directly (the same class
-          production code uses), feeding it a small in-memory fake `IRowSource<TSourceRow>` and a
-          key-selector function using a plain dictionary as a stand-in for the Lookup cache (no real
-          database needed) -- then assert the grouped/counted output rows.
-        - **A ForEach-Loop-over-a-Data-Flow-Task's own loop body**, whose per-iteration source has no
-          static Tier-A sample file to point a test at (its path is computed fresh each iteration, not
-          a fixed location). Write two small temp files into `harness.ForEachLoopFolder(key)` (the
-          evidence below names the real folder/file-spec/destination the real package uses) and assert
-          the destination sink receives rows from both.
+            """);
+        return sb.ToString();
+    }
 
-        **If you cannot determine a correct expected value with confidence, say so instead of
-        guessing one** -- a test asserting a wrong value is worse than no test at all, since it looks
-        like proof of something that was never actually checked.
+    /// <summary>Which of <see cref="TestOracleEvidence"/>'s five shapes a TEST-ORACLE gap is --
+    /// factored out of that method so <see cref="TestOracleContractFor"/> can name the ONE
+    /// applicable bullet instead of listing all five. Must stay in the exact same dispatch order
+    /// as <see cref="TestOracleEvidence"/> or the contract and the evidence could name different
+    /// shapes for the same gap.</summary>
+    private enum TestOracleShape { ScriptTask, ScriptComponent, ConditionalSplit, ForEachDataFlowLoop, Aggregate, Unknown }
 
-        """;
+    private static TestOracleShape ResolveTestOracleShape(PackageSpec package, GenerationGap gap)
+    {
+        if (gap.Location.EndsWith(".ScriptTask", StringComparison.Ordinal)
+            && FindExecutable(package, gap.EvidenceRefId) is { ScriptTask: not null })
+        {
+            return TestOracleShape.ScriptTask;
+        }
+
+        var found = FindComponent(package, gap.EvidenceRefId);
+        if (found?.Component.ScriptComponent is not null) return TestOracleShape.ScriptComponent;
+        if (found?.Component.ConditionalSplit is not null) return TestOracleShape.ConditionalSplit;
+        if (FindForEachDataFlowLoop(package, gap.EvidenceRefId) is not null) return TestOracleShape.ForEachDataFlowLoop;
+        if (found?.Component.Aggregate is not null) return TestOracleShape.Aggregate;
+        return TestOracleShape.Unknown;
+    }
+
+    /// <summary>Phase 5.5 (P4/G3): whether a ScriptTask/ScriptComponentColumn gap's own real
+    /// source is ALREADY C# -- gates <see cref="SsisSemanticsAppendix"/>, which describes SSIS
+    /// EXPRESSION semantics (e.g. Derived Column translation) that simply don't apply when the
+    /// thing being ported is already .NET code, not raw SSIS expression text.</summary>
+    private static bool IsCSharpScript(PackageSpec package, GenerationGap gap) => gap.Kind switch
+    {
+        GapKind.ScriptTask => FindExecutable(package, gap.EvidenceRefId)?.ScriptTask?.Language
+            is { } taskLang && taskLang.Equals("CSharp", StringComparison.OrdinalIgnoreCase),
+        GapKind.ScriptComponentColumn => FindComponent(package, gap.EvidenceRefId)?.Component.ScriptComponent?.Language
+            is { } componentLang && componentLang.Equals("CSharp", StringComparison.OrdinalIgnoreCase),
+        _ => false,
+    };
 
     /// <summary>
     /// Docs/Generated-Tests-Plan.md's own Tier B: the wiring (`appsettings.Development.json`'s
@@ -795,8 +930,8 @@ public static class AiPacketEmitter
     /// Dispatches to one of five shapes by trying, in order, what <see cref="GapSpec.EvidenceRefId"/>
     /// actually resolves to -- a Script Task companion test, a Script Component column companion
     /// test, a Conditional Split router test, an Aggregate GroupBy/count source test, or a ForEach
-    /// Data Flow Loop's own loop-body test (see <see cref="TestOracleContract"/>'s own bullets,
-    /// which this must stay in lockstep with). The fourth (Aggregate) shape was added 2026-09-06
+    /// Data Flow Loop's own loop-body test (see <see cref="ResolveTestOracleShape"/>, which must
+    /// stay in the exact same order as this method). The fourth (Aggregate) shape was added 2026-09-06
     /// after a real gap (<c>Package_Transforms</c>'s own <c>RegionSummary</c>, whose GroupBy key
     /// resolves through a Lookup cache rather than a plain row property) fell through to the
     /// generic "could not resolve" fallback below -- <see cref="PipelineComponentSpec.Aggregate"/>
