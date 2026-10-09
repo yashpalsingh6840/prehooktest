@@ -170,8 +170,8 @@ public static class ComponentTestEmitter
             "",
             "        Assert.Equal(2, written);",
             $"        var filePath = harness.SinkFilePath({ProgramEmitter.CSharpStringLiteral(fileSourceKey)});",
-            "        Assert.True(File.Exists(filePath));",
-            "        var text = await File.ReadAllTextAsync(filePath);",
+            "        Assert.True(await harness.FileExistsAsync(filePath));",
+            "        var text = await harness.ReadFileAsync(filePath);",
             "        Assert.False(string.IsNullOrWhiteSpace(text));",
         };
 
@@ -215,7 +215,7 @@ public static class ComponentTestEmitter
     /// <see cref="TestDoublesEmitter"/>, so no <c>KeyNotFoundException</c> either way).</summary>
     public static GeneratedFile EmitFileSourceTest(
         string testNamespace, string rootNamespace, string rowTypeNamespace, string rowTypeName,
-        string sourceMethodName, bool sourceNeedsUow, string componentName)
+        string sourceMethodName, bool sourceNeedsUow, string componentName, StorageMode storage = StorageMode.Local)
     {
         var nameLiteral = ProgramEmitter.CSharpStringLiteral(componentName);
         var uowArg = sourceNeedsUow ? "uow" : "";
@@ -256,7 +256,9 @@ public static class ComponentTestEmitter
         lines.Add("    [Trait(\"Category\", \"Integration\")]");
         lines.Add($"    public async Task {sourceMethodName}_ReadsRealRows_AgainstARealFile()");
         lines.Add("    {");
-        lines.Add("        using var harness = new PackageHarness();");
+        lines.Add(storage == StorageMode.S3
+            ? "        using var harness = new PackageHarness(useRealS3: true);"
+            : "        using var harness = new PackageHarness();");
         lines.Add("        var package = harness.Package();");
         if (sourceNeedsUow) lines.Add("        var uow = harness.NewUnitOfWork();");
         lines.Add($"        var source = package.{sourceMethodName}({uowArg});");
@@ -369,7 +371,7 @@ public static class ComponentTestEmitter
     /// so no Tier-A sample file can ever be synthesized for this source kind, unlike CSV/fixed-width.</summary>
     public static GeneratedFile EmitExcelSourceTest(
         string testNamespace, string rootNamespace, string rowTypeNamespace, string rowTypeName,
-        string sourceMethodName, string componentName)
+        string sourceMethodName, string componentName, StorageMode storage = StorageMode.Local)
     {
         var nameLiteral = ProgramEmitter.CSharpStringLiteral(componentName);
         var lines = new List<string>
@@ -408,7 +410,9 @@ public static class ComponentTestEmitter
             "    [Trait(\"Category\", \"Integration\")]",
             $"    public async Task {sourceMethodName}_ReadsRealRows_AgainstARealWorkbook()",
             "    {",
-            "        using var harness = new PackageHarness();",
+            storage == StorageMode.S3
+                ? "        using var harness = new PackageHarness(useRealS3: true);"
+                : "        using var harness = new PackageHarness();",
             "        var package = harness.Package();",
             $"        var source = package.{sourceMethodName}();",
             "",
@@ -485,15 +489,15 @@ public static class ComponentTestEmitter
             $"    public async Task {safeTaskName}_CopiesTheSourceFileToTheDestination()",
             "    {",
             "        using var harness = new PackageHarness();",
-            $"        await File.WriteAllTextAsync(harness.FileSystemTaskPath({sourceKeyLiteral}), {contentLiteral});",
+            $"        await harness.WriteFileAsync(harness.FileSystemTaskPath({sourceKeyLiteral}), {contentLiteral});",
             "        var package = harness.Package();",
             "        var uow = harness.NewUnitOfWork();",
             "",
             $"        await package.{safeTaskName}(uow, CancellationToken.None);",
             "",
             $"        var destinationPath = harness.FileSystemTaskPath({destKeyLiteral});",
-            "        Assert.True(File.Exists(destinationPath));",
-            $"        Assert.Equal({contentLiteral}, await File.ReadAllTextAsync(destinationPath));",
+            "        Assert.True(await harness.FileExistsAsync(destinationPath));",
+            $"        Assert.Equal({contentLiteral}, await harness.ReadFileAsync(destinationPath));",
             "    }",
             "}",
         };
@@ -546,9 +550,9 @@ public static class ComponentTestEmitter
                     var contentLiteral = ProgramEmitter.CSharpStringLiteral($"ssisx starter-test content for {fsStep.StepName}");
                     var sourceKeyLiteral = ProgramEmitter.CSharpStringLiteral(sourceKey);
                     var destKeyLiteral = ProgramEmitter.CSharpStringLiteral(destKey);
-                    setupLines.Add($"        await File.WriteAllTextAsync(harness.FileSystemTaskPath({sourceKeyLiteral}), {contentLiteral});");
-                    assertLines.Add($"        Assert.True(File.Exists(harness.FileSystemTaskPath({destKeyLiteral})));");
-                    assertLines.Add($"        Assert.Equal({contentLiteral}, await File.ReadAllTextAsync(harness.FileSystemTaskPath({destKeyLiteral})));");
+                    setupLines.Add($"        await harness.WriteFileAsync(harness.FileSystemTaskPath({sourceKeyLiteral}), {contentLiteral});");
+                    assertLines.Add($"        Assert.True(await harness.FileExistsAsync(harness.FileSystemTaskPath({destKeyLiteral})));");
+                    assertLines.Add($"        Assert.Equal({contentLiteral}, await harness.ReadFileAsync(harness.FileSystemTaskPath({destKeyLiteral})));");
                     break;
                 }
             }
@@ -773,8 +777,8 @@ public static class ComponentTestEmitter
             $"    public async Task {safeStepName}_ExecutesOneStatementPerFile_InOrdinalFileOrder()",
             "    {",
             "        using var harness = new PackageHarness();",
-            $"        await File.WriteAllTextAsync(Path.Combine(harness.ForEachLoopFolder({keyLiteral}), {ProgramEmitter.CSharpStringLiteral(name1)}), \"a\");",
-            $"        await File.WriteAllTextAsync(Path.Combine(harness.ForEachLoopFolder({keyLiteral}), {ProgramEmitter.CSharpStringLiteral(name2)}), \"b\");",
+            $"        await harness.WriteFileAsync(Path.Combine(harness.ForEachLoopFolder({keyLiteral}), {ProgramEmitter.CSharpStringLiteral(name1)}), \"a\");",
+            $"        await harness.WriteFileAsync(Path.Combine(harness.ForEachLoopFolder({keyLiteral}), {ProgramEmitter.CSharpStringLiteral(name2)}), \"b\");",
             "        var package = harness.Package();",
             "        var uow = harness.NewUnitOfWork();",
             "",

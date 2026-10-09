@@ -22,6 +22,9 @@ that folder's own `HOW-TO-FILL-GAPS.md`. This file assumes `Tools\` itself is op
 4. **`--framework` is not sticky -- pass it every call, matching the client's real .NET runtime.**
    Ask if unknown; never silently default to `net10.0` (it also pins a different EF Core major
    version).
+4a. **`--storage s3` only when the client wants S3 -- and pass it every call, like `--framework`.**
+   Default is local folders. In S3 mode leave `Storage:Bucket`/`Region` for the human; never invent
+   a bucket or put AWS credentials in any file.
 5. **Never verify generated code against a live DB, real client files, or a real SSIS run** --
    none exist here. The limit is `dotnet build` + `dotnet test --filter Category!=Integration`.
    One deliberate exception: a `LocalFileSourceData` packet is explicitly asking for a realistic

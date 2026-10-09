@@ -108,7 +108,7 @@ public static partial class PackageGenerator
     /// package never had any equivalent of, on the strength of nothing but "maybe someone
     /// configures it later." Opt in via `ssisx generate --notifications` once real recipients/SMTP
     /// settings actually exist.</param>
-    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix, GapDecisions? decisions = null, bool emitSeams = false, bool skipTests = false, bool includeNotifications = false)
+    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix, GapDecisions? decisions = null, bool emitSeams = false, bool skipTests = false, bool includeNotifications = false, StorageMode storage = StorageMode.Local)
     {
         decisions ??= GapDecisions.None;
         var ns = namespacePrefix is null ? package.ObjectName : $"{namespacePrefix}.{package.ObjectName}";
@@ -408,7 +408,7 @@ public static partial class PackageGenerator
                 var splitStep = GenerateConditionalSplitFlow(
                     package, ns, flow, split, fileSourceEntries, files, testFiles, testCoverageNotes, tables, functionsUsed,
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
-                    csvSampleCandidates, componentHolders);
+                    csvSampleCandidates, componentHolders, storage);
                 if (splitStep is not null) wiredSplits[flow] = splitStep;
                 continue;
             }
@@ -431,7 +431,7 @@ public static partial class PackageGenerator
             {
                 var unionFlow = GenerateUnionFlow(
                     package, ns, flow, union, fileSourceEntries, files, tables, functionsUsed,
-                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams, storage);
                 if (unionFlow is not null) wiredFlows[flow] = unionFlow;
                 continue;
             }
@@ -441,7 +441,7 @@ public static partial class PackageGenerator
                 var multicastStep = GenerateMulticastFlow(
                     package, ns, flow, multicast, fileSourceEntries, files, testFiles, testCoverageNotes, tables, functionsUsed,
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
-                    multicastTestCandidates, csvSampleCandidates, componentHolders);
+                    multicastTestCandidates, csvSampleCandidates, componentHolders, storage);
                 if (multicastStep is not null) wiredMulticasts[flow] = multicastStep;
                 continue;
             }
@@ -539,7 +539,7 @@ public static partial class PackageGenerator
             FlowSinkSpec sink;
             if (isFlatFileDestination)
             {
-                var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, flow.DestinationComponent, entityName, fileSourceEntries, gaps);
+                var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, flow.DestinationComponent, entityName, fileSourceEntries, gaps, storage);
                 if (flatFileSink is null) continue; // ResolveFlatFileSink already added the reason
                 sink = flatFileSink;
                 flatFileSinkCandidates.Add(new FlatFileSinkCandidate(flatFileSink, entityName, flow.DestinationComponent));
@@ -830,6 +830,7 @@ public static partial class PackageGenerator
                 VariableSeeds = plan.VariableSeeds,
                 FailureHandlers = plan.FailureHandlers,
                 IncludeNotifications = includeNotifications,
+                UseS3Storage = storage == StorageMode.S3,
             };
             Merge(files, gaps, ProgramEmitter.Emit(programRequest));
             Merge(files, gaps, PackageClassEmitter.Emit(programRequest, out methodInventory, out var supportsFakeHappyPath, out var usesLookupPreload));
@@ -987,7 +988,7 @@ public static partial class PackageGenerator
                     $"'{xmlFlow.FileSourceKey}' (row element '{xmlFlow.RowElementName}') has no Tier-A synthetic sample at all -- this tool has no .xml writer. A real XML file matching the declared schema under `TestData/{realFileName}` is the only way its own Integration-tagged read test can run (see the LOCAL-DATA work packet).",
                     IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: null));
             }
-            foreach (var f in TestDoublesEmitter.Emit(ns, className, dbContextTypeName, testDataFileEntries, sinkFileKeys, distinctFileSystemTaskKeys, forEachLoopKeys, secondaryConnections.Keys.ToList(), sampleDataFallbackEntries).Files)
+            foreach (var f in TestDoublesEmitter.Emit(ns, className, dbContextTypeName, testDataFileEntries, sinkFileKeys, distinctFileSystemTaskKeys, forEachLoopKeys, secondaryConnections.Keys.ToList(), sampleDataFallbackEntries, storage).Files)
                 testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
             var runAsyncTest = RunAsyncFailureTestEmitter.Emit(ns, className, plan.FailureHandlers.Count > 0, supportsFakeHappyPath, usesLookupPreload, includeNotifications);
             var runAsyncTestFinal = runAsyncTest with { RelativePath = $"{package.ObjectName}.Tests/{runAsyncTest.RelativePath}" };
@@ -1081,7 +1082,7 @@ public static partial class PackageGenerator
                     // always calls the source method with no uow argument.
                     var fileSourceTest = ComponentTestEmitter.EmitFileSourceTest(
                         $"{package.ObjectName}.Tests", ns, $"{ns}.Csv", rowTypeName,
-                        sourceEntry.MethodName, sourceNeedsUow: false, source.ComponentName);
+                        sourceEntry.MethodName, sourceNeedsUow: false, source.ComponentName, storage);
                     var fileSourceTestFinal = fileSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{fileSourceTest.RelativePath}" };
                     testFiles.Add(fileSourceTestFinal);
                     NoteTest(testCoverageNotes, fileSourceTestFinal, "Source-File",
@@ -1100,7 +1101,7 @@ public static partial class PackageGenerator
                 else if (source is ExcelFlowSource)
                 {
                     var excelSourceTest = ComponentTestEmitter.EmitExcelSourceTest(
-                        $"{package.ObjectName}.Tests", ns, $"{ns}.Excel", rowTypeName, sourceEntry.MethodName, source.ComponentName);
+                        $"{package.ObjectName}.Tests", ns, $"{ns}.Excel", rowTypeName, sourceEntry.MethodName, source.ComponentName, storage);
                     var excelSourceTestFinal = excelSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{excelSourceTest.RelativePath}" };
                     testFiles.Add(excelSourceTestFinal);
                     NoteTest(testCoverageNotes, excelSourceTestFinal, "Source-Excel",
@@ -1116,7 +1117,7 @@ public static partial class PackageGenerator
                     // a fourth, near-identical emitter method.
                     var xmlSourceTest = ComponentTestEmitter.EmitFileSourceTest(
                         $"{package.ObjectName}.Tests", ns, $"{ns}.Xml", rowTypeName,
-                        sourceEntry.MethodName, sourceNeedsUow: false, source.ComponentName);
+                        sourceEntry.MethodName, sourceNeedsUow: false, source.ComponentName, storage);
                     var xmlSourceTestFinal = xmlSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{xmlSourceTest.RelativePath}" };
                     testFiles.Add(xmlSourceTestFinal);
                     NoteTest(testCoverageNotes, xmlSourceTestFinal, "Source-Xml",
@@ -1305,6 +1306,21 @@ public static partial class PackageGenerator
                 authMode = "Windows";
             }
 
+            if (storage == StorageMode.S3)
+            {
+                // The .dtsx's own paths are local ones (a drive letter, a UNC share); under S3 they only
+                // survive as a KEY PREFIX inside the configured bucket. Derived here, flagged below.
+                for (var i = 0; i < fileSourceEntries.Count; i++)
+                {
+                    var e = fileSourceEntries[i];
+                    fileSourceEntries[i] = e with { SourceFolder = ToS3KeyPrefix(e.SourceFolder) };
+                }
+                if (fileSourceEntries.Count > 0)
+                    gaps.Add(new GenerationGap($"{package.ObjectName}.Storage",
+                        "generated for S3 storage (--storage s3): every FileSource SourceFolder in appsettings.json is now an S3 key prefix derived from the original local path " +
+                        "(drive/share removed, '/' separators) -- review each one, and set Storage:Bucket (and Storage:Region). Credentials come from the default AWS chain.", IsBlocking: false));
+            }
+
             Merge(files, gaps, ProjectEmitter.Emit(new ProjectRequest(
                 PackageName: package.ObjectName,
                 FileSourceEntries: fileSourceEntries,
@@ -1314,6 +1330,7 @@ public static partial class PackageGenerator
                 SecondaryConnections: secondaryConnections.Values.ToList())
             {
                 IncludeNotifications = includeNotifications,
+                UseS3Storage = storage == StorageMode.S3,
             }));
 
             // Reported either way, wording tied to what was actually generated -- with
@@ -1948,7 +1965,7 @@ public static partial class PackageGenerator
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams)
+        bool emitSeams, StorageMode storage = StorageMode.Local)
     {
         // Same isFlatFileDestination branching the single-destination path already has -- both
         // real probe fixtures for THIS round (gap-audit Phase 3.6) are Flat File destinations
@@ -2012,7 +2029,7 @@ public static partial class PackageGenerator
         FlowSinkSpec sink;
         if (isFlatFileDestination)
         {
-            var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, flow.DestinationComponent, entityName, fileSourceEntries, gaps);
+            var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, flow.DestinationComponent, entityName, fileSourceEntries, gaps, storage);
             if (flatFileSink is null) return null; // ResolveFlatFileSink already added the reason
             sink = flatFileSink;
         }
@@ -2078,7 +2095,8 @@ public static partial class PackageGenerator
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams, List<CsvSampleCandidate>? csvSampleCandidates = null, ComponentHolderRegistry? componentHolders = null)
+        bool emitSeams, List<CsvSampleCandidate>? csvSampleCandidates = null, ComponentHolderRegistry? componentHolders = null,
+        StorageMode storage = StorageMode.Local)
     {
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
         // Never null here: ConditionalSplitBranchPlan.Discarded is gated to Multicast only in
@@ -2280,7 +2298,7 @@ public static partial class PackageGenerator
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
         bool emitSeams, List<MulticastTestCandidate>? testCandidates = null, List<CsvSampleCandidate>? csvSampleCandidates = null,
-        ComponentHolderRegistry? componentHolders = null)
+        ComponentHolderRegistry? componentHolders = null, StorageMode storage = StorageMode.Local)
     {
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
 
@@ -2374,7 +2392,7 @@ public static partial class PackageGenerator
                 Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branchDestination, nullableColumnNames));
                 if (isFlatFile)
                 {
-                    var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, branchDestination, entityName, fileSourceEntries, gaps);
+                    var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, branchDestination, entityName, fileSourceEntries, gaps, storage);
                     if (flatFileSink is null) return null; // ResolveFlatFileSink already added the reason
                     sink = flatFileSink;
                 }
@@ -4082,6 +4100,18 @@ public static partial class PackageGenerator
         return null;
     }
 
+    /// <summary>A local folder to an S3 key prefix: drive letters and UNC server/share prefixes are
+    /// meaningless inside a bucket, so what remains is a relative prefix with '/' separators
+    /// ("D:\data\in" becomes "data/in"). "TODO" placeholders pass through.</summary>
+    internal static string ToS3KeyPrefix(string folder)
+    {
+        if (folder == "TODO") return folder;
+        var p = folder.Replace('\\', '/');
+        if (p.StartsWith("//")) { var parts = p.TrimStart('/').Split('/', 2); p = parts.Length > 1 ? parts[1] : ""; }
+        else if (p.Length >= 2 && p[1] == ':') p = p[2..];
+        return p.Trim('/');
+    }
+
     /// <summary>Design-time default file path, split into folder + file name for
     /// appsettings.json. Both real PoC packages show why this can't always be filled in: every
     /// CSV connection manager here is expression-driven off a project parameter (CLAUDE.md's
@@ -4261,7 +4291,7 @@ public static partial class PackageGenerator
 
     private static FlatFileFlowSink? ResolveFlatFileSink(
         PackageSpec package, string taskName, PipelineComponentSpec destination, string fileSourceKey,
-        List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps)
+        List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps, StorageMode storage = StorageMode.Local)
     {
         var payload = destination.FlatFileDestination;
         var connectionManager = payload?.ConnectionName is { } cmName ? FindConnectionManager(package, cmName) : null;
@@ -4324,6 +4354,10 @@ public static partial class PackageGenerator
         }
 
         fileSourceEntries.Add(BuildFileSourceEntry(fileSourceKey, connectionManager, gaps));
+        if (storage == StorageMode.S3 && payload.Overwrite != true)
+            gaps.Add(new GenerationGap(taskName,
+                $"Flat File Destination '{destination.Name}' appends to its file (Overwrite=false), but an S3 object cannot be appended to -- with --storage s3 the object is REPLACED on every run, dropping what a previous run wrote", IsBlocking: false));
+
         return new FlatFileFlowSink(destination.Name, fileSourceKey, payload.Overwrite == true, headerLine, columns);
     }
 

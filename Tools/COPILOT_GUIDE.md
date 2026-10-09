@@ -189,6 +189,22 @@ ssisx generate --input <folder> --out out --recursive --package LoadEmployees --
 ssisx generate --input <folder> --out out --recursive --package LoadEmployees --etl-core Etl.Core --fills fills-library --framework net8.0
 ```
 
+## Reading and writing files in S3: `--storage s3`
+
+Default is `--storage local` (local folders, unchanged). Add `--storage s3` to **every** `generate`
+call for a package that must use an S3 bucket instead -- one mode per package, never mixed. The
+output then has `builder.Services.AddS3FileStore(...)` in `Program.cs` and a `Storage` section in
+`appsettings.json` with an **empty `Bucket`/`Region` for the human to fill in** (the package refuses
+to start until `Bucket` is set -- never invent a bucket name). Each `FileSource` `SourceFolder` is
+an S3 key prefix derived from the original local path; the `<Package>.Storage` advisory in
+`generate-report.md` says to review them. Credentials are the standard AWS chain -- never put an
+access key in any file. A Flat File Destination with `Overwrite=false` replaces the S3 object on
+every run (S3 cannot append); that is reported as a gap, not something to work around.
+
+```
+ssisx generate --input <folder> --out out --recursive --package LoadEmployees --etl-core Etl.Core --fills fills-library --storage s3
+```
+
 **If you don't know which .NET version the client actually runs, ask before generating** --
 don't default to net10.0 and hope, since discovering the mismatch only at `dotnet build` (or
 worse, at deployment) is a much more expensive failure than asking up front. Both legs have been

@@ -62,6 +62,8 @@ internal static class GenerateCommand
         // Configuration.UserSecrets, System.Text.Encoding.CodePages, all pinned at 10.0.11)
         // already multi-targets net8.0 for real and stays unchanged either way.
         var framework = "net10.0";
+        // local stays the default -- omitting --storage changes nothing for an existing caller.
+        var storage = StorageMode.Local;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -111,6 +113,16 @@ internal static class GenerateCommand
                             return 2;
                         }
                         framework = fw;
+                        break;
+                    case "--storage":
+                        var st = RequireValue(args, ref i, "--storage");
+                        if (st.Equals("local", StringComparison.OrdinalIgnoreCase)) storage = StorageMode.Local;
+                        else if (st.Equals("s3", StringComparison.OrdinalIgnoreCase)) storage = StorageMode.S3;
+                        else
+                        {
+                            Console.Error.WriteLine($"error: --storage '{st}' is not supported. Supported values: local, s3.");
+                            return 2;
+                        }
                         break;
                     default:
                         Console.Error.WriteLine($"error: unknown generate option '{args[i]}'");
@@ -205,7 +217,7 @@ internal static class GenerateCommand
             PackageGenerateResult result;
             try
             {
-                result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests, includeNotifications);
+                result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests, includeNotifications, storage);
                 Console.WriteLine($"  done ({stopwatch.ElapsedMilliseconds}ms, {result.Files.Count} file(s), {result.Gaps.Count} gap(s))");
             }
             catch (Exception ex)
@@ -478,6 +490,7 @@ internal static class GenerateCommand
         "  </PropertyGroup>",
         "",
         "  <ItemGroup>",
+        "    <PackageVersion Include=\"AWSSDK.S3\" Version=\"4.0.104.1\" />",
         "    <PackageVersion Include=\"CsvHelper\" Version=\"33.1.0\" />",
         "    <PackageVersion Include=\"ExcelDataReader\" Version=\"3.7.0\" />",
         "    <PackageVersion Include=\"MailKit\" Version=\"4.17.0\" />",

@@ -159,6 +159,17 @@ changes nothing; net10.0 stays the default.
 %SSISX% generate --input C:\client-packages --out out --recursive --package LoadEmployees --etl-core Etl.Core --fills fills-library --framework net8.0
 ```
 
+**Reading and writing files in S3 instead of local folders:** add `--storage s3` to any `generate`
+call (default is `local`, unchanged). One mode per package, never mixed. With `s3`, the generated
+`Program.cs` registers an S3 file store, `appsettings.json` gains a `Storage` section
+(`Bucket`, `Region` -- both empty, fill them in; the package refuses to start until `Bucket` is
+set), and every `FileSource` `SourceFolder` becomes an S3 key prefix derived from the original
+local path (drive/share dropped, `/` separators) -- review each one, the report lists them as a
+non-blocking `<Package>.Storage` gap. Credentials come from the standard AWS chain (environment
+variables, shared profile, IAM role), never from config. S3 cannot append, so a Flat File
+Destination with `Overwrite=false` *replaces* the object each run (also reported as a gap).
+Works with both `--framework` values.
+
 Every `generate` call above exits `3` when it wrote code but there are gaps to review (normal,
 not a failure -- read `out\generate-report.md`), `0` when everything generated with zero gaps,
 and `2` on a usage error, including a `--package` name that matched nothing. **If `--etl-core`

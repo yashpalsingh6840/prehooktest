@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Etl.Core.Abstractions;
+using Etl.Core.Storage;
 using Microsoft.Extensions.Logging;
 
 namespace Etl.Core.Pipeline;
@@ -18,16 +19,14 @@ namespace Etl.Core.Pipeline;
 /// <see cref="IUnitOfWork"/>) -- one failing iteration rolls back every prior one, the same
 /// all-or-nothing semantics every other step in a package already has.
 /// </summary>
-public sealed class ForEachLoopStep(string name, ForEachFileLoopAction action, Func<string, string> buildSql, ILogger<ForEachLoopStep> logger) : ILoadTask
+public sealed class ForEachLoopStep(string name, ForEachFileLoopAction action, Func<string, string> buildSql, ILogger<ForEachLoopStep> logger, IFileStore? fileStore = null) : ILoadTask
 {
     public string Name => name;
 
     public async Task<StepResult> RunAsync(IUnitOfWork uow, LoadContext load, CancellationToken ct)
     {
         var stopwatch = Stopwatch.StartNew();
-        var searchOption = action.Recurse ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-        var files = Directory.EnumerateFiles(action.Folder, action.FileSpec, searchOption)
-            .OrderBy(path => path, StringComparer.Ordinal);
+        var files = await (fileStore ?? LocalFileStore.Instance).ListAsync(action.Folder, action.FileSpec, action.Recurse, ct);
 
         long iterations = 0;
         foreach (var path in files)

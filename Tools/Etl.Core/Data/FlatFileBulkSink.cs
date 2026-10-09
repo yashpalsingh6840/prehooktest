@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text;
 using Etl.Core.Abstractions;
+using Etl.Core.Storage;
 using Microsoft.Extensions.Logging;
 
 namespace Etl.Core.Data;
@@ -19,7 +20,8 @@ public sealed class FlatFileBulkSink<TEntity>(
     bool overwrite,
     string? headerLine,
     IReadOnlyList<FlatFileColumnFormat> columns,
-    ILogger<FlatFileBulkSink<TEntity>> logger) : IBulkSink<TEntity>
+    ILogger<FlatFileBulkSink<TEntity>> logger,
+    IFileStore? fileStore = null) : IBulkSink<TEntity>
     where TEntity : class
 {
     public async Task<long> WriteAsync(IUnitOfWork uow, IAsyncEnumerable<TEntity> rows, CancellationToken ct)
@@ -29,11 +31,10 @@ public sealed class FlatFileBulkSink<TEntity>(
                 ?? throw new InvalidOperationException($"{typeof(TEntity).Name} has no public property '{c.PropertyName}'")))
             .ToArray();
 
-        var directory = Path.GetDirectoryName(Path.GetFullPath(filePath));
-        if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-
-        // Overwrite=true recreates the file (FileMode.Create); otherwise append to it.
-        await using var stream = new FileStream(filePath, overwrite ? FileMode.Create : FileMode.Append, FileAccess.Write, FileShare.None);
+        // Overwrite=true recreates the file; otherwise append to it (local store only -- an object
+        // store cannot append and always replaces). The store creates any missing parent folder.
+        var store = fileStore ?? LocalFileStore.Instance;
+        await using var stream = await store.OpenWriteAsync(filePath, append: !overwrite, ct);
         await using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         if (!string.IsNullOrEmpty(headerLine))

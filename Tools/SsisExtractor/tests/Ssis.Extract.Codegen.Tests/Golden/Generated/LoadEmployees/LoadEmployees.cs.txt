@@ -5,6 +5,7 @@ using Etl.Core.Csv;
 using Etl.Core.Data;
 using Etl.Core.Hosting;
 using Etl.Core.Pipeline;
+using Etl.Core.Storage;
 using LoadEmployees.Csv;
 using LoadEmployees.Mapping;
 using LoadEmployees.Model;
@@ -26,6 +27,7 @@ internal sealed partial class LoadEmployeesPackage(IServiceProvider services)
     internal IOptions<T> Opt<T>() where T : class => services.GetRequiredService<IOptions<T>>();
     private DatabaseOptions Db() => Opt<DatabaseOptions>().Value;
     private string File(string key) => Opt<FileSourceOptions>().Value[key].ResolvedPath;
+    internal IFileStore Files() => services.GetRequiredService<IFileStore>();
 
     public async Task<int> RunAsync(CancellationToken ct)
     {
@@ -89,7 +91,7 @@ internal sealed partial class LoadEmployeesPackage(IServiceProvider services)
 
     internal IRowSource<EmployeeCsvRow> FF_SRC_Employees()
     {
-        return new CsvRowSource<EmployeeCsvRow>("FF_SRC_Employees", new CsvSourceOptions { FilePath = File("Employee") }, new EmployeeCsvRowMap());
+        return new CsvRowSource<EmployeeCsvRow>("FF_SRC_Employees", new CsvSourceOptions { FilePath = File("Employee") }, new EmployeeCsvRowMap(), Files());
     }
 
     internal IBulkSink<Employee> OLEDST_Employee()

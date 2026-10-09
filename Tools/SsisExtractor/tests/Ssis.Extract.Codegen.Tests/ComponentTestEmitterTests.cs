@@ -77,9 +77,9 @@ public class ComponentTestEmitterTests
         var file = ComponentTestEmitter.EmitSequenceContainerTest("MyPackage.Tests", "MyPackage", "SEQ_Prepare", children);
 
         Assert.NotNull(file);
-        Assert.Contains("await File.WriteAllTextAsync(harness.FileSystemTaskPath(\"CM_FILE_Source\")", file!.Content);
+        Assert.Contains("await harness.WriteFileAsync(harness.FileSystemTaskPath(\"CM_FILE_Source\")", file!.Content);
         Assert.Contains("Assert.Contains(SQL_TruncateTargetsStatement.BuildStatement(), uow.ExecutedSql);", file.Content);
-        Assert.Contains("Assert.True(File.Exists(harness.FileSystemTaskPath(\"CM_FILE_Dest\")));", file.Content);
+        Assert.Contains("Assert.True(await harness.FileExistsAsync(harness.FileSystemTaskPath(\"CM_FILE_Dest\")));", file.Content);
         // Only one SQL child -- nothing to compare it against, so no IndexOf assertion at all.
         Assert.DoesNotContain("IndexOf", file.Content);
     }

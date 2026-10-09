@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using Etl.Core.Abstractions;
 using Etl.Core.Csv;
+using Etl.Core.Storage;
 using ExcelDataReader;
 
 namespace Etl.Core.Excel;
@@ -21,13 +22,14 @@ namespace Etl.Core.Excel;
 /// mixed-type columns); a column whose real SSIS output type is neither <c>double</c> nor
 /// <c>string</c> is a separate, unevidenced gap.
 /// </summary>
-public sealed class ExcelRowSource<TRow>(string name, ExcelSourceOptions options, Func<IExcelDataReader, TRow> materialize) : IRowSource<TRow>
+public sealed class ExcelRowSource<TRow>(string name, ExcelSourceOptions options, Func<IExcelDataReader, TRow> materialize, IFileStore? fileStore = null) : IRowSource<TRow>
 {
     public string Name => name;
 
     public async IAsyncEnumerable<TRow> ReadAsync([EnumeratorCancellation] CancellationToken ct)
     {
-        if (!File.Exists(options.FilePath))
+        var store = fileStore ?? LocalFileStore.Instance;
+        if (!await store.ExistsAsync(options.FilePath, ct))
             throw new FileNotFoundException($"{name}: Excel source not found: {options.FilePath}", options.FilePath);
 
         // ExcelReaderFactory's own default configuration calls Encoding.GetEncoding(1252) even
@@ -35,7 +37,9 @@ public sealed class ExcelRowSource<TRow>(string name, ExcelSourceOptions options
         // CsvRowSource<TRow> already needs it for CodePage-driven text decoding.
         CodePageSupport.EnsureRegistered();
 
-        using var stream = File.Open(options.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        await using var rawStream = await store.OpenReadAsync(options.FilePath, ct);
+        // ExcelDataReader needs a seekable stream; an object store hands back a forward-only one, so buffer it.
+        await using var stream = await EnsureSeekableAsync(rawStream, ct);
         using var reader = ExcelReaderFactory.CreateReader(stream);
         await Task.Yield(); // ExcelDataReader has no async API of its own -- this justifies the async iterator, matching CsvRowSource's own genuine await point.
 
@@ -74,5 +78,14 @@ public sealed class ExcelRowSource<TRow>(string name, ExcelSourceOptions options
             }
             yield return row;
         }
+    }
+
+    private static async Task<Stream> EnsureSeekableAsync(Stream source, CancellationToken ct)
+    {
+        if (source.CanSeek) return source;
+        var buffered = new MemoryStream();
+        await source.CopyToAsync(buffered, ct);
+        buffered.Position = 0;
+        return buffered;
     }
 }

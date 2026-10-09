@@ -5,6 +5,7 @@ using Etl.Core.Csv;
 using Etl.Core.Data;
 using Etl.Core.Hosting;
 using Etl.Core.Pipeline;
+using Etl.Core.Storage;
 using LoadReferenceData.Csv;
 using LoadReferenceData.Mapping;
 using LoadReferenceData.Model;
@@ -26,6 +27,7 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
     internal IOptions<T> Opt<T>() where T : class => services.GetRequiredService<IOptions<T>>();
     private DatabaseOptions Db() => Opt<DatabaseOptions>().Value;
     private string File(string key) => Opt<FileSourceOptions>().Value[key].ResolvedPath;
+    internal IFileStore Files() => services.GetRequiredService<IFileStore>();
 
     public async Task<int> RunAsync(CancellationToken ct)
     {
@@ -100,7 +102,7 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
 
     internal IRowSource<DepartmentCsvRow> FF_SRC_Department()
     {
-        return new CsvRowSource<DepartmentCsvRow>("FF_SRC_Department", new CsvSourceOptions { FilePath = File("Department") }, new DepartmentCsvRowMap());
+        return new CsvRowSource<DepartmentCsvRow>("FF_SRC_Department", new CsvSourceOptions { FilePath = File("Department") }, new DepartmentCsvRowMap(), Files());
     }
 
     internal IBulkSink<Department> OLEDST_Department()
@@ -110,7 +112,7 @@ internal sealed partial class LoadReferenceDataPackage(IServiceProvider services
 
     internal IRowSource<DesignationCsvRow> FF_SRC_Designation()
     {
-        return new CsvRowSource<DesignationCsvRow>("FF_SRC_Designation", new CsvSourceOptions { FilePath = File("Designation") }, new DesignationCsvRowMap());
+        return new CsvRowSource<DesignationCsvRow>("FF_SRC_Designation", new CsvSourceOptions { FilePath = File("Designation") }, new DesignationCsvRowMap(), Files());
     }
 
     internal IBulkSink<Designation> OLEDST_Designation()
