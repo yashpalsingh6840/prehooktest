@@ -90,7 +90,7 @@ internal static class Program
             AFTER the sweep, so the same load-failure/duplicate-name handling applies
             either way. A name that matches nothing is a hard error (exit 2), never a
             silent no-op -- run without --package first to see every name --input
-            actually contains (metadata/inventory.csv, or just the console output, lists them).
+            actually contains (metadata/report/inventory.csv, or just the console output, lists them).
             This is the knob to reach for on a large portfolio: run 'extract' once across
             everything (read-only), then run 'generate' --package by name for just the
             packages you actually want C# for.
@@ -107,8 +107,8 @@ internal static class Program
                                  loose .dtsx files with no .dtproj beside them (add
                                  --recursive to search subdirectories). A package that
                                  cannot be read is skipped with a warning and listed in
-                                 metadata/load-failures.md -- one bad package never costs you the
-                                 rest of the folder.
+                                 metadata/report/load-failures.md -- one bad package never costs
+                                 you the rest of the folder.
               --out <dir>       Output directory (everything below lands here).
               --package <name>  Only this package (repeatable/comma-splittable) -- see above.
               --no-redact       Do not strip Password=/Pwd= from connection strings.
@@ -140,30 +140,35 @@ internal static class Program
             stays at the TOP of --out -- it's the one file 'generate'/'svk' actually read
             back (confirmed directly: svk's own contract is packages/*.spec.json, nothing
             else). Everything else is human-facing analysis output, so it all lands under
-            one metadata/ subfolder instead of ~30 loose files cluttering --out itself:
+            one metadata/ subfolder instead of ~30 loose files cluttering --out itself --
+            and WITHIN metadata/, the portfolio-level roll-ups (report/) are kept separate
+            from the deeper per-component analysis artifacts (analysis/), so metadata/
+            itself never grows past a handful of subfolders plus two provenance files:
               packages/<Package>.spec.json                                -- the canonical
                 machine-readable spec 'generate'/svk read; the one path NOT under metadata/
               metadata/project.spec.json, metadata/_meta.json             -- this run's own
                 provenance (tool version, timestamp, redaction flag)
-              metadata/inventory.csv/.md, metadata/findings.csv/.md       -- per-package
+              metadata/report/inventory.csv/.md, .../findings.csv/.md     -- per-package
                 complexity/classification and every RulesEngine finding, with location
-              metadata/nondeterministic.json                             -- columns to
+              metadata/analysis/nondeterministic.json                    -- columns to
                 exclude from a parallel-run row-hash comparison (plan §5.8)
-              metadata/datatouch.md/.json, metadata/effects.json/.md     -- every table/
+              metadata/analysis/datatouch.md/.json,
+              metadata/analysis/effects.json/.md                         -- every table/
                 file/procedure a package reads or writes, PLUS every task type this tool
                 has no model for as an explicit UncharacterizedTask (never silently
                 dropped -- gate 3 must refuse PASS while any effect here is unverified)
-              metadata/primary-keys.json/.md                             -- best-effort
+              metadata/analysis/primary-keys.json/.md                    -- best-effort
                 naming-convention PK guesses, needs human confirmation (a .dtsx carries
                 no real PK concept)
-              metadata/expressions.csv, metadata/expression-functions.md -- every
+              metadata/analysis/expressions.csv,
+              metadata/analysis/expression-functions.md                  -- every
                 expression and the SSIS expression-language surface actually used
-              metadata/sql/ + metadata/sql-analysis.json                 -- every SQL
+              metadata/sql/ + metadata/analysis/sql-analysis.json        -- every SQL
                 statement, individually addressable, with its parse result
               metadata/lineage/*.mmd + *.dot                             -- one Mermaid +
                 Graphviz DOT pair per Data Flow Task's column-level lineage (plan §5.1)
-              metadata/graph/portfolio.mmd + metadata/dependencies.json  -- cross-package
-                dependency graph
+              metadata/graph/portfolio.mmd + metadata/analysis/dependencies.json --
+                cross-package dependency graph
               metadata/conformance/<Package>.rules.json,
               metadata/conformance/conformance-rules.csv,
               metadata/conformance/conformance-report.json/.md           -- gate 1
@@ -176,9 +181,10 @@ internal static class Program
                 expression, boundary cases included, every expected value COMPUTED by
                 evaluating it through Ssis.Runtime.Expressions (itself verified against
                 the real SSIS evaluator) at generation time, never hand-authored
-              metadata/unmapped.md, metadata/portfolio.md,
-              metadata/portfolio-digest.md/.json, metadata/generation-readiness.md,
-              metadata/load-failures.md                                  -- portfolio
+              metadata/report/unmapped.md, metadata/report/portfolio.md,
+              metadata/report/portfolio-digest.md/.json,
+              metadata/report/generation-readiness.md,
+              metadata/report/load-failures.md                           -- portfolio
                 roll-ups, incl. the client-safe digest and whether 'generate' would
                 produce each package with zero blocking gaps
 
