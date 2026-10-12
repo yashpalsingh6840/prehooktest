@@ -1,0 +1,30 @@
+Open MFDBUpdate.dtsx as plain XML (not the SSDT designer) and answer the following,
+for EACH of the three Data Flow Tasks whose name contains "fndInfo", "fndCompany", and
+"fndDescription":
+
+1. Find the Flat File Source component. Find the <path> whose startId is that source's
+   ERROR output (isErrorOut="true"). Follow it to the Script Component, then follow the
+   Script Component's own output path to find the destination component it feeds
+   ("OLE DB Destination 1" or similar — NOT the destination fed directly by the Flat
+   File Source's main output).
+
+2. For that destination component, report:
+   - Its componentClassID (confirm it's Microsoft.OLEDBDestination, not something else)
+   - Its connection manager's OpenRowset / table name (resolve the connection reference
+     to the real table name)
+   - Its full <externalMetadataColumns> list: name, dataType, length, precision, scale
+   - Its <inputColumns>: for each one, the column name AND which externalMetadataColumn
+     (destination column) it maps to, or whether it maps to nothing ("<ignore>" /
+     unmapped)
+
+3. For the Script Component itself (upstream of that destination), report its
+   <inputColumns> and <outputColumns> exactly as declared in the XML — names, dataType,
+   length — not from the generated .vb wrapper, the raw <ObjectData>/<properties>
+   SourceCode-adjacent column declarations.
+
+4. State explicitly whether all three Data Flow Tasks (fndInfo/fndCompany/fndDescription)
+   have IDENTICAL structure for all of the above, or name exactly what differs if they
+   don't.
+
+Report this as plain text/markdown tables. Do not modify the file. Do not open any other
+file.
