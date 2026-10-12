@@ -59,8 +59,8 @@ public static class MethodSignatures
     public static string ForStepOrContainer(string methodName) =>
         $"internal async Task {methodName}(IUnitOfWork uow, CancellationToken ct)";
 
-    public static string ForSource(string methodName, string rowTypeName, bool needsUow) =>
-        $"internal IRowSource<{rowTypeName}> {methodName}({(needsUow ? "IUnitOfWork uow" : "")})";
+    public static string ForSource(string methodName, string rowTypeName, bool needsUow, string? concreteReturnTypeName = null) =>
+        $"internal {concreteReturnTypeName ?? $"IRowSource<{rowTypeName}>"} {methodName}({(needsUow ? "IUnitOfWork uow" : "")})";
 
     public static string ForSink(string methodName, string entityName) =>
         $"internal IBulkSink<{entityName}> {methodName}()";
@@ -143,7 +143,7 @@ public static class PackageClassEmitter
         // ForEach-Data-Flow-Loop is likewise always SQL-sunk (PlanForEachDataFlowLoop's own gate
         // requires it), and so is a For Loop Container's own body (PlanForLoop's own gate
         // requires a fast-load-configured, non-Flat-File destination).
-        var usesSqlSink = flows.Any(f => f.Sink is SqlFlowSink or RedirectingSqlFlowSink) || splits.Count > 0
+        var usesSqlSink = flows.Any(f => f.Sink is SqlFlowSink or RedirectingSqlFlowSink || f.ErrorOutputRoute?.ErrorSink is SqlFlowSink) || splits.Count > 0
             || multicasts.Any(m => m.Branches.Any(b => b.Sink is SqlFlowSink)) || dataFlowLoops.Count > 0 || forLoops.Count > 0
             || scds.Any(s => s.Branches.Any(b => b.Sink is SqlFlowSink));
         usesLookupPreload = flows.Any(f => f.Lookup is not null);
@@ -244,7 +244,7 @@ public static class PackageClassEmitter
             w.Line($"{assignPrefix}{expr};");
         }
 
-        void EmitSource(CodeWriter w, string rowTypeName, FlowSourceSpec source, string assignPrefix)
+        void EmitSource(CodeWriter w, string rowTypeName, FlowSourceSpec source, string assignPrefix, bool divertErrorsToErrorRows = false)
         {
             switch (source)
             {
@@ -253,7 +253,8 @@ public static class PackageClassEmitter
                     var opts = csv.SkipRows == 0
                         ? $"new CsvSourceOptions {{ FilePath = File({Str(csv.FileSourceKey)}) }}"
                         : $"new CsvSourceOptions {{ FilePath = File({Str(csv.FileSourceKey)}), SkipRows = {csv.SkipRows} }}";
-                    w.Line($"{assignPrefix}new CsvRowSource<{rowTypeName}>({Str(csv.ComponentName)}, {opts}, new {rowTypeName}Map(), Files());");
+                    var divertArg = divertErrorsToErrorRows ? ", divertErrorsToErrorRows: true" : "";
+                    w.Line($"{assignPrefix}new CsvRowSource<{rowTypeName}>({Str(csv.ComponentName)}, {opts}, new {rowTypeName}Map(), Files(){divertArg});");
                     break;
                 }
                 case FixedWidthFlowSource fw:
@@ -484,16 +485,23 @@ public static class PackageClassEmitter
             _ => false,
         };
 
-        string EmitSourceMethod(string rowTypeName, FlowSourceSpec source)
+        // concreteReturnTypeName/divertErrorsToErrorRows: only ever set by the ProgramFlowStep
+        // case below, when flow.ErrorOutputRoute is configured -- a flow's own buffered error
+        // rows (CsvRowSource<T>.ErrorRows) are only reachable from the CALL SITE if the method's
+        // own DECLARED return type is the concrete CsvRowSource<T>, not the IRowSource<T>
+        // interface every other source method keeps (var takes a method's DECLARED return type,
+        // never its runtime type). Every other caller leaves both null/false, so this is a no-op
+        // for every existing fixture/real package.
+        string EmitSourceMethod(string rowTypeName, FlowSourceSpec source, string? concreteReturnTypeName = null, bool divertErrorsToErrorRows = false)
         {
             // A component's own SSIS object name is free text ("OLE DB Source" -- the exact
             // schema default nobody renames, per PackageGenerator.SanitizeIdentifier's own doc
             // comment) and not necessarily a valid C# identifier.
             var name = Reserve(PackageGenerator.SanitizeIdentifier(source.ComponentName));
             var needsUow = SourceNeedsUow(source);
-            var signature = MethodSignatures.ForSource(name, rowTypeName, needsUow);
+            var signature = MethodSignatures.ForSource(name, rowTypeName, needsUow, concreteReturnTypeName);
             componentMethods.OpenBlock(signature);
-            EmitSource(componentMethods, rowTypeName, source, "return ");
+            EmitSource(componentMethods, rowTypeName, source, "return ", divertErrorsToErrorRows);
             componentMethods.CloseBlock();
             componentMethods.Blank();
             inventory.Add(new ComponentMethodEntry("Source", source.ComponentName, name, signature, rowTypeName));
@@ -563,8 +571,23 @@ public static class PackageClassEmitter
             {
                 case ProgramFlowStep { Flow: var flow }:
                 {
-                    var sourceMethodName = EmitSourceMethod(flow.RowTypeName, flow.Source);
-                    methods.Line($"var source = {sourceMethodName}({SourceCallArgs(flow.Source)});");
+                    string sourceMethodName;
+                    if (flow.ErrorOutputRoute is not null)
+                    {
+                        // The concrete CsvRowSource<T> return type is what makes .ErrorRows
+                        // visible at the call site below -- var takes a method's DECLARED return
+                        // type, never its runtime type, and every other source method keeps the
+                        // interface (IRowSource<T>) for every other flow.
+                        sourceMethodName = EmitSourceMethod(flow.RowTypeName, flow.Source,
+                            concreteReturnTypeName: $"CsvRowSource<{flow.RowTypeName}>", divertErrorsToErrorRows: true);
+                        methods.Line($"var csvSource = {sourceMethodName}({SourceCallArgs(flow.Source)});");
+                        methods.Line($"IRowSource<{flow.RowTypeName}> source = csvSource;");
+                    }
+                    else
+                    {
+                        sourceMethodName = EmitSourceMethod(flow.RowTypeName, flow.Source);
+                        methods.Line($"var source = {sourceMethodName}({SourceCallArgs(flow.Source)});");
+                    }
                     if (flow.SortKey is { } sortKey)
                         methods.Line($"source = new SortingRowSource<{flow.RowTypeName}, {sortKey.KeyClrType}>({Str(flow.StepName + ".Sort")}, source, row => row.{PackageGenerator.SanitizeIdentifier(sortKey.KeyColumnName)}, Comparer<{sortKey.KeyClrType}>.Default);");
                     foreach (var variableName in flow.RowCountVariableNames ?? [])
@@ -578,6 +601,26 @@ public static class PackageClassEmitter
                     methods.Blank();
                     methods.Line($"var step = new DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>({Str(flow.StepName)}, source, transform, sink, Log<DataFlowStep<{flow.RowTypeName}, {flow.EntityName}>>());");
                     methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
+
+                    if (flow.ErrorOutputRoute is { } errorRoute)
+                    {
+                        // Safe to read only NOW -- DataFlowStep.RunAsync enumerates source.ReadAsync()
+                        // to completion internally before returning, the same timing
+                        // MulticastStep's own buffer-then-flush branches already rely on.
+                        methods.Blank();
+                        var errorSinkMethodName = EmitSinkMethod(errorRoute.ErrorEntityName, errorRoute.ErrorSink);
+                        methods.Line($"var errorTransform = new {errorRoute.ErrorTransformClassName}();");
+                        methods.Line($"var errorSink = {errorSinkMethodName}();");
+                        methods.Line($"var errorBranch = new ConditionalSplitBranch<{errorRoute.ErrorRowTypeName}, {errorRoute.ErrorEntityName}>({Str(flow.StepName + ".ErrorOutput")}, errorTransform, errorSink);");
+                        methods.Line("var errorRowNumber = 0L;");
+                        methods.OpenBlock("foreach (var raw in csvSource.ErrorRows)");
+                        methods.Line($"var errorRow = new {errorRoute.ErrorRowTypeName}(raw.RawRow, raw.ErrorCode, raw.ErrorColumn);");
+                        methods.Line("var errorCtx = new RowContext(++errorRowNumber, _load.StartedAtUtc, csvSource.Name);");
+                        methods.Line("errorBranch.Add(errorRow, in errorCtx);");
+                        methods.CloseBlock();
+                        methods.Line("var errorWritten = await errorBranch.FlushAsync(uow, ct);");
+                        methods.Line($"_results.Add(new StepResult({Str(flow.StepName + ".ErrorOutput")}, errorRowNumber, errorWritten, TimeSpan.Zero));");
+                    }
                     break;
                 }
                 case ProgramSqlStep sqlStep:

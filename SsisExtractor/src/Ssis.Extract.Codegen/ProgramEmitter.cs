@@ -222,7 +222,34 @@ public sealed record ProgramFlowSpec(
     /// this field existed: a standalone Sort was silently invisible, see
     /// <c>Ssis.Extract.Codegen.PackagePlanner.ResolveStandaloneSort</c>'s own doc comment). Null
     /// for every flow with no standalone Sort, which is every flow before this round.</summary>
-    ProgramSortKeySpec? SortKey = null);
+    ProgramSortKeySpec? SortKey = null,
+    /// <summary>Added for a Flat File Source's own error-output routing (a real client shape,
+    /// MFDBUpdate.dtsx) -- see <see cref="ProgramFlatFileErrorOutputRoute"/>'s own doc comment.
+    /// Only ever set when <see cref="Source"/> is a <see cref="CsvFlowSource"/>; null for every
+    /// flow without a Flat File Source column configured for
+    /// ErrorRowDisposition/TruncationRowDisposition=RedirectRow.</summary>
+    ProgramFlatFileErrorOutputRoute? ErrorOutputRoute = null);
+
+/// <summary>
+/// A Flat File Source's own error output, routed to a second destination -- real client evidence
+/// (MFDBUpdate.dtsx): the main flow's own <c>CsvRowSource&lt;TRow&gt;</c> is constructed with
+/// <c>divertErrorsToErrorRows: true</c>, buffering every row it could not parse/fit instead of
+/// aborting (see that type's own doc comment), and once the main <c>DataFlowStep</c> finishes
+/// (so every row has been read and <c>ErrorRows</c> is complete), those buffered
+/// <c>Etl.Core.Csv.CsvErrorRow</c> values are mapped into this flow's own fixed
+/// <see cref="ErrorRowTypeName"/>, run through <see cref="ErrorTransformClassName"/> (a Script
+/// Component's own synthesized columns become the usual Tier-2 seam, same mechanism as
+/// everywhere else -- see <c>TransformEmitter</c>'s own <c>GapKind.ScriptComponentColumn</c>
+/// handling, not duplicated here), and bulk-inserted into <see cref="ErrorSink"/> via a plain
+/// <c>Etl.Core.Pipeline.ConditionalSplitBranch{TRow,TEntity}</c> -- the same buffer-then-flush
+/// abstraction Multicast/Conditional Split already use, reused rather than inventing a second
+/// one.
+/// </summary>
+public sealed record ProgramFlatFileErrorOutputRoute(
+    string ErrorRowTypeName,
+    string ErrorEntityName,
+    string ErrorTransformClassName,
+    FlowSinkSpec ErrorSink);
 
 /// <summary>See <see cref="ProgramFlowSpec.SortKey"/>. <see cref="KeyClrType"/> is the already-
 /// resolved CLR type NAME (e.g. "int"), not the whole <c>SsisPipelineType</c> -- this project's

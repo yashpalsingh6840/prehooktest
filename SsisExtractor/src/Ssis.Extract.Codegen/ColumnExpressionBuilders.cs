@@ -33,6 +33,20 @@ public enum NumericCoercionKind
     NarrowR4ToI4,
     ParseWstrToI4,
     WidenI4ToNumeric,
+
+    /// <summary>
+    /// A plain passthrough column whose source buffer is int (DT_I4) but whose destination
+    /// column is string (DT_STR/DT_WSTR), with no explicit Data Conversion component -- added
+    /// 2026-10 closing a real client shape (a Flat File Source's error output: its own
+    /// ErrorCode/ErrorColumn system columns are i4, but the real destination's own
+    /// externalMetadataColumns declare them str,100). Unlike every OTHER pairing in this enum,
+    /// this one needed NO dtexec probe at all -- int.ToString() is deterministic and always fits
+    /// in any reasonable declared width, so there is no rounding/truncation/overflow question to
+    /// measure. Reuses the SAME <c>SsisFn.Str</c> helper this generator already emits for the SSIS
+    /// expression-language STR() function (a (DT_WSTR,n) cast of an integer) rather than adding a
+    /// near-duplicate method -- see <c>SsisFnEmitter.StrBody</c>'s own doc comment.
+    /// </summary>
+    Str,
 }
 
 /// <summary>Builds the C# expression for one of the evidenced numeric-coercion pairings,

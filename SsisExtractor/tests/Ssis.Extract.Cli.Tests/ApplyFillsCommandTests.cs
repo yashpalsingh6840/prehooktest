@@ -89,7 +89,7 @@ public class ApplyFillsCommandTests : IDisposable
 
     private void WriteClaim(string ruleId, string status)
     {
-        var dir = Path.Combine(_root, "conformance", "claims");
+        var dir = Path.Combine(_root, "metadata", "conformance", "claims");
         Directory.CreateDirectory(dir);
         var claim = new List<object> { new { RuleId = ruleId, Status = status, ImplementedBy = (string?)null, Note = (string?)null } };
         File.WriteAllText(Path.Combine(dir, $"{Package}.claims.json"), JsonSerializer.Serialize(claim));

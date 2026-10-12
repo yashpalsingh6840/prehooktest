@@ -243,7 +243,7 @@ internal static class ApplyFillsCommand
         fillsDir = Path.GetFullPath(fillsDir ?? Path.Combine(outDir, "fills"));
         // Same default `ssisx conformance` itself uses -- read-only here, and silently absent
         // (never an error) when nobody has run `conformance` for this --out at all.
-        claimsDir = Path.GetFullPath(claimsDir ?? Path.Combine(outDir, "conformance", "claims"));
+        claimsDir = Path.GetFullPath(claimsDir ?? Path.Combine(outDir, "metadata", "conformance", "claims"));
         var generateDir = Path.Combine(outDir, "generate");
 
         var applied = new List<string>();

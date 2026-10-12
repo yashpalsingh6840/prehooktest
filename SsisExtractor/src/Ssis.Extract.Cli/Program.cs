@@ -90,7 +90,7 @@ internal static class Program
             AFTER the sweep, so the same load-failure/duplicate-name handling applies
             either way. A name that matches nothing is a hard error (exit 2), never a
             silent no-op -- run without --package first to see every name --input
-            actually contains (inventory.csv, or just the console output, lists them).
+            actually contains (metadata/inventory.csv, or just the console output, lists them).
             This is the knob to reach for on a large portfolio: run 'extract' once across
             everything (read-only), then run 'generate' --package by name for just the
             packages you actually want C# for.
@@ -107,7 +107,7 @@ internal static class Program
                                  loose .dtsx files with no .dtproj beside them (add
                                  --recursive to search subdirectories). A package that
                                  cannot be read is skipped with a warning and listed in
-                                 load-failures.md -- one bad package never costs you the
+                                 metadata/load-failures.md -- one bad package never costs you the
                                  rest of the folder.
               --out <dir>       Output directory (everything below lands here).
               --package <name>  Only this package (repeatable/comma-splittable) -- see above.
@@ -122,7 +122,7 @@ internal static class Program
               --weights <path>  Override the complexity-scoring weights (config/
                                  complexity-weights.json has the defaults -- plan §5.6).
               --claims <dir>    Where the gate-1 claim files live (default: <out>/
-                                 conformance/claims). Claim files are HAND-MAINTAINED and
+                                 metadata/conformance/claims). Claim files are HAND-MAINTAINED and
                                  NEVER overwritten -- edit them as the rewrite progresses.
               --check           Exit 1 unless every gate-1 obligation is Implemented or
                                  explained-NotApplicable, for CI gating.
@@ -133,43 +133,52 @@ internal static class Program
                                  source-vs-deployed drift. Off by default: this is the one
                                  piece with a genuinely different shape (compare TWO
                                  things, not survey one), so it only runs when asked.
-                                 Writes diff-report.md/.json; exits 1 if any difference is
-                                 found (a CI drift gate).
+                                 Writes metadata/diff-report.md/.json; exits 1 if any
+                                 difference is found (a CI drift gate).
 
-            Every 'extract' run writes, unconditionally:
-              packages/<Package>.spec.json, project.spec.json, _meta.json  -- the
-                canonical machine-readable spec every other command/tool reads
-              inventory.csv/.md, findings.csv/.md                         -- per-package
+            Every 'extract' run writes, unconditionally. Only packages/<Package>.spec.json
+            stays at the TOP of --out -- it's the one file 'generate'/'svk' actually read
+            back (confirmed directly: svk's own contract is packages/*.spec.json, nothing
+            else). Everything else is human-facing analysis output, so it all lands under
+            one metadata/ subfolder instead of ~30 loose files cluttering --out itself:
+              packages/<Package>.spec.json                                -- the canonical
+                machine-readable spec 'generate'/svk read; the one path NOT under metadata/
+              metadata/project.spec.json, metadata/_meta.json             -- this run's own
+                provenance (tool version, timestamp, redaction flag)
+              metadata/inventory.csv/.md, metadata/findings.csv/.md       -- per-package
                 complexity/classification and every RulesEngine finding, with location
-              nondeterministic.json                                       -- columns to
+              metadata/nondeterministic.json                             -- columns to
                 exclude from a parallel-run row-hash comparison (plan §5.8)
-              datatouch.md/.json, effects.json/.md                        -- every table/
+              metadata/datatouch.md/.json, metadata/effects.json/.md     -- every table/
                 file/procedure a package reads or writes, PLUS every task type this tool
                 has no model for as an explicit UncharacterizedTask (never silently
                 dropped -- gate 3 must refuse PASS while any effect here is unverified)
-              primary-keys.json/.md                                       -- best-effort
+              metadata/primary-keys.json/.md                             -- best-effort
                 naming-convention PK guesses, needs human confirmation (a .dtsx carries
                 no real PK concept)
-              expressions.csv, expression-functions.md                    -- every
+              metadata/expressions.csv, metadata/expression-functions.md -- every
                 expression and the SSIS expression-language surface actually used
-              sql/ + sql-analysis.json                                    -- every SQL
+              metadata/sql/ + metadata/sql-analysis.json                 -- every SQL
                 statement, individually addressable, with its parse result
-              lineage/*.mmd + *.dot                                       -- one Mermaid +
+              metadata/lineage/*.mmd + *.dot                             -- one Mermaid +
                 Graphviz DOT pair per Data Flow Task's column-level lineage (plan §5.1)
-              graph/portfolio.mmd + dependencies.json                     -- cross-package
+              metadata/graph/portfolio.mmd + metadata/dependencies.json  -- cross-package
                 dependency graph
-              conformance/<Package>.rules.json, conformance-rules.csv,
-              conformance-report.json/.md                                 -- gate 1
+              metadata/conformance/<Package>.rules.json,
+              metadata/conformance/conformance-rules.csv,
+              metadata/conformance/conformance-report.json/.md           -- gate 1
                 (Migration-Validation-Plan.md): the obligations a rewrite must satisfy
                 (control flow, ordering, data flow, columns, schema, SQL, load semantics,
                 script code) and how many are accounted for, joined against --claims
-              testgen/<Package>.ExpressionTests.cs, testgen-summary.md     -- gate 2
+              metadata/testgen/<Package>.ExpressionTests.cs,
+              metadata/testgen/testgen-summary.md                        -- gate 2
                 (Migration-Validation-Plan.md §4): an xUnit test per Derived Column
                 expression, boundary cases included, every expected value COMPUTED by
                 evaluating it through Ssis.Runtime.Expressions (itself verified against
                 the real SSIS evaluator) at generation time, never hand-authored
-              unmapped.md, portfolio.md, portfolio-digest.md/.json,
-              generation-readiness.md, load-failures.md                   -- portfolio
+              metadata/unmapped.md, metadata/portfolio.md,
+              metadata/portfolio-digest.md/.json, metadata/generation-readiness.md,
+              metadata/load-failures.md                                  -- portfolio
                 roll-ups, incl. the client-safe digest and whether 'generate' would
                 produce each package with zero blocking gaps
 
@@ -302,7 +311,7 @@ internal static class Program
             file) STALE and NOT copied. Every seam and its outcome is written fresh to
             <out>/fills-applied.json every run. When a Script Task/Component's every seam is
             filled, and a claims file already exists at --claims (default
-            <out>/conformance/claims/, the same default `extract` itself uses), this also
+            <out>/metadata/conformance/claims/, the same default `extract` itself uses), this also
             names the gate-1 ScriptCode RuleId that translation answers and its current claim
             status -- read-only, never written; only a human updates the claims file.
             The main seam scan is RECURSIVE under each <out>/fills/<Package>/ (excluding its

@@ -151,7 +151,11 @@ public static class SsisFnEmitter
 
     private static List<string> StrBody() =>
     [
-        "    /// <summary>(DT_WSTR,n) cast of an integer -- invariant, no thousands separator.</summary>",
+        "    /// <summary>(DT_WSTR,n) cast of an integer -- invariant, no thousands separator.",
+        "    /// Also reused (NumericCoercionKind.Str) for a plain int-source/string-destination",
+        "    /// passthrough column with no Data Conversion component (e.g. a Flat File Source's",
+        "    /// own ErrorCode/ErrorColumn system columns, i4, feeding a str-typed destination) --",
+        "    /// the identical cast, no new helper needed.</summary>",
         "    public static string Str(int value) => value.ToString(CultureInfo.InvariantCulture);",
     ];
 

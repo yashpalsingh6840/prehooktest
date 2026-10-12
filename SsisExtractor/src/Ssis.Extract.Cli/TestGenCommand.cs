@@ -71,7 +71,7 @@ internal static class TestGenCommand
             Console.Error.WriteLine("error: --package matched no packages under this --input -- nothing to testgen.");
             return 2;
         }
-        var testGenDir = Path.Combine(outDir, "testgen");
+        var testGenDir = Path.Combine(outDir, "metadata", "testgen");
         Directory.CreateDirectory(testGenDir);
 
         var skipped = new List<(string Package, string Location, string Reason)>();

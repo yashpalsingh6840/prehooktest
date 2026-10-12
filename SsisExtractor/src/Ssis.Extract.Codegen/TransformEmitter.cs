@@ -258,6 +258,7 @@ public static class TransformEmitter
         var narrowedNumericToI4Columns = new HashSet<string>();
         var narrowedR4ToI4Columns = new HashSet<string>();
         var widenedI4ToNumericColumns = new HashSet<string>();
+        var formattedI4AsStrColumns = new HashSet<string>();
         // Precomputed via the shared detector (not inline) because PackageGenerator's
         // ResolveNullableColumnNames needs the SAME answer before EntityEmitter runs --
         // ParseWstrToI4 always returns int? (string/string? are the same runtime type, unlike
@@ -310,6 +311,16 @@ public static class TransformEmitter
                 // "Last Cost Price" (buffered i4 from a SqlCommand result set, decimal(18,2) at
                 // the real destination table).
                 widenedI4ToNumericColumns.Add(column.PipelineColumnName);
+                continue;
+            }
+
+            if (sourceType.ClrTypeName == "int" && column.Type.ClrTypeName == "string")
+            {
+                // No dtexec probe needed -- int.ToString() is deterministic. Real, evidenced
+                // instance: a Flat File Source's own error output, whose ErrorCode/ErrorColumn
+                // system columns are i4 but whose real destination declares them str,100. See
+                // NumericCoercionKind.Str's own doc comment.
+                formattedI4AsStrColumns.Add(column.PipelineColumnName);
                 continue;
             }
 
@@ -535,6 +546,15 @@ public static class TransformEmitter
                 // shape works whether or not this column is nullable-inferred, same reasoning as
                 // every other coercion helper above.
                 var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.WidenI4ToNumeric, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
+                CollectSsisFunctions(expr, functionsUsed);
+                assignments.Add($"        {destId} = {expr},");
+            }
+            else if (formattedI4AsStrColumns.Contains(column.PipelineColumnName))
+            {
+                // SsisFn.Str has no nullable overload (ErrorCode/ErrorColumn are never
+                // nullable-inferred) -- a nullable-inferred int source reaching this branch would
+                // need one added; unevidenced for this feature, so not built speculatively.
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.Str, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {destId} = {expr},");
             }

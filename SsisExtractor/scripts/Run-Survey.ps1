@@ -67,8 +67,8 @@ Write-Host ""
 $reportExit = $LASTEXITCODE
 
 Write-Host ""
-$digestMd = Join-Path $OutputFolder 'portfolio-digest.md'
-$digestJson = Join-Path $OutputFolder 'portfolio-digest.json'
+$digestMd = Join-Path $OutputFolder 'metadata\portfolio-digest.md'
+$digestJson = Join-Path $OutputFolder 'metadata\portfolio-digest.json'
 $digestExists = (Test-Path $digestMd) -and (Test-Path $digestJson)
 
 if ($reportExit -eq 0) {
@@ -82,7 +82,7 @@ elseif ($reportExit -eq 2 -and $digestExists) {
     Write-Warning "Some packages could not be read -- see load-failures.md in the output. The survey is still valid for the rest."
 }
 elseif ($reportExit -eq 2) {
-    Write-Error "ssisx extract exited 2 (genuine load failure) and produced no portfolio-digest.md -- see any console output above and $PackageFolder\load-failures.md. Nothing to export." -ErrorAction Stop
+    Write-Error "ssisx extract exited 2 (genuine load failure) and produced no portfolio-digest.md -- see any console output above and $OutputFolder\metadata\load-failures.md. Nothing to export." -ErrorAction Stop
 }
 else {
     Write-Error "ssisx extract failed with exit code $reportExit." -ErrorAction Stop

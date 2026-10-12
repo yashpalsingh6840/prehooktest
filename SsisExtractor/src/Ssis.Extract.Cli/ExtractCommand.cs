@@ -143,11 +143,15 @@ internal static class ExtractCommand
 
             foreach (var (dtprojPath, project) in loaded.Projects)
             {
-                // With more than one project in scope, each gets its own subdirectory so
-                // their project.spec.json files don't overwrite each other.
+                // Lands under metadata/ alongside every other extract-stage analysis file --
+                // never read back by `generate`/svk (svk's own contract is packages/*.spec.json,
+                // confirmed by reading PackageSpecLoader directly), so it's pure human-facing
+                // output, not a pipeline contract. With more than one project in scope, each
+                // gets its own subdirectory so their project.spec.json files don't overwrite
+                // each other.
                 var projectOutDir = loaded.Projects.Count == 1
-                    ? outDir
-                    : Path.Combine(outDir, Path.GetFileNameWithoutExtension(dtprojPath));
+                    ? Path.Combine(outDir, "metadata")
+                    : Path.Combine(outDir, "metadata", Path.GetFileNameWithoutExtension(dtprojPath));
                 var projectOutPath = Path.Combine(projectOutDir, "project.spec.json");
                 StableJsonWriter.WriteToFile(project, projectOutPath);
                 Console.WriteLine($"wrote {projectOutPath}");
@@ -189,7 +193,7 @@ internal static class ExtractCommand
             PackagesProcessed = packageSpecs.Select(p => p.ObjectName).ToList(),
             PackageCoverage = packageCoverage,
         };
-        StableJsonWriter.WriteToFile(meta, Path.Combine(outDir, "_meta.json"));
+        StableJsonWriter.WriteToFile(meta, Path.Combine(outDir, "metadata", "_meta.json"));
 
         Console.WriteLine($"extracted {packageSpecs.Count} package(s) from {Math.Max(projectCount, 1)} project/input(s) -> {Path.GetFullPath(outDir)}");
         foreach (var c in packageCoverage)
@@ -250,7 +254,7 @@ internal static class ExtractCommand
             Console.WriteLine("--- semantic diff against --diff-against (former `ssisx diff`) ---");
             var diffArgs = new List<string> { "--left", input, "--right", Path.GetFullPath(diffAgainst) };
             diffArgs.AddRange(packageArgs);
-            diffArgs.AddRange(["--out", Path.Combine(outDir, "diff-report.md")]);
+            diffArgs.AddRange(["--out", Path.Combine(outDir, "metadata", "diff-report.md")]);
             var diffExit = DiffCommand.Run([.. diffArgs]);
             if (diffExit == 2) hardFailure = true;
             if (diffExit == 1) gateFailed = true;

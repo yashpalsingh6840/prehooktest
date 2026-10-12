@@ -184,7 +184,7 @@ if ($extractExit -ne 0) {
     # package-not-found -- a --package filter miss) from a genuinely unreadable
     # .dtsx/.dtproj/.ispac (Kind package/project/ispac, carrying the real exception message).
     # Only the latter should abort the pipeline.
-    $loadFailuresPath = Join-Path $extractOut 'load-failures.md'
+    $loadFailuresPath = Join-Path $extractOut 'metadata\load-failures.md'
     $benignKinds = @('duplicate-name', 'package-not-found')
     $hardFailureRows = @()
     if (Test-Path $loadFailuresPath) {

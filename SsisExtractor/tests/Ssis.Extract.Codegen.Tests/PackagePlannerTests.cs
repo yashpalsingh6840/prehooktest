@@ -1771,4 +1771,91 @@ public class PackagePlannerTests
             ],
         };
     }
+
+    [Fact]
+    public void Plan_ResolvesAFlatFileSourceErrorOutput_RoutedThroughAScriptComponent()
+    {
+        // Real client shape (MFDBUpdate.dtsx, read via its raw XML, not the designer): a Flat
+        // File Source's own main-output columns configured for ErrorRowDisposition/
+        // TruncationRowDisposition=RedirectRow, whose error output is routed through a Script
+        // Component (computing ErrorDescription/FileName) into a second OLE DB Destination.
+        var package = LoadSyntheticFixture("SyntheticFlatFileErrorOutput.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        var flow = Assert.Single(plan.Flows);
+        Assert.NotNull(flow.FlatFileErrorOutput);
+        var errorOutput = flow.FlatFileErrorOutput!;
+        Assert.Equal("Flat File Source", errorOutput.FlatFileSource.Name);
+        Assert.Equal("OLE DB Destination 1", errorOutput.ErrorDestination.Name);
+        Assert.NotNull(errorOutput.ScriptComponent);
+        Assert.Equal("Script Component", errorOutput.ScriptComponent!.Name);
+        // The main output's own destination is completely unaffected -- both are generatable
+        // from the SAME flow, not a gap.
+        Assert.Equal("OLE DB Destination", flow.DestinationComponent.Name);
+        Assert.Empty(plan.Gaps);
+    }
+
+    [Fact]
+    public void Plan_ReportsAGap_WhenAFlatFileSourceErrorOutputRoutesToAnUnsupportedComponent()
+    {
+        // Hand-built, same "no dtsx/object-model build needed" reasoning as
+        // ErrorRedirectPackageWithExtraDestination -- a Flat File Source with at least one
+        // column configured for error-row redirection, but whose error output has no downstream
+        // path attached at all, proves ResolveFlatFileErrorOutput reports a precise gap rather
+        // than silently treating "redirect configured, nowhere to send it" as "nothing
+        // configured" (the same distinction ResolveErrorRedirect already draws for the
+        // destination-level shape).
+        var components = new List<PipelineComponentSpec>
+        {
+            new()
+            {
+                RefId = "FF", Name = "Flat File Source", ComponentClassId = "Microsoft.FlatFileSource",
+                Outputs =
+                [
+                    new PipelineOutputSpec { RefId = "FF.Main", Name = "Flat File Source Output", Columns = [new PipelineOutputColumnSpec { RefId = "FF.Main.Columns[ID]", Name = "ID", DataType = "i4", LineageId = "LIN_ID", ErrorRowDisposition = "RedirectRow" }] },
+                    new PipelineOutputSpec { RefId = "FF.Error", Name = "Flat File Source Error Output", IsErrorOut = true, Columns = [] },
+                ],
+            },
+            new()
+            {
+                RefId = "DST", Name = "OLE DB Destination", ComponentClassId = "Microsoft.OLEDBDestination",
+                Inputs = [new PipelineInputSpec { RefId = "DST.Input", Name = "Input", Columns = [new PipelineInputColumnSpec { RefId = "DST.Input.Columns[ID]", CachedName = "ID", LineageId = "LIN_ID" }] }],
+            },
+        };
+        var paths = new List<PipelinePathSpec>
+        {
+            new() { RefId = "P_FF_DST", StartId = "FF.Main", EndId = "DST.Input" },
+            // Deliberately no path at all from FF.Error -- the error output is configured but dangling.
+        };
+        var pipeline = new PipelineSpec { Components = components, Paths = paths };
+        var package = new PackageSpec
+        {
+            ObjectName = "P",
+            SourceDtsxPath = "P.dtsx",
+            Sha256 = "",
+            FileSizeBytes = 0,
+            LastWriteTimeUtc = default,
+            ProtectionLevelRaw = 0,
+            ProtectionLevelName = "DontSaveSensitive",
+            Coverage = new CoverageStats { TotalElements = 0, UnmappedElements = 0, ExcludedElements = 0, CoveragePercent = 100 },
+            Executables =
+            [
+                new ExecutableSpec
+                {
+                    RefId = @"Package\DFT_Test",
+                    ExecutableType = "Microsoft.Pipeline",
+                    ObjectName = "DFT_Test",
+                    DataFlowTask = new DataFlowTaskPayload { Pipeline = pipeline, Lineage = LineageBuilder.Build(pipeline) },
+                },
+            ],
+        };
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Empty(plan.Flows);
+        Assert.Contains(plan.Gaps, g => g.IsBlocking
+            && g.Reason.Contains("Flat File Source", StringComparison.Ordinal)
+            && g.Reason.Contains("no downstream path", StringComparison.Ordinal));
+    }
 }

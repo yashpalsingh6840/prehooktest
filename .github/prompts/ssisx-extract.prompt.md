@@ -71,10 +71,10 @@ fresh non-interactive PowerShell invocation before summarizing.
 
 ## Step 3 — summarize, then STOP
 
-Summarize **from the console output only**. Do **not** open `<outputPath>/*.spec.json`,
-`<outputPath>/inventory.csv`, `<outputPath>/findings.csv`, or `<outputPath>/portfolio.md` unless I
-explicitly ask. Read `<outputPath>/load-failures.md` **only if** the run reported unreadable
-inputs.
+Summarize **from the console output only**. Do **not** open `<outputPath>/packages/*.spec.json`,
+`<outputPath>/metadata/inventory.csv`, `<outputPath>/metadata/findings.csv`, or
+`<outputPath>/metadata/portfolio.md` unless I explicitly ask. Read
+`<outputPath>/metadata/load-failures.md` **only if** the run reported unreadable inputs.
 
 Report: package names, complexity/score, finding counts, blocking gap counts, dominant gap
 kinds, and anything that failed to load and why. Then stop — do not start generating.

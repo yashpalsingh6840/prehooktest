@@ -70,7 +70,7 @@ internal static class GraphCommand
                 return 2;
             }
 
-            var lineageDir = Path.Combine(outDir, "lineage");
+            var lineageDir = Path.Combine(outDir, "metadata", "lineage");
             Directory.CreateDirectory(lineageDir);
 
             var written = 0;

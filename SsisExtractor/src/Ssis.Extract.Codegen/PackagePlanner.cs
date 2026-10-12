@@ -138,11 +138,30 @@ public sealed record DataFlowPlan(
     /// non-authoritative-placeholder convention <see cref="ConditionalSplit"/>/
     /// <see cref="Multicast"/>/<see cref="OleDbCommand"/> already established --
     /// <see cref="PackageGenerator"/> branches on this field long before consulting it.</summary>
-    ScdPlan? Scd = null);
+    ScdPlan? Scd = null,
+    /// <summary>Added for a Flat File Source's own error output, routed through zero or one Script
+    /// Component into a second destination -- a real client shape (MFDBUpdate.dtsx), structurally
+    /// unlike <see cref="ErrorRedirect"/> (a DESTINATION's own insert-failure redirect): this is a
+    /// SOURCE-level routing of rows the Flat File Source itself could not parse/fit into its
+    /// declared column types/widths. See <see cref="PackagePlanner.ResolveFlatFileErrorOutput"/>
+    /// for exactly what shape is recognized. Independent of <see cref="FlatFileSource"/>'s own
+    /// main-output routing -- both fields can be (and, whenever this one is non-null, always are)
+    /// populated together, since they describe the SAME physical source's two different output
+    /// streams.</summary>
+    FlatFileErrorOutputPlan? FlatFileErrorOutput = null);
 
 /// <summary>Resolved once <see cref="PackagePlanner.ResolveErrorRedirect"/> confirms
 /// <see cref="DataFlowPlan.DestinationComponent"/>'s own error output leads somewhere real.</summary>
 public sealed record ErrorRedirectPlan(PipelineComponentSpec ErrorDestinationComponent);
+
+/// <summary>Resolved once <see cref="PackagePlanner.ResolveFlatFileErrorOutput"/> confirms a Flat
+/// File Source's own error output leads somewhere real. <see cref="ScriptComponent"/> is null when
+/// the error output feeds <see cref="ErrorDestination"/> directly (no evidenced instance of this
+/// shape yet, but not guessed at as unsupported either, since nothing about generating it would
+/// differ) -- non-null for the one evidenced real shape, a Script Component synthesizing
+/// additional columns (e.g. ErrorDescription via <c>ComponentMetaData.GetErrorDescription</c>)
+/// before the row reaches <see cref="ErrorDestination"/>.</summary>
+public sealed record FlatFileErrorOutputPlan(PipelineComponentSpec FlatFileSource, PipelineComponentSpec ErrorDestination, PipelineComponentSpec? ScriptComponent);
 
 /// <summary>One <c>Microsoft.RowCount</c> resolved for <see cref="DataFlowPlan.RowCounts"/> --
 /// see <see cref="Ssis.Extract.Model.Pipeline.RowCountPayload"/>'s own doc comment for what's
@@ -2676,6 +2695,18 @@ public static class PackagePlanner
             errorRedirect = resolved;
         }
 
+        // Real client shape (MFDBUpdate.dtsx), scoped the same way as SortKey/ErrorRedirect above
+        // -- a Conditional Split/Multicast/PctSampling/SCD branch's own Flat File Source error
+        // output is unevidenced and left as a named gap rather than guessed at if ever
+        // encountered, not resolved here.
+        FlatFileErrorOutputPlan? flatFileErrorOutput = null;
+        if (flatFileSource is not null && conditionalSplit is null && multicast is null && pctSampling is null && scd is null)
+        {
+            var (hasGap, resolved) = ResolveFlatFileErrorOutput(taskName, pipeline, flatFileSource, gaps);
+            if (hasGap) return null; // ResolveFlatFileErrorOutput already added the gap
+            flatFileErrorOutput = resolved;
+        }
+
         // General defensive check, closing the bug CLASS this whole feature exists to fix, not
         // just the one shape above: a destination component in this pipeline that is neither the
         // resolved primary destination nor its own error-redirect destination would otherwise
@@ -2689,20 +2720,72 @@ public static class PackagePlanner
             var allDestinations = pipeline.Components.Where(c =>
                 c.ComponentClassId is "Microsoft.OLEDBDestination" or "Microsoft.FlatFileDestination"
                 || c.AdoNetDestination is not null).ToList();
-            var accountedRefIds = errorRedirect is null
-                ? new HashSet<string> { destination.RefId }
-                : new HashSet<string> { destination.RefId, errorRedirect.ErrorDestinationComponent.RefId };
+            var accountedRefIds = new HashSet<string> { destination.RefId };
+            if (errorRedirect is not null) accountedRefIds.Add(errorRedirect.ErrorDestinationComponent.RefId);
+            if (flatFileErrorOutput is not null) accountedRefIds.Add(flatFileErrorOutput.ErrorDestination.RefId);
             var unaccounted = allDestinations.Where(c => !accountedRefIds.Contains(c.RefId)).ToList();
             if (unaccounted.Count > 0)
             {
-                var names = string.Join(", ", unaccounted.Select(c => c.Name));
+                // Name the chain feeding each unaccounted destination, not just its own name --
+                // found necessary from a real client report: this exact gap fired correctly for
+                // a Flat File Source's own Error Output -> Script Component -> second OLE DB
+                // Destination (a source-level error-row branch, structurally unlike the
+                // destination-level ErrorRowDisposition=RedirectRow shape ResolveErrorRedirect
+                // models above), but the bare "OLE DB Destination 1 left unresolved" wording gave
+                // no hint a Script Component was involved at all -- read as "the tool silently
+                // skipped the script task" rather than "the tool correctly refused this shape and
+                // said so". DescribeUnresolvedDestinationChain makes that chain explicit in the
+                // message itself, at no cost to every existing single-destination fixture (it
+                // returns "" whenever the unaccounted destination's own input isn't fed by
+                // anything this walk can resolve).
+                var names = string.Join(", ", unaccounted.Select(c => $"'{c.Name}'{DescribeUnresolvedDestinationChain(pipeline, c)}"));
                 gaps.Add(new GenerationGap(taskName,
                     $"this Data Flow Task has {allDestinations.Count} destination components but only {accountedRefIds.Count} are accounted for ({names} left unresolved) -- not supported"));
                 return null;
             }
         }
 
-        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, CopyMap: copyMap, ExcelSource: excelSource, Multicast: multicast, Aggregate: aggregate, RowCounts: rowCounts, SortKey: sortKey, ErrorRedirect: errorRedirect, PctSampling: pctSampling, XmlSource: xmlSourceComponent, Scd: scd);
+        return new DataFlowPlan(taskName, pipeline, flatFileSource, oleDbSource, derivedColumn, lookup, conditionalSplit, destination, dataConversion, CopyMap: copyMap, ExcelSource: excelSource, Multicast: multicast, Aggregate: aggregate, RowCounts: rowCounts, SortKey: sortKey, ErrorRedirect: errorRedirect, PctSampling: pctSampling, XmlSource: xmlSourceComponent, Scd: scd, FlatFileErrorOutput: flatFileErrorOutput);
+    }
+
+    /// <summary>Walks backward from an "unaccounted for" destination's own first input, through
+    /// <see cref="PipelineSpec.Paths"/>, one component at a time, to describe what actually feeds
+    /// it -- e.g. <c>" (fed from 'Flat File Source''s Error Output -> 'Script Component' -- a
+    /// source's own error-row branch, not the main data path)"</c>. Capped at 8 hops, the same
+    /// bound every other chain-walk in this file uses (see <see cref="ResolveBranch"/>), and gives
+    /// up quietly -- returning <c>""</c> -- on a dangling/unresolvable input rather than guessing
+    /// past it. Named explicitly so the gap this builds for is self-explanatory without reading
+    /// this file: see the general defensive check immediately above for why the bare destination
+    /// name alone was not enough.</summary>
+    private static string DescribeUnresolvedDestinationChain(PipelineSpec pipeline, PipelineComponentSpec destination)
+    {
+        var upstream = new List<(PipelineComponentSpec Component, bool FedByErrorOutput)>();
+        var current = destination;
+        for (var hop = 0; hop < 8; hop++)
+        {
+            var input = current.Inputs.FirstOrDefault();
+            if (input is null) break; // a source -- nothing further upstream to walk
+
+            var path = pipeline.Paths.FirstOrDefault(p => p.EndId == input.RefId);
+            if (path is null) break; // dangling input, nothing more to report
+
+            var producer = pipeline.Components.FirstOrDefault(c => c.Outputs.Any(o => o.RefId == path.StartId));
+            if (producer is null) break;
+
+            var producingOutput = producer.Outputs.First(o => o.RefId == path.StartId);
+            upstream.Add((producer, producingOutput.IsErrorOut == true));
+            current = producer;
+        }
+
+        if (upstream.Count == 0) return "";
+
+        upstream.Reverse(); // source-first order, matching how a reader would trace the diagram
+        var sawErrorOutput = upstream.Any(u => u.FedByErrorOutput);
+        var names = string.Join(" -> ", upstream.Select(u =>
+            u.FedByErrorOutput ? $"'{u.Component.Name}''s Error Output" : $"'{u.Component.Name}'"));
+        return sawErrorOutput
+            ? $" (fed from {names} -- a source's own error-row branch, not the main data path)"
+            : $" (fed from {names})";
     }
 
     /// <summary>Picks the primary destination among candidates of the SAME destination type --
@@ -2786,6 +2869,66 @@ public static class PackagePlanner
         }
 
         return (false, new ErrorRedirectPlan(errorDestination));
+    }
+
+    /// <summary>Resolves a Flat File Source's own error output -- a real client shape
+    /// (MFDBUpdate.dtsx): at least one main-output column configured for
+    /// ErrorRowDisposition/TruncationRowDisposition=RedirectRow, routed (directly, or through
+    /// exactly one Script Component) into a second destination. Returns <c>(false, null)</c> when
+    /// NOTHING on the main output is configured this way -- every existing, already-verified
+    /// fixture with no error-output redirect is completely unaffected. Returns <c>(true, null)</c>
+    /// -- a gap already added -- when redirect IS configured but cannot be safely resolved.
+    ///
+    /// <para>Deliberately scoped to EXACTLY "zero or one intermediate component, and if one, it
+    /// must be a Script Component" -- the only evidenced shape. A general multi-hop chain-walk
+    /// (the way <see cref="ResolveBranch"/> walks through Derived Column/Sort/Merge/UnionAll for a
+    /// Conditional Split/Multicast branch) is NOT attempted here: nothing evidences a Derived
+    /// Column or Sort sitting between a Flat File Source's error output and its destination, and
+    /// guessing that shape works the same way would be exactly the kind of unevidenced
+    /// generalization this tool's own "gaps not guesses" discipline refuses. Any OTHER intermediate
+    /// component type, or a chain longer than one hop, is a named gap instead.</para></summary>
+    private static (bool HasGap, FlatFileErrorOutputPlan? Plan) ResolveFlatFileErrorOutput(
+        string taskName, PipelineSpec pipeline, PipelineComponentSpec flatFileSource, List<GenerationGap> gaps)
+    {
+        var errorOutput = flatFileSource.Outputs.FirstOrDefault(o => o.IsErrorOut == true);
+        if (errorOutput is null) return (false, null);
+
+        var mainOutput = flatFileSource.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+        var anyColumnConfiguredForRedirect = mainOutput?.Columns.Any(c =>
+            c.ErrorRowDisposition == "RedirectRow" || c.TruncationRowDisposition == "RedirectRow") ?? false;
+        if (!anyColumnConfiguredForRedirect) return (false, null);
+
+        var firstPath = pipeline.Paths.FirstOrDefault(p => p.StartId == errorOutput.RefId);
+        var firstHop = firstPath is null ? null : pipeline.Components.FirstOrDefault(c => c.Inputs.Any(i => i.RefId == firstPath.EndId));
+        if (firstHop is null)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Flat File Source '{flatFileSource.Name}' has at least one column configured for error-row redirection but its error output has no downstream path -- not supported"));
+            return (true, null);
+        }
+
+        bool IsSupportedDestinationType(PipelineComponentSpec c) =>
+            c.ComponentClassId is "Microsoft.OLEDBDestination" or "Microsoft.FlatFileDestination" || c.AdoNetDestination is not null;
+
+        if (IsSupportedDestinationType(firstHop))
+            return (false, new FlatFileErrorOutputPlan(flatFileSource, firstHop, ScriptComponent: null));
+
+        if (firstHop.ScriptComponent is not null)
+        {
+            var scriptMainOutput = firstHop.Outputs.FirstOrDefault(o => o.IsErrorOut != true);
+            var secondPath = scriptMainOutput is null ? null : pipeline.Paths.FirstOrDefault(p => p.StartId == scriptMainOutput.RefId);
+            var secondHop = secondPath is null ? null : pipeline.Components.FirstOrDefault(c => c.Inputs.Any(i => i.RefId == secondPath.EndId));
+            if (secondHop is not null && IsSupportedDestinationType(secondHop))
+                return (false, new FlatFileErrorOutputPlan(flatFileSource, secondHop, ScriptComponent: firstHop));
+
+            gaps.Add(new GenerationGap(taskName,
+                $"Flat File Source '{flatFileSource.Name}''s error output routes through Script Component '{firstHop.Name}' to {(secondHop is null ? "no further downstream path" : $"'{secondHop.Name}' ({secondHop.ComponentClassId}), which is not a supported destination type")} -- not supported"));
+            return (true, null);
+        }
+
+        gaps.Add(new GenerationGap(taskName,
+            $"Flat File Source '{flatFileSource.Name}''s error output routes to '{firstHop.Name}' ({firstHop.ComponentClassId}) -- only a direct route to a destination, or one through a single Script Component, is supported yet"));
+        return (true, null);
     }
 
     /// <summary>Detects a standalone <c>Microsoft.Sort</c> in the plain (non-Conditional-Split,

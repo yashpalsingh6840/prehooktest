@@ -106,6 +106,12 @@ internal static class ReportCommand
         }
 
         Directory.CreateDirectory(outDir);
+        // Everything this command writes is analysis OUTPUT, not something `generate`/`svk`
+        // read back (svk's own contract is `packages/*.spec.json`, confirmed by reading
+        // PackageSpecLoader directly) -- it all lands under one `metadata/` subfolder so a real
+        // portfolio's `--out` isn't ~30 loose files deep before `generate` has even run.
+        var metadataDir = Path.Combine(outDir, "metadata");
+        Directory.CreateDirectory(metadataDir);
 
         var perPackageFindings = new Dictionary<string, List<FindingSpec>>();
         var perPackageComplexity = new Dictionary<string, ComplexityStats>();
@@ -117,7 +123,6 @@ internal static class ReportCommand
         var allPrimaryKeyCandidates = new List<PrimaryKeyCandidateSpec>();
         var allObservableEffects = new List<ObservableEffectSpec>();
 
-        var sqlDir = Path.Combine(outDir, "sql");
         var scriptFilesWritten = 0;
         var scriptItemsStripped = 0;
 
@@ -142,7 +147,11 @@ internal static class ReportCommand
             foreach (var harvested in SqlHarvester.Harvest(pkg))
             {
                 var fileName = SanitizeFileName($"{harvested.Location}.sql");
-                var relativePath = Path.Combine("sql", pkg.ObjectName, fileName);
+                // Stored and reported relative to --out (not metadataDir) -- this value lands
+                // in sql-analysis.json/datatouch.json for a human to follow, so it must name the
+                // real path under --out, "metadata/sql/...", not a path that only makes sense
+                // relative to a folder this spec never names.
+                var relativePath = Path.Combine("metadata", "sql", pkg.ObjectName, fileName);
                 var fullPath = Path.Combine(outDir, relativePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
                 File.WriteAllText(fullPath, harvested.Sql);
@@ -168,7 +177,7 @@ internal static class ReportCommand
                 if (ex.ScriptTask is null) continue;
                 if (ex.ScriptTask.SourceStripped) { scriptItemsStripped++; continue; }
 
-                var taskDir = Path.Combine(outDir, "scripts", pkg.ObjectName, SanitizeFileName(ex.RefId));
+                var taskDir = Path.Combine(metadataDir, "scripts", pkg.ObjectName, SanitizeFileName(ex.RefId));
                 foreach (var item in ex.ScriptTask.ProjectItems)
                 {
                     var relativePath = SanitizeRelativePath(item.Name);
@@ -191,7 +200,7 @@ internal static class ReportCommand
                     if (comp.ScriptComponent is null) continue;
                     if (comp.ScriptComponent.SourceStripped) { scriptItemsStripped++; continue; }
 
-                    var componentDir = Path.Combine(outDir, "scripts", pkg.ObjectName, SanitizeFileName(ex.RefId), SanitizeFileName(comp.Name));
+                    var componentDir = Path.Combine(metadataDir, "scripts", pkg.ObjectName, SanitizeFileName(ex.RefId), SanitizeFileName(comp.Name));
                     var extension = comp.ScriptComponent.Language switch
                     {
                         "CSharp" => ".cs",
@@ -228,34 +237,34 @@ internal static class ReportCommand
             HighestSeverity = HighestSeverity(perPackageFindings[pkg.ObjectName]),
         }).OrderBy(r => r.PackageName, StringComparer.Ordinal).ToList();
 
-        WriteInventoryCsv(inventory, Path.Combine(outDir, "inventory.csv"));
-        WriteInventoryMd(inventory, Path.Combine(outDir, "inventory.md"));
-        WriteFindingsCsv(allFindings, Path.Combine(outDir, "findings.csv"));
-        WriteFindingsMd(allFindings, Path.Combine(outDir, "findings.md"));
-        StableJsonWriter.WriteToFile(allNonDeterministic.OrderBy(n => n.PackageName, StringComparer.Ordinal).ToList(), Path.Combine(outDir, "nondeterministic.json"));
+        WriteInventoryCsv(inventory, Path.Combine(metadataDir, "inventory.csv"));
+        WriteInventoryMd(inventory, Path.Combine(metadataDir, "inventory.md"));
+        WriteFindingsCsv(allFindings, Path.Combine(metadataDir, "findings.csv"));
+        WriteFindingsMd(allFindings, Path.Combine(metadataDir, "findings.md"));
+        StableJsonWriter.WriteToFile(allNonDeterministic.OrderBy(n => n.PackageName, StringComparer.Ordinal).ToList(), Path.Combine(metadataDir, "nondeterministic.json"));
         StableJsonWriter.WriteToFile(
             allPrimaryKeyCandidates.OrderBy(p => p.PackageName, StringComparer.Ordinal).ThenBy(p => p.DataFlowTaskPath, StringComparer.Ordinal).ToList(),
-            Path.Combine(outDir, "primary-keys.json"));
-        WriteUnmappedMd(packages, Path.Combine(outDir, "unmapped.md"));
+            Path.Combine(metadataDir, "primary-keys.json"));
+        WriteUnmappedMd(packages, Path.Combine(metadataDir, "unmapped.md"));
 
         // Slice 5 outputs (plan §5.2-§5.5)
-        WriteExpressionsCsv(allExpressions, Path.Combine(outDir, "expressions.csv"));
-        WriteExpressionFunctionsMd(allExpressions, Path.Combine(outDir, "expression-functions.md"));
-        StableJsonWriter.WriteToFile(allSqlAnalyses, Path.Combine(outDir, "sql-analysis.json"));
-        StableJsonWriter.WriteToFile(perPackageDataTouch.Values.OrderBy(d => d.PackageName, StringComparer.Ordinal).ToList(), Path.Combine(outDir, "datatouch.json"));
-        WriteDataTouchMd(perPackageDataTouch, Path.Combine(outDir, "datatouch.md"));
-        WritePrimaryKeysMd(allPrimaryKeyCandidates, Path.Combine(outDir, "primary-keys.md"));
-        WriteGenerationReadinessMd(perPackageGenerationGaps, Path.Combine(outDir, "generation-readiness.md"));
+        WriteExpressionsCsv(allExpressions, Path.Combine(metadataDir, "expressions.csv"));
+        WriteExpressionFunctionsMd(allExpressions, Path.Combine(metadataDir, "expression-functions.md"));
+        StableJsonWriter.WriteToFile(allSqlAnalyses, Path.Combine(metadataDir, "sql-analysis.json"));
+        StableJsonWriter.WriteToFile(perPackageDataTouch.Values.OrderBy(d => d.PackageName, StringComparer.Ordinal).ToList(), Path.Combine(metadataDir, "datatouch.json"));
+        WriteDataTouchMd(perPackageDataTouch, Path.Combine(metadataDir, "datatouch.md"));
+        WritePrimaryKeysMd(allPrimaryKeyCandidates, Path.Combine(metadataDir, "primary-keys.md"));
+        WriteGenerationReadinessMd(perPackageGenerationGaps, Path.Combine(metadataDir, "generation-readiness.md"));
         StableJsonWriter.WriteToFile(
             allObservableEffects.OrderBy(e => e.PackageName, StringComparer.Ordinal).ThenBy(e => e.Kind, StringComparer.Ordinal).ThenBy(e => e.Target, StringComparer.Ordinal).ToList(),
-            Path.Combine(outDir, "effects.json"));
-        WriteEffectsMd(allObservableEffects, Path.Combine(outDir, "effects.md"));
-        var graphDir = Path.Combine(outDir, "graph");
+            Path.Combine(metadataDir, "effects.json"));
+        WriteEffectsMd(allObservableEffects, Path.Combine(metadataDir, "effects.md"));
+        var graphDir = Path.Combine(metadataDir, "graph");
         Directory.CreateDirectory(graphDir);
         File.WriteAllText(Path.Combine(graphDir, "portfolio.mmd"), DependencyGraphBuilder.ToMermaid(packages, dependencyEdges));
-        StableJsonWriter.WriteToFile(dependencyEdges, Path.Combine(outDir, "dependencies.json"));
+        StableJsonWriter.WriteToFile(dependencyEdges, Path.Combine(metadataDir, "dependencies.json"));
 
-        WritePortfolioMd(inventory, allFindings, allNonDeterministic, allExpressions, allSqlAnalyses, dependencyEdges, perPackageGenerationGaps, Path.Combine(outDir, "portfolio.md"));
+        WritePortfolioMd(inventory, allFindings, allNonDeterministic, allExpressions, allSqlAnalyses, dependencyEdges, perPackageGenerationGaps, Path.Combine(metadataDir, "portfolio.md"));
 
         var sqlFileCount = allSqlAnalyses.Count(s => s.SqlFilePath is not null);
         var parseFailures = allSqlAnalyses.Count(s => !s.ParsedSuccessfully);
@@ -263,7 +272,7 @@ internal static class ReportCommand
         Console.WriteLine($"wrote report for {packages.Count} package(s) -> {outDir}");
         Console.WriteLine($"  {allFindings.Count} finding(s), {allNonDeterministic.Count} non-deterministic column(s)");
         Console.WriteLine($"  {sqlFileCount} SQL statement(s) harvested ({parseFailures} failed to parse), {allExpressions.Count} expression(s), {dependencyEdges.Count} cross-package dependency edge(s)");
-        Console.WriteLine($"  {scriptFilesWritten} Script Task/Component source file(s) harvested to `scripts/`{(scriptItemsStripped > 0 ? $", {scriptItemsStripped} script(s) had NO source (binary only -- see findings)" : "")}");
+        Console.WriteLine($"  {scriptFilesWritten} Script Task/Component source file(s) harvested to `metadata/scripts/`{(scriptItemsStripped > 0 ? $", {scriptItemsStripped} script(s) had NO source (binary only -- see findings)" : "")}");
         foreach (var row in inventory)
         {
             var gapCount = perPackageGenerationGaps.TryGetValue(row.PackageName, out var gaps) ? gaps.Count(PortfolioDigest.IsBlockingGap) : 0;
@@ -275,8 +284,8 @@ internal static class ReportCommand
         // screenshot or a phone photo of the terminal. See PortfolioDigest for why it is an
         // allow-list of safe fields rather than a redaction of the fuller report.
         var digest = PortfolioDigest.Build(packages, inventory, allFindings, allExpressions, allObservableEffects, allNonDeterministic, loaded.Failures.Count, perPackageGenerationGaps);
-        File.WriteAllText(Path.Combine(outDir, "portfolio-digest.md"), PortfolioDigest.ToMarkdown(digest));
-        StableJsonWriter.WriteToFile(digest, Path.Combine(outDir, "portfolio-digest.json"));
+        File.WriteAllText(Path.Combine(metadataDir, "portfolio-digest.md"), PortfolioDigest.ToMarkdown(digest));
+        StableJsonWriter.WriteToFile(digest, Path.Combine(metadataDir, "portfolio-digest.json"));
         Console.WriteLine();
         Console.WriteLine(PortfolioDigest.ToConsoleDigest(digest));
 
@@ -284,10 +293,10 @@ internal static class ReportCommand
         // a survey run on a machine we do not control is usually reduced to whatever ends up
         // in the out directory, and "which packages are missing from this report, and why"
         // is exactly the question that cannot be answered later from console scrollback.
-        WriteLoadFailuresMd(loaded.Failures, Path.Combine(outDir, "load-failures.md"));
+        WriteLoadFailuresMd(loaded.Failures, Path.Combine(metadataDir, "load-failures.md"));
         if (loaded.Failures.Count > 0)
         {
-            Console.Error.WriteLine($"warning: {loaded.Failures.Count} input(s) could not be read and are ABSENT from this report -- see load-failures.md");
+            Console.Error.WriteLine($"warning: {loaded.Failures.Count} input(s) could not be read and are ABSENT from this report -- see metadata/load-failures.md");
         }
 
         // Phase 1.2 of the independent-review fix plan: a "duplicate-name"/"package-not-found"
