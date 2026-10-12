@@ -764,6 +764,21 @@ public static class PackagePlanner
         var flows = new List<DataFlowPlan>();
         var steps = new List<PackageStep>();
 
+        // Phase 2.4 (C3) of the independent-review fix plan: a legacy Package-Deployment-Model
+        // configuration (an external .dtsConfig file, a registry key, a parent variable, or a SQL
+        // config table -- see PackageConfigurationSpec's own doc comment) is applied by the SSIS
+        // runtime BEFORE the package runs, overriding whatever property/connection-string value it
+        // targets. This tool has no access to the referenced source's own contents, so generated
+        // code would silently run with the DESIGN-TIME value baked in wherever that source
+        // actually overrides something at runtime -- reported as one blocking gap per entry
+        // instead of a guess.
+        foreach (var config in package.Configurations)
+        {
+            gaps.Add(new GenerationGap(
+                $"Package.Configuration.{config.ObjectName ?? "(unnamed)"}",
+                $"package configuration override ('{config.ObjectName ?? "(unnamed)"}', type {config.ConfigurationType ?? "?"}, source '{config.ConfigurationString ?? config.ConnectionString ?? "?"}') is not applied by generated code -- its target property/connection-string value is whatever this .dtsx's own design-time default says, not what the configuration source would set at runtime"));
+        }
+
         // Resolved BEFORE the walk so each step can be created already carrying its guard --
         // attaching one afterwards would mean matching steps back to executables, which only
         // FlowStep/ScriptTaskStep even retain enough identity to do.
@@ -1422,16 +1437,41 @@ public static class PackagePlanner
             "Int64" => IntegralGuard(SsisType.I8, "long", designTimeValue),
             "String" => new GuardVariable(SsisType.WStr, "string",
                 ProgramEmitter.CSharpStringLiteral(designTimeValue ?? "")),
-            "Boolean" => new GuardVariable(SsisType.Bool, "bool",
-                string.Equals(designTimeValue, "True", StringComparison.OrdinalIgnoreCase) ? "true" : "false"),
+            "Boolean" => new GuardVariable(SsisType.Bool, "bool", BooleanLiteral(designTimeValue)),
             "DateTime" => DateTimeGuard(designTimeValue),
             _ => null,
         };
 
+    /// <summary>
+    /// SSIS persists a Boolean variable's design-time default as the string "True"/"False" in
+    /// SOME contexts, but as the raw OLE Automation VARIANT_BOOL numeral (<c>-1</c> for true,
+    /// <c>0</c> for false) in others -- confirmed real, not assumed, from a checked-in fixture
+    /// (<c>Package_Advanced.dtsx</c>'s own <c>DTS:VariableValue</c> for a Boolean variable is
+    /// literally <c>-1</c>). Before this, only the literal string "True" (case-insensitive) was
+    /// ever recognized as true, so a "-1"-persisted variable silently guarded as false.
+    /// </summary>
+    private static string BooleanLiteral(string? designTimeValue) =>
+        designTimeValue is "-1" or "1" || string.Equals(designTimeValue, "True", StringComparison.OrdinalIgnoreCase)
+            ? "true"
+            : "false";
+
+    /// <summary>
+    /// Parses per the variable's own CLR width rather than always through <c>long.TryParse</c> --
+    /// the earlier version accepted any value that fits in a <c>long</c> regardless of whether
+    /// the variable is actually declared <c>Int16</c>/<c>Int32</c>, so a design-time default that
+    /// overflows the real declared type (e.g. 40000 for an Int16) would still emit a literal that
+    /// doesn't compile against the narrower type. A value that genuinely doesn't fit degrades to
+    /// the existing "no resolvable declared type" gap path (returning null) rather than being
+    /// guessed at or silently truncated.
+    /// </summary>
     private static GuardVariable? IntegralGuard(SsisType type, string clrTypeName, string? designTimeValue) =>
-        long.TryParse(designTimeValue, out var parsed)
-            ? new GuardVariable(type, clrTypeName, clrTypeName == "long" ? $"{parsed}L" : $"{parsed}")
-            : null;
+        clrTypeName switch
+        {
+            "short" => short.TryParse(designTimeValue, out var s) ? new GuardVariable(type, clrTypeName, $"{s}") : null,
+            "int" => int.TryParse(designTimeValue, out var i) ? new GuardVariable(type, clrTypeName, $"{i}") : null,
+            "long" => long.TryParse(designTimeValue, out var l) ? new GuardVariable(type, clrTypeName, $"{l}L") : null,
+            _ => null,
+        };
 
     private static GuardVariable? DateTimeGuard(string? designTimeValue) =>
         DateTime.TryParse(designTimeValue, System.Globalization.CultureInfo.InvariantCulture,
@@ -1665,6 +1705,51 @@ public static class PackagePlanner
         Dictionary<string, GuardVariable> variables,
         int? inheritedWave = null)
     {
+        // A cyclic precedence-constraint graph (including a self-loop, which BuildDag counts
+        // as an in-edge with no matching topological-order entry) has no valid execution order
+        // at all -- SSIS's own designer prevents authoring one, but a hand-edited/corrupted
+        // .dtsx can still contain it. Before this check, WalkContainer fell through to
+        // declaration order below and silently generated the WRONG order with no gap at all.
+        // (Measured against a real cyclic fixture via DTExec: it did NOT reject the package at
+        // validation -- it ran, and failed later on an unrelated task's own missing database
+        // connection, which never exercised the cyclic pair specifically. Reported here anyway,
+        // independent of what dtexec's own runtime engine tolerates: SSDT's designer refuses to
+        // author this shape at all, and this tool has no evidence for what execution order a
+        // real cyclic package's own two mutually-constrained tasks would run in, so generating
+        // an order this tool invented would be a guess, not a translation.)
+        // Reported once per container, at the exact point that container's own walk would
+        // otherwise begin -- nothing in it (or nested inside it) is generated.
+        if (dag.HasCycle)
+        {
+            var cyclicContainerName = containerPath.Count > 0 ? containerPath[^1] : "Package";
+            gaps.Add(new GenerationGap(
+                $"{cyclicContainerName}.PrecedenceConstraints",
+                "precedence constraints form a cycle -- SSIS rejects this at validation; not generated"));
+            return;
+        }
+
+        // A precedence constraint whose own From/To refId doesn't match any child in THIS
+        // container was excluded from the graph by BuildDag (so it can't corrupt the topological
+        // order/levels) but is reported here rather than silently dropped -- before this, the
+        // orphaned node kept in-degree 0 and was treated as a genuinely independent, concurrent
+        // root (a Task.WhenAll wave) with no gap at all, even though the .dtsx itself declares an
+        // ordering relationship for it that just can't be resolved. Same refusal shape as the
+        // HasCycle check above, and for the identical reason: this tool has no evidence for what
+        // ordering the author actually intended for the dangling side, so treating the node as
+        // either "ordered as declared" or "independent/concurrent" would both be guesses -- the
+        // whole container is refused rather than picking one.
+        if (dag.DanglingConstraints.Count > 0)
+        {
+            var owningContainerName = containerPath.Count > 0 ? containerPath[^1] : "Package";
+            foreach (var dangling in dag.DanglingConstraints)
+            {
+                gaps.Add(new GenerationGap(
+                    $"{owningContainerName}.{dangling.ObjectName ?? dangling.RefId ?? $"{dangling.From}->{dangling.To}"}",
+                    $"precedence constraint references unknown executable (From='{dangling.From}', To='{dangling.To}') -- container not generated"));
+            }
+            return;
+        }
+
         var byRefId = children.ToDictionary(e => e.RefId);
 
         // dag.TopologicalOrder is empty by design for 0-1 children (that type's own doc
@@ -2233,8 +2318,69 @@ public static class PackagePlanner
         return (pathRaw, null);
     }
 
+    /// <summary>Component types this tool models with dedicated planner logic elsewhere in this
+    /// method (each resolved via its own Plan* helper, not TransformEmitter's passthrough gate)
+    /// -- Phase 2.3 (C2/C4) of the independent-review fix plan needs the FULL recognized set,
+    /// which is this list plus <see cref="TransformEmitter.IsRecognizedPassthroughComponent"/>'s
+    /// own (sources/destinations/structural pass-throughs).</summary>
+    private static readonly HashSet<string> ModelledTransformComponentClassIds =
+    [
+        "Microsoft.DerivedColumn",
+        "Microsoft.DataConvert",
+        "Microsoft.Lookup",
+        "Microsoft.Aggregate",
+        "Microsoft.SCD",
+        "Microsoft.CopyMap",
+        "Microsoft.PctSampling",
+    ];
+
+    /// <summary>
+    /// Phase 2.3 (C2/C4) of the independent-review fix plan. TransformEmitter's own per-column
+    /// "unrecognized component" gate (<c>unrecognizedComponentColumns</c>) only ever fires when a
+    /// DESTINATION column happens to share a name with something the unrecognized component
+    /// itself produced or rewrote -- it has NO way to notice a component that declares no output
+    /// columns at all. Confirmed real from SyntheticScriptComponent.dtsx: a pure-passthrough
+    /// Script Component (<c>synchronousInputId</c> set, an empty
+    /// <c>&lt;outputColumns/&gt;</c> -- no NEW column, and its INPUT columns are all plain
+    /// <c>usageType="readOnly"</c>, not <c>readWrite</c> either) is completely invisible to that
+    /// gate, so this tool generates 13 clean files with zero gaps about it, and whatever that
+    /// script's own per-row logic actually does (filter rows, mutate a value some other way, a
+    /// side-effect write) silently vanishes.
+    ///
+    /// <para>Deliberately scoped to a component that is BOTH unrecognized AND has nothing at all
+    /// for the existing per-column gate to key off (no non-error output column, no readWrite
+    /// input column) -- a Script Component that DOES synthesize new columns (RBC_Demo_ETL's own
+    /// SCR_CleanseCustomerRow/SCR_ComputeCustomerTier, the real, heavily-tested Tier-2-seam case)
+    /// is left entirely alone here: it already gets a precise per-column gap from the existing
+    /// mechanism, plus a compile-enforced seam once <c>--seams</c> is used, and this new check
+    /// must not double-report or otherwise disturb that.</para>
+    /// </summary>
+    private static void ReportInvisibleUnrecognizedComponents(string taskName, PipelineSpec pipeline, List<GenerationGap> gaps)
+    {
+        foreach (var comp in pipeline.Components)
+        {
+            if (TransformEmitter.IsRecognizedPassthroughComponent(comp)) continue;
+            if (ModelledTransformComponentClassIds.Contains(comp.ComponentClassId)) continue;
+
+            var hasOwnOutputColumns = comp.Outputs.Any(o => o.IsErrorOut != true && o.Columns.Count > 0);
+            var hasReadWriteInputColumn = comp.Inputs.Any(i => i.Columns.Any(c => string.Equals(c.UsageType, "readWrite", StringComparison.OrdinalIgnoreCase)));
+            if (hasOwnOutputColumns || hasReadWriteInputColumn) continue; // already named by TransformEmitter's own per-column gate, if anything downstream actually references it
+
+            gaps.Add(new GenerationGap(
+                $"{taskName}.{comp.Name}",
+                $"component '{comp.Name}' ({comp.ComponentClassId}) is not translated and declares no output column or in-place modification this tool can detect -- its per-row behaviour (row count changes, filtering, in-place mutation, or side effects) is not reproduced by generated code at all",
+                // Tier-2-eligible only for a Script Component -- its real source is present
+                // (SourceFiles), so a human can actually port the logic; any OTHER unrecognized
+                // type has no source this tool can hand to a work packet at all.
+                Kind: comp.ScriptComponent is not null ? GapKind.ScriptComponentColumn : GapKind.Unclassified,
+                EvidenceRefId: comp.RefId));
+        }
+    }
+
     private static DataFlowPlan? PlanDataFlow(string taskName, PipelineSpec pipeline, List<GenerationGap> gaps)
     {
+        ReportInvisibleUnrecognizedComponents(taskName, pipeline, gaps);
+
         // Computed up front (moved ahead of the MergeJoin/Union carve-outs below, which used to
         // return before this was ever consulted) so BOTH of those can check their own resolved
         // input count against the TOTAL source count in the pipeline -- a real, previously-SILENT
@@ -3415,6 +3561,15 @@ public static class PackagePlanner
         {
             gaps.Add(new GenerationGap(taskName,
                 $"Percentage Sampling '{pctSamplingComponent.Name}' does not declare both its 'Sampling Selected Output' and 'Sampling Unselected Output' outputs -- not supported"));
+            return null;
+        }
+
+        // A missing SamplingValue is refused rather than guessed at 0 or the schema's own
+        // documented default (10) -- see PctSamplingPayload.SamplingValue's own doc comment.
+        if (pctSamplingComponent.PctSampling?.SamplingValue is null)
+        {
+            gaps.Add(new GenerationGap(taskName,
+                $"Percentage Sampling '{pctSamplingComponent.Name}' declares no SamplingValue -- not generated (would otherwise be guessed)"));
             return null;
         }
 

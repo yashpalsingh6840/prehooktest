@@ -117,11 +117,14 @@ public sealed class LogProviderSpec
 /// <summary>
 /// Legacy Package-Deployment-Model configuration (plan §4.2) -- XML file / env var /
 /// registry / parent variable / SQL config table. Not present in either PoC package
-/// (both are Project-Deployment-Model); modeled now so a client package that still uses
-/// this doesn't fall into <see cref="UnmappedFragment"/> unnoticed once slice 2 walks
-/// <c>DTS:Configurations</c>. Left with no reader wiring yet -- see CLAUDE.md's own
-/// warning that this is "where a huge amount of undocumented environment coupling lives
-/// in older packages."
+/// (both are Project-Deployment-Model); confirmed real from RBC_Demo_ETL's own
+/// <c>Package_Legacy.dtsx</c> (<c>ConfigurationType=1</c>, <c>LegacyXmlConfig</c>, pointing at
+/// an external <c>.dtsConfig</c> file). Wired by <c>DtsxPackageReader.Read</c> (Phase 2.4 of the
+/// independent-review fix plan) -- see CLAUDE.md's own warning that this is "where a huge
+/// amount of undocumented environment coupling lives in older packages." This tool has no
+/// access to the referenced file/registry-key/parent-variable/SQL-table's own contents, so
+/// <c>PackagePlanner.Plan</c> reports one blocking gap per entry rather than guessing at what
+/// it overrides.
 /// </summary>
 public sealed class PackageConfigurationSpec
 {

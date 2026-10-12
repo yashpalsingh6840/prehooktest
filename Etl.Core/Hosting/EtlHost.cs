@@ -2,9 +2,11 @@ using System.Reflection;
 using Etl.Core.Abstractions;
 using Etl.Core.Csv;
 using Etl.Core.Data;
+using Etl.Core.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 
 namespace Etl.Core.Hosting;
@@ -54,6 +56,8 @@ public static class EtlHost
         builder.Services.Configure<FileSourceOptions>(builder.Configuration.GetSection("FileSource"));
         builder.Services.Configure<BulkCopyOptions>(builder.Configuration.GetSection("BulkCopy"));
 
+        // Local filesystem by default; a package generated with --storage s3 replaces this via AddS3FileStore.
+        builder.Services.TryAddSingleton<IFileStore>(LocalFileStore.Instance);
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<ISqlBulkCopyFactory, SqlBulkCopyFactory>();
         builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();

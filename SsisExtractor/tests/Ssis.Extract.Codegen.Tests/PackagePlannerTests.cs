@@ -28,6 +28,70 @@ public class PackagePlannerTests
     }
 
     [Fact]
+    public void Plan_ReportsABlockingGap_ForAPackageLevelLegacyConfiguration()
+    {
+        // Phase 2.4 (C3) of the independent-review fix plan. SyntheticPackageConfiguration.dtsx
+        // is a byte-preserving derivative of SyntheticPostFlowSql.dtsx with a real-shaped
+        // <DTS:Configurations> block spliced in, copied verbatim from RBC_Demo_ETL's own
+        // Package_Legacy.dtsx (ConfigurationType=1, LegacyXmlConfig, pointing at an external
+        // .dtsConfig file this tool cannot read). The rest of the flow is unaffected --
+        // generated code would silently run with this package's own design-time defaults
+        // wherever the configuration source overrides something at runtime, so the gap is
+        // reported independently of everything else the package does.
+        var package = LoadSyntheticFixture("SyntheticPackageConfiguration.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Contains(plan.Gaps, g => g.IsBlocking
+            && g.Location == "Package.Configuration.LegacyXmlConfig"
+            && g.Reason.Contains("not applied by generated code", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Plan_ReportsAGap_ForAPureScriptComponentPassthrough_WithNoOutputColumnsAtAll()
+    {
+        // Phase 2.3 (C2/C4) of the independent-review fix plan. SyntheticScriptComponent.dtsx's
+        // own Script Component (DFT_ScriptComponentDemo) has a synchronousInputId and an EMPTY
+        // <outputColumns/> -- no new column, and none of its input columns are usageType=
+        // "readWrite" either -- so TransformEmitter's own per-column "unrecognized component"
+        // gate (keyed on a DESTINATION column matching something the component itself produced
+        // or rewrote) has literally nothing to key off, and this whole component -- and whatever
+        // its script actually does per row -- was completely invisible before this fix: 0 gaps,
+        // 13 files generated as if it were a plain passthrough.
+        var package = LoadSyntheticFixture("SyntheticScriptComponent.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        var gap = Assert.Single(plan.Gaps, g => g.Reason.Contains("is not translated and declares no output column", StringComparison.Ordinal));
+        Assert.True(gap.IsBlocking);
+        Assert.Equal(GapKind.ScriptComponentColumn, gap.Kind);
+        Assert.EndsWith(".Script Component", gap.Location, StringComparison.Ordinal);
+        Assert.NotNull(gap.EvidenceRefId);
+        // The flow itself still generates -- this is a per-component gap, not a whole-flow
+        // refusal (unlike the Phase 2.1/2.2/2.5 items, there IS something else in this flow that
+        // remains safe to generate: the OLE DB Source -> Destination columns the script never
+        // touches).
+        Assert.Single(plan.Flows);
+    }
+
+    [Fact]
+    public void Plan_ReportsNoInvisibleComponentGap_ForARealScriptComponentThatProducesColumns()
+    {
+        // The negative case, and the one that must NOT regress: a Script Component that
+        // genuinely synthesizes new columns (SyntheticScriptComponentSeams.dtsx -- the same
+        // real-world shape as RBC_Demo_ETL's own SCR_CleanseCustomerRow) is already correctly
+        // named by the pre-existing per-column gate/seam mechanism. This new, coarser
+        // whole-component check must stay silent for it -- double-reporting (or, worse, this
+        // new check ever refusing the whole flow) would regress the heavily-tested Tier-2 seam
+        // workflow this project's own AI-assisted gap filling depends on.
+        var package = LoadSyntheticFixture("SyntheticScriptComponentSeams.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.DoesNotContain(plan.Gaps, g => g.Reason.Contains("is not translated and declares no output column", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Plan_RecursesIntoASequenceContainer_ForTheSyntheticNestedContainerFixture()
     {
         var package = LoadSyntheticFixture("SyntheticNestedContainer.dtsx");
@@ -1046,6 +1110,24 @@ public class PackagePlannerTests
         // DestinationComponent is the Sampled branch's own destination -- the same
         // non-authoritative-placeholder convention ConditionalSplit/Multicast already established.
         Assert.Same(flow.PctSampling.Sampled.Destination, flow.DestinationComponent);
+    }
+
+    [Fact]
+    public void Plan_ReportsABlockingGap_ForAPercentageSampling_WithNoDeclaredSamplingValue()
+    {
+        // Phase 2.6 (R9/R10) of the independent-review fix plan: SyntheticPctSamplingNoValue.dtsx
+        // is a byte-preserving derivative of SyntheticPctSampling.dtsx with the whole
+        // SamplingValue <property> element removed. Before this fix, PipelineReader defaulted a
+        // missing SamplingValue to 0 via "?? 0" -- and 0 means "route every row to the Unselected
+        // output" (see PctSamplingRouterEmitter's own generated condition), silently dropping
+        // every row from the Selected branch with zero gaps reported. Now refused outright rather
+        // than guessed at 0 or the schema's own documented default (10).
+        var package = LoadSyntheticFixture("SyntheticPctSamplingNoValue.dtsx");
+
+        var plan = PackagePlanner.Plan(package);
+
+        Assert.Contains(plan.Gaps, g => g.IsBlocking && g.Reason.Contains("declares no SamplingValue", StringComparison.Ordinal));
+        Assert.Empty(plan.Flows);
     }
 
     [Fact]

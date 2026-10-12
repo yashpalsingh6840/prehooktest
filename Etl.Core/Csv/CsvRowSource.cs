@@ -5,6 +5,7 @@ using CsvHelper;
 using CsvHelper.Configuration;
 using Etl.Core.Abstractions;
 using Etl.Core.Ssis;
+using Etl.Core.Storage;
 
 namespace Etl.Core.Csv;
 
@@ -16,10 +17,12 @@ public sealed class CsvRowSource<TRow> : IRowSource<TRow>
 {
     private readonly CsvSourceOptions _options;
     private readonly ClassMap _classMap;
+    private readonly IFileStore _fileStore;
     private readonly (PropertyInfo Property, int MaxWidth)[] _widthChecks;
 
-    public CsvRowSource(string name, CsvSourceOptions options, ClassMap classMap)
+    public CsvRowSource(string name, CsvSourceOptions options, ClassMap classMap, IFileStore? fileStore = null)
     {
+        _fileStore = fileStore ?? LocalFileStore.Instance;
         CodePageSupport.EnsureRegistered();
         Name = name;
         _options = options;
@@ -31,11 +34,12 @@ public sealed class CsvRowSource<TRow> : IRowSource<TRow>
 
     public async IAsyncEnumerable<TRow> ReadAsync([EnumeratorCancellation] CancellationToken ct)
     {
-        if (!File.Exists(_options.FilePath))
+        if (!await _fileStore.ExistsAsync(_options.FilePath, ct))
             throw new FileNotFoundException($"{Name}: CSV source not found: {_options.FilePath}", _options.FilePath);
 
         var encoding = Encoding.GetEncoding(_options.CodePage);
-        using var streamReader = new StreamReader(_options.FilePath, encoding);
+        await using var stream = await _fileStore.OpenReadAsync(_options.FilePath, ct);
+        using var streamReader = new StreamReader(stream, encoding);
 
         for (var i = 0; i < _options.SkipRows; i++)
         {

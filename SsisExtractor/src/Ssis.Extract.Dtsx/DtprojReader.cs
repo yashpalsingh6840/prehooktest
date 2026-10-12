@@ -93,26 +93,46 @@ public static class DtprojReader
         // portfolios -- this is a wiring gap, not a new format to parse.
         var projectDir = Path.GetDirectoryName(Path.GetFullPath(dtprojPath)) ?? "";
         var connectionManagers = new List<ConnectionManagerSpec>();
+        var connectionManagerLoadErrors = new List<ConnectionManagerLoadError>();
         foreach (var cmRefEl in manifestProject?.Element(Ssis + "ConnectionManagers")?.Elements(Ssis + "ConnectionManager") ?? [])
         {
             var cmFileName = cmRefEl.Attr(Ssis + "Name");
             if (cmFileName is null) continue;
 
             var cmPath = Path.Combine(projectDir, cmFileName);
-            if (!File.Exists(cmPath)) continue; // reported nowhere yet -- no failure-list mechanism exists on ProjectSpec today; the resulting unresolved connection reference still surfaces as its own generation gap downstream
+            if (!File.Exists(cmPath))
+            {
+                connectionManagerLoadErrors.Add(new ConnectionManagerLoadError { Path = cmPath, Reason = "referenced by the project manifest but not found on disk" });
+                continue;
+            }
 
-            var cmDoc = XDocument.Load(cmPath, LoadOptions.PreserveWhitespace);
-            var cmRoot = cmDoc.Root;
-            if (cmRoot is null) continue;
+            // Each .conmgr is isolated in its own try/catch -- one malformed file must not
+            // reject the WHOLE .dtproj (and every package it lists) the way an unhandled
+            // XDocument.Load exception used to, caught only by PackageLoader.LoadProject's own
+            // outer catch with a generic, unhelpful "Line 1" message.
+            try
+            {
+                var cmDoc = XDocument.Load(cmPath, LoadOptions.PreserveWhitespace);
+                var cmRoot = cmDoc.Root;
+                if (cmRoot is null)
+                {
+                    connectionManagerLoadErrors.Add(new ConnectionManagerLoadError { Path = cmPath, Reason = "no root element" });
+                    continue;
+                }
 
-            // The refId shape a .dtsx's own pipeline/task XML actually uses to reference a
-            // project CM (e.g. connectionManagerRefId="Project.ConnectionManagers[WWI_Source_DB]",
-            // confirmed real) is keyed by the connection manager's own ObjectName, not
-            // necessarily its filename -- read that one attribute directly rather than
-            // deriving the name from cmFileName.
-            var cmObjectName = cmRoot.Attr(Dts + "ObjectName") ?? Path.GetFileNameWithoutExtension(cmFileName);
-            var refId = $"Project.ConnectionManagers[{cmObjectName}]";
-            connectionManagers.Add(DtsxPackageReader.ReadConnectionManager(cmRoot, noRedact, scope: "Project", refIdOverride: refId));
+                // The refId shape a .dtsx's own pipeline/task XML actually uses to reference a
+                // project CM (e.g. connectionManagerRefId="Project.ConnectionManagers[WWI_Source_DB]",
+                // confirmed real) is keyed by the connection manager's own ObjectName, not
+                // necessarily its filename -- read that one attribute directly rather than
+                // deriving the name from cmFileName.
+                var cmObjectName = cmRoot.Attr(Dts + "ObjectName") ?? Path.GetFileNameWithoutExtension(cmFileName);
+                var refId = $"Project.ConnectionManagers[{cmObjectName}]";
+                connectionManagers.Add(DtsxPackageReader.ReadConnectionManager(cmRoot, noRedact, scope: "Project", refIdOverride: refId));
+            }
+            catch (Exception ex)
+            {
+                connectionManagerLoadErrors.Add(new ConnectionManagerLoadError { Path = cmPath, Reason = ex.Message });
+            }
         }
 
         var buildConfigs = new List<BuildConfigurationSpec>();
@@ -147,6 +167,7 @@ public static class DtprojReader
             FormatVersion = ManifestProp("FormatVersion"),
             Packages = packages,
             ConnectionManagers = connectionManagers,
+            ConnectionManagerLoadErrors = connectionManagerLoadErrors,
             Parameters = parameters,
             BuildConfigurations = buildConfigs,
             SourceDtprojPath = dtprojPath,

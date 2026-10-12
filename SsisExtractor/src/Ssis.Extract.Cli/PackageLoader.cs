@@ -45,6 +45,13 @@ internal static class PackageLoader
         /// <summary>Temp directories from extracted <c>.ispac</c> archives, cleaned up on dispose -- callers must dispose (or the extracted packages' <c>SourceDtsxPath</c> values would outlive the files they point at).</summary>
         internal List<IspacContents> OpenArchives { get; } = [];
 
+        /// <summary>Full paths of every .dtsx loaded because a .dtproj's own manifest listed it --
+        /// the highest-priority signal <see cref="DropDuplicateNames"/> uses to pick a winner
+        /// among same-named packages. Deliberately NOT set for an .ispac's own packages (the plan's
+        /// own rule names ".dtproj" specifically -- an .ispac carries no authoring-time manifest at
+        /// all, see LoadIspac's own comment).</summary>
+        internal HashSet<string> ProjectLoadedDtsxPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+
         public void Dispose()
         {
             foreach (var archive in OpenArchives)
@@ -124,30 +131,62 @@ internal static class PackageLoader
     ///
     /// <para>Build output is filtered out before this (see <see cref="IsBuildOutput"/>), which
     /// removes that cause. This is the backstop for the rest -- most plausibly the same
-    /// package name reused across two different client projects. First one wins (projects
-    /// load before loose files, and both are ordinal-sorted, so the choice is deterministic),
-    /// and the loser is reported rather than silently dropped: an under-counted portfolio that
-    /// looks complete is worse than a named omission.</para>
+    /// package name reused across two different client projects, or a loose scratch/working
+    /// copy sitting alongside the real file (the "R5" case: <c>Package.Scripts.WORKING.dtsx</c>
+    /// beat the real <c>Package.dtsx</c> in a loose folder, purely because ordinal path sort
+    /// happens to put "...Scripts.WORKING..." before "...dtsx" -- an accident of alphabetization,
+    /// not a signal about which copy is real). Picking a winner now follows an explicit,
+    /// documented priority instead of "whichever sorted first":
+    /// <list type="number">
+    /// <item>a package a .dtproj's own manifest actually lists (<see cref="LoadResult.ProjectLoadedDtsxPaths"/>) -- the
+    /// author's own project file said this is the real one;</item>
+    /// <item>then the one whose file name (without extension) equals its own declared
+    /// <c>ObjectName</c> -- a renamed/copied duplicate rarely keeps that agreement;</item>
+    /// <item>then the one with the newest <see cref="PackageSpec.LastWriteTimeUtc"/> -- the more
+    /// recently touched copy is more likely the one still being worked on;</item>
+    /// <item>then the original ordinal path order, as a final, deterministic tiebreaker.</item>
+    /// </list>
+    /// The loser is reported rather than silently dropped either way: an under-counted portfolio
+    /// that looks complete is worse than a named omission.</para>
     /// </summary>
     private static void DropDuplicateNames(LoadResult result)
     {
-        var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var kept = new List<PackageSpec>(result.Packages.Count);
+        var groups = result.Packages
+            .Select((pkg, index) => (pkg, index))
+            .GroupBy(x => x.pkg.ObjectName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-        foreach (var pkg in result.Packages)
+        if (groups.All(g => g.Count() == 1)) return;
+
+        var kept = new List<PackageSpec>(result.Packages.Count);
+        foreach (var group in groups)
         {
-            if (seen.TryGetValue(pkg.ObjectName, out var firstPath))
+            if (group.Count() == 1)
             {
-                result.Failures.Add(new LoadFailure(pkg.SourceDtsxPath, "duplicate-name",
-                    $"another package already loaded with ObjectName '{pkg.ObjectName}' (from {firstPath}); reports are keyed by package name, so this copy was skipped"));
-                Console.Error.WriteLine($"warning: duplicate package name '{pkg.ObjectName}' -- kept {firstPath}, skipped {pkg.SourceDtsxPath}");
+                kept.Add(group.Single().pkg);
                 continue;
             }
-            seen[pkg.ObjectName] = pkg.SourceDtsxPath;
-            kept.Add(pkg);
+
+            var winner = group
+                .OrderByDescending(x => result.ProjectLoadedDtsxPaths.Contains(Path.GetFullPath(x.pkg.SourceDtsxPath)))
+                .ThenByDescending(x => string.Equals(Path.GetFileNameWithoutExtension(x.pkg.SourceDtsxPath), x.pkg.ObjectName, StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(x => x.pkg.LastWriteTimeUtc)
+                .ThenBy(x => x.index)
+                .First();
+            kept.Add(winner.pkg);
+
+            foreach (var loser in group.Where(x => x.index != winner.index))
+            {
+                result.Failures.Add(new LoadFailure(loser.pkg.SourceDtsxPath, "duplicate-name",
+                    $"another package already loaded with ObjectName '{loser.pkg.ObjectName}' (from {winner.pkg.SourceDtsxPath}); reports are keyed by package name, so this copy was skipped. Winner picked by: a .dtproj-listed package beats a loose one, then filename==ObjectName, then newest LastWriteTimeUtc, then path order."));
+                // Console.Out, not Console.Error (Phase 1.6 / L4): this is a benign, already-
+                // recovered-from skip (see ReportCommand's own Phase-1.2 fix), not a real error --
+                // on stderr, PowerShell renders it as a NativeCommandError even though nothing
+                // actually failed.
+                Console.WriteLine($"warning: duplicate package name '{loser.pkg.ObjectName}' -- kept {winner.pkg.SourceDtsxPath}, skipped {loser.pkg.SourceDtsxPath} (dtproj-listed > filename==ObjectName > newest > path order)");
+            }
         }
 
-        if (kept.Count == result.Packages.Count) return;
         result.Packages.Clear();
         result.Packages.AddRange(kept);
     }
@@ -270,6 +309,17 @@ internal static class PackageLoader
 
         result.Projects.Add((dtprojPath, project));
 
+        // A .conmgr that failed to load (missing or corrupt) is named here rather than
+        // silently dropped or, for a corrupt one, letting the exception propagate out of
+        // DtprojReader.Read and reject the whole .dtproj -- DtprojReader now isolates each
+        // .conmgr in its own try/catch, so the project's OTHER connection managers, and every
+        // package it lists, still load.
+        foreach (var cmError in project.ConnectionManagerLoadErrors)
+        {
+            result.Failures.Add(new LoadFailure(cmError.Path, "conmgr", cmError.Reason));
+            Console.Error.WriteLine($"warning: could not load connection manager {Path.GetFileName(cmError.Path)} ({cmError.Reason}) -- the project's other connection managers and packages still loaded");
+        }
+
         foreach (var pkgEntry in project.Packages)
         {
             var dtsxPath = Path.Combine(projectDir, pkgEntry.Name);
@@ -279,6 +329,7 @@ internal static class PackageLoader
                 Console.Error.WriteLine($"warning: {pkgEntry.Name} listed in {Path.GetFileName(dtprojPath)} but not found at {dtsxPath} -- skipped");
                 continue;
             }
+            result.ProjectLoadedDtsxPaths.Add(Path.GetFullPath(dtsxPath));
             LoadDtsx(result, dtsxPath, noRedact, project.ConnectionManagers);
         }
     }

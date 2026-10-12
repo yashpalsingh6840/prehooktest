@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="AWSSDK.S3" />
     <PackageReference Include="CsvHelper" />
     <PackageReference Include="ExcelDataReader" />
     <PackageReference Include="MailKit" />

@@ -62,6 +62,8 @@ internal static class GenerateCommand
         // Configuration.UserSecrets, System.Text.Encoding.CodePages, all pinned at 10.0.11)
         // already multi-targets net8.0 for real and stays unchanged either way.
         var framework = "net10.0";
+        // local stays the default -- omitting --storage changes nothing for an existing caller.
+        var storage = StorageMode.Local;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -112,6 +114,16 @@ internal static class GenerateCommand
                         }
                         framework = fw;
                         break;
+                    case "--storage":
+                        var st = RequireValue(args, ref i, "--storage");
+                        if (st.Equals("local", StringComparison.OrdinalIgnoreCase)) storage = StorageMode.Local;
+                        else if (st.Equals("s3", StringComparison.OrdinalIgnoreCase)) storage = StorageMode.S3;
+                        else
+                        {
+                            Console.Error.WriteLine($"error: --storage '{st}' is not supported. Supported values: local, s3.");
+                            return 2;
+                        }
+                        break;
                     default:
                         Console.Error.WriteLine($"error: unknown generate option '{args[i]}'");
                         return 2;
@@ -130,10 +142,35 @@ internal static class GenerateCommand
             return 2;
         }
 
+        // Phase 1.5 (R6): an EXPLICITLY given --etl-core that doesn't exist is a typo -- a hard
+        // usage error up front, not a soft advisory discovered only after Generated.slnx has
+        // already been written referencing an Etl.Core/ directory nothing ever put there
+        // (confirmed as exactly this shape: WriteFixedFiles's own try/catch around the copy
+        // only ever fires for a permission-style failure, not a straightforwardly-missing
+        // source directory, which Directory copy helpers tend to treat as "0 files", not an
+        // exception). Checked here, before anything is written, rather than folded into that
+        // later try/catch.
+        if (etlCorePath is not null && !Directory.Exists(etlCorePath))
+        {
+            Console.Error.WriteLine($"error: --etl-core '{etlCorePath}' does not exist.");
+            return ExitCodes.UsageOrInputError;
+        }
+
         // A durable copy of this run's own console narration (see RunLog's own doc comment) --
         // every `return` below restores Console.Out/Error via this `using` regardless of where
         // it happens to exit.
         using var runLog = RunLog.Start(Path.Combine(outDir, "generate.log"));
+
+        // Phase 3.2 (R8): delete the three summary files FIRST, not last. They are written fresh
+        // at the very end of a successful run (below) -- that ordering alone means a run killed
+        // or crashed partway through used to leave the PREVIOUS run's generate-report.md/
+        // gaps.json/Generated.slnx sitting next to a half-written (or entirely stale) generate/
+        // tree, looking like a complete, trustworthy result when it no longer describes what's
+        // actually on disk. Deleting them here instead makes "these three files exist and agree
+        // with generate/" true only when a run actually finished.
+        DeleteIfExists(Path.Combine(outDir, "generate-report.md"));
+        DeleteIfExists(Path.Combine(outDir, "gaps.json"));
+        DeleteIfExists(Path.Combine(outDir, "generate", "Generated.slnx"));
 
         PackageLoader.LoadResult loaded;
         try
@@ -167,6 +204,7 @@ internal static class GenerateCommand
         var decisionOutcomes = new List<(string Package, GapDecisionOutcome Outcome)>();
 
         var crashCount = 0;
+        var crashedPackages = new List<(string Package, string DiagnosticPath)>();
         var packageOrdinal = 0;
         foreach (var package in loaded.Packages)
         {
@@ -179,7 +217,7 @@ internal static class GenerateCommand
             PackageGenerateResult result;
             try
             {
-                result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests, includeNotifications);
+                result = PackageGenerator.Generate(package, namespacePrefix, decisions, seams, skipTests, includeNotifications, storage);
                 Console.WriteLine($"  done ({stopwatch.ElapsedMilliseconds}ms, {result.Files.Count} file(s), {result.Gaps.Count} gap(s))");
             }
             catch (Exception ex)
@@ -195,6 +233,12 @@ internal static class GenerateCommand
                     "ssisx", scrubbed, "package-generation", ex,
                     context: [("Package", $"{packageOrdinal} of {loaded.Packages.Count}")],
                     outDir: outDir);
+                // Phase 1.3(d): a crashed package used to be visible only as a console line and a
+                // diagnostic file -- generate-report.md, the one file this tool writes for someone
+                // to read AFTER the run, said nothing about it at all, so a package silently
+                // missing from the "Files written" table looked identical to one that was never
+                // in --input to begin with.
+                crashedPackages.Add((package.ObjectName, diagPath));
                 Console.Error.WriteLine($"error: package {packageOrdinal} of {loaded.Packages.Count} hit an unexpected internal error during generation -- skipped, continuing with the rest.");
                 Console.Error.WriteLine($"  A diagnostic file with no client data was written to: {diagPath}");
                 continue;
@@ -203,6 +247,17 @@ internal static class GenerateCommand
             results.Add(result);
             decisionOutcomes.AddRange(decisions.Outcomes.Concat(decisions.Orphans())
                 .Select(o => (package.ObjectName, o)));
+
+            // Phase 3.1 (R2): clean this package's own PREVIOUS output before writing this run's
+            // -- otherwise a component the package no longer has (renamed, disabled, or removed
+            // since the last `ssisx generate` into this same --out) leaves a stale Mapping/*.cs
+            // sitting next to this run's own files, and the two together produce confusing
+            // compile errors that read like a generator bug, not a stale-output problem. Fills/
+            // and TestData/ are explicitly preserved -- both are hand-maintained work product
+            // this tool only ever reads, never something it generates, so they must survive a
+            // clean the exact same way a conformance claims file survives re-running
+            // `conformance`.
+            CleanPreviousPackageOutput(generateDir, gapsDir, package.ObjectName);
 
             foreach (var file in result.Files)
             {
@@ -225,7 +280,7 @@ internal static class GenerateCommand
             // Work packets live under <out>/gaps/, deliberately NOT inside <out>/generate/ --
             // that tree is "the buildable solution" and nothing else, so a stray .md never ends up
             // in a project directory someone is about to `dotnet build`.
-            var packetResult = AiPacketEmitter.Emit(package, result.Gaps);
+            var packetResult = AiPacketEmitter.Emit(package, result.Gaps, result.Files);
             allGaps.AddRange(packetResult.Gaps);
             foreach (var packet in packetResult.Packets)
             {
@@ -235,13 +290,26 @@ internal static class GenerateCommand
             }
         }
 
+        // Phase 3.1 (R2): a package this run never touched (renamed since a previous run into
+        // this same --out, or scoped out via --package this time) still has its OLD folder on
+        // disk, unreferenced by the Generated.slnx this run is about to write -- reported, never
+        // auto-deleted, since it's the only place a since-descoped package's own hand-written
+        // fills might still live.
+        ReportStalePackageFolders(generateDir, results);
+
         var fixedFileGaps = WriteFixedFiles(generateDir, loaded.Packages, results, etlCorePath, framework);
 
         var gapsPath = Path.Combine(outDir, "gaps.json");
         StableJsonWriter.WriteToFile(allGaps, gapsPath);
 
         var reportPath = Path.Combine(outDir, "generate-report.md");
-        WriteReport(reportPath, results, loaded.Failures, fixedFileGaps, allGaps, decisionOutcomes);
+        WriteReport(reportPath, results, loaded.Failures, crashedPackages, fixedFileGaps, allGaps, decisionOutcomes);
+
+        // Phase 5.3 (P3): an EncryptedConnectionManagerSecret gap gets no per-gap packet any more
+        // (GapIdentity.HasWorkPacket) -- every one of them says the identical thing, so N copies
+        // of the same contract is pure token cost. One portfolio-wide table instead. The gaps
+        // themselves are untouched: still in gaps.json, still blocking, still need acknowledging.
+        WriteSecretsChecklist(Path.Combine(outDir, "secrets-checklist.md"), loaded.Packages, results, allGaps);
 
         // Written unconditionally, at the --out ROOT (not inside generate/, not inside gaps/)
         // specifically so it is the first thing visible to anyone -- a person or an AI coding
@@ -270,7 +338,85 @@ internal static class GenerateCommand
             Console.WriteLine($"  {crashCount} package(s) crashed during generation and were skipped -- see the diagnostic file(s) reported above");
         }
 
-        return crashCount > 0 ? 98 : (totalGaps > 0 ? 3 : 0);
+        // Phase 1.5 (R6): the exit-code contract, see ExitCodes.cs. Two real bugs here before
+        // this fix:
+        //  - `totalGaps` counted EVERY gap, including non-blocking Advisory ones (the always-
+        //    present {Package}.Notification gap alone made a clean 0/BlockingGaps outcome
+        //    unreachable for any real package -- confirmed across all 83 tracked fixtures).
+        //  - There was no way to tell "wrote real files, some gaps remain" (exit 3, meaningful)
+        //    apart from "wrote NOTHING at all" (also exit 3) without re-parsing generate-report.md.
+        var totalBlockingGaps = results.Sum(r => r.Gaps.Count(g => g.IsBlocking)) + fixedFileGaps.Count(g => g.IsBlocking);
+        if (crashCount > 0) return ExitCodes.PartialCrash;
+        if (totalFiles == 0) return ExitCodes.NothingWritten;
+        return totalBlockingGaps > 0 ? ExitCodes.BlockingGaps : ExitCodes.Ok;
+    }
+
+    private static void DeleteIfExists(string path)
+    {
+        if (File.Exists(path)) File.Delete(path);
+    }
+
+    /// <summary>
+    /// Phase 3.1 (R2): removes everything this tool itself generated for one package on a PRIOR
+    /// run, so this run's own output is never mixed with a leftover file (e.g. Mapping/*.cs for
+    /// a component the package no longer has). Fills/ and TestData/ are preserved untouched --
+    /// see <see cref="CleanDirectoryPreserving"/>. Also removes gaps/&lt;Pkg&gt;/ entirely (that
+    /// tree carries no hand-maintained content at all -- every file in it is a generated work
+    /// packet, safe to fully replace).
+    /// </summary>
+    private static void CleanPreviousPackageOutput(string generateDir, string gapsDir, string packageName)
+    {
+        CleanDirectoryPreserving(Path.Combine(generateDir, packageName), "Fills", "TestData");
+        CleanDirectoryPreserving(Path.Combine(generateDir, $"{packageName}.Tests"), "Fills", "TestData");
+
+        var gapsPkgDir = Path.Combine(gapsDir, packageName);
+        if (Directory.Exists(gapsPkgDir)) Directory.Delete(gapsPkgDir, recursive: true);
+    }
+
+    /// <summary>
+    /// Deletes every file and subdirectory directly under <paramref name="dir"/> EXCEPT the
+    /// named subdirectories (kept, and left completely untouched, contents included). A no-op if
+    /// <paramref name="dir"/> doesn't exist -- the ordinary case for a package this --out has
+    /// never generated before.
+    /// </summary>
+    private static void CleanDirectoryPreserving(string dir, params string[] preserve)
+    {
+        if (!Directory.Exists(dir)) return;
+
+        var preserveSet = new HashSet<string>(preserve, StringComparer.OrdinalIgnoreCase);
+        foreach (var file in Directory.EnumerateFiles(dir))
+            File.Delete(file);
+        foreach (var subDir in Directory.EnumerateDirectories(dir))
+        {
+            if (preserveSet.Contains(Path.GetFileName(subDir))) continue;
+            Directory.Delete(subDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Phase 3.1 (R2): a package folder under generate/ that this run neither cleaned nor wrote
+    /// to (renamed since a previous run into this same --out, or scoped out of this run via
+    /// --package) is dead weight Generated.slnx no longer references -- reported so a human
+    /// notices, never deleted automatically, since it may be the only place that package's own
+    /// hand-written Fills/TestData still live.
+    /// </summary>
+    private static void ReportStalePackageFolders(string generateDir, List<PackageGenerateResult> results)
+    {
+        if (!Directory.Exists(generateDir)) return;
+
+        var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Etl.Core", "Shared" };
+        foreach (var r in results)
+        {
+            known.Add(r.PackageName);
+            known.Add($"{r.PackageName}.Tests");
+        }
+
+        foreach (var dir in Directory.EnumerateDirectories(generateDir))
+        {
+            var name = Path.GetFileName(dir);
+            if (known.Contains(name)) continue;
+            Console.WriteLine($"warning: stale package folder '{name}' under {generateDir} is not referenced by Generated.slnx (from a previous run, or a package not generated this time) -- not deleted automatically; remove it by hand once you've confirmed nothing in it (e.g. hand-written Fills/) is still needed.");
+        }
     }
 
     /// <summary>
@@ -344,6 +490,7 @@ internal static class GenerateCommand
         "  </PropertyGroup>",
         "",
         "  <ItemGroup>",
+        "    <PackageVersion Include=\"AWSSDK.S3\" Version=\"4.0.104.1\" />",
         "    <PackageVersion Include=\"CsvHelper\" Version=\"33.1.0\" />",
         "    <PackageVersion Include=\"ExcelDataReader\" Version=\"3.7.0\" />",
         "    <PackageVersion Include=\"MailKit\" Version=\"4.17.0\" />",
@@ -524,7 +671,7 @@ internal static class GenerateCommand
         return copied;
     }
 
-    private static void WriteReport(string path, List<PackageGenerateResult> results, List<PackageLoader.LoadFailure> loadFailures, List<GenerationGap> fixedFileGaps, List<GapSpec> allGaps, List<(string Package, GapDecisionOutcome Outcome)> decisionOutcomes)
+    private static void WriteReport(string path, List<PackageGenerateResult> results, List<PackageLoader.LoadFailure> loadFailures, List<(string Package, string DiagnosticPath)> crashedPackages, List<GenerationGap> fixedFileGaps, List<GapSpec> allGaps, List<(string Package, GapDecisionOutcome Outcome)> decisionOutcomes)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# ssisx generate -- report");
@@ -534,7 +681,8 @@ internal static class GenerateCommand
 
         var totalFiles = results.Sum(r => r.Files.Count + r.SiblingFiles.Count);
         var totalGaps = results.Sum(r => r.Gaps.Count) + fixedFileGaps.Count;
-        sb.AppendLine($"**{totalFiles} file(s) written across {results.Count} package(s), {totalGaps} gap(s).**");
+        sb.AppendLine($"**{totalFiles} file(s) written across {results.Count} package(s), {totalGaps} gap(s).**"
+            + (crashedPackages.Count > 0 ? $" **{crashedPackages.Count} package(s) crashed during generation -- see below.**" : ""));
         sb.AppendLine();
 
         sb.AppendLine("| Package | Files written | Starter tests | Gaps |");
@@ -583,6 +731,22 @@ internal static class GenerateCommand
             sb.AppendLine();
         }
 
+        if (crashedPackages.Count > 0)
+        {
+            sb.AppendLine("## Packages that crashed during generation -- an internal ssisx bug, not a gap");
+            sb.AppendLine();
+            sb.AppendLine("Loaded successfully but generation itself threw an unexpected exception -- this is a real,");
+            sb.AppendLine("unclassified ssisx defect, not a reported gap. Every OTHER package in this run still");
+            sb.AppendLine("generated normally (one package crashing never costs the rest). Check the named diagnostic");
+            sb.AppendLine("file for the real exception, and consider filing it.");
+            sb.AppendLine();
+            sb.AppendLine("| Package | Diagnostic file |");
+            sb.AppendLine("|---|---|");
+            foreach (var (pkg, diagPath) in crashedPackages)
+                sb.AppendLine($"| {pkg} | {diagPath} |");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## Packages that failed to load -- not generated at all");
         sb.AppendLine();
         if (loadFailures.Count == 0)
@@ -619,6 +783,107 @@ internal static class GenerateCommand
     /// this file now says so explicitly and gives the exact command to use, so a reader has no
     /// way to fall back to the wrong default by omission.
     /// </summary>
+    /// <summary>
+    /// Phase 5.3 (P3): one portfolio-wide table for every <see cref="GapKind.EncryptedConnectionManagerSecret"/>
+    /// gap, replacing what used to be one near-identical work packet per connection manager. The
+    /// gaps themselves are unchanged (still blocking, still in gaps.json/generate-report.md) --
+    /// this file only changes WHERE the "what do I do about this" answer lives.
+    /// </summary>
+    private static void WriteSecretsChecklist(string path, List<PackageSpec> packages, List<PackageGenerateResult> results, List<GapSpec> allGaps)
+    {
+        var packagesByName = packages.ToDictionary(p => p.ObjectName);
+        var resultsByPackage = results.ToDictionary(r => r.PackageName);
+        var rows = allGaps
+            .Where(g => g.Kind == GapKind.EncryptedConnectionManagerSecret)
+            .OrderBy(g => g.Package, StringComparer.Ordinal)
+            .ThenBy(g => g.Location, StringComparer.Ordinal)
+            .ToList();
+
+        var sb = new StringBuilder();
+        sb.AppendLine("# Encrypted connection-manager secrets -- checklist");
+        sb.AppendLine();
+        sb.AppendLine("Every row below carries a DPAPI-encrypted sensitive value in its own .dtsx --");
+        sb.AppendLine("undecryptable outside the original author's Windows account, so this tool never");
+        sb.AppendLine("extracts the ciphertext or guesses the real value. Each one is still a blocking");
+        sb.AppendLine("`EncryptedConnectionManagerSecret` gap in gaps.json/generate-report.md -- this file is");
+        sb.AppendLine("just the one place to work through all of them, instead of N near-identical packets.");
+        sb.AppendLine();
+
+        if (rows.Count == 0)
+        {
+            sb.AppendLine("No encrypted connection-manager secrets found in this run.");
+        }
+        else
+        {
+            sb.AppendLine("| Package | Connection Manager | Encrypted Properties | User Secrets key | How to acknowledge |");
+            sb.AppendLine("|---|---|---|---|---|");
+            foreach (var gap in rows)
+            {
+                var properties = "(see gaps.json)";
+                if (packagesByName.TryGetValue(gap.Package, out var pkg))
+                {
+                    var cm = pkg.ConnectionManagers.FirstOrDefault(c => c.ObjectName == gap.Location);
+                    if (cm is { EncryptedProperties.Count: > 0 })
+                        properties = string.Join(", ", cm.EncryptedProperties);
+                }
+
+                var key = ResolveSecretsUserSecretsKey(resultsByPackage, gap.Package, gap.Location);
+                sb.AppendLine($"| {gap.Package} | {gap.Location} | {properties} | `{key}` | `fills-library/{gap.Package}.decisions.json`, GapId `{gap.GapId}` |");
+            }
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("Acknowledging a row does not supply the secret -- it only records that a human reviewed");
+        sb.AppendLine("it (see the ENCRYPTED-SECRET work-packet contract for the exact decisions.json shape).");
+        sb.AppendLine("The real value always goes into User Secrets/an environment variable at the key shown,");
+        sb.AppendLine("**never** into a tracked decisions.json file.");
+
+        File.WriteAllText(path, sb.ToString());
+    }
+
+    /// <summary>
+    /// Best-effort: reads the SAME <c>appsettings.json</c> this run already generated for the
+    /// package (in <see cref="PackageGenerateResult.Files"/>) to say which User Secrets key a
+    /// connection manager's real value actually resolves to -- <c>SecondaryConnections:&lt;CM&gt;
+    /// :Password</c> when the CM shows up there, else <c>TargetDatabase:Password</c> when the
+    /// package's primary connection is SQL-authenticated. Deliberately conservative: nothing in
+    /// the generated output records WHICH connection manager fed <c>TargetDatabase</c> (only that
+    /// something did), so that half is phrased as "if this is the primary connection" rather than
+    /// asserted outright -- a wrong guess here would send someone to edit the wrong secret.
+    /// </summary>
+    private static string ResolveSecretsUserSecretsKey(Dictionary<string, PackageGenerateResult> resultsByPackage, string package, string connectionManagerName)
+    {
+        if (!resultsByPackage.TryGetValue(package, out var result))
+            return "(see appsettings.json / the generate report)";
+
+        var appsettings = result.Files.FirstOrDefault(f => f.RelativePath == "appsettings.json");
+        if (appsettings is null)
+            return "(see appsettings.json / the generate report)";
+
+        try
+        {
+            using var doc = JsonDocument.Parse(appsettings.Content);
+            if (doc.RootElement.TryGetProperty("SecondaryConnections", out var secondary)
+                && secondary.TryGetProperty(connectionManagerName, out _))
+            {
+                return $"SecondaryConnections:{connectionManagerName}:Password";
+            }
+
+            if (doc.RootElement.TryGetProperty("TargetDatabase", out var target)
+                && target.TryGetProperty("AuthMode", out var authMode)
+                && authMode.GetString() == "SqlServer")
+            {
+                return "TargetDatabase:Password (if this is the package's primary connection -- confirm against appsettings.json)";
+            }
+        }
+        catch (JsonException)
+        {
+            // Fall through to the generic pointer below.
+        }
+
+        return "not wired to any generated connection (not used by any wired flow -- see the gap's own reason)";
+    }
+
     private static void WriteAiAssistantGuide(string path, List<GapSpec> allGaps, string fillsDir, string outDir)
     {
         var fillable = allGaps.Where(g => g.Tier is GapTier.MissingDatum or GapTier.MissingLogic).ToList();
@@ -683,6 +948,8 @@ internal static class GenerateCommand
         sb.AppendLine("  half in the fills directory above -- that failure is intentional, not something to patch");
         sb.AppendLine("  around here.");
         sb.AppendLine("- `generate-report.md` / `gaps.json` -- the full gap list, with every `GapId` and tier.");
+        sb.AppendLine("- `secrets-checklist.md` -- every `EncryptedConnectionManagerSecret` gap, portfolio-wide,");
+        sb.AppendLine("  one table instead of N near-identical packets.");
         sb.AppendLine();
 
         if (fillable.Count == 0)
@@ -702,20 +969,29 @@ internal static class GenerateCommand
             sb.AppendLine("|---|---|---|---|---|");
             foreach (var g in fillable.OrderBy(g => g.Package, StringComparer.Ordinal).ThenBy(g => g.GapId, StringComparer.Ordinal))
             {
-                var packetRef = g.PacketPath is not null ? $"`{g.PacketPath}`" : "_(none)_";
+                // Phase 5.3 (P3): EncryptedConnectionManagerSecret gets no per-gap packet any
+                // more -- point at the one portfolio-wide checklist instead of "(none)", which
+                // used to read as though the gap had simply lost its packet.
+                var packetRef = g.Kind == GapKind.EncryptedConnectionManagerSecret
+                    ? "`secrets-checklist.md`"
+                    : g.PacketPath is not null ? $"`{g.PacketPath}`" : "_(none)_";
                 sb.AppendLine($"| {g.Package} | {(g.Tier == GapTier.MissingDatum ? "1 -- datum" : "2 -- logic")} | {g.Kind} | `{g.GapId}` | {packetRef} |");
             }
             sb.AppendLine();
             sb.AppendLine("## What to actually do for each tier");
             sb.AppendLine();
-            sb.AppendLine("**Tier 1 is one workflow with THREE different answer shapes -- check the Kind column above");
+            sb.AppendLine("**Tier 1 is one workflow with FOUR different answer shapes -- check the Kind column above");
             sb.AppendLine("before writing anything, they are not interchangeable:**");
             sb.AppendLine();
-            sb.AppendLine("- **`LookupJoinKey` / `EncryptedConnectionManagerSecret`** (a missing FACT, or an");
-            sb.AppendLine("  acknowledgment): open the work packet, read its exact question, do **not** guess a");
-            sb.AppendLine("  confident-sounding answer -- confirm it with a human if you're not certain. Write the");
-            sb.AppendLine($"  answer into `{fillsDir}\\<Package>.decisions.json`, in the exact JSON shape the packet");
-            sb.AppendLine("  shows, with a real `ConfirmedBy`.");
+            sb.AppendLine("- **`LookupJoinKey`** (a missing FACT): open the work packet, read its exact question, do");
+            sb.AppendLine("  **not** guess a confident-sounding answer -- confirm it with a human if you're not");
+            sb.AppendLine($"  certain. Write the answer into `{fillsDir}\\<Package>.decisions.json`, in the exact JSON");
+            sb.AppendLine("  shape the packet shows, with a real `ConfirmedBy`.");
+            sb.AppendLine("- **`EncryptedConnectionManagerSecret`** (an acknowledgment, never a value): read");
+            sb.AppendLine("  `secrets-checklist.md` at this file's own level, NOT a per-gap packet -- there isn't");
+            sb.AppendLine("  one; every instance of this kind says the identical thing, so they're all answered from");
+            sb.AppendLine("  that one table instead. It names the real User Secrets key to supply the value at; the");
+            sb.AppendLine($"  acknowledgment itself (never the secret) still goes into `{fillsDir}\\<Package>.decisions.json`.");
             sb.AppendLine("- **`TestOracle`** (a starter test the deterministic emitter could not itself derive --");
             sb.AppendLine("  a Conditional Split case, or a test for a filled Script Task/Component seam): the packet");
             sb.AppendLine("  asks for a WHOLE new xUnit test file, not a value in a JSON file. Write it under");

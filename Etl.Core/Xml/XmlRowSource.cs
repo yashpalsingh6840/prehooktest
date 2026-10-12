@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Xml.Linq;
 using Etl.Core.Abstractions;
+using Etl.Core.Storage;
 
 namespace Etl.Core.Xml;
 
@@ -24,17 +25,18 @@ namespace Etl.Core.Xml;
 /// -- that shape is a named, unbuilt generator gap (see <c>PackagePlanner</c>'s own XML source
 /// resolution), not silently mis-read here.
 /// </summary>
-public sealed class XmlRowSource<TRow>(string name, XmlSourceOptions options, Func<XElement, TRow> materialize) : IRowSource<TRow>
+public sealed class XmlRowSource<TRow>(string name, XmlSourceOptions options, Func<XElement, TRow> materialize, IFileStore? fileStore = null) : IRowSource<TRow>
 {
     public string Name => name;
 
     public async IAsyncEnumerable<TRow> ReadAsync([EnumeratorCancellation] CancellationToken ct)
     {
-        if (!File.Exists(options.FilePath))
+        var store = fileStore ?? LocalFileStore.Instance;
+        if (!await store.ExistsAsync(options.FilePath, ct))
             throw new FileNotFoundException($"{name}: XML source not found: {options.FilePath}", options.FilePath);
 
         XDocument document;
-        using (var stream = File.Open(options.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        await using (var stream = await store.OpenReadAsync(options.FilePath, ct))
         {
             document = await XDocument.LoadAsync(stream, LoadOptions.None, ct);
         }

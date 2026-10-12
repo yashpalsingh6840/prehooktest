@@ -41,6 +41,26 @@ public sealed class ProjectSpec
 
     public required string SourceDtprojPath { get; init; }
     public string? SourceProjectParamsPath { get; init; }
+
+    /// <summary>
+    /// A standalone project-scoped .conmgr that failed to load -- either missing on disk, or
+    /// present but unreadable (malformed XML). Before this existed, a missing .conmgr was a
+    /// silent `continue` (nothing reported it at all), and a corrupt one threw out of
+    /// XDocument.Load and was caught by PackageLoader.LoadProject's OWN outer catch, which
+    /// rejects the WHOLE .dtproj -- and every package it lists -- over one bad connection
+    /// manager file, blaming a generic "Line 1" parse error with no mention of which .conmgr
+    /// was actually at fault. This list lets DtprojReader.Read isolate each .conmgr the same
+    /// way PackageLoader already isolates each package: one bad file is named here, and every
+    /// other connection manager / every package still loads.
+    /// </summary>
+    public List<ConnectionManagerLoadError> ConnectionManagerLoadErrors { get; init; } = [];
+}
+
+/// <summary>One standalone project-scoped .conmgr file that could not be read (see <see cref="ProjectSpec.ConnectionManagerLoadErrors"/>).</summary>
+public sealed class ConnectionManagerLoadError
+{
+    public required string Path { get; init; }
+    public required string Reason { get; init; }
 }
 
 /// <summary>

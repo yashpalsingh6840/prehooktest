@@ -203,6 +203,7 @@
   "CreatorComputerName": "IRIS-CSG-7247",
   "CreatorName": "IRISSOFTWARE\\yashpal.singh01",
   "Dag": {
+    "DanglingConstraints": [],
     "HasCycle": false,
     "ParallelLevels": [
       [
@@ -225,6 +226,7 @@
     {
       "Children": [],
       "Dag": {
+        "DanglingConstraints": [],
         "HasCycle": false,
         "ParallelLevels": [],
         "TopologicalOrder": []
@@ -1959,6 +1961,7 @@
     {
       "Children": [],
       "Dag": {
+        "DanglingConstraints": [],
         "HasCycle": false,
         "ParallelLevels": [],
         "TopologicalOrder": []

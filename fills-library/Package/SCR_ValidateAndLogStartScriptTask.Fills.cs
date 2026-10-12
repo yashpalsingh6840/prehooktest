@@ -1,4 +1,8 @@
+using System;
+using System.Diagnostics;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using Etl.Core.Abstractions;
 using Etl.Core.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -6,13 +10,16 @@ using Microsoft.Extensions.Options;
 
 namespace Package.ScriptTasks;
 
-// ssisx-fill: GapId=SCRIPT-TASK:Package:SCR_ValidateAndLogStart.ScriptTask Author=Copilot Date=2026-09-22 EvidenceSha256=e03a55826d8326b3e07c823b2caaa8f88a63bb857b5121bc4ecd41ce8830cdad
+// ssisx-fill: GapId=SCRIPT-TASK:Package:SCR_ValidateAndLogStart.ScriptTask Author=GitHub Copilot Date=2026-10-09 EvidenceSha256=e03a55826d8326b3e07c823b2caaa8f88a63bb857b5121bc4ecd41ce8830cdad
 public sealed partial class SCR_ValidateAndLogStartScriptTask
 {
-    private async partial Task RunScriptAsync(ScriptTaskContext ctx, CancellationToken ct)
+    private partial async Task RunScriptAsync(ScriptTaskContext ctx, CancellationToken ct)
     {
-        ct.ThrowIfCancellationRequested();
-        var filePath = ctx.Services.GetRequiredService<IOptions<FileSourceOptions>>().Value["StagingCustomers"].ResolvedPath;
+        var filePath = ctx.Services
+            .GetRequiredService<IOptions<FileSourceOptions>>()
+            .Value["CM_FF_Customers"]
+            .ResolvedPath;
+
         if (!File.Exists(filePath))
         {
             throw new FileNotFoundException("Source file not found: " + filePath, filePath);
@@ -28,7 +35,7 @@ public sealed partial class SCR_ValidateAndLogStartScriptTask
                 ctx.Load.PackageName,
                 "Batch Start",
                 startTime,
-                "Source file validated: " + filePath,
+                "Source file validated: " + filePath
             },
             ct);
     }

@@ -40,6 +40,10 @@ public sealed record ProjectRequest(
     /// no "Notification" section is written into appsettings.json at all, since nothing in the
     /// generated code reads it (IPackageResultNotifier is never wired).</summary>
     public bool IncludeNotifications { get; init; }
+
+    /// <summary>True for <c>--storage s3</c>: appsettings.json gets a "Storage" section (bucket/region,
+    /// to be filled in) and the Development override stops pointing file sources at a local TestData folder.</summary>
+    public bool UseS3Storage { get; init; }
 }
 
 /// <summary>
@@ -151,6 +155,11 @@ public static class ProjectEmitter
             ["TargetDatabase"] = targetDatabase,
         };
 
+        // Bucket is deliberately empty: nothing in a .dtsx names one, and Program.cs fails fast at
+        // startup (AddS3FileStore) until a human fills it in. No credentials, ever.
+        if (request.UseS3Storage)
+            root["Storage"] = new JsonObject { ["Bucket"] = "", ["Region"] = "" };
+
         if (request.IncludeNotifications)
         {
             root["Notification"] = new JsonObject
@@ -214,8 +223,13 @@ public static class ProjectEmitter
     private static GeneratedFile EmitAppSettingsDevelopment(ProjectRequest request)
     {
         var files = new JsonObject();
-        foreach (var entry in request.FileSourceEntries)
-            files[entry.Key] = new JsonObject { ["SourceFolder"] = "TestData" };
+        // Under S3 there is no local TestData folder to redirect to -- a development run reads the
+        // same bucket (a test bucket, via Storage__Bucket) as any other.
+        if (!request.UseS3Storage)
+        {
+            foreach (var entry in request.FileSourceEntries)
+                files[entry.Key] = new JsonObject { ["SourceFolder"] = "TestData" };
+        }
 
         var root = new JsonObject { ["FileSource"] = new JsonObject { ["Files"] = files } };
 

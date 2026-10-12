@@ -121,8 +121,8 @@ public static class ScriptTaskEmitter
         // seam does not stop the package building.
         var testGap = new GenerationGap($"{taskName}.ScriptTask",
             $"Script Task '{taskName}' has no generated test at all (a filled seam is human logic -- " +
-            "see the TEST-ORACLE work packet for this task to write one, exercising the ported " +
-            $"RunScriptAsync via a real PackageHarness and ctx.Variables/ctx.Uow).",
+            $"write one exercising the ported {SeamMethodName} via a real PackageHarness and ctx.Variables/ctx.Uow, " +
+            $"e.g. `await package.{PackageGenerator.SanitizeIdentifier(taskName)}(uow, ct)` once the seam is filled).",
             IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: task.RefId);
 
         return new EmitResult(

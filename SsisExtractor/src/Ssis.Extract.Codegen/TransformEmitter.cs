@@ -642,7 +642,9 @@ public static class TransformEmitter
                 // a separate, non-blocking work item from the port itself, sharing its own
                 // Location so both land under the same component in `gaps.json`.
                 gaps.Add(new GenerationGap($"{request.EntityName}.{sanitizedName}",
-                    $"Script Component '{group.Producer.Name}' ({sanitizedName}) has no generated test at all (a filled seam is human logic -- see the TEST-ORACLE work packet to write one).",
+                    $"Script Component '{group.Producer.Name}' ({sanitizedName}) has no generated test at all (a filled seam is human logic -- " +
+                    $"write one exercising the ported {sanitizedName} once its seam is filled, e.g. " +
+                    $"`new {request.TransformClassName}().Map(row, ctx)` on a representative `{request.RowTypeName}`).",
                     IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: group.Producer.RefId));
             }
             else
@@ -1062,7 +1064,11 @@ public static class TransformEmitter
         "Microsoft.FlatFileDestination",
     ];
 
-    private static bool IsRecognizedPassthroughComponent(PipelineComponentSpec component) =>
+    /// <summary>Internal (not private) so PackagePlanner's own top-level "every pipeline
+    /// component must be something this tool understands" check (Phase 2.3 of the
+    /// independent-review fix plan) can reuse the identical recognition list -- one set, not
+    /// two that could drift apart.</summary>
+    internal static bool IsRecognizedPassthroughComponent(PipelineComponentSpec component) =>
         RecognizedPassthroughComponentClassIds.Contains(component.ComponentClassId)
         || SourceInfo.IsSqlSource(component)
         || component.AdoNetDestination is not null

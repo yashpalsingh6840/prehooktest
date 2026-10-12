@@ -37,7 +37,10 @@ Every generated `{Package}.Tests` project carries its own `TestDoubles/` folder
 regenerated fresh every `generate` run, the same pattern `Ssis/SsisFn.cs` already uses. Its full
 public surface:
 
-- `using var harness = new PackageHarness();` -- one per test, disposed at the end.
+- `using var harness = new PackageHarness();` -- one per test, disposed at the end. Pass
+  `new PackageHarness(useSampleDataForFileSources: true)` instead for a happy-path `RunAsync`
+  test on a CSV/fixed-width-sourced package -- it points those sources at the already-generated
+  Tier-A `SampleData/` files rather than `TestData/`, so no real data has to be supplied.
 - `harness.Package()` -- a fresh instance of the generated `{Package}Package` class, wired to
   fakes: no database, no real file server, no real Script Task connections, no real secondary
   connection.
@@ -52,10 +55,17 @@ public surface:
     run AFTER rollback
   - `BulkInserts` (`List<BulkInsertCall>`, each with `DestinationTable`/`ColumnMappings`/
     `RowsWritten`) -- what a sink actually wrote
-  - `ThrowOnGetBindToken` (settable) -- makes the very next `GetBindTokenAsync` call throw; the
-    universal, package-shape-agnostic fault-injection point `RunAsync`'s own failure-path test
-    uses, since every generated `RunAsync` calls it unconditionally, right after `BeginAsync`,
-    before any step runs.
+  - `ThrowOnGetBindToken` (`Exception?`, settable) -- makes the very next `GetBindTokenAsync`
+    call throw it; the universal, package-shape-agnostic fault-injection point `RunAsync`'s own
+    failure-path test uses, since every generated `RunAsync` calls it unconditionally, right
+    after `BeginAsync`, before any step runs.
+  - `ThrowOnSqlWithoutTransactionContaining` (`string?`, settable) -- makes the next
+    `ExecuteSqlWithoutTransactionAsync` call whose SQL contains this substring throw, for
+    testing a failure handler that itself fails.
+- `harness.NewRealUnitOfWorkAsync()` -- a REAL `UnitOfWork` against an actual SQL Server, built
+  from this file's own `_databaseOptions` field (points at an unreachable server by default --
+  edit that one line for a local run against a real database). Only ever used from a test
+  carrying `[Trait("Category", "Integration")]`.
 - `harness.CreatedUnitsOfWork` (`ConcurrentBag<FakeUnitOfWork>`) -- every `FakeUnitOfWork`
   actually resolved from DI so far, one per scope. Only relevant when asserting on a run made
   through `RunAsync` itself (not a direct method call): a concurrent wave resolves more than one
@@ -156,6 +166,25 @@ necessary, not just plausible, verifying this feature end to end: a self-signed 
 failed with an SSL trust error until that key was added by hand, the exact same
 `TrustServerCertificate=True` requirement CLAUDE.md's own SMO-catalog-admin notes already
 document for a different tool in this repo.
+
+## Packages generated with `--storage s3`
+
+Same tests, same `PackageHarness` API -- only which file store the harness hands the package changes:
+
+- **Everything except an `Integration` read uses an in-memory store** (`TestDoubles/FakeFileStore.cs`,
+  generated only in S3 mode) with S3's semantics: a write *replaces* the object, there are no real
+  folders, `\` and `/` are the same, pattern matching is case-insensitive. No AWS access and no
+  credentials are needed, and nothing is written to disk. A read of a path nothing wrote falls back
+  to the real local file, so `SampleData/` and `TestData/` still resolve.
+- **Write and read file content through the harness, never `System.IO`:** `harness.WriteFileAsync(path, text)`,
+  `harness.FileExistsAsync(path)`, `harness.ReadFileAsync(path)`. The same helpers exist in local
+  mode, so a test you write works in both.
+- **A source's `Category=Integration` real-read test uses `new PackageHarness(useRealS3: true)`:** it
+  reads a *real* S3 object from the bucket in the `SSISX_TEST_S3_BUCKET` environment variable
+  (`SSISX_TEST_S3_REGION` optional; credentials from the default AWS chain) and fails with a message
+  saying so if the variable is unset. Upload the realistic file under the `TestData/` prefix (key
+  `TestData/<the file name the LOCAL-DATA packet names>`). Never invent a bucket name, and never put
+  credentials in a file.
 
 ## `RunAsync`'s two starter tests, and why they look different per package
 

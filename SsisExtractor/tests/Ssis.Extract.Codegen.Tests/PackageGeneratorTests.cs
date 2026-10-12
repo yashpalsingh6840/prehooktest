@@ -1137,7 +1137,7 @@ public class PackageGeneratorTests
         // The per-iteration SQL text is a call to its own named, parameterized statement class
         // (SqlStatementBuilderEmitter.EmitParameterized) -- never an inline lambda body.
         Assert.Contains("currentFile => SQL_LogFileNameStatement.BuildStatement(currentFile),", classFile.Content);
-        Assert.Contains("Log<ForEachLoopStep>());", classFile.Content);
+        Assert.Contains("Log<ForEachLoopStep>(), Files());", classFile.Content);
         // DFT_Load and FEL_SampleFiles are precedence-independent siblings -- the emitter
         // rewrite's phase 7 now runs them concurrently (see PackageStep.Wave), each in its own
         // RunBranchAsync transaction, rather than two sequential awaits.
@@ -1153,11 +1153,17 @@ public class PackageGeneratorTests
             statementFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(statementFile.Content);
 
-        // Only two unavoidable/non-blocking gaps -- the SqlCommand column-name assumption on
-        // DFT_Load's own source, and Notification. The old parallelism advisory is gone now that
-        // DFT_Load/FEL_SampleFiles run as real concurrency; no ForEach-Loop-specific gap either.
-        Assert.Equal(2, result.Gaps.Count);
+        // Three unavoidable/non-blocking gaps -- the SqlCommand column-name assumption on
+        // DFT_Load's own source, Notification, and (Phase 2.7 of the independent-review fix
+        // plan) the string-built-SQL quote-splice advisory: the same real repro the fix plan's
+        // own R7/S2 item names (Mapping/SQL_LogFileNameStatement.cs's "...N'" + currentFile +
+        // "');" -- a file name containing a single quote, e.g. O'Brien.csv, breaks or injects the
+        // resulting SQL, same as the real SSIS package). The old parallelism advisory is gone now
+        // that DFT_Load/FEL_SampleFiles run as real concurrency; no ForEach-Loop-specific
+        // BLOCKING gap either -- this one is deliberately advisory, not a "fix".
+        Assert.Equal(3, result.Gaps.Count);
         Assert.All(result.Gaps, g => Assert.False(g.IsBlocking));
+        Assert.Contains(result.Gaps, g => g.Reason.Contains("splices the loop's own variable inside a quoted literal", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1190,11 +1196,12 @@ public class PackageGeneratorTests
             classFile.Content);
         Assert.Contains("new ForEachFileLoopAction(", classFile.Content);
         Assert.Contains(
-            "currentFile => new CsvRowSource<SyntheticForEachDataFlowLoopTargetCsvRow>(\"Flat File Source\", new CsvSourceOptions { FilePath = currentFile }, new SyntheticForEachDataFlowLoopTargetCsvRowMap()),",
+            "currentFile => new CsvRowSource<SyntheticForEachDataFlowLoopTargetCsvRow>(\"Flat File Source\", new CsvSourceOptions { FilePath = currentFile }, new SyntheticForEachDataFlowLoopTargetCsvRowMap(), Files()),",
             classFile.Content);
         Assert.Contains("new SyntheticForEachDataFlowLoopTargetTransform(),", classFile.Content);
         Assert.Contains("new SqlBulkSink<SyntheticForEachDataFlowLoopTarget>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<SyntheticForEachDataFlowLoopTarget>>()),", classFile.Content);
-        Assert.Contains("Log<DataFlowStep<SyntheticForEachDataFlowLoopTargetCsvRow, SyntheticForEachDataFlowLoopTarget>>());", classFile.Content);
+        Assert.Contains("Log<DataFlowStep<SyntheticForEachDataFlowLoopTargetCsvRow, SyntheticForEachDataFlowLoopTarget>>(),", classFile.Content);
+        Assert.Contains("Files());", classFile.Content);
         Assert.Contains("await FEL_SampleFiles(uow, ct);", classFile.Content); // referenced in RunAsync
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 
@@ -1439,7 +1446,7 @@ public class PackageGeneratorTests
         Assert.Contains("var source = ExcelSource();", classFile.Content);
         Assert.Contains("internal IRowSource<SyntheticExcelSourceTargetExcelRow> ExcelSource()", classFile.Content);
         Assert.Contains(
-            "return new ExcelRowSource<SyntheticExcelSourceTargetExcelRow>(\"Excel Source\", new ExcelSourceOptions { FilePath = File(\"Excel Source\"), WorksheetName = \"DripEligibility$\", HasHeaderRow = true }, SyntheticExcelSourceTargetExcelRowReader.Read);",
+            "return new ExcelRowSource<SyntheticExcelSourceTargetExcelRow>(\"Excel Source\", new ExcelSourceOptions { FilePath = File(\"Excel Source\"), WorksheetName = \"DripEligibility$\", HasHeaderRow = true }, SyntheticExcelSourceTargetExcelRowReader.Read, Files());",
             classFile.Content);
         Assert.Contains("var step = new DataFlowStep<SyntheticExcelSourceTargetExcelRow, SyntheticExcelSourceTarget>(", classFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
@@ -1481,7 +1488,7 @@ public class PackageGeneratorTests
         Assert.Contains("var source = XMLSource();", classFile.Content);
         Assert.Contains("internal IRowSource<SyntheticXmlSourceTargetXmlRow> XMLSource()", classFile.Content);
         Assert.Contains(
-            "return new XmlRowSource<SyntheticXmlSourceTargetXmlRow>(\"XML Source\", new XmlSourceOptions { FilePath = File(\"XML Source\"), RowElementName = \"record\" }, SyntheticXmlSourceTargetXmlRowReader.Read);",
+            "return new XmlRowSource<SyntheticXmlSourceTargetXmlRow>(\"XML Source\", new XmlSourceOptions { FilePath = File(\"XML Source\"), RowElementName = \"record\" }, SyntheticXmlSourceTargetXmlRowReader.Read, Files());",
             classFile.Content);
         Assert.Contains("var step = new DataFlowStep<SyntheticXmlSourceTargetXmlRow, SyntheticXmlSourceTarget>(", classFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
@@ -1572,7 +1579,7 @@ public class PackageGeneratorTests
         // client-side) never touches the package's transaction.
         Assert.Contains("var source = ExcelSource();", classFile.Content);
         Assert.Contains(
-            "return new FilteringRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", new ExcelRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", new ExcelSourceOptions { FilePath = File(\"Excel Source\"), WorksheetName = \"DripEligibility$\", HasHeaderRow = true }, SyntheticExcelSourceSqlCommandWhereTargetExcelRowReader.Read), row => row.CustomerID > 5);",
+            "return new FilteringRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", new ExcelRowSource<SyntheticExcelSourceSqlCommandWhereTargetExcelRow>(\"Excel Source\", new ExcelSourceOptions { FilePath = File(\"Excel Source\"), WorksheetName = \"DripEligibility$\", HasHeaderRow = true }, SyntheticExcelSourceSqlCommandWhereTargetExcelRowReader.Read, Files()), row => row.CustomerID > 5);",
             classFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
 

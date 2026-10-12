@@ -506,6 +506,10 @@ public sealed record ProgramRequest(
     /// exception.</summary>
     public IReadOnlyList<FailureHandlerPlan> FailureHandlers { get; init; } = [];
 
+    /// <summary>True when generated with <c>--storage s3</c>: Program.cs then registers the S3
+    /// file store (from the "Storage" config section) instead of the default local one.</summary>
+    public bool UseS3Storage { get; init; }
+
     /// <summary>Whether to wire <c>IPackageResultNotifier</c>/<c>AddEmailNotifications</c> at all.
     /// Defaults to false -- a .dtsx carries no notification-recipient information (see the
     /// {Package}.Notification gap), so unconditionally emitting this hook on every generated
@@ -544,6 +548,7 @@ public static class ProgramEmitter
         w.Blank();
         w.Line("var builder = EtlHost.Create(args, PackageName);");
         w.Line($"builder.Services.AddEtlDbContext<{request.DbContextTypeName}>();");
+        if (request.UseS3Storage) w.Line("builder.Services.AddS3FileStore(builder.Configuration);");
         if (request.IncludeNotifications) w.Line("builder.Services.AddEmailNotifications(builder.Configuration);");
         w.Blank();
         w.Line("using var host = builder.Build();");

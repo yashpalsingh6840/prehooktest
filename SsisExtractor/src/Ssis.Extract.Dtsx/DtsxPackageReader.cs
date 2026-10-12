@@ -82,7 +82,24 @@ public static partial class DtsxPackageReader
         var (executables, precedenceConstraints, dag) = ReadContainerBody(root, cmDtsIdToName, cmRefIdToName, coverage);
         var eventHandlers = ReadEventHandlers(root, cmDtsIdToName, cmRefIdToName, coverage);
 
-        AddUnmappedIfPresent(root, Dts + "Configurations", "Package/Configurations", "legacy Package-Deployment-Model configurations not yet modeled (plan §4.2)", unmapped, coverage, excluded: false);
+        // Phase 2.4 (C3) of the independent-review fix plan. Confirmed real from
+        // RBC_Demo_ETL's own Package_Legacy.dtsx: <DTS:Configuration DTS:ConfigurationString=
+        // "...\Package_Legacy.dtsConfig" DTS:ConfigurationType="1" DTS:ObjectName=
+        // "LegacyXmlConfig" /> -- a legacy Package-Deployment-Model configuration override that
+        // is applied by the SSIS runtime BEFORE the package runs, and this tool has no evidence
+        // of what the referenced file/registry-key/parent-variable/SQL-table actually contains,
+        // so PackagePlanner reports one gap per configuration rather than silently ignoring it
+        // (see the model type's own doc comment for why this was left unwired until now).
+        var configurations = (root.Element(Dts + "Configurations")?.Elements(Dts + "Configuration") ?? [])
+            .Select(el => new PackageConfigurationSpec
+            {
+                ObjectName = el.Attr(Dts + "ObjectName"),
+                ConfigurationType = el.Attr(Dts + "ConfigurationType"),
+                ConnectionString = el.Attr(Dts + "ConnectionString"),
+                ConfigurationString = el.Attr(Dts + "ConfigurationString"),
+            })
+            .ToList();
+
         AddDesignTimePropertiesPlaceholder(root, unmapped, coverage);
 
         var executionSemantics = new ExecutionSemanticsSpec
@@ -146,7 +163,7 @@ public static partial class DtsxPackageReader
             Parameters = parameters,
             ConnectionManagers = connectionManagers,
             Variables = variables,
-            Configurations = [],
+            Configurations = configurations,
             EnableConfigurations = root.AttrBoolOrFalse(Dts + "EnableConfigurations"),
             Executables = executables,
             PrecedenceConstraints = precedenceConstraints,
@@ -637,9 +654,12 @@ public static partial class DtsxPackageReader
     /// Kahn's algorithm for topological order, plus a longest-path "level" for each node
     /// (see <see cref="ControlFlowDagSpec.ParallelLevels"/> for what that grouping does and
     /// doesn't guarantee). Constraints referencing a refId outside <paramref name="nodeRefIds"/>
-    /// are silently excluded from the graph rather than treated as an error -- shouldn't
-    /// happen for a well-formed .dtsx, but a hand-edited or corrupted file shouldn't crash
-    /// the whole extraction over one dangling reference.
+    /// are excluded from the graph itself (so they can't corrupt the topological order or the
+    /// levels) but collected into <see cref="ControlFlowDagSpec.DanglingConstraints"/> rather than
+    /// silently dropped -- shouldn't happen for a well-formed .dtsx, but a hand-edited or
+    /// corrupted file shouldn't crash the whole extraction over one dangling reference, and a
+    /// codegen-side consumer still needs to know it happened rather than treat the orphaned node
+    /// as a genuinely independent, concurrent root.
     /// </summary>
     internal static ControlFlowDagSpec BuildDag(List<string> nodeRefIds, List<PrecedenceConstraintSpec> constraints)
     {
@@ -651,11 +671,13 @@ public static partial class DtsxPackageReader
         var nodes = new HashSet<string>(nodeRefIds);
         var adjacency = nodeRefIds.ToDictionary(n => n, _ => new List<string>());
         var inDegree = nodeRefIds.ToDictionary(n => n, _ => 0);
+        var danglingConstraints = new List<PrecedenceConstraintSpec>();
 
         foreach (var c in constraints)
         {
             if (!nodes.Contains(c.From) || !nodes.Contains(c.To))
             {
+                danglingConstraints.Add(c);
                 continue;
             }
             adjacency[c.From].Add(c.To);
@@ -692,7 +714,7 @@ public static partial class DtsxPackageReader
         var hasCycle = topoOrder.Count != nodeRefIds.Count;
         if (hasCycle)
         {
-            return new ControlFlowDagSpec { HasCycle = true };
+            return new ControlFlowDagSpec { HasCycle = true, DanglingConstraints = danglingConstraints };
         }
 
         var parallelLevels = levels
@@ -706,6 +728,7 @@ public static partial class DtsxPackageReader
             TopologicalOrder = topoOrder,
             ParallelLevels = parallelLevels,
             HasCycle = false,
+            DanglingConstraints = danglingConstraints,
         };
     }
 

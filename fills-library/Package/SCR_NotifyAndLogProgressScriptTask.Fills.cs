@@ -1,3 +1,7 @@
+using System;
+using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 using Etl.Core.Abstractions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,30 +9,24 @@ using Microsoft.Extensions.Logging;
 
 namespace Package.ScriptTasks;
 
-// ssisx-fill: GapId=SCRIPT-TASK:Package:SCR_NotifyAndLogProgress.ScriptTask Author=Copilot Date=2026-09-22 EvidenceSha256=d4e7d94002e26ca46558d5f72c7143750195d7ac42fa6704cfda3a970bf99368
+// ssisx-fill: GapId=SCRIPT-TASK:Package:SCR_NotifyAndLogProgress.ScriptTask Author=GitHub Copilot Date=2026-10-09 EvidenceSha256=d4e7d94002e26ca46558d5f72c7143750195d7ac42fa6704cfda3a970bf99368
 public sealed partial class SCR_NotifyAndLogProgressScriptTask
 {
-    private async partial Task RunScriptAsync(ScriptTaskContext ctx, CancellationToken ct)
+    private partial async Task RunScriptAsync(ScriptTaskContext ctx, CancellationToken ct)
     {
-        ct.ThrowIfCancellationRequested();
         var startedAt = DateTime.UtcNow;
-        if (ctx.Variables.TryGet<string>("User::BatchStartTime", out var rawStart)
-            && !string.IsNullOrEmpty(rawStart)
-            && DateTime.TryParse(rawStart, out var parsedStart))
+        var rawStart = ctx.Variables.Get<string>("User::BatchStartTime", string.Empty);
+        if (!string.IsNullOrEmpty(rawStart))
         {
-            startedAt = parsedStart;
+            DateTime.TryParse(rawStart, out startedAt);
         }
 
-        var elapsed = (DateTime.UtcNow - startedAt).TotalSeconds;
-        var customers = ctx.Uow.Context.Set<Package.Model.StagingCustomers>();
-        var totalRows = await customers.CountAsync(ct);
-        var invalidRows = await customers.CountAsync(row => !row.IsValidRow, ct);
-
-        var message = string.Format(
-            "Staged {0} row(s), {1} flagged invalid, {2:F2}s after batch start.",
-            totalRows,
-            invalidRows,
-            elapsed);
+        var elapsedSeconds = (DateTime.UtcNow - startedAt).TotalSeconds;
+        var counts = await ctx.Uow.Context.Database
+            .SqlQueryRaw<BatchProgressCounts>(
+                "SELECT COUNT(*) AS TotalRows, SUM(CASE WHEN IsValidRow = 0 THEN 1 ELSE 0 END) AS InvalidRows FROM dbo.StagingCustomers")
+            .SingleAsync(ct);
+        var invalidRows = counts.InvalidRows ?? 0;
 
         await ctx.Uow.ExecuteSqlAsync(
             "INSERT INTO dbo.EtlAuditLog (PackageName, StepName, EventTime, RowsAffected, Message) VALUES ({0}, {1}, {2}, {3}, {4})",
@@ -37,13 +35,28 @@ public sealed partial class SCR_NotifyAndLogProgressScriptTask
                 ctx.Load.PackageName,
                 "Batch Progress",
                 DateTime.UtcNow,
-                totalRows,
-                message,
+                counts.TotalRows,
+                string.Format(
+                    "Staged {0} row(s), {1} flagged invalid, {2:F2}s after batch start.",
+                    counts.TotalRows,
+                    invalidRows,
+                    elapsedSeconds)
             },
             ct);
 
-        ctx.Variables.Set("User::RowsLoaded", totalRows);
-        ctx.Services.GetRequiredService<ILogger<SCR_NotifyAndLogProgressScriptTask>>()
-            .LogInformation("Staged {TotalRows} row(s), {InvalidRows} invalid.", totalRows, invalidRows);
+        ctx.Variables.Set("User::RowsLoaded", counts.TotalRows);
+
+        var logger = ctx.Services.GetRequiredService<ILogger<SCR_NotifyAndLogProgressScriptTask>>();
+        logger.LogInformation(
+            "Staged {TotalRows} row(s), {InvalidRows} invalid.",
+            counts.TotalRows,
+            invalidRows);
+    }
+
+    private sealed class BatchProgressCounts
+    {
+        public int TotalRows { get; set; }
+
+        public int? InvalidRows { get; set; }
     }
 }

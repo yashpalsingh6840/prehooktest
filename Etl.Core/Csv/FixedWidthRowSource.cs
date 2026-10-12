@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text;
 using Etl.Core.Abstractions;
+using Etl.Core.Storage;
 
 namespace Etl.Core.Csv;
 
@@ -22,7 +23,7 @@ namespace Etl.Core.Csv;
 /// run that this is exactly what SSIS itself produces.
 /// </summary>
 public sealed class FixedWidthRowSource<TRow>(
-    string name, FixedWidthSourceOptions options, IReadOnlyList<FixedWidthColumnFormat> columns, Func<string[], TRow> factory)
+    string name, FixedWidthSourceOptions options, IReadOnlyList<FixedWidthColumnFormat> columns, Func<string[], TRow> factory, IFileStore? fileStore = null)
     : IRowSource<TRow>
 {
     public string Name { get; } = name;
@@ -31,11 +32,13 @@ public sealed class FixedWidthRowSource<TRow>(
     {
         CodePageSupport.EnsureRegistered();
 
-        if (!File.Exists(options.FilePath))
+        var store = fileStore ?? LocalFileStore.Instance;
+        if (!await store.ExistsAsync(options.FilePath, ct))
             throw new FileNotFoundException($"{Name}: fixed-width source not found: {options.FilePath}", options.FilePath);
 
         var encoding = Encoding.GetEncoding(options.CodePage);
-        using var reader = new StreamReader(options.FilePath, encoding);
+        await using var stream = await store.OpenReadAsync(options.FilePath, ct);
+        using var reader = new StreamReader(stream, encoding);
 
         for (var i = 0; i < options.SkipRows; i++)
         {

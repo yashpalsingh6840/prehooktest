@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Etl.Core.Abstractions;
+using Etl.Core.Storage;
 using Microsoft.Extensions.Logging;
 
 namespace Etl.Core.Pipeline;
@@ -11,7 +12,7 @@ namespace Etl.Core.Pipeline;
 /// <see cref="ExecuteSqlStep"/>'s own doc comment already describes for Execute SQL).
 /// Row counts are always reported as zero -- a file operation has no rows.
 /// </summary>
-public sealed class FileSystemStep(string name, FileSystemPreLoadAction action, ILogger<FileSystemStep> logger) : ILoadTask
+public sealed class FileSystemStep(string name, FileSystemPreLoadAction action, ILogger<FileSystemStep> logger, IFileStore? fileStore = null) : ILoadTask
 {
     public string Name => name;
 
@@ -20,7 +21,7 @@ public sealed class FileSystemStep(string name, FileSystemPreLoadAction action, 
         var stopwatch = Stopwatch.StartNew();
         logger.LogInformation("{Step}: {Operation} {Source}{Destination}", name, action.Operation, action.SourcePath,
             action.DestinationPath is null ? "" : $" -> {action.DestinationPath}");
-        await FileSystemActionRunner.RunAsync(action, ct);
+        await FileSystemActionRunner.RunAsync(action, ct, fileStore);
         return new StepResult(name, 0, 0, stopwatch.Elapsed);
     }
 }
@@ -35,33 +36,31 @@ public sealed class FileSystemStep(string name, FileSystemPreLoadAction action, 
 /// </summary>
 public static class FileSystemActionRunner
 {
-    public static Task RunAsync(FileSystemPreLoadAction action, CancellationToken ct)
+    public static async Task RunAsync(FileSystemPreLoadAction action, CancellationToken ct, IFileStore? fileStore = null)
     {
+        var store = fileStore ?? LocalFileStore.Instance;
         ct.ThrowIfCancellationRequested();
         switch (action.Operation)
         {
             case FileSystemOperation.Copy:
-                File.Copy(action.SourcePath, RequireDestination(action), action.OverwriteDestination);
+                await store.CopyAsync(action.SourcePath, RequireDestination(action), action.OverwriteDestination, ct);
                 break;
 
             case FileSystemOperation.Move or FileSystemOperation.Rename:
-                var destination = RequireDestination(action);
-                if (action.OverwriteDestination && File.Exists(destination)) File.Delete(destination);
-                File.Move(action.SourcePath, destination);
+                await store.MoveAsync(action.SourcePath, RequireDestination(action), action.OverwriteDestination, ct);
                 break;
 
             case FileSystemOperation.Delete:
-                File.Delete(action.SourcePath);
+                await store.DeleteAsync(action.SourcePath, ct);
                 break;
 
             case FileSystemOperation.CreateDirectory:
-                Directory.CreateDirectory(action.SourcePath);
+                await store.EnsureFolderAsync(action.SourcePath, ct);
                 break;
 
             default:
                 throw new NotSupportedException($"FileSystemOperation.{action.Operation} is not supported.");
         }
-        return Task.CompletedTask;
     }
 
     private static string RequireDestination(FileSystemPreLoadAction action) =>

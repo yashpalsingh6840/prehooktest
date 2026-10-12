@@ -210,14 +210,36 @@ internal static class ApplyFillsCommand
         // gap's Location/FileSourceKey). A gap with no derivable file name (an expression-driven
         // connection manager with no design-time default path) is skipped here -- there is no name
         // to match a fill against, so it can never be auto-applied by this command at all.
-        var expectedLocalData = new Dictionary<string, Dictionary<string, GapSpec>>(StringComparer.Ordinal);
+        //
+        // Phase 4.6 (P5/a+b) of the independent-review fix plan, two real bugs fixed together:
+        // (a) this used to be keyed OrdinalIgnoreCase while the "still open" check below compared
+        // Ordinal, so a fill saved as e.g. "customers.CSV" against an expected "Customers.csv"
+        // matched here (silently applied, wrong case preserved on disk) but then ALSO reported as
+        // "still open" -- both true at once, neither trustworthy. Now Ordinal throughout, with a
+        // dedicated case-mismatch diagnosis at apply time instead of a silent case-insensitive
+        // match. (b) the value used to be a single GapSpec, so two-or-more gaps legitimately
+        // sharing one expected file name (a raw source read by more than one flow) silently
+        // collapsed to whichever gap was enumerated last -- the other gap(s) never got marked
+        // applied by the one file that in fact answers all of them.
+        var expectedLocalData = new Dictionary<string, Dictionary<string, List<GapSpec>>>(StringComparer.Ordinal);
         foreach (var gap in gaps.Where(g => g.Kind == GapKind.LocalFileSourceData && g.ExpectedFileName is { Length: > 0 }))
         {
             if (!expectedLocalData.TryGetValue(gap.Package, out var byFileName))
-                expectedLocalData[gap.Package] = byFileName = new Dictionary<string, GapSpec>(StringComparer.OrdinalIgnoreCase);
-            byFileName[gap.ExpectedFileName!] = gap;
+                expectedLocalData[gap.Package] = byFileName = new Dictionary<string, List<GapSpec>>(StringComparer.Ordinal);
+            if (!byFileName.TryGetValue(gap.ExpectedFileName!, out var gapsForFile))
+                byFileName[gap.ExpectedFileName!] = gapsForFile = [];
+            gapsForFile.Add(gap);
         }
 
+        // Phase 1.5 (R6): an EXPLICITLY given --fills that doesn't exist is a typo -- a hard
+        // usage error (exit 2), not a silent "nothing to apply" (exit 3 with no explanation at
+        // all, as it used to be). The default location (no --fills given) is deliberately NOT
+        // held to this: it's entirely normal for fills/ to not exist yet on a fresh --out.
+        if (fillsDir is not null && !Directory.Exists(fillsDir))
+        {
+            Console.Error.WriteLine($"error: --fills '{fillsDir}' does not exist.");
+            return ExitCodes.UsageOrInputError;
+        }
         fillsDir = Path.GetFullPath(fillsDir ?? Path.Combine(outDir, "fills"));
         // Same default `ssisx conformance` itself uses -- read-only here, and silently absent
         // (never an error) when nobody has run `conformance` for this --out at all.
@@ -226,6 +248,14 @@ internal static class ApplyFillsCommand
 
         var applied = new List<string>();
         var orphanedFiles = new List<string>();
+        // Phase 4.6 (P5/d): a file with NO recognizable partial method/class at all (a missing
+        // `partial` keyword, a renamed seam) is a genuinely different problem from a file that
+        // DOES declare a real seam but one no current gap asks for -- the latter alone is what
+        // "implements a seam no gap asked for" describes. Conflating the two under one label
+        // used to tell a human whose fill has a typo that their (nonexistent) seam is orphaned,
+        // when the real problem is that apply-fills never recognized it as a seam at all.
+        var noSeamFiles = new List<string>();
+        var collidingFiles = new List<string>();
         var orphanedMethods = new List<string>();
         var staleSeams = new List<string>();
         var unknownPackages = new List<string>();
@@ -268,9 +298,39 @@ internal static class ApplyFillsCommand
                 // separate TEST-ORACLE handling below with different provenance rules -- a file
                 // there must not also be considered by this seam scan.
                 var testsSubdir = Path.Combine(packageDir, "Tests") + Path.DirectorySeparatorChar;
-                foreach (var fillFile in Directory.EnumerateFiles(packageDir, "*.cs", SearchOption.AllDirectories)
-                             .Where(f => !f.StartsWith(testsSubdir, StringComparison.OrdinalIgnoreCase))
-                             .OrderBy(f => f, StringComparer.Ordinal))
+                var seamFiles = Directory.EnumerateFiles(packageDir, "*.cs", SearchOption.AllDirectories)
+                    .Where(f => !f.StartsWith(testsSubdir, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(f => f, StringComparer.Ordinal)
+                    .ToList();
+
+                // Phase 4.6 (P5/e): every seam fill is copied into ONE FLAT `Fills/` directory,
+                // keyed only by its own bare file name -- so two fills that differ only by their
+                // NESTED source path (e.g. mirroring the generated project's own Mapping\ and
+                // Sql\ folders, both containing a file named the same) used to silently overwrite
+                // each other, with whichever sorted last winning and the other's own work simply
+                // vanishing with no error at all. Detected up front, for the whole package, before
+                // anything is copied -- a collision blocks every one of the colliding files, not
+                // just all-but-one of them, since there's no way to know which one a human meant.
+                foreach (var group in seamFiles.GroupBy(f => Path.GetFileName(f), StringComparer.Ordinal))
+                {
+                    if (group.Count() <= 1) continue;
+                    var relativePaths = group.Select(f => Path.GetRelativePath(packageDir, f));
+                    Console.WriteLine($"    {group.Key}: COLLISION -- {group.Count()} fills under different subfolders flatten to the same name ({string.Join(", ", relativePaths)}); NONE copied. Rename one or the other.");
+                    foreach (var f in group)
+                    {
+                        collidingFiles.Add($"{packageName}/{Path.GetRelativePath(packageDir, f)}");
+                        fillRecords.Add(new FillRecordSpec
+                        {
+                            Package = packageName, FileName = Path.GetRelativePath(packageDir, f), Seam = "(name collision)",
+                            GapId = null, Status = FillStatus.Orphaned,
+                        });
+                    }
+                }
+                var collidingNames = new HashSet<string>(
+                    seamFiles.GroupBy(f => Path.GetFileName(f), StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => g.Key),
+                    StringComparer.Ordinal);
+
+                foreach (var fillFile in seamFiles.Where(f => !collidingNames.Contains(Path.GetFileName(f))))
                 {
                     var fileName = Path.GetFileName(fillFile);
                     var relativePath = Path.GetRelativePath(packageDir, fillFile);
@@ -378,7 +438,12 @@ internal static class ApplyFillsCommand
                     // still unfilled too, which is the honest state of the actual generated output.
                     if (recognized.Count == 0 || staleInThisFile.Count > 0)
                     {
-                        if (staleInThisFile.Count == 0 && (seams.Count == 0 || seams.All(s => s.Gap is null)))
+                        if (staleInThisFile.Count == 0 && seams.Count == 0)
+                        {
+                            Console.WriteLine($"      -> file NOT copied (no seam declaration recognized at all)");
+                            noSeamFiles.Add($"{packageName}/{fileName}");
+                        }
+                        else if (staleInThisFile.Count == 0 && seams.All(s => s.Gap is null))
                         {
                             Console.WriteLine($"      -> file NOT copied (nothing in it matched a current gap)");
                             orphanedFiles.Add($"{packageName}/{fileName}");
@@ -420,10 +485,14 @@ internal static class ApplyFillsCommand
 
                         if (gap is null)
                         {
-                            Console.WriteLine(provenance?.GapId is null
-                                ? "      ORPHANED -- no leading '// ssisx-fill: GapId=...' comment found"
-                                : $"      ORPHANED -- GapId '{provenance.GapId}' does not match any current TEST-ORACLE gap in this package");
-                            testOracleOrphaned.Add($"{packageName}/Tests/{fileName}");
+                            // Phase 4.6 (P5/d): the reason is carried in the SAME string the summary
+                            // prints, not a blanket "GapId did not match" suffix that used to
+                            // misdescribe the "no comment at all" case as a GapId mismatch.
+                            var reason = provenance?.GapId is null
+                                ? "no leading '// ssisx-fill: GapId=...' comment found"
+                                : $"GapId '{provenance.GapId}' does not match any current TEST-ORACLE gap in this package";
+                            Console.WriteLine($"      ORPHANED -- {reason}");
+                            testOracleOrphaned.Add($"{packageName}/Tests/{fileName} ({reason})");
                             fillRecords.Add(new FillRecordSpec
                             {
                                 Package = packageName, FileName = $"Tests/{fileName}", Seam = "(whole file)",
@@ -477,18 +546,39 @@ internal static class ApplyFillsCommand
                 var knownLocalData = expectedLocalData.TryGetValue(packageName, out var byFileName) ? byFileName : [];
                 if (Directory.Exists(testDataDir))
                 {
-                    foreach (var fillFile in Directory.EnumerateFiles(testDataDir).OrderBy(f => f, StringComparer.Ordinal))
+                    // Phase 5.2 (G1): `svk sampledata --for-gaps` marks a file it auto-closed with
+                    // a sidecar `<file>.provenance` -- itself never a data file to apply, so it is
+                    // excluded from the scan up front rather than showing up as its own, nonsense
+                    // "orphaned" entry.
+                    foreach (var fillFile in Directory.EnumerateFiles(testDataDir)
+                                 .Where(f => !f.EndsWith(".provenance", StringComparison.OrdinalIgnoreCase))
+                                 .OrderBy(f => f, StringComparer.Ordinal))
                     {
                         var fileName = Path.GetFileName(fillFile);
-                        Console.WriteLine($"    TestData\\{fileName}");
-                        if (!knownLocalData.TryGetValue(fileName, out var gap))
+                        var synthetic = File.Exists(fillFile + ".provenance");
+                        Console.WriteLine($"    TestData\\{fileName}" + (synthetic ? " (synthetic -- svk sampledata --for-gaps)" : ""));
+                        if (!knownLocalData.TryGetValue(fileName, out var gapsForFile))
                         {
-                            Console.WriteLine("      ORPHANED -- file name does not match any current gap's own expected TestData\\ name");
+                            // Phase 4.6 (P5/a): distinguish "genuinely unknown" from "right file,
+                            // wrong case" -- the latter used to match silently (OrdinalIgnoreCase)
+                            // and get copied with its own wrong casing preserved, then ALSO show
+                            // up under "still open" below (Ordinal there), reporting both Applied
+                            // and not-yet-filled for the identical gap. Neither is copied now.
+                            var caseMismatch = knownLocalData.Keys
+                                .FirstOrDefault(k => string.Equals(k, fileName, StringComparison.OrdinalIgnoreCase));
+                            if (caseMismatch is not null)
+                            {
+                                Console.WriteLine($"      ORPHANED -- file name differs only by CASE from the expected 'TestData\\{caseMismatch}' -- rename it to match exactly; not copied");
+                            }
+                            else
+                            {
+                                Console.WriteLine("      ORPHANED -- file name does not match any current gap's own expected TestData\\ name");
+                            }
                             localDataOrphaned.Add($"{packageName}/TestData/{fileName}");
                             fillRecords.Add(new FillRecordSpec
                             {
                                 Package = packageName, FileName = $"TestData/{fileName}", Seam = "(data file)",
-                                GapId = null, Status = FillStatus.Orphaned,
+                                GapId = null, Status = FillStatus.Orphaned, Synthetic = synthetic,
                             });
                             continue;
                         }
@@ -496,13 +586,19 @@ internal static class ApplyFillsCommand
                         var dataTargetDir = Path.Combine(generateDir, packageName, "TestData");
                         Directory.CreateDirectory(dataTargetDir);
                         File.Copy(fillFile, Path.Combine(dataTargetDir, fileName), overwrite: true);
-                        Console.WriteLine($"      APPLIED ({gap.GapId}) -> {dataTargetDir}\\{fileName}");
-                        localDataApplied.Add($"{packageName}/TestData/{fileName} ({gap.GapId})");
-                        fillRecords.Add(new FillRecordSpec
+                        // One file can genuinely answer several gaps at once (Phase 4.6, P5/b) --
+                        // e.g. the same raw source read by more than one flow -- so every gap this
+                        // file's own name satisfies is recorded, not just the first/last one seen.
+                        Console.WriteLine($"      APPLIED ({string.Join(", ", gapsForFile.Select(g => g.GapId))}) -> {dataTargetDir}\\{fileName}");
+                        foreach (var gap in gapsForFile)
                         {
-                            Package = packageName, FileName = $"TestData/{fileName}", Seam = "(data file)", GapId = gap.GapId,
-                            Status = FillStatus.Applied,
-                        });
+                            localDataApplied.Add($"{packageName}/TestData/{fileName} ({gap.GapId})" + (synthetic ? " [synthetic]" : ""));
+                            fillRecords.Add(new FillRecordSpec
+                            {
+                                Package = packageName, FileName = $"TestData/{fileName}", Seam = "(data file)", GapId = gap.GapId,
+                                Status = FillStatus.Applied, Synthetic = synthetic,
+                            });
+                        }
                         if (!localDataFilled.TryGetValue(packageName, out var dataSet))
                             localDataFilled[packageName] = dataSet = new HashSet<string>(StringComparer.Ordinal);
                         dataSet.Add(fileName);
@@ -561,8 +657,11 @@ internal static class ApplyFillsCommand
         foreach (var (packageName, byFileName) in expectedLocalData.OrderBy(p => p.Key, StringComparer.Ordinal))
         {
             localDataFilled.TryGetValue(packageName, out var filled);
-            foreach (var (fileName, gap) in byFileName.OrderBy(p => p.Key, StringComparer.Ordinal))
-                if (filled?.Contains(fileName) != true) localDataOpen.Add($"{gap.GapId}  ->  TestData/{fileName}");
+            foreach (var (fileName, gapsForFile) in byFileName.OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                if (filled?.Contains(fileName) == true) continue;
+                foreach (var gap in gapsForFile) localDataOpen.Add($"{gap.GapId}  ->  TestData/{fileName}");
+            }
         }
 
         // Group every EXPECTED seam (not just the ones a fill answered) by the ScriptCode RuleId
@@ -619,11 +718,11 @@ internal static class ApplyFillsCommand
             manifestPath);
 
         Report(
-            fillsDir, manifestPath, applied, stillUnfilled, staleSeams, orphanedFiles, orphanedMethods, unknownPackages, conformanceLinks,
+            fillsDir, manifestPath, applied, stillUnfilled, staleSeams, orphanedFiles, noSeamFiles, collidingFiles, orphanedMethods, unknownPackages, conformanceLinks,
             testOracleApplied, testOracleOpen, testOracleStale, testOracleOrphaned,
             localDataApplied, localDataOpen, localDataOrphaned);
 
-        if (orphanedFiles.Count > 0 || orphanedMethods.Count > 0 || unknownPackages.Count > 0
+        if (orphanedFiles.Count > 0 || noSeamFiles.Count > 0 || collidingFiles.Count > 0 || orphanedMethods.Count > 0 || unknownPackages.Count > 0
             || testOracleOrphaned.Count > 0 || localDataOrphaned.Count > 0) return 1;
         return stillUnfilled.Count > 0 || staleSeams.Count > 0 || testOracleStale.Count > 0 ? 3 : 0;
     }
@@ -750,7 +849,7 @@ internal static class ApplyFillsCommand
 
     private static void Report(
         string fillsDir, string manifestPath, List<string> applied, List<string> stillUnfilled,
-        List<string> staleSeams, List<string> orphanedFiles, List<string> orphanedMethods,
+        List<string> staleSeams, List<string> orphanedFiles, List<string> noSeamFiles, List<string> collidingFiles, List<string> orphanedMethods,
         List<string> unknownPackages, List<string> conformanceLinks,
         List<string> testOracleApplied, List<string> testOracleOpen, List<string> testOracleStale, List<string> testOracleOrphaned,
         List<string> localDataApplied, List<string> localDataOpen, List<string> localDataOrphaned)
@@ -782,7 +881,30 @@ internal static class ApplyFillsCommand
             sb.AppendLine("Orphaned -- implements a seam no gap asked for, so NOT copied. Usually the package");
             sb.AppendLine("changed and that seam is gone; re-read the current work packet before reusing it.");
             foreach (var line in orphanedMethods) sb.AppendLine($"  ? {line}");
-            foreach (var line in orphanedFiles) sb.AppendLine($"  ? {line} (skipped entirely -- nothing in it matched a seam)");
+            foreach (var line in orphanedFiles) sb.AppendLine($"  ? {line} (skipped entirely -- its own seam(s) don't match a current gap)");
+        }
+
+        // Phase 4.6 (P5/e): two fills under different subfolders that flatten to the SAME bare
+        // file name in the one flat Fills/ target -- neither is copied, since there's no way to
+        // know which one a human meant to keep.
+        if (collidingFiles.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Name collision -- two or more fills flatten to the same Fills\\ file name, so NONE of");
+            sb.AppendLine("them were copied. Rename one or the other so they no longer collide.");
+            foreach (var line in collidingFiles) sb.AppendLine($"  ! {line}");
+        }
+
+        // Phase 4.6 (P5/d): kept separate from "Orphaned" above -- this file never declared a
+        // recognizable seam at all (a missing `partial` keyword, a renamed method/class), which
+        // is a different mistake than implementing a real seam nothing asks for any more.
+        if (noSeamFiles.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("No seam found -- this file has no 'partial <ReturnType> <Method>(...)' or 'partial class");
+            sb.AppendLine("<Name>' declaration ssisx recognizes as a seam, so NOT copied. Check for a missing");
+            sb.AppendLine("'partial' keyword or a renamed method/class against the work packet's own signature.");
+            foreach (var line in noSeamFiles) sb.AppendLine($"  ? {line} (skipped entirely -- no seam declaration recognized)");
         }
 
         if (unknownPackages.Count > 0)
@@ -810,7 +932,7 @@ internal static class ApplyFillsCommand
             foreach (var line in testOracleApplied) sb.AppendLine($"  + {line}");
             foreach (var line in testOracleStale) sb.AppendLine($"  ~ {line}");
             foreach (var line in testOracleOpen) sb.AppendLine($"  . {line}");
-            foreach (var line in testOracleOrphaned) sb.AppendLine($"  ? {line} (its own GapId comment did not match a current gap in this package)");
+            foreach (var line in testOracleOrphaned) sb.AppendLine($"  ? {line}");
         }
 
         if (localDataApplied.Count > 0 || localDataOpen.Count > 0 || localDataOrphaned.Count > 0)

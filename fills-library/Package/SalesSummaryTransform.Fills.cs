@@ -1,9 +1,14 @@
+using System;
+using Etl.Core.Abstractions;
+using Package.Sql;
+using Package.Model;
+
 namespace Package.Mapping;
 
 public sealed partial class SalesSummaryTransform
 {
-    // ssisx-fill: GapId=SCRIPT-COLUMN:Package:SalesSummary.SCR_ComputeCustomerTier Author=Copilot Date=2026-09-22 EvidenceSha256=acb950341c43d6703f6b632a5deaa307a86c1d04914c3f382b6ea5acc05f95cf
-    private partial SCR_ComputeCustomerTierResult SCR_ComputeCustomerTier(Package.Sql.SalesSummarySqlRow row, in Etl.Core.Abstractions.RowContext ctx)
+    // ssisx-fill: GapId=SCRIPT-COLUMN:Package:SalesSummary.SCR_ComputeCustomerTier Author=GitHub Copilot Date=2026-10-09 EvidenceSha256=acb950341c43d6703f6b632a5deaa307a86c1d04914c3f382b6ea5acc05f95cf
+    private partial SCR_ComputeCustomerTierResult SCR_ComputeCustomerTier(SalesSummarySqlRow row, in RowContext ctx)
     {
         var customerTier = row.TotalRevenue >= 10000
             ? "Platinum"
@@ -13,7 +18,7 @@ public sealed partial class SalesSummaryTransform
                     ? "Silver"
                     : "Bronze";
 
-        return new(
+        return new SCR_ComputeCustomerTierResult(
             CustomerTier: customerTier,
             ProcessedDateTime: DateTime.UtcNow);
     }

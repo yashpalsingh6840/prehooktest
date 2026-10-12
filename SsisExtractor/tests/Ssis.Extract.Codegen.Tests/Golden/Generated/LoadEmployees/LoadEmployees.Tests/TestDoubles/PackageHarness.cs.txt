@@ -8,6 +8,7 @@ using Etl.Core.Abstractions;
 using Etl.Core.Data;
 using Etl.Core.Hosting;
 using Etl.Core.Notifications;
+using Etl.Core.Storage;
 using LoadEmployees.Model;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -82,6 +83,8 @@ internal sealed class PackageHarness : IDisposable
         // would make every Lookup-bearing package's RunAsync failure-path test that slow.
         _databaseOptions = new DatabaseOptions { Server = "(fake)", Database = "Fake", ConnectTimeoutSeconds = 1 };
         services.AddSingleton<IOptions<DatabaseOptions>>(Options.Create(_databaseOptions));
+        Files = LocalFileStore.Instance;
+        services.AddSingleton(Files);
         Directory.CreateDirectory(_sinkOutputDirectory);
         services.AddSingleton<IOptions<FileSourceOptions>>(Options.Create(new FileSourceOptions
         {
@@ -156,6 +159,27 @@ internal sealed class PackageHarness : IDisposable
     /// here before calling the method; created eagerly in the constructor (see above) since
     /// Directory.EnumerateFiles throws if the folder does not exist yet.</summary>
     public string ForEachLoopFolder(string key) => Path.Combine(_sinkOutputDirectory, key);
+
+    /// <summary>The file store the package under test reads and writes through -- the real local filesystem.</summary>
+    public IFileStore Files { get; }
+
+    /// <summary>Writes a text file through <see cref="Files"/> (replacing any existing one).</summary>
+    public async Task WriteFileAsync(string path, string text)
+    {
+        await using var stream = await Files.OpenWriteAsync(path, append: false, default);
+        await using var writer = new StreamWriter(stream);
+        await writer.WriteAsync(text);
+    }
+
+    public Task<bool> FileExistsAsync(string path) => Files.ExistsAsync(path, default);
+
+    public async Task<string> ReadFileAsync(string path)
+    {
+        await using var stream = await Files.OpenReadAsync(path, default);
+        using var reader = new StreamReader(stream);
+        return await reader.ReadToEndAsync();
+    }
+
 
     private static LoadEmployeesDbContext NewDbContext()
     {

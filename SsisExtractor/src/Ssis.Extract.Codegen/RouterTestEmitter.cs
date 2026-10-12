@@ -104,14 +104,16 @@ public static class RouterTestEmitter
             catch (SsisExpressionError ex)
             {
                 return new EmitResult([], [new GenerationGap(routerClassName,
-                    $"starter test not generated -- case '{branch.OutputName}' could not be evaluated against a representative row: {ex.Message}. Add an assertion by hand.",
+                    $"starter test not generated -- case '{branch.OutputName}' could not be evaluated against a representative row: {ex.Message}. " +
+                    $"Add one by hand: construct a `{rowTypeName}` and assert `new {routerClassName}().SelectBranch(row, ctx)` lands in the branch you expect.",
                     IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: splitComponent.RefId)]);
             }
 
             if (evaluated.IsNull || evaluated.Type != SsisType.Bool)
             {
                 return new EmitResult([], [new GenerationGap(routerClassName,
-                    $"starter test not generated -- case '{branch.OutputName}' evaluated to {(evaluated.IsNull ? "NULL" : "a non-boolean value")} against a representative row, which this pilot does not assert. Add an assertion by hand.",
+                    $"starter test not generated -- case '{branch.OutputName}' evaluated to {(evaluated.IsNull ? "NULL" : "a non-boolean value")} against a representative row, which this pilot does not assert. " +
+                    $"Add one by hand: construct a `{rowTypeName}` and assert `new {routerClassName}().SelectBranch(row, ctx)` lands in the branch you expect.",
                     IsBlocking: false, Kind: GapKind.TestOracle, EvidenceRefId: splitComponent.RefId)]);
             }
 

@@ -108,7 +108,7 @@ public static partial class PackageGenerator
     /// package never had any equivalent of, on the strength of nothing but "maybe someone
     /// configures it later." Opt in via `ssisx generate --notifications` once real recipients/SMTP
     /// settings actually exist.</param>
-    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix, GapDecisions? decisions = null, bool emitSeams = false, bool skipTests = false, bool includeNotifications = false)
+    public static PackageGenerateResult Generate(PackageSpec package, string? namespacePrefix, GapDecisions? decisions = null, bool emitSeams = false, bool skipTests = false, bool includeNotifications = false, StorageMode storage = StorageMode.Local)
     {
         decisions ??= GapDecisions.None;
         var ns = namespacePrefix is null ? package.ObjectName : $"{namespacePrefix}.{package.ObjectName}";
@@ -264,6 +264,38 @@ public static partial class PackageGenerator
 
         foreach (var flow in plan.Flows)
         {
+            // Phase 2.5 (D1) of the independent-review fix plan, checked before EVERYTHING else
+            // for this flow. Every row/entity DECLARATION site (SqlRowEmitter/EntityEmitter/
+            // DbContextEmitter/...) resolves an identifier via MakeColumnIdentifierResolver
+            // (memoized per raw name, so a genuine collision between two DIFFERENT raw names
+            // gets disambiguated with a _2 suffix there) -- but every REFERENCE site
+            // (TransformEmitter/RouterEmitter/ColumnExpressionBuilders/PackageClassEmitter's own
+            // selectors/the starter-test emitters) calls bare SanitizeIdentifier instead, with no
+            // memoization and so no disambiguation. Confirmed real via SyntheticCollide.dtsx (a
+            // destination with two real columns, "LastCostPrice" (int, renamed from "ID") and
+            // "Last Cost Price" (decimal) -- both sanitize to the identical "LastCostPrice"):
+            // declaration sites correctly emit "int LastCostPrice" / "decimal LastCostPrice_2",
+            // but a reference site's own bare SanitizeIdentifier("Last Cost Price") also resolves
+            // to "LastCostPrice" -- the WRONG (first-declared, int) property -- so the transform
+            // silently assigns the int ID's value into the decimal price property. It compiles
+            // and runs; it reads the wrong column into the wrong property on every row.
+            //
+            // The lowest-risk fix, per the plan's own recommendation: refuse the whole flow
+            // rather than thread one shared resolver map through every reference site (~10
+            // emitters) for a collision that has never yet been observed on a real portfolio.
+            // Checked here uniformly via flow.DestinationComponent -- for a Conditional Split/
+            // Multicast/PctSampling/SCD flow this is only that shape's own "non-authoritative
+            // placeholder" destination (see DataFlowPlan.DestinationComponent's own doc comment),
+            // not necessarily every branch's own destination -- deliberately NOT extended to walk
+            // every branch too, matching the plan's own "defer it unless a real portfolio hits
+            // collisions" call.
+            if (FindColumnIdentifierCollision(flow.DestinationComponent) is { } collision)
+            {
+                gaps.Add(new GenerationGap(flow.TaskName,
+                    $"columns '{collision.RawA}' and '{collision.RawB}' both sanitize to '{collision.Identifier}'; generation refused to avoid mis-wiring (a reference to one could silently resolve to the other's declared property)"));
+                continue;
+            }
+
             // Checked before ConditionalSplit and before any entity-name/source resolution --
             // SyntheticLookupSplit.dtsx has BOTH a Lookup and a Conditional Split in the same
             // flow, and the Lookup's own unrecoverable join key makes the whole flow unsafe to
@@ -376,7 +408,7 @@ public static partial class PackageGenerator
                 var splitStep = GenerateConditionalSplitFlow(
                     package, ns, flow, split, fileSourceEntries, files, testFiles, testCoverageNotes, tables, functionsUsed,
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
-                    csvSampleCandidates, componentHolders);
+                    csvSampleCandidates, componentHolders, storage);
                 if (splitStep is not null) wiredSplits[flow] = splitStep;
                 continue;
             }
@@ -399,7 +431,7 @@ public static partial class PackageGenerator
             {
                 var unionFlow = GenerateUnionFlow(
                     package, ns, flow, union, fileSourceEntries, files, tables, functionsUsed,
-                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams);
+                    primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams, storage);
                 if (unionFlow is not null) wiredFlows[flow] = unionFlow;
                 continue;
             }
@@ -409,7 +441,7 @@ public static partial class PackageGenerator
                 var multicastStep = GenerateMulticastFlow(
                     package, ns, flow, multicast, fileSourceEntries, files, testFiles, testCoverageNotes, tables, functionsUsed,
                     primaryKeysByDestination, gaps, ref authMode, ref userId, ref targetServer, ref targetDatabase, emitSeams,
-                    multicastTestCandidates, csvSampleCandidates, componentHolders);
+                    multicastTestCandidates, csvSampleCandidates, componentHolders, storage);
                 if (multicastStep is not null) wiredMulticasts[flow] = multicastStep;
                 continue;
             }
@@ -507,7 +539,7 @@ public static partial class PackageGenerator
             FlowSinkSpec sink;
             if (isFlatFileDestination)
             {
-                var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, flow.DestinationComponent, entityName, fileSourceEntries, gaps);
+                var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, flow.DestinationComponent, entityName, fileSourceEntries, gaps, storage);
                 if (flatFileSink is null) continue; // ResolveFlatFileSink already added the reason
                 sink = flatFileSink;
                 flatFileSinkCandidates.Add(new FlatFileSinkCandidate(flatFileSink, entityName, flow.DestinationComponent));
@@ -798,6 +830,7 @@ public static partial class PackageGenerator
                 VariableSeeds = plan.VariableSeeds,
                 FailureHandlers = plan.FailureHandlers,
                 IncludeNotifications = includeNotifications,
+                UseS3Storage = storage == StorageMode.S3,
             };
             Merge(files, gaps, ProgramEmitter.Emit(programRequest));
             Merge(files, gaps, PackageClassEmitter.Emit(programRequest, out methodInventory, out var supportsFakeHappyPath, out var usesLookupPreload));
@@ -843,6 +876,23 @@ public static partial class PackageGenerator
             // to test against (each is a local function inside the owning flow's one method, e.g.
             // AGG_ByRegion()'s own BuildRawSource()) -- that remains the allWiredSources loop's
             // own documented, separate limitation below.
+            // Phase 5.5 (P4/G3): a LOCAL-DATA gap only earns its keep when some GENERATED
+            // Integration test would actually read the file it names -- a source nested inside a
+            // Merge Join/Union/Aggregate side gets its own TestData/appsettings wiring (needed to
+            // avoid the KeyNotFoundException bug fixed above) but never its own top-level starter
+            // source test (see the same "a source nested inside a Merge Join/Union/Aggregate side
+            // is still deliberately NOT covered here" comment two paragraphs up), so asking a
+            // human/AI for a real file nobody's test reads is pure waste. Real case that motivated
+            // this: RBC's own CustomerContacts.csv, read only by a Merge Join side. Computed from
+            // the exact same four wired-flow dictionaries `allWiredSources` below builds from --
+            // matched by component name, not FileSourceKey, since that's what FlowSourceSpec
+            // itself carries.
+            var testedSourceComponentNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var w in wiredFlows.Values) testedSourceComponentNames.Add(w.Source.ComponentName);
+            foreach (var w in wiredSplits.Values) testedSourceComponentNames.Add(w.Source.ComponentName);
+            foreach (var w in wiredMulticasts.Values) testedSourceComponentNames.Add(w.Source.ComponentName);
+            foreach (var w in wiredOleDbCommands.Values) testedSourceComponentNames.Add(w.Source.ComponentName);
+
             var sampleDataByKey = new Dictionary<string, SampleDataResult>();
             var testDataFileEntries = new List<(string Key, string FileName)>();
             foreach (var candidate in csvSampleCandidates)
@@ -870,9 +920,14 @@ public static partial class PackageGenerator
                 // "LocalFileSourceData" taxonomy row (Docs/Generated-Tests-Plan.md's own Tier B):
                 // this is now the ONLY way this source's own Integration-tagged read test gets
                 // real data to run against, not an optional upgrade over an already-passing test.
-                gaps.Add(new GenerationGap(candidate.FileSourceKey,
-                    $"'{candidate.FileSourceKey}' has no real data yet -- its own Integration-tagged read test needs a REALISTIC file matching this connection manager's own declared schema at `TestData/{realFileName}` (see the LOCAL-DATA work packet; a schema-correct but synthetic reference was written to `SampleData/{sample?.FileName ?? candidate.FileSourceKey}` as a starting point, not a substitute).",
-                    IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: candidate.ConnectionManager.RefId));
+                // Phase 5.5 (P4/G3): only reported when a generated Integration test actually
+                // exists to read it -- see testedSourceComponentNames' own doc comment above.
+                if (testedSourceComponentNames.Contains(candidate.ComponentName))
+                {
+                    gaps.Add(new GenerationGap(candidate.FileSourceKey,
+                        $"'{candidate.FileSourceKey}' has no real data yet -- its own Integration-tagged read test needs a REALISTIC file matching this connection manager's own declared schema at `TestData/{realFileName}` (see the LOCAL-DATA work packet; a schema-correct but synthetic reference was written to `SampleData/{sample?.FileName ?? candidate.FileSourceKey}` as a starting point, not a substitute).",
+                        IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: candidate.ConnectionManager.RefId));
+                }
             }
             foreach (var sample in sampleDataByKey.Values)
                 testFiles.Add(sample.File with { RelativePath = $"{package.ObjectName}.Tests/{sample.File.RelativePath}" });
@@ -933,7 +988,7 @@ public static partial class PackageGenerator
                     $"'{xmlFlow.FileSourceKey}' (row element '{xmlFlow.RowElementName}') has no Tier-A synthetic sample at all -- this tool has no .xml writer. A real XML file matching the declared schema under `TestData/{realFileName}` is the only way its own Integration-tagged read test can run (see the LOCAL-DATA work packet).",
                     IsBlocking: false, Kind: GapKind.LocalFileSourceData, EvidenceRefId: null));
             }
-            foreach (var f in TestDoublesEmitter.Emit(ns, className, dbContextTypeName, testDataFileEntries, sinkFileKeys, distinctFileSystemTaskKeys, forEachLoopKeys, secondaryConnections.Keys.ToList(), sampleDataFallbackEntries).Files)
+            foreach (var f in TestDoublesEmitter.Emit(ns, className, dbContextTypeName, testDataFileEntries, sinkFileKeys, distinctFileSystemTaskKeys, forEachLoopKeys, secondaryConnections.Keys.ToList(), sampleDataFallbackEntries, storage).Files)
                 testFiles.Add(f with { RelativePath = $"{package.ObjectName}.Tests/{f.RelativePath}" });
             var runAsyncTest = RunAsyncFailureTestEmitter.Emit(ns, className, plan.FailureHandlers.Count > 0, supportsFakeHappyPath, usesLookupPreload, includeNotifications);
             var runAsyncTestFinal = runAsyncTest with { RelativePath = $"{package.ObjectName}.Tests/{runAsyncTest.RelativePath}" };
@@ -1027,7 +1082,7 @@ public static partial class PackageGenerator
                     // always calls the source method with no uow argument.
                     var fileSourceTest = ComponentTestEmitter.EmitFileSourceTest(
                         $"{package.ObjectName}.Tests", ns, $"{ns}.Csv", rowTypeName,
-                        sourceEntry.MethodName, sourceNeedsUow: false, source.ComponentName);
+                        sourceEntry.MethodName, sourceNeedsUow: false, source.ComponentName, storage);
                     var fileSourceTestFinal = fileSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{fileSourceTest.RelativePath}" };
                     testFiles.Add(fileSourceTestFinal);
                     NoteTest(testCoverageNotes, fileSourceTestFinal, "Source-File",
@@ -1046,7 +1101,7 @@ public static partial class PackageGenerator
                 else if (source is ExcelFlowSource)
                 {
                     var excelSourceTest = ComponentTestEmitter.EmitExcelSourceTest(
-                        $"{package.ObjectName}.Tests", ns, $"{ns}.Excel", rowTypeName, sourceEntry.MethodName, source.ComponentName);
+                        $"{package.ObjectName}.Tests", ns, $"{ns}.Excel", rowTypeName, sourceEntry.MethodName, source.ComponentName, storage);
                     var excelSourceTestFinal = excelSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{excelSourceTest.RelativePath}" };
                     testFiles.Add(excelSourceTestFinal);
                     NoteTest(testCoverageNotes, excelSourceTestFinal, "Source-Excel",
@@ -1062,7 +1117,7 @@ public static partial class PackageGenerator
                     // a fourth, near-identical emitter method.
                     var xmlSourceTest = ComponentTestEmitter.EmitFileSourceTest(
                         $"{package.ObjectName}.Tests", ns, $"{ns}.Xml", rowTypeName,
-                        sourceEntry.MethodName, sourceNeedsUow: false, source.ComponentName);
+                        sourceEntry.MethodName, sourceNeedsUow: false, source.ComponentName, storage);
                     var xmlSourceTestFinal = xmlSourceTest with { RelativePath = $"{package.ObjectName}.Tests/{xmlSourceTest.RelativePath}" };
                     testFiles.Add(xmlSourceTestFinal);
                     NoteTest(testCoverageNotes, xmlSourceTestFinal, "Source-Xml",
@@ -1251,6 +1306,21 @@ public static partial class PackageGenerator
                 authMode = "Windows";
             }
 
+            if (storage == StorageMode.S3)
+            {
+                // The .dtsx's own paths are local ones (a drive letter, a UNC share); under S3 they only
+                // survive as a KEY PREFIX inside the configured bucket. Derived here, flagged below.
+                for (var i = 0; i < fileSourceEntries.Count; i++)
+                {
+                    var e = fileSourceEntries[i];
+                    fileSourceEntries[i] = e with { SourceFolder = ToS3KeyPrefix(e.SourceFolder) };
+                }
+                if (fileSourceEntries.Count > 0)
+                    gaps.Add(new GenerationGap($"{package.ObjectName}.Storage",
+                        "generated for S3 storage (--storage s3): every FileSource SourceFolder in appsettings.json is now an S3 key prefix derived from the original local path " +
+                        "(drive/share removed, '/' separators) -- review each one, and set Storage:Bucket (and Storage:Region). Credentials come from the default AWS chain.", IsBlocking: false));
+            }
+
             Merge(files, gaps, ProjectEmitter.Emit(new ProjectRequest(
                 PackageName: package.ObjectName,
                 FileSourceEntries: fileSourceEntries,
@@ -1260,6 +1330,7 @@ public static partial class PackageGenerator
                 SecondaryConnections: secondaryConnections.Values.ToList())
             {
                 IncludeNotifications = includeNotifications,
+                UseS3Storage = storage == StorageMode.S3,
             }));
 
             // Reported either way, wording tied to what was actually generated -- with
@@ -1530,6 +1601,34 @@ public static partial class PackageGenerator
             resolvedByRaw[raw] = name;
             return name;
         };
+    }
+
+    private readonly record struct ColumnIdentifierCollision(string RawA, string RawB, string Identifier);
+
+    /// <summary>Phase 2.5 (D1) of the independent-review fix plan -- see the per-flow loop's own
+    /// call site for the full reasoning. Two genuinely different raw external column names that
+    /// <see cref="SanitizeIdentifier"/> maps to the identical identifier (a declaration site
+    /// disambiguates this via <see cref="MakeColumnIdentifierResolver"/>'s own suffix; a bare
+    /// reference site does not, and can silently resolve to the WRONG one). Returns the first such
+    /// pair found, in the destination's own declared column order, or null when there is none.</summary>
+    private static ColumnIdentifierCollision? FindColumnIdentifierCollision(PipelineComponentSpec destinationComponent)
+    {
+        var seen = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var column in PipelineResolver.ResolveDestinationInput(destinationComponent).Columns)
+        {
+            var raw = column.ExternalColumnName;
+            var identifier = SanitizeIdentifier(raw);
+            if (seen.TryGetValue(identifier, out var firstRaw))
+            {
+                if (!string.Equals(firstRaw, raw, StringComparison.Ordinal))
+                {
+                    return new ColumnIdentifierCollision(firstRaw, raw, identifier);
+                }
+                continue;
+            }
+            seen[identifier] = raw;
+        }
+        return null;
     }
 
     /// <summary>Evidence-based, not a fact lookup -- see NullabilityInference's own doc comment
@@ -1866,7 +1965,7 @@ public static partial class PackageGenerator
         List<FileSourceEntryRequest> fileSourceEntries, List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams)
+        bool emitSeams, StorageMode storage = StorageMode.Local)
     {
         // Same isFlatFileDestination branching the single-destination path already has -- both
         // real probe fixtures for THIS round (gap-audit Phase 3.6) are Flat File destinations
@@ -1930,7 +2029,7 @@ public static partial class PackageGenerator
         FlowSinkSpec sink;
         if (isFlatFileDestination)
         {
-            var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, flow.DestinationComponent, entityName, fileSourceEntries, gaps);
+            var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, flow.DestinationComponent, entityName, fileSourceEntries, gaps, storage);
             if (flatFileSink is null) return null; // ResolveFlatFileSink already added the reason
             sink = flatFileSink;
         }
@@ -1996,7 +2095,8 @@ public static partial class PackageGenerator
         List<DbContextEmitter.TableSpec> tables, HashSet<string> functionsUsed,
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
-        bool emitSeams, List<CsvSampleCandidate>? csvSampleCandidates = null, ComponentHolderRegistry? componentHolders = null)
+        bool emitSeams, List<CsvSampleCandidate>? csvSampleCandidates = null, ComponentHolderRegistry? componentHolders = null,
+        StorageMode storage = StorageMode.Local)
     {
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
         // Never null here: ConditionalSplitBranchPlan.Discarded is gated to Multicast only in
@@ -2198,7 +2298,7 @@ public static partial class PackageGenerator
         Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, List<GenerationGap> gaps,
         ref string? authMode, ref string? userId, ref string? targetServer, ref string? targetDatabase,
         bool emitSeams, List<MulticastTestCandidate>? testCandidates = null, List<CsvSampleCandidate>? csvSampleCandidates = null,
-        ComponentHolderRegistry? componentHolders = null)
+        ComponentHolderRegistry? componentHolders = null, StorageMode storage = StorageMode.Local)
     {
         var flowBaseName = SanitizeIdentifier(flow.TaskName);
 
@@ -2292,7 +2392,7 @@ public static partial class PackageGenerator
                 Merge(branchFiles, gaps, EntityEmitter.Emit($"{ns}.Model", entityName, branchDestination, nullableColumnNames));
                 if (isFlatFile)
                 {
-                    var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, branchDestination, entityName, fileSourceEntries, gaps);
+                    var flatFileSink = ResolveFlatFileSink(package, flow.TaskName, branchDestination, entityName, fileSourceEntries, gaps, storage);
                     if (flatFileSink is null) return null; // ResolveFlatFileSink already added the reason
                     sink = flatFileSink;
                 }
@@ -4000,6 +4100,18 @@ public static partial class PackageGenerator
         return null;
     }
 
+    /// <summary>A local folder to an S3 key prefix: drive letters and UNC server/share prefixes are
+    /// meaningless inside a bucket, so what remains is a relative prefix with '/' separators
+    /// ("D:\data\in" becomes "data/in"). "TODO" placeholders pass through.</summary>
+    internal static string ToS3KeyPrefix(string folder)
+    {
+        if (folder == "TODO") return folder;
+        var p = folder.Replace('\\', '/');
+        if (p.StartsWith("//")) { var parts = p.TrimStart('/').Split('/', 2); p = parts.Length > 1 ? parts[1] : ""; }
+        else if (p.Length >= 2 && p[1] == ':') p = p[2..];
+        return p.Trim('/');
+    }
+
     /// <summary>Design-time default file path, split into folder + file name for
     /// appsettings.json. Both real PoC packages show why this can't always be filled in: every
     /// CSV connection manager here is expression-driven off a project parameter (CLAUDE.md's
@@ -4179,7 +4291,7 @@ public static partial class PackageGenerator
 
     private static FlatFileFlowSink? ResolveFlatFileSink(
         PackageSpec package, string taskName, PipelineComponentSpec destination, string fileSourceKey,
-        List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps)
+        List<FileSourceEntryRequest> fileSourceEntries, List<GenerationGap> gaps, StorageMode storage = StorageMode.Local)
     {
         var payload = destination.FlatFileDestination;
         var connectionManager = payload?.ConnectionName is { } cmName ? FindConnectionManager(package, cmName) : null;
@@ -4242,6 +4354,10 @@ public static partial class PackageGenerator
         }
 
         fileSourceEntries.Add(BuildFileSourceEntry(fileSourceKey, connectionManager, gaps));
+        if (storage == StorageMode.S3 && payload.Overwrite != true)
+            gaps.Add(new GenerationGap(taskName,
+                $"Flat File Destination '{destination.Name}' appends to its file (Overwrite=false), but an S3 object cannot be appended to -- with --storage s3 the object is REPLACED on every run, dropping what a previous run wrote", IsBlocking: false));
+
         return new FlatFileFlowSink(destination.Name, fileSourceKey, payload.Overwrite == true, headerLine, columns);
     }
 
@@ -4383,6 +4499,15 @@ public static partial class PackageGenerator
         {
             gaps.Add(new GenerationGap(loop.TaskName, $"{loop.InnerTaskName}: {notTranslatable.Reason}"));
             return null;
+        }
+
+        // Phase 2.7 (S2): reported, never silently "fixed" -- see
+        // ForEachLoopEmitter.IsSplicedInsideAQuotedSqlLiteral's own doc comment.
+        if (ForEachLoopEmitter.IsSplicedInsideAQuotedSqlLiteral(loop.SqlTemplate, loop.VariableName))
+        {
+            gaps.Add(new GenerationGap(loop.TaskName,
+                $"{loop.InnerTaskName}: string-built SQL splices the loop's own variable inside a quoted literal -- a value containing ' breaks or injects the resulting SQL, same as the original SSIS package",
+                IsBlocking: false));
         }
 
         var nameMode = ResolveForEachFileNameMode(loop.NameRetrievalTypeRaw, loop.TaskName, gaps);

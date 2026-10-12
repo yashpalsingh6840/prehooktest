@@ -33,15 +33,21 @@ param(
     [string] $OutputFolder
 )
 
-$ErrorActionPreference = 'Stop'
+# Deliberately NOT 'Stop': ssisx.exe (a native command) writes its own benign warnings --
+# "N input(s) could not be read", a duplicate-name skip -- to stderr, and under 'Stop' PowerShell
+# upgrades that into a terminating NativeCommandError even though nothing here actually failed
+# (the same "a native command's own stderr is not a script error" lesson this repo's own
+# Run-Pipeline.ps1 already applies). Every genuinely fatal condition below uses an explicit
+# `Write-Error ... -ErrorAction Stop` instead.
+$ErrorActionPreference = 'Continue'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $exe = Join-Path $scriptDir 'ssisx.exe'
 
 if (-not (Test-Path $exe)) {
-    Write-Error "ssisx.exe not found next to this script ($scriptDir). Keep them in the same folder."
+    Write-Error "ssisx.exe not found next to this script ($scriptDir). Keep them in the same folder." -ErrorAction Stop
 }
 if (-not (Test-Path $PackageFolder)) {
-    Write-Error "Package folder not found: $PackageFolder"
+    Write-Error "Package folder not found: $PackageFolder" -ErrorAction Stop
 }
 if (-not $OutputFolder) { $OutputFolder = Join-Path $scriptDir 'ssis-survey' }
 
@@ -51,25 +57,35 @@ Write-Host "Found    : $dtsxCount .dtsx file(s)"
 Write-Host "Writing  : $OutputFolder"
 Write-Host ""
 
-# --recursive always: a portfolio is essentially never flat, and the flag is harmless on one
-# that is. Redaction is on by default and is not overridable here on purpose -- the whole
-# point of this wrapper is that the run that leaves the client site cannot accidentally be
-# the one with --no-redact on it.
-& $exe report --input $PackageFolder --out $OutputFolder --recursive
+# `report`/`conformance` were retired as separate verbs (folded into `extract` -- see
+# ExtractCommand.cs's own header comment): one call now does the portfolio report, column
+# lineage, gate-1 conformance, and gate-2 testgen together. --recursive always: a portfolio is
+# essentially never flat, and the flag is harmless on one that is. Redaction is on by default
+# and is not overridable here on purpose -- the whole point of this wrapper is that the run
+# that leaves the client site cannot accidentally be the one with --no-redact on it.
+& $exe extract --input $PackageFolder --out $OutputFolder --recursive
 $reportExit = $LASTEXITCODE
 
 Write-Host ""
-if ($reportExit -eq 2) {
-    Write-Warning "Some packages could not be read -- see load-failures.md in the output. The survey is still valid for the rest."
-} elseif ($reportExit -ne 0) {
-    Write-Error "ssisx report failed with exit code $reportExit."
-}
+$digestMd = Join-Path $OutputFolder 'portfolio-digest.md'
+$digestJson = Join-Path $OutputFolder 'portfolio-digest.json'
+$digestExists = (Test-Path $digestMd) -and (Test-Path $digestJson)
 
-# The conformance pass is cheap and additive: it turns each package into the list of
-# obligations a rewrite has to satisfy, which is the thing that actually sizes the work.
-& $exe conformance --input $PackageFolder --out $OutputFolder --recursive
-if ($LASTEXITCODE -eq 2) {
-    Write-Warning "conformance pass reported a usage/extraction error; the report output above is unaffected."
+if ($reportExit -eq 0) {
+    # Nothing to warn about.
+}
+elseif ($reportExit -eq 2 -and $digestExists) {
+    # Exit 2 now means a genuine (non-benign) load failure occurred somewhere in the portfolio
+    # (see ExtractCommand's own Phase-1.2 fix -- a benign duplicate-name/package-not-found skip
+    # no longer produces this exit at all), but extract still ran every stage regardless and the
+    # digest still exists -- a partial result worth keeping, not a failed run.
+    Write-Warning "Some packages could not be read -- see load-failures.md in the output. The survey is still valid for the rest."
+}
+elseif ($reportExit -eq 2) {
+    Write-Error "ssisx extract exited 2 (genuine load failure) and produced no portfolio-digest.md -- see any console output above and $PackageFolder\load-failures.md. Nothing to export." -ErrorAction Stop
+}
+else {
+    Write-Error "ssisx extract failed with exit code $reportExit." -ErrorAction Stop
 }
 
 # Two tiers on purpose, because the usual situation is that nothing may leave the site.
@@ -79,8 +95,9 @@ if ($LASTEXITCODE -eq 2) {
 #  - The DIGEST is counts only, built from an allow-list of Microsoft/tool vocabulary, with
 #    package names reduced to PKG-nnn. It is also printed to the console above, so it can
 #    leave as a screenshot or a phone photo when no file may leave at all.
-$digestMd = Join-Path $OutputFolder 'portfolio-digest.md'
-$digestJson = Join-Path $OutputFolder 'portfolio-digest.json'
+if (-not $digestExists) {
+    Write-Error "portfolio-digest.md/.json not found under $OutputFolder -- nothing to export. See any warnings above." -ErrorAction Stop
+}
 
 $exportDir = "$OutputFolder-EXPORT"
 if (Test-Path $exportDir) { Remove-Item $exportDir -Recurse -Force }

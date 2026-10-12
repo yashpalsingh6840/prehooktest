@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Etl.Core.Abstractions;
+using Etl.Core.Storage;
 using Microsoft.Extensions.Logging;
 
 namespace Etl.Core.Pipeline;
@@ -31,7 +32,8 @@ public sealed class ForEachFileDataFlowStep<TRow, TEntity>(
     Func<string, IRowSource<TRow>> sourceFactory,
     IRowTransform<TRow, TEntity> transform,
     IBulkSink<TEntity> sink,
-    ILogger<DataFlowStep<TRow, TEntity>> stepLogger) : ILoadTask
+    ILogger<DataFlowStep<TRow, TEntity>> stepLogger,
+    IFileStore? fileStore = null) : ILoadTask
     where TEntity : class
 {
     public string Name => name;
@@ -39,10 +41,7 @@ public sealed class ForEachFileDataFlowStep<TRow, TEntity>(
     public async Task<StepResult> RunAsync(IUnitOfWork uow, LoadContext load, CancellationToken ct)
     {
         var stopwatch = Stopwatch.StartNew();
-        var searchOption = action.Recurse ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-        var files = Directory.EnumerateFiles(action.Folder, action.FileSpec, searchOption)
-            .OrderBy(path => path, StringComparer.Ordinal)
-            .ToList();
+        var files = await (fileStore ?? LocalFileStore.Instance).ListAsync(action.Folder, action.FileSpec, action.Recurse, ct);
 
         long totalRead = 0, totalWritten = 0;
         foreach (var path in files)

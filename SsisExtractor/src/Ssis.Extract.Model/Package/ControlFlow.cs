@@ -51,4 +51,15 @@ public sealed class ControlFlowDagSpec
 
     /// <summary>True if the constraints don't form a DAG (a cycle exists among this container's own children). SSIS's designer prevents authoring this, but a hand-edited or corrupted file could still contain one -- reported rather than looping forever or throwing.</summary>
     public bool HasCycle { get; init; }
+
+    /// <summary>
+    /// Constraints excluded from the graph because their own <see cref="PrecedenceConstraintSpec.From"/>
+    /// or <see cref="PrecedenceConstraintSpec.To"/> refId doesn't match any of this container's own
+    /// children -- a hand-edited/corrupted .dtsx, not a well-formed one. Before this field existed
+    /// they were silently dropped, which meant the node that should have had an incoming edge kept
+    /// in-degree 0 and was treated as an independent root -- turning it into a concurrent
+    /// <c>Task.WhenAll</c> branch with no gap at all. Reported here so a codegen-side consumer can
+    /// name the specific dangling reference instead.
+    /// </summary>
+    public List<PrecedenceConstraintSpec> DanglingConstraints { get; init; } = [];
 }

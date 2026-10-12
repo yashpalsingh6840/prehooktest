@@ -38,6 +38,22 @@ public class RulesEngineTests
         ConnectionManagers = connectionManagers,
     };
 
+    private static PackageSpec WithConfigurations(PackageSpec package, List<PackageConfigurationSpec> configurations) => new()
+    {
+        ObjectName = package.ObjectName,
+        SourceDtsxPath = package.SourceDtsxPath,
+        Sha256 = package.Sha256,
+        FileSizeBytes = package.FileSizeBytes,
+        LastWriteTimeUtc = package.LastWriteTimeUtc,
+        ProtectionLevelRaw = package.ProtectionLevelRaw,
+        ProtectionLevelName = package.ProtectionLevelName,
+        Coverage = package.Coverage,
+        Executables = package.Executables,
+        Variables = package.Variables,
+        ConnectionManagers = package.ConnectionManagers,
+        Configurations = configurations,
+    };
+
     [Fact]
     public void DisabledTask_ProducesFinding()
     {
@@ -47,6 +63,29 @@ public class RulesEngineTests
         var findings = RulesEngine.Evaluate(package);
 
         Assert.Contains(findings, f => f.RuleId == "disabled-task" && f.Location == "T1");
+    }
+
+    [Fact]
+    public void LegacyPackageConfiguration_ProducesFinding()
+    {
+        // Phase 2.4 (C3) of the independent-review fix plan -- real evidenced shape from
+        // RBC_Demo_ETL's own Package_Legacy.dtsx (ConfigurationType=1, LegacyXmlConfig).
+        var config = new PackageConfigurationSpec { ObjectName = "LegacyXmlConfig", ConfigurationType = "1", ConfigurationString = @"D:\config\Package_Legacy.dtsConfig" };
+        var package = WithConfigurations(TestFixtures.MinimalPackage("P"), [config]);
+
+        var findings = RulesEngine.Evaluate(package);
+
+        Assert.Contains(findings, f => f.RuleId == "legacy-package-configurations" && f.PackageName == "P");
+    }
+
+    [Fact]
+    public void NoConfigurations_ProducesNoLegacyPackageConfigurationFinding()
+    {
+        var package = TestFixtures.MinimalPackage("P");
+
+        var findings = RulesEngine.Evaluate(package);
+
+        Assert.DoesNotContain(findings, f => f.RuleId == "legacy-package-configurations");
     }
 
     [Fact]

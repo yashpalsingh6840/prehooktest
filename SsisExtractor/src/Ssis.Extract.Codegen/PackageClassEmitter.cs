@@ -233,7 +233,7 @@ public static class PackageClassEmitter
             var columns = string.Join(", ", sink.Columns.Select(c =>
                 $"new FlatFileColumnFormat({Str(c.PropertyName)}, {(c.FixedWidth is { } w ? w.ToString() : "null")}, {Str(c.Delimiter)})"));
             var header = sink.HeaderLine is null ? "null" : Str(sink.HeaderLine);
-            return $"new FlatFileBulkSink<{entityName}>(File({Str(sink.FileSourceKey)}), {(sink.Overwrite ? "true" : "false")}, {header}, [{columns}], Log<FlatFileBulkSink<{entityName}>>())";
+            return $"new FlatFileBulkSink<{entityName}>(File({Str(sink.FileSourceKey)}), {(sink.Overwrite ? "true" : "false")}, {header}, [{columns}], Log<FlatFileBulkSink<{entityName}>>(), Files())";
         }
 
         void EmitSinkConstruction(CodeWriter w, string entityName, FlowSinkSpec sink, string assignPrefix)
@@ -253,7 +253,7 @@ public static class PackageClassEmitter
                     var opts = csv.SkipRows == 0
                         ? $"new CsvSourceOptions {{ FilePath = File({Str(csv.FileSourceKey)}) }}"
                         : $"new CsvSourceOptions {{ FilePath = File({Str(csv.FileSourceKey)}), SkipRows = {csv.SkipRows} }}";
-                    w.Line($"{assignPrefix}new CsvRowSource<{rowTypeName}>({Str(csv.ComponentName)}, {opts}, new {rowTypeName}Map());");
+                    w.Line($"{assignPrefix}new CsvRowSource<{rowTypeName}>({Str(csv.ComponentName)}, {opts}, new {rowTypeName}Map(), Files());");
                     break;
                 }
                 case FixedWidthFlowSource fw:
@@ -269,7 +269,7 @@ public static class PackageClassEmitter
                     w.Dedent();
                     w.Line("};");
                     var opts = $"new FixedWidthSourceOptions {{ FilePath = File({Str(fw.FileSourceKey)}), SkipRows = {fw.SkipRows} }}";
-                    w.Line($"{assignPrefix}new FixedWidthRowSource<{rowTypeName}>({Str(fw.ComponentName)}, {opts}, columns, {rowTypeName}Reader.Read);");
+                    w.Line($"{assignPrefix}new FixedWidthRowSource<{rowTypeName}>({Str(fw.ComponentName)}, {opts}, columns, {rowTypeName}Reader.Read, Files());");
                     break;
                 }
                 case SqlFlowSource sql:
@@ -299,14 +299,14 @@ public static class PackageClassEmitter
                 {
                     var opts = $"new ExcelSourceOptions {{ FilePath = File({Str(excel.FileSourceKey)}), WorksheetName = {Str(excel.WorksheetName)}, HasHeaderRow = {(excel.HasHeaderRow ? "true" : "false")} }}";
                     w.Line(excel.WhereFilter is { } filter
-                        ? $"{assignPrefix}new FilteringRowSource<{rowTypeName}>({Str(excel.ComponentName)}, new ExcelRowSource<{rowTypeName}>({Str(excel.ComponentName)}, {opts}, {rowTypeName}Reader.Read), row => {filter});"
-                        : $"{assignPrefix}new ExcelRowSource<{rowTypeName}>({Str(excel.ComponentName)}, {opts}, {rowTypeName}Reader.Read);");
+                        ? $"{assignPrefix}new FilteringRowSource<{rowTypeName}>({Str(excel.ComponentName)}, new ExcelRowSource<{rowTypeName}>({Str(excel.ComponentName)}, {opts}, {rowTypeName}Reader.Read, Files()), row => {filter});"
+                        : $"{assignPrefix}new ExcelRowSource<{rowTypeName}>({Str(excel.ComponentName)}, {opts}, {rowTypeName}Reader.Read, Files());");
                     break;
                 }
                 case XmlFlowSource xmlSource:
                 {
                     var opts = $"new XmlSourceOptions {{ FilePath = File({Str(xmlSource.FileSourceKey)}), RowElementName = {Str(xmlSource.RowElementName)} }}";
-                    w.Line($"{assignPrefix}new XmlRowSource<{rowTypeName}>({Str(xmlSource.ComponentName)}, {opts}, {rowTypeName}Reader.Read);");
+                    w.Line($"{assignPrefix}new XmlRowSource<{rowTypeName}>({Str(xmlSource.ComponentName)}, {opts}, {rowTypeName}Reader.Read, Files());");
                     break;
                 }
                 case MergeJoinFlowSource mj:
@@ -602,7 +602,7 @@ public static class PackageClassEmitter
                     methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramFileSystemStep fsStep:
-                    methods.Line($"var step = new FileSystemStep({Str(fsStep.StepName)}, {FileSystemActionExpr(fsStep.Action)}, Log<FileSystemStep>());");
+                    methods.Line($"var step = new FileSystemStep({Str(fsStep.StepName)}, {FileSystemActionExpr(fsStep.Action)}, Log<FileSystemStep>(), Files());");
                     methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
                 case ProgramForEachFileLoopStep loopStep:
@@ -611,7 +611,7 @@ public static class PackageClassEmitter
                     methods.Line($"{Str(loopStep.StepName)},");
                     methods.Line($"new ForEachFileLoopAction(File({Str(loopStep.FileSourceKey)}), {Str(loopStep.FileSpec)}, {(loopStep.Recurse ? "true" : "false")}, ForEachFileNameMode.{loopStep.NameMode}),");
                     methods.Line($"{loopStep.CurrentFileParamName} => {loopStep.StatementClassName}.BuildStatement({loopStep.CurrentFileParamName}),");
-                    methods.Line("Log<ForEachLoopStep>());");
+                    methods.Line("Log<ForEachLoopStep>(), Files());");
                     methods.Dedent();
                     methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
@@ -620,12 +620,13 @@ public static class PackageClassEmitter
                     methods.Indent();
                     methods.Line($"{Str(dfStep.StepName)},");
                     methods.Line($"new ForEachFileLoopAction(File({Str(dfStep.FileSourceKey)}), {Str(dfStep.FileSpec)}, {(dfStep.Recurse ? "true" : "false")}, ForEachFileNameMode.{dfStep.NameMode}),");
-                    methods.Line($"{dfStep.CurrentFileParamName} => new CsvRowSource<{dfStep.RowTypeName}>({Str(dfStep.SourceComponentName)}, new CsvSourceOptions {{ FilePath = {dfStep.FilePathExpression} }}, new {dfStep.RowTypeName}Map()),");
+                    methods.Line($"{dfStep.CurrentFileParamName} => new CsvRowSource<{dfStep.RowTypeName}>({Str(dfStep.SourceComponentName)}, new CsvSourceOptions {{ FilePath = {dfStep.FilePathExpression} }}, new {dfStep.RowTypeName}Map(), Files()),");
                     methods.Line($"new {dfStep.TransformClassName}(),");
                     // A ForEach-Data-Flow-Loop is always SQL-sunk -- PlanForEachDataFlowLoop's own
                     // gate requires it, matching the old emitter's usesSql-detection comment.
                     methods.Line($"new SqlBulkSink<{dfStep.EntityName}>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<{dfStep.EntityName}>>()),");
-                    methods.Line($"Log<DataFlowStep<{dfStep.RowTypeName}, {dfStep.EntityName}>>());");
+                    methods.Line($"Log<DataFlowStep<{dfStep.RowTypeName}, {dfStep.EntityName}>>(),");
+                    methods.Line("Files());");
                     methods.Dedent();
                     methods.Line("_results.Add(await step.RunAsync(uow, _load, ct));");
                     break;
@@ -646,7 +647,7 @@ public static class PackageClassEmitter
                         : "null,");
                     methods.Line($"() => {forStep.EvalCSharpPredicate},");
                     methods.Line($"() => {string.Format(setCounter, forStep.AssignCSharpValueExpression)},");
-                    methods.Line($"() => new CsvRowSource<{forStep.RowTypeName}>({Str(forStep.SourceComponentName)}, new CsvSourceOptions {{ FilePath = {forStep.FilePathExpression} }}, new {forStep.RowTypeName}Map()),");
+                    methods.Line($"() => new CsvRowSource<{forStep.RowTypeName}>({Str(forStep.SourceComponentName)}, new CsvSourceOptions {{ FilePath = {forStep.FilePathExpression} }}, new {forStep.RowTypeName}Map(), Files()),");
                     methods.Line($"new {forStep.TransformClassName}(),");
                     // A For Loop Container's own body is always SQL-sunk -- PlanForLoop's own
                     // gate requires a fast-load-configured, non-Flat-File destination.
@@ -1104,6 +1105,9 @@ public static class PackageClassEmitter
 
         // ----- assemble the whole file -----
 
+        // Files() is only emitted when some step/source/sink actually reads or writes a file --
+        // a pure-SQL package stays free of the storage types entirely.
+        var usesFiles = methods.Lines.Concat(componentMethods.Lines).Any(l => l.Contains("Files()"));
         var w2 = new CodeWriter();
         if (hasConcurrency) w2.Line("using System.Collections.Concurrent;");
         w2.Line("using System.Data;");
@@ -1116,6 +1120,7 @@ public static class PackageClassEmitter
         w2.Line("using Etl.Core.Hosting;");
         if (includeNotifications) w2.Line("using Etl.Core.Notifications;");
         w2.Line("using Etl.Core.Pipeline;");
+        if (usesFiles) w2.Line("using Etl.Core.Storage;");
         if (usesCsv) w2.Line($"using {ns}.Csv;");
         if (usesSql) w2.Line($"using {ns}.Sql;");
         if (usesExcel) w2.Line($"using {ns}.Excel;");
@@ -1160,6 +1165,8 @@ public static class PackageClassEmitter
         w2.Line("internal IOptions<T> Opt<T>() where T : class => services.GetRequiredService<IOptions<T>>();");
         w2.Line("private DatabaseOptions Db() => Opt<DatabaseOptions>().Value;");
         w2.Line("private string File(string key) => Opt<FileSourceOptions>().Value[key].ResolvedPath;");
+        // Local filesystem or S3, per how Program.cs registered IFileStore (see --storage).
+        if (usesFiles) w2.Line("internal IFileStore Files() => services.GetRequiredService<IFileStore>();");
         if (secondaryConnectionNames.Count > 0)
             w2.Line("private IConfiguration Config() => services.GetRequiredService<IConfiguration>();");
         // No `Step(task, uow, ct)` helper any more (removed 2026-09-11): it hid exactly one line --

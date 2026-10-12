@@ -62,6 +62,17 @@ internal static class ApplyTestsCommand
         }
 
         outDir = Path.GetFullPath(outDir);
+        // Phase 1.5 (R6): nothing else in this command needs --out to already exist (a missing
+        // fillsDir just means the scan below finds nothing, and StableJsonWriter.WriteToFile
+        // happily creates any missing directory when it writes the manifest at the end) --
+        // which used to mean this command exited 0 and CONJURED --out into existence for a path
+        // that was never a real `ssisx generate` output at all. A nonexistent --out is always a
+        // usage mistake for this command specifically (it only ever makes sense pointed at one).
+        if (!Directory.Exists(outDir))
+        {
+            Console.Error.WriteLine($"error: --out '{outDir}' does not exist -- run 'ssisx generate --out {outDir}' first.");
+            return ExitCodes.UsageOrInputError;
+        }
         fillsDir = Path.GetFullPath(fillsDir ?? Path.Combine(outDir, "fills"));
         var generateDir = Path.Combine(outDir, "generate");
 

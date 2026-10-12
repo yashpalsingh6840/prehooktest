@@ -70,4 +70,59 @@ public static class ForEachLoopEmitter
 
         return new TranslatedOk($"{((TranslatedOk)left).CSharpExpression} + {((TranslatedOk)right).CSharpExpression}");
     }
+
+    /// <summary>
+    /// Phase 2.7 (S2) of the independent-review fix plan. RBC_Demo_ETL's own real
+    /// <c>Mapping/SQL_LogFileNameStatement.cs</c> builds
+    /// <c>"... N'" + currentFile + "');"</c> -- a string-BUILT SQL statement, exactly like SSIS's
+    /// own real behaviour, so a file name containing a single quote (e.g. <c>O'Brien.csv</c>)
+    /// breaks or injects the resulting SQL, in EITHER the real SSIS package or this generated
+    /// translation of it. Measured, not assumed: this is a faithful translation of what SSIS
+    /// itself does (string-substitute the raw text), so "fixing" it (e.g. parameterizing the
+    /// value) would make the generated code diverge from the real package's own behaviour --
+    /// this is reported as a non-blocking advisory instead, never silently "fixed".
+    ///
+    /// <para>Detected by walking the whole <c>+</c> concatenation chain left-to-right and
+    /// tracking the running count of single-quote characters contributed by every
+    /// <see cref="StringLiteral"/> seen so far: an ODD count means the loop's own variable
+    /// reference lands INSIDE an already-open SQL string literal (e.g. after a trailing
+    /// <c>N'</c>) rather than between two complete SQL tokens. Re-parses the same expression
+    /// <see cref="TranslateSqlTemplate"/> already did -- cheap and deterministic, and keeps this
+    /// concern (a SQL-quoting risk) entirely separate from translation itself.</para>
+    /// </summary>
+    public static bool IsSplicedInsideAQuotedSqlLiteral(string rawExpression, string ssisVariableName)
+    {
+        ExprNode ast;
+        try
+        {
+            ast = Parser.Parse(rawExpression);
+        }
+        catch (SsisExpressionError)
+        {
+            return false;
+        }
+
+        var quoteCountSoFar = 0;
+        var spliced = false;
+
+        void Walk(ExprNode node)
+        {
+            switch (node)
+            {
+                case StringLiteral s:
+                    quoteCountSoFar += s.Value.Count(c => c == '\'');
+                    break;
+                case Reference r when r.Name == ssisVariableName:
+                    if (quoteCountSoFar % 2 != 0) spliced = true;
+                    break;
+                case BinaryExpr { Op: BinaryOp.Add } add:
+                    Walk(add.Left);
+                    Walk(add.Right);
+                    break;
+            }
+        }
+
+        Walk(ast);
+        return spliced;
+    }
 }

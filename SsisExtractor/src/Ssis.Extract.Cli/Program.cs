@@ -183,6 +183,7 @@ internal static class Program
                               [--recursive] [--package <name>] [--namespace-prefix <prefix>]
                               [--unsafe-skip-seams] [--skip-tests] [--notifications]
                               [--fills <dir>] [--etl-core <path>] [--framework net8.0|net10.0]
+                              [--storage local|s3]
 
             generate options: turns a package into a runnable C# ETL project -- entity,
             DbContext, CSV row + ClassMap, Derived Column transform, the oracle-verified
@@ -246,6 +247,13 @@ internal static class Program
             instead. --etl-core copies the matching Directory.Build.props/Directory.Packages.props
             into the copied Etl.Core too, so the two always agree -- pass --framework net8.0
             on every generate call for a client stuck on .NET 8, not just once.
+            --storage selects where the generated package reads and writes its files: local
+            (default, unchanged) or s3. One per package, never mixed. With s3, Program.cs registers
+            an S3 file store, appsettings.json gets a "Storage" section (Bucket/Region, empty --
+            fill them in; credentials come from the default AWS chain, never from config), and
+            every FileSource SourceFolder becomes an S3 key prefix derived from the original local
+            path. S3 cannot append, so a Flat File Destination with Overwrite=false replaces the
+            object (reported as a non-blocking gap).
             --namespace-prefix roots every generated namespace under a prefix (e.g.
             "Contoso.Etl") instead of just the package name. Generated code under
             <out>/generate/ has no hand-editing expectation -- rerun freely.
@@ -329,14 +337,21 @@ internal static class Program
             package under fills[-library]/ was never generated into --out at all.
 
             Exit codes: 0 success. 1 a gate found a real problem (extract --check, or
-            --diff-against) / an orphaned fill (apply-fills). 2 usage/extraction error. 3 a
-            package's coverage was below --fail-under (extract) / generate produced one or
-            more gaps (generate) / a seam is unfilled or stale (apply-fills). See each
-            command's own section above for its exact precedence when more than one applies.
-            98 (generate only) one or more packages hit a genuine, unexpected internal ssisx
-            error during generation and were skipped -- every OTHER package still generated
-            normally. 99 an unexpected internal error crashed the whole run before it could
-            finish at all. Both 98 and 99 write a compact ssisx-diagnostic-<timestamp>.txt
+            --diff-against) / an orphaned fill (apply-fills). 2 usage/extraction error --
+            bad flags, an unreadable/missing input, --package matching nothing, or (generate)
+            an explicitly-given --etl-core that doesn't exist / (apply-fills) an explicitly-
+            given --fills that doesn't exist / (apply-tests) a --out that doesn't exist. 3 a
+            package's coverage was below --fail-under (extract) / generate wrote real files
+            but at least one BLOCKING (Tier-1/2/3, not Advisory) gap remains (generate) / a
+            seam is unfilled or stale (apply-fills). 4 (generate only) wrote ZERO files at
+            all -- every package/flow was blocked; distinct from 3 specifically so a caller
+            can tell "partial success" apart from "nothing here" without re-parsing
+            generate-report.md. See each command's own section above for its exact
+            precedence when more than one applies. 98 (generate only) one or more packages
+            hit a genuine, unexpected internal ssisx error during generation and were
+            skipped -- every OTHER package still generated normally. 99 an unexpected
+            internal error crashed the whole run before it could finish at all. Both 98 and
+            99 write a compact ssisx-diagnostic-<timestamp>.txt
             containing no package/column/file names or other client data -- only the exception
             type, a stack trace filtered to this tool's own source, and which package ordinal
             (never its name) was being processed. If this ever happens on a client site (where
