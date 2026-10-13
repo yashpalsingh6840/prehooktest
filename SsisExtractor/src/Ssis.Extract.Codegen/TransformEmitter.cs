@@ -390,6 +390,11 @@ public static class TransformEmitter
         // known. Dictionary iteration order matches insertion order here (no removals), matching
         // this project's own established determinism convention elsewhere.
         var scriptComponentGroups = new Dictionary<string, ScriptComponentGroup>();
+        // Cache per producer RefId so a multi-column component (the evidenced shape only ever
+        // produces 2, but nothing requires that of the cache itself) is only pattern-matched
+        // once. See FlatFileErrorScriptComponentRecognizer's own doc comment for the one exact
+        // shape this promotes out of the human-reviewed seam below.
+        var autoRecognizedByRefId = new Dictionary<string, IReadOnlyDictionary<string, string>?>();
         // 1-to-1 component-to-function mapping round (2026-09): one entry per Derived Column
         // component actually referenced by THIS destination's own resolved columns, keyed by that
         // component's own RefId -- see TransformRequest.Holders' own doc comment for why a shared,
@@ -574,6 +579,19 @@ public static class TransformEmitter
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
                         $"column '{column.PipelineColumnName}' is produced by '{producer.Name}' ({producer.ComponentClassId}), a component type this tool does not translate -- cannot safely generate a passthrough reference.",
                         Kind: GapKind.Unclassified));
+                    continue;
+                }
+
+                // Promote the one narrow, measured, repeating shape (a Flat File Source error
+                // output's Script Component -- see FlatFileErrorScriptComponentRecognizer's own
+                // doc comment) straight to a deterministic assignment, bypassing the seam/gap
+                // mechanism below entirely. Cached per producer so a component with more than one
+                // deferred column here is only pattern-matched once.
+                if (!autoRecognizedByRefId.TryGetValue(producer.RefId, out var autoRecognized))
+                    autoRecognizedByRefId[producer.RefId] = autoRecognized = FlatFileErrorScriptComponentRecognizer.TryRecognize(producer);
+                if (autoRecognized is not null && autoRecognized.TryGetValue(column.ExternalColumnName, out var autoExpr))
+                {
+                    assignments.Add($"        {destId} = {autoExpr},");
                     continue;
                 }
 

@@ -2001,17 +2001,22 @@ public class PackageGeneratorTests
     }
 
     [Fact]
-    public void Generate_WiresAFlatFileSourceErrorOutput_ThroughAScriptComponentSeam_IntoASecondDestination()
+    public void Generate_WiresAFlatFileSourceErrorOutput_ThroughAnAutoRecognizedScriptComponent_IntoASecondDestination()
     {
         // Real client shape (MFDBUpdate.dtsx): a Flat File Source's main output feeds one
         // destination; its error output (at least one main-output column configured for
         // ErrorRowDisposition/TruncationRowDisposition=RedirectRow) routes through a Script
         // Component (ComponentMetaData.GetErrorDescription(Row.ErrorCode) + a literal FileName)
-        // into a SECOND destination. Confirmed beyond this test by a real dtexec probe
-        // (Ssis.Extract.FixtureBuilder's "flat-file-error-probe" mode, measuring the real
-        // ErrorCode values/GetErrorDescription() text) and by actually running the generated exe
-        // against .\SQLFORPOC_2022 after filling the seam -- exact row-for-row match, including
-        // the raw failed-row text, against the probe (see Tools/SsisExtractor/CLAUDE.md).
+        // into a SECOND destination. This ORIGINALLY generated a human-reviewed Tier-2 seam (the
+        // ordinary GapKind.ScriptComponentColumn mechanism), proven correct once filled by hand --
+        // but once the SAME two-statement script turned up verbatim on THREE Data Flow Tasks in
+        // the real client package, FlatFileErrorScriptComponentRecognizer promoted this one exact,
+        // fully-measured shape out of the seam entirely: no human fill needed at all. Confirmed
+        // beyond this test by a real dtexec probe (Ssis.Extract.FixtureBuilder's
+        // "flat-file-error-probe" mode, measuring the real ErrorCode values/GetErrorDescription()
+        // text) and by actually running the auto-translated generated exe against
+        // .\SQLFORPOC_2022 WITH ZERO FILLS APPLIED -- exact row-for-row match, including the raw
+        // failed-row text, against the probe (see Tools/SsisExtractor/CLAUDE.md).
         var package = LoadSyntheticFixture("SyntheticFlatFileErrorOutput.dtsx");
 
         var result = PackageGenerator.Generate(package, namespacePrefix: null, emitSeams: true);
@@ -2050,14 +2055,17 @@ public class PackageGeneratorTests
         Assert.Contains("ErrorColumnValue = row.FlatFileSourceErrorOutputColumn,", transformFile.Content);
         Assert.Contains("ErrorCode = SsisFn.Str(row.ErrorCode),", transformFile.Content);
         Assert.Contains("ErrorColumn = SsisFn.Str(row.ErrorColumn),", transformFile.Content);
-        // The Script Component's own two synthesized columns (ErrorDescription/FileName) become
-        // ONE combined Tier-2 seam -- the exact same GapKind.ScriptComponentColumn mechanism
-        // every other Script Component in this tool already uses, not a second one. The result
-        // record's own name is prefixed with the transform class name (not just the component's
-        // bare display name) -- it's declared at NAMESPACE scope, and a package with more than
-        // one Data Flow Task can have two Script Components both left at SSIS's default display
-        // name ("Script Component"), which would otherwise collide (CS0101) across flows.
-        Assert.Contains("private partial SyntheticFlatFileErrorOutputMainErrorTransformScriptComponentResult ScriptComponent(SyntheticFlatFileErrorOutputMainErrorRow row, in RowContext ctx);", transformFile.Content);
+        // The Script Component's own two synthesized columns (ErrorDescription/FileName) are
+        // auto-recognized and resolved INLINE -- no seam, no partial method, no namespace-level
+        // result record at all. The ErrorDescription switch reproduces the two measured, closed
+        // ErrorCode values exactly; FileName is the real literal read straight out of the
+        // script's own source.
+        Assert.DoesNotContain("partial", transformFile.Content);
+        Assert.DoesNotContain("ScriptComponentResult", transformFile.Content);
+        Assert.Contains("ErrorDescription = row.ErrorCode switch", transformFile.Content);
+        Assert.Contains("-1071607676 => \"The data value cannot be converted for reasons other than sign mismatch or data overflow.\",", transformFile.Content);
+        Assert.Contains("-1071607675 => \"The data was truncated.\",", transformFile.Content);
+        Assert.Contains("FileName = \"SyntheticFlatFileErrorOutput.csv\",", transformFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(transformFile.Content);
 
         var errorEntityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticFlatFileErrorOutputMainError.cs");
@@ -2072,10 +2080,12 @@ public class PackageGeneratorTests
         Assert.Contains("modelBuilder.Entity<SyntheticFlatFileErrorOutputMain>", dbContextFile.Content);
         Assert.Contains("modelBuilder.Entity<SyntheticFlatFileErrorOutputMainError>", dbContextFile.Content);
 
-        // Only the ONE expected Tier-2 seam gap (plus its companion TestOracle, plus the
-        // unrelated, unavoidable LocalFileSourceData/Notification advisories) -- no gap from the
-        // error-output routing itself.
-        Assert.Single(result.Gaps, g => g.Kind == GapKind.ScriptComponentColumn);
+        // Zero gaps from the error-output routing or its Script Component -- auto-recognized and
+        // translated, not deferred to a human. Only the unrelated, unavoidable
+        // LocalFileSourceData/Notification advisories remain.
+        Assert.DoesNotContain(result.Gaps, g => g.Kind == GapKind.ScriptComponentColumn);
+        Assert.DoesNotContain(result.Gaps, g => g.Kind == GapKind.TestOracle);
         Assert.DoesNotContain(result.Gaps, g => g.Kind == GapKind.Unclassified && g.IsBlocking);
+        Assert.True(result.Gaps.All(g => !g.IsBlocking), $"expected zero blocking gaps, got: {string.Join(", ", result.Gaps.Where(g => g.IsBlocking).Select(g => g.Reason))}");
     }
 }
