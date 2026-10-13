@@ -628,7 +628,16 @@ public static class TransformEmitter
         foreach (var group in scriptComponentGroups.Values)
         {
             var sanitizedName = PackageGenerator.SanitizeIdentifier(group.Producer.Name);
-            var resultTypeName = $"{sanitizedName}Result";
+            // Prefixed with the TRANSFORM CLASS name, not just the component's own display
+            // name: this record is declared at NAMESPACE scope (see BuildFile below), and a
+            // package with more than one Data Flow Task can easily have two Script Components
+            // both left at SSIS's default display name ("Script Component", never renamed) --
+            // the exact same "component left at its schema default" collision class this tool
+            // has already hit for other component types (OLE DB destinations, etc.), just never
+            // before for a namespace-level type. TransformClassName is already guaranteed unique
+            // per flow within the package (PackageGenerator disambiguates it), so prefixing with
+            // it is sufficient and needs no new uniqueness machinery of its own.
+            var resultTypeName = $"{request.TransformClassName}{sanitizedName}Result";
             var columnList = string.Join(", ", group.Columns.Select(c => c.ExternalColumnName));
 
             if (request.EmitSeams)

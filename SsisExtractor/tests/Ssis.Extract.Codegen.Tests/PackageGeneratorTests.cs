@@ -2052,8 +2052,12 @@ public class PackageGeneratorTests
         Assert.Contains("ErrorColumn = SsisFn.Str(row.ErrorColumn),", transformFile.Content);
         // The Script Component's own two synthesized columns (ErrorDescription/FileName) become
         // ONE combined Tier-2 seam -- the exact same GapKind.ScriptComponentColumn mechanism
-        // every other Script Component in this tool already uses, not a second one.
-        Assert.Contains("private partial ScriptComponentResult ScriptComponent(SyntheticFlatFileErrorOutputMainErrorRow row, in RowContext ctx);", transformFile.Content);
+        // every other Script Component in this tool already uses, not a second one. The result
+        // record's own name is prefixed with the transform class name (not just the component's
+        // bare display name) -- it's declared at NAMESPACE scope, and a package with more than
+        // one Data Flow Task can have two Script Components both left at SSIS's default display
+        // name ("Script Component"), which would otherwise collide (CS0101) across flows.
+        Assert.Contains("private partial SyntheticFlatFileErrorOutputMainErrorTransformScriptComponentResult ScriptComponent(SyntheticFlatFileErrorOutputMainErrorRow row, in RowContext ctx);", transformFile.Content);
         CodeAssertions.AssertNoSyntaxErrors(transformFile.Content);
 
         var errorEntityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticFlatFileErrorOutputMainError.cs");

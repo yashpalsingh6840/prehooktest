@@ -553,10 +553,13 @@ public class TransformEmitterTests
         var file = Assert.Single(result.Result.Files);
 
         Assert.Contains("public sealed partial class StagingCustomersTransform", file.Content);
-        // ONE combined record carrying both produced columns together.
-        Assert.Contains("internal readonly record struct SCR_CleanseCustomerRowResult(string FullName, string CleanEmail);", file.Content);
+        // ONE combined record carrying both produced columns together -- its own name is
+        // prefixed with the TRANSFORM CLASS name (not just the component's bare display name),
+        // since it's declared at namespace scope and two flows in the same package can share a
+        // Script Component display name (e.g. both left at SSIS's default "Script Component").
+        Assert.Contains("internal readonly record struct StagingCustomersTransformSCR_CleanseCustomerRowResult(string FullName, string CleanEmail);", file.Content);
         // ONE seam declaration, named after the component itself -- not "Fill_<Column>".
-        Assert.Contains("private partial SCR_CleanseCustomerRowResult SCR_CleanseCustomerRow(StagingCustomersCsvRow row, in RowContext ctx);", file.Content);
+        Assert.Contains("private partial StagingCustomersTransformSCR_CleanseCustomerRowResult SCR_CleanseCustomerRow(StagingCustomersCsvRow row, in RowContext ctx);", file.Content);
         // Called ONCE from Map()'s own (now block-bodied) implementation.
         Assert.Contains("var sCR_CleanseCustomerRowResult = SCR_CleanseCustomerRow(row, ctx);", file.Content);
         Assert.Contains("FullName = sCR_CleanseCustomerRowResult.FullName,", file.Content);
