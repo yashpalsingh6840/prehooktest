@@ -170,6 +170,7 @@ public static class AiPacketEmitter
             EvidenceSha256 = evidenceHash,
             EvidenceRefId = gap.EvidenceRefId,
             ExpectedFileName = gap.Kind == GapKind.LocalFileSourceData ? LocalFileSourceDataExpectedFileName(package, gap) : null,
+            TransformClassName = gap.TransformClassName,
         };
 
     /// <summary>The real <c>TestData/</c> file name this gap's fill must use -- see

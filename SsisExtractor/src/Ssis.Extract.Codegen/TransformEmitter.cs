@@ -681,7 +681,8 @@ public static class TransformEmitter
                 gaps.Add(new GenerationGap($"{request.EntityName}.{sanitizedName}",
                     $"Script Component '{group.Producer.Name}' produces {group.Columns.Count} column(s) ({columnList}) -- emitted as a single `private partial {resultTypeName} {sanitizedName}({request.RowTypeName} row, in RowContext ctx)` seam. The project will not compile (CS8795) until a second part of '{request.TransformClassName}' implements it; apply one with `ssisx apply-fills`.",
                     Kind: GapKind.ScriptComponentColumn,
-                    EvidenceRefId: group.Producer.RefId));
+                    EvidenceRefId: group.Producer.RefId,
+                    TransformClassName: request.TransformClassName));
 
                 // Companion "Script Task / Script Component seam" taxonomy row
                 // (Docs/Generated-Tests-Plan.md): a filled seam is human logic, and a test for it
@@ -699,7 +700,8 @@ public static class TransformEmitter
                 gaps.Add(new GenerationGap($"{request.EntityName}.{sanitizedName}",
                     $"Script Component '{group.Producer.Name}' produces {group.Columns.Count} column(s) ({columnList}) -- cannot safely generate a passthrough reference; its transform logic must be ported by hand, the same limitation as a Script Task. Re-run with --seams for a fillable partial-method seam instead of this plain gap.",
                     Kind: GapKind.ScriptComponentColumn,
-                    EvidenceRefId: group.Producer.RefId));
+                    EvidenceRefId: group.Producer.RefId,
+                    TransformClassName: request.TransformClassName));
             }
         }
 

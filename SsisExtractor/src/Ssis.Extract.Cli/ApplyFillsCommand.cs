@@ -169,14 +169,37 @@ internal static class ApplyFillsCommand
         // method IDENTICALLY to that same sanitized name -- so the expected seam name is read
         // directly off Location's own tail, never synthesized (unlike the retired "Fill_" + column
         // convention, which assumed a naming rule rather than reading back what was emitted).
-        var expected = new Dictionary<string, Dictionary<string, GapSpec>>(StringComparer.Ordinal);
+        //
+        // TWO maps, not one -- a real, confirmed bug this closes. A package with more than one
+        // Script Component left at SSIS's own unrenamed default display name ("Script Component")
+        // produces more than one gap whose seam method name is IDENTICAL ("ScriptComponent"). The
+        // bare-method-keyed map alone used to let only the LAST such gap survive, silently
+        // checking every OTHER same-named fill against the wrong gap's evidence hash (reported
+        // Stale despite being correct). `expectedPrecise`, keyed by (the generated TRANSFORM CLASS
+        // name read off the file's own `partial class` declaration, seam method name), disambiguates
+        // correctly whenever GapSpec.TransformClassName is present (every gap from a current
+        // `ssisx generate` run). `expected` (bare method name -> every gap sharing it) is kept as
+        // the fallback for an OLDER gaps.json with no TransformClassName recorded -- used only when
+        // there is exactly ONE candidate for that method name; a genuine ambiguity with no precise
+        // match available is reported explicitly rather than silently guessing (see below).
+        var expected = new Dictionary<string, Dictionary<string, List<GapSpec>>>(StringComparer.Ordinal);
+        var expectedPrecise = new Dictionary<string, Dictionary<(string ClassName, string Method), GapSpec>>(StringComparer.Ordinal);
         foreach (var gap in gaps.Where(g => g.Kind == GapKind.ScriptComponentColumn))
         {
             var seamName = gap.Location[(gap.Location.LastIndexOf('.') + 1)..];
             if (seamName.Length == 0) continue;
             if (!expected.TryGetValue(gap.Package, out var byMethod))
-                expected[gap.Package] = byMethod = new Dictionary<string, GapSpec>(StringComparer.Ordinal);
-            byMethod[seamName] = gap;
+                expected[gap.Package] = byMethod = new Dictionary<string, List<GapSpec>>(StringComparer.Ordinal);
+            if (!byMethod.TryGetValue(seamName, out var candidates))
+                byMethod[seamName] = candidates = [];
+            candidates.Add(gap);
+
+            if (gap.TransformClassName is { Length: > 0 } className)
+            {
+                if (!expectedPrecise.TryGetValue(gap.Package, out var byClassAndMethod))
+                    expectedPrecise[gap.Package] = byClassAndMethod = new Dictionary<(string, string), GapSpec>();
+                byClassAndMethod[(className, seamName)] = gap;
+            }
         }
 
         // Expected Script Task seams, per package, keyed by the generated partial CLASS name.
@@ -259,6 +282,12 @@ internal static class ApplyFillsCommand
         var orphanedMethods = new List<string>();
         var staleSeams = new List<string>();
         var unknownPackages = new List<string>();
+        // Keyed by GapId, NOT by the bare seam/method name -- a real, confirmed bug: two or more
+        // Script Components left at SSIS's own unrenamed default display name ("Script Component")
+        // produce DIFFERENT gaps whose seam method name is IDENTICAL ("ScriptComponent"). Tracking
+        // "is this seam filled/stale" by that bare string meant filling just ONE of them marked
+        // every other same-named, still-unfilled gap as already filled too (and the mirror failure
+        // for staleness) -- GapId is always unique regardless of how many components share a name.
         var filledMethods = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var staleMethods = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var fillRecords = new List<FillRecordSpec>();
@@ -337,7 +366,17 @@ internal static class ApplyFillsCommand
                     Console.WriteLine($"    {relativePath}");
                     var content = File.ReadAllText(fillFile);
                     var known = expected.TryGetValue(packageName, out var byMethod) ? byMethod : [];
+                    var knownPrecise = expectedPrecise.TryGetValue(packageName, out var byClassAndMethod) ? byClassAndMethod : [];
                     var knownClasses = expectedScriptTasks.TryGetValue(packageName, out var byClass) ? byClass : [];
+
+                    // The enclosing `partial class` this fill's own seam(s) live on -- read directly
+                    // off the file (same generic regex the Script Task pass already uses; it is not
+                    // specific to RunScriptAsync), so a Script Component seam can be matched
+                    // precisely by (class, method) instead of by method name alone. Null when the
+                    // file has no recognizable class at all, which only matters for the bare-method
+                    // fallback below.
+                    var fileClassMatch = ScriptTaskFillClassPattern.Match(content);
+                    var fileClassName = fileClassMatch.Success ? fileClassMatch.Groups[1].Value : null;
 
                     // One row per seam actually found in the file, each carrying its own
                     // provenance comment (if any) -- unlike the pre-chunk-4 version, this is no
@@ -349,7 +388,36 @@ internal static class ApplyFillsCommand
                         var method = m.Groups[1].Value;
                         if (method == "RunScriptAsync") continue; // reserved for the Script Task pass below
                         if (seams.Any(s => s.Seam == method)) continue;
-                        known.TryGetValue(method, out var gap);
+
+                        GapSpec? gap = null;
+                        if (fileClassName is not null && knownPrecise.TryGetValue((fileClassName, method), out var preciseGap))
+                        {
+                            gap = preciseGap;
+                        }
+                        else if (known.TryGetValue(method, out var candidates))
+                        {
+                            if (candidates.Count == 1)
+                            {
+                                // Safe fallback: no TransformClassName recorded (an older gaps.json)
+                                // or no class could be read from the file, but only ONE gap in the
+                                // whole package shares this seam method name, so there is nothing
+                                // to disambiguate.
+                                gap = candidates[0];
+                            }
+                            else
+                            {
+                                // The real, confirmed bug this round closes: more than one gap
+                                // shares this bare seam method name (two+ Script Components left at
+                                // SSIS's own default display name) and no precise (class, method)
+                                // match resolved it -- never silently pick one. Regenerating with a
+                                // current ssisx build records TransformClassName on every gap, which
+                                // is what the precise path above needs.
+                                Console.WriteLine(
+                                    $"      {method}: AMBIGUOUS -- {candidates.Count} current gaps share this seam method name and this file's own class " +
+                                    $"({fileClassName ?? "(not found)"}) did not precisely match any of them; " +
+                                    $"re-run 'ssisx generate' with a current build to record which gap this file answers, then retry.");
+                            }
+                        }
                         seams.Add((method, gap));
                     }
 
@@ -379,6 +447,7 @@ internal static class ApplyFillsCommand
                     }
 
                     var recognized = new List<string>();
+                    var recognizedGapIds = new List<string>();
                     var staleInThisFile = new List<string>();
                     foreach (var (seam, gap) in seams)
                     {
@@ -412,13 +481,14 @@ internal static class ApplyFillsCommand
                             });
                             if (!staleMethods.TryGetValue(packageName, out var staleSet))
                                 staleMethods[packageName] = staleSet = new HashSet<string>(StringComparer.Ordinal);
-                            staleSet.Add(seam);
+                            staleSet.Add(gap.GapId); // keyed by GapId -- see filledMethods/staleMethods' own doc comment above
                             staleInThisFile.Add(seam);
                             continue;
                         }
 
                         Console.WriteLine($"      {seam}: {(provenance is null ? "UNATTRIBUTED" : "APPLIED")} ({gap.GapId})");
                         recognized.Add(seam);
+                        recognizedGapIds.Add(gap.GapId);
                         fillRecords.Add(new FillRecordSpec
                         {
                             Package = packageName, FileName = fileName, Seam = seam, GapId = gap.GapId,
@@ -463,7 +533,7 @@ internal static class ApplyFillsCommand
 
                     if (!filledMethods.TryGetValue(packageName, out var set))
                         filledMethods[packageName] = set = new HashSet<string>(StringComparer.Ordinal);
-                    foreach (var method in recognized) set.Add(method);
+                    foreach (var gapId in recognizedGapIds) set.Add(gapId); // keyed by GapId, not the bare seam name -- see the doc comment above
                 }
 
                 // TEST-ORACLE: a whole test file per gap, attributed ONLY by its own
@@ -612,13 +682,20 @@ internal static class ApplyFillsCommand
         {
             filledMethods.TryGetValue(packageName, out var filled);
             staleMethods.TryGetValue(packageName, out var stale);
-            foreach (var (method, gap) in byMethod.OrderBy(p => p.Key, StringComparer.Ordinal))
+            foreach (var (method, candidates) in byMethod.OrderBy(p => p.Key, StringComparer.Ordinal))
             {
-                if (filled?.Contains(method) == true) continue;
-                // A stale seam is reported in its own, more informative section above -- it HAS a
-                // fill, just an out-of-date one, which "no fill provided at all" would misstate.
-                if (stale?.Contains(method) == true) continue;
-                stillUnfilled.Add($"{gap.GapId}  ->  {method}");
+                // More than one gap can share this bare seam method name (two+ Script Components
+                // left at SSIS's own default display name) -- each is tracked and reported
+                // independently by its own GapId, never assumed filled/stale just because another
+                // gap with the same method name is.
+                foreach (var gap in candidates.OrderBy(g => g.GapId, StringComparer.Ordinal))
+                {
+                    if (filled?.Contains(gap.GapId) == true) continue;
+                    // A stale seam is reported in its own, more informative section above -- it HAS
+                    // a fill, just an out-of-date one, which "no fill provided at all" would misstate.
+                    if (stale?.Contains(gap.GapId) == true) continue;
+                    stillUnfilled.Add($"{gap.GapId}  ->  {method}");
+                }
             }
         }
 
@@ -629,8 +706,8 @@ internal static class ApplyFillsCommand
             foreach (var (cls, gap) in byClass.OrderBy(p => p.Key, StringComparer.Ordinal))
             {
                 var seam = $"{cls}.RunScriptAsync";
-                if (filled?.Contains(seam) == true) continue;
-                if (stale?.Contains(seam) == true) continue;
+                if (filled?.Contains(gap.GapId) == true) continue;
+                if (stale?.Contains(gap.GapId) == true) continue;
                 stillUnfilled.Add($"{gap.GapId}  ->  {seam}");
             }
         }
@@ -669,16 +746,21 @@ internal static class ApplyFillsCommand
         // Script Component, several columns), and the underlying obligation is "port the whole
         // component", not one per column, so it is only satisfied once every seam in the group has
         // genuinely landed in `generate/` (i.e. is in filledMethods, never stale/orphaned).
-        var ruleGroups = new Dictionary<(string Package, string RuleId), List<string>>();
+        // Each entry is (the seam's readable method name for display, the specific gap's own
+        // GapId for the filled-check) -- the method name alone is NOT a safe key here either, for
+        // the identical reason filledMethods/staleMethods moved to GapId above: a Script Component
+        // seam name can repeat across several different gaps/components.
+        var ruleGroups = new Dictionary<(string Package, string RuleId), List<(string Method, string GapId)>>();
         foreach (var (packageName, byMethod) in expected)
-            foreach (var (method, gap) in byMethod)
-                if (ConformanceRuleId(gap) is { } ruleId)
-                {
-                    var key = (packageName, ruleId);
-                    if (!ruleGroups.TryGetValue(key, out var seamsForRule))
-                        ruleGroups[key] = seamsForRule = [];
-                    seamsForRule.Add(method);
-                }
+            foreach (var (method, candidates) in byMethod)
+                foreach (var gap in candidates)
+                    if (ConformanceRuleId(gap) is { } ruleId)
+                    {
+                        var key = (packageName, ruleId);
+                        if (!ruleGroups.TryGetValue(key, out var seamsForRule))
+                            ruleGroups[key] = seamsForRule = [];
+                        seamsForRule.Add((method, gap.GapId));
+                    }
         foreach (var (packageName, byClass) in expectedScriptTasks)
             foreach (var (cls, gap) in byClass)
                 if (ConformanceRuleId(gap) is { } ruleId)
@@ -686,7 +768,7 @@ internal static class ApplyFillsCommand
                     var key = (packageName, ruleId);
                     if (!ruleGroups.TryGetValue(key, out var seamsForRule))
                         ruleGroups[key] = seamsForRule = [];
-                    seamsForRule.Add($"{cls}.RunScriptAsync");
+                    seamsForRule.Add(($"{cls}.RunScriptAsync", gap.GapId));
                 }
 
         var conformanceLinks = new List<string>();
@@ -695,7 +777,7 @@ internal static class ApplyFillsCommand
                                                                           .ThenBy(g => g.Key.RuleId, StringComparer.Ordinal))
         {
             filledMethods.TryGetValue(packageName, out var filled);
-            if (!seamsForRule.All(s => filled?.Contains(s) == true)) continue; // partial -- not yet a candidate
+            if (!seamsForRule.All(s => filled?.Contains(s.GapId) == true)) continue; // partial -- not yet a candidate
 
             if (!claimsCache.TryGetValue(packageName, out var claims))
                 claimsCache[packageName] = claims = ReadClaims(claimsDir, packageName);
@@ -706,7 +788,7 @@ internal static class ApplyFillsCommand
                 ? "already marked Implemented"
                 : "update the claims file by hand if this port is trustworthy";
             conformanceLinks.Add(
-                $"{packageName}: {ruleId}  --  all {seamsForRule.Count} seam(s) filled ({string.Join(", ", seamsForRule.OrderBy(s => s, StringComparer.Ordinal))}); claim status: {status} -- {note}");
+                $"{packageName}: {ruleId}  --  all {seamsForRule.Count} seam(s) filled ({string.Join(", ", seamsForRule.Select(s => s.Method).OrderBy(s => s, StringComparer.Ordinal))}); claim status: {status} -- {note}");
         }
 
         var manifestPath = Path.Combine(outDir, "fills-applied.json");

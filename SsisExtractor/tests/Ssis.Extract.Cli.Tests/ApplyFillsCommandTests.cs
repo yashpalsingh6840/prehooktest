@@ -105,6 +105,119 @@ public class ApplyFillsCommandTests : IDisposable
         return writer.ToString();
     }
 
+    // The real, client-reported bug: two Script Components in the SAME package both left at
+    // SSIS's own unrenamed default display name ("Script Component") produce two DIFFERENT gaps
+    // whose seam method name is IDENTICAL ("ScriptComponent"), distinguishable only by
+    // TransformClassName. Before this fix, "expected" collapsed both gaps into one dictionary
+    // slot keyed by the bare method name, so only the LAST-registered gap survived for lookup --
+    // every fill for the OTHER component was checked against the wrong gap's evidence hash and
+    // reported Stale, even though its own hash was correct and current.
+    [Fact]
+    public void Run_AppliesBothFills_WhenTwoDifferentComponentsShareTheIdenticalDefaultSeamName()
+    {
+        const string hashFoo = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        const string hashBar = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+        var gapFoo = new GapSpec
+        {
+            GapId = "SCRIPT-COLUMN:Pkg:Foo.ScriptComponent", Package = Package, Kind = GapKind.ScriptComponentColumn,
+            Tier = GapTier.MissingLogic, Location = "Foo.ScriptComponent", Reason = "produced by a Script Component",
+            IsBlocking = true, EvidenceSha256 = hashFoo, TransformClassName = "FooTransform",
+        };
+        var gapBar = new GapSpec
+        {
+            GapId = "SCRIPT-COLUMN:Pkg:Bar.ScriptComponent", Package = Package, Kind = GapKind.ScriptComponentColumn,
+            Tier = GapTier.MissingLogic, Location = "Bar.ScriptComponent", Reason = "produced by a Script Component",
+            IsBlocking = true, EvidenceSha256 = hashBar, TransformClassName = "BarTransform",
+        };
+        WriteGaps(gapFoo, gapBar);
+        WriteFill("FooTransform.Fills.cs", $$"""
+            namespace Pkg.Mapping;
+
+            public sealed partial class FooTransform
+            {
+                // ssisx-fill: GapId={{gapFoo.GapId}} Author=tester Date=2026-10-15 EvidenceSha256={{hashFoo}}
+                private partial ScriptComponentResult ScriptComponent(FooRow row, in RowContext ctx) => new("foo");
+            }
+            """);
+        WriteFill("BarTransform.Fills.cs", $$"""
+            namespace Pkg.Mapping;
+
+            public sealed partial class BarTransform
+            {
+                // ssisx-fill: GapId={{gapBar.GapId}} Author=tester Date=2026-10-15 EvidenceSha256={{hashBar}}
+                private partial ScriptComponentResult ScriptComponent(BarRow row, in RowContext ctx) => new("bar");
+            }
+            """);
+
+        var output = CaptureConsole(() => ApplyFillsCommand.Run(["--out", _root]));
+
+        Assert.DoesNotContain("STALE", output);
+        Assert.DoesNotContain("AMBIGUOUS", output);
+        var manifest = ReadManifest();
+        var fooRecord = Assert.Single(manifest, r => r.FileName == "FooTransform.Fills.cs");
+        var barRecord = Assert.Single(manifest, r => r.FileName == "BarTransform.Fills.cs");
+        Assert.Equal(FillStatus.Applied, fooRecord.Status);
+        Assert.Equal(gapFoo.GapId, fooRecord.GapId);
+        Assert.Equal(FillStatus.Applied, barRecord.Status);
+        Assert.Equal(gapBar.GapId, barRecord.GapId);
+        Assert.True(File.Exists(Path.Combine(_root, "generate", Package, "Fills", "FooTransform.Fills.cs")));
+        Assert.True(File.Exists(Path.Combine(_root, "generate", Package, "Fills", "BarTransform.Fills.cs")));
+    }
+
+    // Same collision shape as above, but ONE of the two components' own fill is genuinely stale
+    // (written against an older hash) -- confirms the fix does not just stop reporting staleness
+    // altogether, only stops MIS-attributing it to the wrong gap. The OTHER, genuinely-current
+    // fill must still apply cleanly.
+    [Fact]
+    public void Run_ReportsOnlyTheGenuinelyStaleOne_WhenTwoComponentsShareTheIdenticalDefaultSeamName()
+    {
+        var gapFoo = new GapSpec
+        {
+            GapId = "SCRIPT-COLUMN:Pkg:Foo.ScriptComponent", Package = Package, Kind = GapKind.ScriptComponentColumn,
+            Tier = GapTier.MissingLogic, Location = "Foo.ScriptComponent", Reason = "produced by a Script Component",
+            IsBlocking = true, EvidenceSha256 = CurrentHash, TransformClassName = "FooTransform",
+        };
+        var gapBar = new GapSpec
+        {
+            GapId = "SCRIPT-COLUMN:Pkg:Bar.ScriptComponent", Package = Package, Kind = GapKind.ScriptComponentColumn,
+            Tier = GapTier.MissingLogic, Location = "Bar.ScriptComponent", Reason = "produced by a Script Component",
+            IsBlocking = true, EvidenceSha256 = CurrentHash, TransformClassName = "BarTransform",
+        };
+        WriteGaps(gapFoo, gapBar);
+        WriteFill("FooTransform.Fills.cs", $$"""
+            namespace Pkg.Mapping;
+
+            public sealed partial class FooTransform
+            {
+                // ssisx-fill: GapId={{gapFoo.GapId}} Author=tester Date=2026-10-15 EvidenceSha256={{CurrentHash}}
+                private partial ScriptComponentResult ScriptComponent(FooRow row, in RowContext ctx) => new("foo");
+            }
+            """);
+        // Bar's own fill is genuinely stale -- written against OldHash, not CurrentHash.
+        WriteFill("BarTransform.Fills.cs", $$"""
+            namespace Pkg.Mapping;
+
+            public sealed partial class BarTransform
+            {
+                // ssisx-fill: GapId={{gapBar.GapId}} Author=tester Date=2026-09-01 EvidenceSha256={{OldHash}}
+                private partial ScriptComponentResult ScriptComponent(BarRow row, in RowContext ctx) => new("bar");
+            }
+            """);
+
+        var exitCode = ApplyFillsCommand.Run(["--out", _root]);
+
+        Assert.Equal(3, exitCode); // 0 warnings would be wrong -- Bar really is stale
+        var manifest = ReadManifest();
+        var fooRecord = Assert.Single(manifest, r => r.FileName == "FooTransform.Fills.cs");
+        var barRecord = Assert.Single(manifest, r => r.FileName == "BarTransform.Fills.cs");
+        Assert.Equal(FillStatus.Applied, fooRecord.Status); // must NOT be dragged into Bar's own staleness
+        Assert.Equal(gapFoo.GapId, fooRecord.GapId);
+        Assert.Equal(FillStatus.Stale, barRecord.Status);
+        Assert.Equal(gapBar.GapId, barRecord.GapId);
+        Assert.True(File.Exists(Path.Combine(_root, "generate", Package, "Fills", "FooTransform.Fills.cs")));
+        Assert.False(File.Exists(Path.Combine(_root, "generate", Package, "Fills", "BarTransform.Fills.cs")));
+    }
+
     [Fact]
     public void Run_AppliesAFill_WhenTheProvenanceHashMatchesTheCurrentGap()
     {

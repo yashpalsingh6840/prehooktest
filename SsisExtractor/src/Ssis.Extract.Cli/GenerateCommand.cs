@@ -464,6 +464,24 @@ internal static class GenerateCommand
         _ => throw new ArgumentOutOfRangeException(nameof(framework), framework, $"unsupported framework -- expected one of: {string.Join(", ", SupportedFrameworks.OrderBy(f => f, StringComparer.Ordinal))}"),
     };
 
+    /// <summary>
+    /// A transitive dependency of AWSSDK.S3 (the --storage s3 feature), pinned explicitly because
+    /// NuGet's own built-in vulnerability audit (NU1902/NU1903, an error under this project's own
+    /// TreatWarningsAsErrors) flags whatever version floats in otherwise. Real, confirmed advisories
+    /// (GHSA-2fmv-rv2c-59x7 moderate, GHSA-846f-f764-76mx high -- both a SignedCms.CheckSignature
+    /// DoS, fetched from GitHub's own advisory pages, not assumed): fixed in 10.0.13 for the 10.x
+    /// line, 8.0.2 for the 8.x line -- this package ships parallel major-version lines matching the
+    /// .NET runtime's own versioning, the same shape EfCoreSqlServerVersionFor already handles for a
+    /// genuinely different reason (a different MAJOR VERSION, not just a patch bump) -- so this one
+    /// needs the identical per-framework switch, not a single shared version number.
+    /// </summary>
+    private static string SecurityCryptographyPkcsVersionFor(string framework) => framework switch
+    {
+        "net8.0" => "8.0.2",
+        "net10.0" => "10.0.13",
+        _ => throw new ArgumentOutOfRangeException(nameof(framework), framework, $"unsupported framework -- expected one of: {string.Join(", ", SupportedFrameworks.OrderBy(f => f, StringComparer.Ordinal))}"),
+    };
+
     private static string[] BuildDirectoryBuildProps(string framework) =>
     [
         "<Project>",
@@ -491,6 +509,7 @@ internal static class GenerateCommand
         "",
         "  <ItemGroup>",
         "    <PackageVersion Include=\"AWSSDK.S3\" Version=\"4.0.104.1\" />",
+        $"    <PackageVersion Include=\"System.Security.Cryptography.Pkcs\" Version=\"{SecurityCryptographyPkcsVersionFor(framework)}\" />",
         "    <PackageVersion Include=\"CsvHelper\" Version=\"33.1.0\" />",
         "    <PackageVersion Include=\"ExcelDataReader\" Version=\"3.7.0\" />",
         "    <PackageVersion Include=\"MailKit\" Version=\"4.17.0\" />",
