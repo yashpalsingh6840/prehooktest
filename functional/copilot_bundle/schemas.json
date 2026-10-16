@@ -1,0 +1,94 @@
+{
+  "_comment": "Maps each table in DI_Repository_Functional_Baseline template to its heading text, columns, and how rows are written. 'kind':'kv' tables are label/value pairs updated in place; 'kind':'rows' tables get new rows appended, with id_field auto-numbered if the model sends 'AUTO'.",
+
+  "document_control": {
+    "heading": "1. Document Control",
+    "kind": "kv",
+    "fields": ["Repository Name", "Application Name", "Migration Stream", "Version", "Functional SME", "RBC SME", "Tech Lead", "QE Lead"]
+  },
+
+  "functional_overview": {
+    "heading": "2. Functional Overview",
+    "kind": "kv",
+    "fields": ["Item"],
+    "columns": ["Item", "Current Understanding", "Validation Status"]
+  },
+
+  "3": {
+    "heading": "3. Functional Inventory",
+    "kind": "rows",
+    "id_field": "Function ID",
+    "id_prefix": "FN",
+    "columns": ["Function ID", "Functionality / Capability", "Description from supplied material", "Priority", "Status"]
+  },
+
+  "4": {
+    "heading": "4. Important Use Case Inventory",
+    "kind": "rows",
+    "id_field": "UC ID",
+    "id_prefix": "UC",
+    "columns": ["UC ID", "Important Use Case", "Business Purpose", "Priority", "Preconditions", "Input", "Expected Output", "Dependencies", "Sample Data", "Sign-off?", "Evidence / Status"]
+  },
+
+  "5": {
+    "heading": "5. Detailed Use Case / Input-Output Matrix",
+    "kind": "rows",
+    "columns": ["Use Case", "Input", "Validation / Rule", "Processing", "Expected Output", "Negative / Error", "Evidence"]
+  },
+
+  "6": {
+    "heading": "6. Upstream / Downstream Dependencies",
+    "kind": "rows",
+    "columns": ["Dependency", "Operations", "Type", "Direction", "Purpose", "Interface / Protocol", "Owner", "Criticality", "Related Use Case", "Migration Impact / Notes"]
+  },
+
+  "7": {
+    "heading": "7. Sample / Test Data",
+    "kind": "rows",
+    "columns": ["Use Case", "Data Type", "Sample / Reference", "Expected Result", "Data Source / Owner", "Sensitive?", "Status"]
+  },
+
+  "8": {
+    "heading": "8. Postman / API Endpoint Details",
+    "kind": "rows",
+    "id_field": "API ID",
+    "id_prefix": "API",
+    "columns": ["API ID", "Method", "Endpoint", "Purpose", "Related Use Case", "Request/Input", "Expected Response", "Auth/Headers", "Postman Reference"]
+  },
+
+  "9": {
+    "heading": "9. Business / Functional Rules",
+    "kind": "rows",
+    "id_field": "Rule ID",
+    "id_prefix": "RULE",
+    "columns": ["Rule ID", "Rule", "Applies To", "Expected Behaviour", "Source / SME Confirmation"]
+  },
+
+  "10": {
+    "heading": "10. Error Handling / Negative Scenarios",
+    "kind": "rows",
+    "columns": ["Scenario", "Related Use Case", "Trigger/Input", "Expected Error/Response", "Business Impact", "Validation Evidence"]
+  },
+
+  "11": {
+    "heading": "11. As-Is vs Target Functional Behaviour",
+    "kind": "rows",
+    "columns": ["Area", "As-Is", "Target", "Functional Impact", "Validation Approach", "Approved Deviation?"]
+  },
+
+  "12": {
+    "heading": "12. Functional Test Baseline",
+    "kind": "rows",
+    "id_field": "Test ID",
+    "id_prefix": "TC",
+    "columns": ["Test ID", "Related Use Case", "Scenario", "Input/Data", "Expected Result", "Priority", "Status"]
+  },
+
+  "13": {
+    "heading": "13. Open Questions / Functional Decisions",
+    "kind": "rows",
+    "id_field": "ID",
+    "id_prefix": "Q",
+    "columns": ["ID", "Question / Gap", "Owner", "Status", "Impact"]
+  }
+}
