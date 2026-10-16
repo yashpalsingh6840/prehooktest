@@ -16,6 +16,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- NU1900 fires whenever NuGet's vulnerability-audit service (api.nuget.org) is unreachable,
+         a connectivity signal, not a real finding, unlike NU1901-1904 (an actual vulnerability,
+         which must stay fatal). Confirmed real on a client machine with restricted internet,
+         2026-10-16; without this, restore fails for every generated package on such a machine. -->
+    <WarningsNotAsErrors>NU1900</WarningsNotAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <!-- CodePage 1252 decoding needs the full globalization stack, not the invariant one. -->
     <InvariantGlobalization>false</InvariantGlobalization>
