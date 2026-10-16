@@ -134,6 +134,23 @@ public static class TransformTestEmitter
 
         var resolved = PipelineResolver.ResolveDestinationInput(request.DestinationComponent);
 
+        // The destination's own input column CACHES the SOURCE's buffer type (e.g. a Flat File
+        // Source's own output column can override a column's type to DT_DBDATE/DT_DBTIMESTAMP
+        // even though its real destination declares plain VARCHAR -- see CsvRowEmitter's own doc
+        // comment). TransformEmitter itself detects this and either coerces or gaps a plain
+        // passthrough column whose SOURCE buffer type disagrees with `column.Type` (the
+        // DESTINATION's own resolved type, used below for both the row literal AND the assert).
+        // This emitter used to have no equivalent check at all, so a mismatched column was always
+        // treated as a trivial passthrough -- emitting a row-initializer literal typed for the
+        // DESTINATION into a row property CsvRowEmitter actually declared with the SOURCE's own
+        // (different) type, a real client CS0029 ("string" into "DateOnly"/"DateTime"). Rather
+        // than replicate every one of TransformEmitter's own coercion branches here too (this is
+        // a deliberately narrower STARTER-test pilot, see the class doc comment), any disagreement
+        // at all is skipped with a gap -- consistent with this pilot's own "skip, don't guess"
+        // philosophy, and never worse than what TransformEmitter itself would generate.
+        var inputColumnsByRefId = request.DestinationComponent.Inputs.FirstOrDefault()?.Columns
+            .ToDictionary(c => c.RefId) ?? [];
+
         // Independently reproduces EntityEmitter's own identifier mapping for THIS destination
         // (same PipelineResolver.ResolveDestinationInput list, same order) -- see
         // PackageGenerator.MakeColumnIdentifierResolver's own doc comment. Every `result.{X}`
@@ -297,6 +314,15 @@ public static class TransformTestEmitter
                 {
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
                         $"starter test not generated for this column -- its external data type ('{column.ExternalDataType ?? "(unknown)"}') has no CLR mapping. Add an assertion by hand.", IsBlocking: false));
+                    continue;
+                }
+
+                if (inputColumnsByRefId.TryGetValue(column.PipelineColumnRefId, out var inputColumn)
+                    && SsisPipelineTypeMap.Resolve(inputColumn.CachedDataType) is { } sourceType
+                    && sourceType.ClrTypeName != clrType.ClrTypeName)
+                {
+                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                        $"starter test not generated for this column -- its source buffer type ({sourceType.ClrTypeName}) disagrees with its destination type ({clrType.ClrTypeName}); the generated row type's own property is typed for the SOURCE side, not the destination, so this pilot cannot assume a plain passthrough value here. Add an assertion by hand.", IsBlocking: false));
                     continue;
                 }
 

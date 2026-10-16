@@ -1738,7 +1738,7 @@ public static partial class PackageGenerator
 
             if (FlatFileRuntimeShape.IsFixedWidthWithoutHeader(format))
             {
-                Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+                Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager, flatFileSource));
                 // "Source -- fixed-width" taxonomy row (Docs/Generated-Tests-Plan.md): the SAME
                 // CsvSampleCandidate list a delimited source registers below -- SampleDataEmitter's
                 // own EmitCsv-vs-EmitFixedWidth dispatch (at the one place this list is consumed)
@@ -1816,7 +1816,7 @@ public static partial class PackageGenerator
 
             if (FlatFileRuntimeShape.IsFixedWidthWithoutHeader(format))
             {
-                Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+                Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager, sourceComponent));
                 csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", sourceComponent.Name, sourceComponent));
                 return (rowTypeName, new FixedWidthFlowSource(sourceComponent.Name, fileSourceKey,
                     FlatFileRuntimeShape.BuildColumnPlans(format!), format!.HeaderRowsToSkip ?? 0));

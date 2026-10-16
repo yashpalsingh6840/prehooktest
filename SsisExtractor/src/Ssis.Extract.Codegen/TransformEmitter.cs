@@ -279,48 +279,18 @@ public static class TransformEmitter
                 continue;
             }
 
-            if (sourceType.ClrTypeName == "double" && column.Type.ClrTypeName == "int")
+            var coercion = ResolveNumericCoercion(sourceType.ClrTypeName, column.Type.ClrTypeName);
+            if (coercion is { } kind)
             {
-                narrowedR8ToI4Columns.Add(column.PipelineColumnName);
-                continue;
-            }
-
-            if (sourceType.ClrTypeName == "long" && column.Type.ClrTypeName == "int")
-            {
-                narrowedI8ToI4Columns.Add(column.PipelineColumnName);
-                continue;
-            }
-
-            if (sourceType.ClrTypeName == "decimal" && column.Type.ClrTypeName == "int")
-            {
-                narrowedNumericToI4Columns.Add(column.PipelineColumnName);
-                continue;
-            }
-
-            if (sourceType.ClrTypeName == "float" && column.Type.ClrTypeName == "int")
-            {
-                narrowedR4ToI4Columns.Add(column.PipelineColumnName);
-                continue;
-            }
-
-            if (sourceType.ClrTypeName == "int" && column.Type.ClrTypeName == "decimal")
-            {
-                // Strictly widening, lossless -- no dtexec probe was needed (see
-                // ColumnExpressionBuilders' own NumericCoercionKind doc comment). Real, evidenced
-                // instance: sql-server-samples' DailyETLMain.dtsx, StockHolding_Staging's own
-                // "Last Cost Price" (buffered i4 from a SqlCommand result set, decimal(18,2) at
-                // the real destination table).
-                widenedI4ToNumericColumns.Add(column.PipelineColumnName);
-                continue;
-            }
-
-            if (sourceType.ClrTypeName == "int" && column.Type.ClrTypeName == "string")
-            {
-                // No dtexec probe needed -- int.ToString() is deterministic. Real, evidenced
-                // instance: a Flat File Source's own error output, whose ErrorCode/ErrorColumn
-                // system columns are i4 but whose real destination declares them str,100. See
-                // NumericCoercionKind.Str's own doc comment.
-                formattedI4AsStrColumns.Add(column.PipelineColumnName);
+                switch (kind)
+                {
+                    case NumericCoercionKind.NarrowR8ToI4: narrowedR8ToI4Columns.Add(column.PipelineColumnName); break;
+                    case NumericCoercionKind.NarrowI8ToI4: narrowedI8ToI4Columns.Add(column.PipelineColumnName); break;
+                    case NumericCoercionKind.NarrowNumericToI4: narrowedNumericToI4Columns.Add(column.PipelineColumnName); break;
+                    case NumericCoercionKind.NarrowR4ToI4: narrowedR4ToI4Columns.Add(column.PipelineColumnName); break;
+                    case NumericCoercionKind.WidenI4ToNumeric: widenedI4ToNumericColumns.Add(column.PipelineColumnName); break;
+                    case NumericCoercionKind.Str: formattedI4AsStrColumns.Add(column.PipelineColumnName); break;
+                }
                 continue;
             }
 
@@ -489,6 +459,52 @@ public static class TransformEmitter
             }
             else if (copiedByName.TryGetValue(column.PipelineColumnName, out var copyMapColumn))
             {
+                // TranslateCopyMap resolves the column's TRUE originating producer via its own
+                // "CopyMap" lineage edge -- a genuinely different pipeline buffer type than what
+                // the main mismatch-detection loop above saw (it only ever compares the
+                // DESTINATION's own immediate cached input-column type, which can disagree once a
+                // Copy Column sits behind a Union All/Sort/Merge boundary whose own buffer
+                // re-declares the type). A real client bug, found 2026-10-16: a DateTime-typed
+                // column reaching a string-typed destination through exactly this path compiled
+                // broken (CS0029) because this branch never consulted the mismatch machinery at
+                // all. Re-check here against the TRUE source type -- same "resolve through the
+                // lineage edge, don't trust the immediate buffer" discipline
+                // TranslateDerivedColumn's own Copy-Column-reference branch already applies.
+                var copyEdge = lineage.Edges.FirstOrDefault(e => e.Kind == "CopyMap" && e.ToColumnName == column.PipelineColumnName);
+                var trueSourceType = copyEdge is not null && columnTypes.TryGetValue(copyEdge.FromColumnRefId, out var copySourceColumn)
+                    ? SsisPipelineTypeMap.Resolve(copySourceColumn.DataType)
+                    : null;
+
+                if (!isFlatFileDestination && trueSourceType is not null && column.Type is not null
+                    && trueSourceType.ClrTypeName != column.Type.ClrTypeName)
+                {
+                    var sourceIdentifier = PackageGenerator.SanitizeIdentifier(copyEdge!.FromColumnName);
+                    var coercionKind = ResolveNumericCoercion(trueSourceType.ClrTypeName, column.Type.ClrTypeName);
+                    if (coercionKind is { } kind)
+                    {
+                        var coercedExpr = NumericCoercionExpressionBuilder.Build(kind, sourceIdentifier);
+                        CollectSsisFunctions(coercedExpr, functionsUsed);
+                        assignments.Add($"        {destId} = {coercedExpr},");
+                        continue;
+                    }
+
+                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                        $"source column '{copyEdge.FromColumnName}' (via Copy Column) is buffered as {trueSourceType.ClrTypeName} but the destination column is {column.Type.ClrTypeName} -- a numeric/string coercion on a Copy Column passthrough column is not generated yet"));
+                    continue;
+                }
+
+                if (isFlatFileDestination && trueSourceType is not null && column.Type is not null
+                    && trueSourceType.ClrTypeName != column.Type.ClrTypeName)
+                {
+                    // Every column a Flat File Destination writes is fundamentally text -- same
+                    // widen-via-ToString() rule the main loop already applies, just reached
+                    // through the Copy Column's own true source identifier instead.
+                    var isNullable = request.NullableColumnNames?.Contains(copyEdge!.FromColumnName) == true;
+                    var flatFileExpr = FlatFileStringConversionExpressionBuilder.Build(PackageGenerator.SanitizeIdentifier(copyEdge!.FromColumnName), isNullable);
+                    assignments.Add($"        {destId} = {flatFileExpr},");
+                    continue;
+                }
+
                 var copied = TranslateCopyMap(copyMapColumn, column.PipelineColumnName, lineage);
                 if (copied is NotTranslatable notTranslatable)
                 {
@@ -1196,6 +1212,29 @@ public static class TransformEmitter
         "dbdate" => SsisType.DbDate,
         _ => null,
     };
+
+    /// <summary>The single source of truth for which evidenced numeric-passthrough-coercion
+    /// pairing (if any) closes a plain-passthrough type mismatch between a source buffer type and
+    /// a non-Flat-File destination column type -- extracted 2026-10-16 so the main mismatch-
+    /// detection loop above and the CopyMap branch's own re-check (a Copy Column's TRUE source
+    /// type, resolved through its own lineage edge, can disagree with what the destination's
+    /// immediate cached input type suggests -- see that branch's own doc comment) can never
+    /// silently diverge about which pairings are supported. Returns null for an unevidenced
+    /// pairing (e.g. DateTime -> string) -- a real client bug (CopyMap's own branch used to emit
+    /// a bare passthrough for exactly this pairing with no gap at all, producing a CS0029 in the
+    /// generated code) is what this null case now correctly surfaces as a named gap instead.
+    /// Internal, not private, so TransformTestEmitter can ask the identical question when
+    /// deciding a starter test's own representative literal for a Copy-Column-produced column.</summary>
+    internal static NumericCoercionKind? ResolveNumericCoercion(string sourceClrTypeName, string destinationClrTypeName)
+    {
+        if (sourceClrTypeName == "double" && destinationClrTypeName == "int") return NumericCoercionKind.NarrowR8ToI4;
+        if (sourceClrTypeName == "long" && destinationClrTypeName == "int") return NumericCoercionKind.NarrowI8ToI4;
+        if (sourceClrTypeName == "decimal" && destinationClrTypeName == "int") return NumericCoercionKind.NarrowNumericToI4;
+        if (sourceClrTypeName == "float" && destinationClrTypeName == "int") return NumericCoercionKind.NarrowR4ToI4;
+        if (sourceClrTypeName == "int" && destinationClrTypeName == "decimal") return NumericCoercionKind.WidenI4ToNumeric;
+        if (sourceClrTypeName == "int" && destinationClrTypeName == "string") return NumericCoercionKind.Str;
+        return null;
+    }
 
     /// <summary>Internal, not private -- TransformTestEmitter reuses this exact producer-column
     /// lookup (RefId -> its own output column, the same one lineage edges resolve against) so a

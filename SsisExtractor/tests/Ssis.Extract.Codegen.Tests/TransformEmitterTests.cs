@@ -280,6 +280,132 @@ public class TransformEmitterTests
         Assert.Contains("Name = row.Name,", file.Content);
     }
 
+    /// <summary>Pins the 2026-10-16 fix: real client bug found via <c>TranslateCopyMap</c>'s own
+    /// doc comment -- a Copy Column resolves its own lineage edge to the column's TRUE
+    /// originating producer, which can genuinely disagree with what the main mismatch-detection
+    /// loop above saw (it only ever compares the destination's OWN immediate cached input-column
+    /// type). A DateTime-typed source column reaching a string-typed destination through a Copy
+    /// Column used to compile broken (CS0029 "DateTime" -&gt; "string") because this branch never
+    /// consulted the mismatch machinery at all -- no coercion is evidenced for this pairing, so
+    /// the correct outcome is a named gap, never a guess.</summary>
+    [Fact]
+    public void Emit_ReportsAGap_ForACopyColumnColumn_WhoseTrueSourceTypeDisagreesWithTheDestination()
+    {
+        var source = new PipelineComponentSpec
+        {
+            RefId = "SRC",
+            Name = "OLE DB Source",
+            ComponentClassId = "Microsoft.OLEDBSource",
+            Outputs =
+            [
+                new PipelineOutputSpec
+                {
+                    RefId = "SRC.Outputs[Output]",
+                    Name = "Output",
+                    Columns =
+                    [
+                        new PipelineOutputColumnSpec { RefId = "SRC.Outputs[Output].Columns[ArrivalDate]", Name = "ArrivalDate", LineageId = "LIN1", DataType = "dbtimestamp" },
+                    ],
+                },
+            ],
+        };
+
+        var copyMap = new PipelineComponentSpec
+        {
+            RefId = "CPY_Test",
+            Name = "Copy Column",
+            ComponentClassId = "Microsoft.CopyMap",
+            CopyMap = new CopyMapPayload
+            {
+                Columns = [new CopyMapColumnSpec { OutputColumnName = "ArrivalDateCopy", SourceColumnLineageId = "LIN1" }],
+            },
+            Outputs =
+            [
+                new PipelineOutputSpec
+                {
+                    RefId = "CPY_Test.Outputs[Output]",
+                    Name = "Output",
+                    Columns =
+                    [
+                        new PipelineOutputColumnSpec { RefId = "CPY_Test.Outputs[Output].Columns[ArrivalDateCopy]", Name = "ArrivalDateCopy", LineageId = "LIN2", DataType = "dbtimestamp" },
+                    ],
+                },
+            ],
+        };
+
+        var destination = new PipelineComponentSpec
+        {
+            RefId = "DST_Test",
+            Name = "OLE DB Destination",
+            ComponentClassId = "Microsoft.OLEDBDestination",
+            Inputs =
+            [
+                new PipelineInputSpec
+                {
+                    RefId = "DST_Test.Inputs[OLE DB Destination Input]",
+                    Name = "OLE DB Destination Input",
+                    Columns =
+                    [
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[ArrivalDateCopy]",
+                            CachedName = "ArrivalDateCopy",
+                            // The destination's own IMMEDIATE cached buffer type agrees with its
+                            // external (string) type -- the exact precondition for the real bug:
+                            // the main mismatch-detection loop above sees no disagreement at all
+                            // (so it never gaps this column), and only a Copy Column's own
+                            // lineage edge, resolved back to its TRUE originating producer
+                            // (DateTime, below), reveals the real mismatch this branch's own
+                            // re-check exists to catch.
+                            CachedDataType = "wstr",
+                            LineageId = "LIN2",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[ArrivalDateCopy]",
+                        },
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[Name]",
+                            CachedName = "Name",
+                            CachedDataType = "wstr",
+                            LineageId = "SRC.Outputs[Output].Columns[Name]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Name]",
+                        },
+                    ],
+                    ExternalMetadataColumns =
+                    [
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[ArrivalDateCopy]", Name = "ArrivalDateCopy", DataType = "wstr", Length = 50 },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[Name]", Name = "Name", DataType = "wstr", Length = 50 },
+                    ],
+                },
+            ],
+        };
+
+        var pipeline = new PipelineSpec { Components = [source, copyMap, destination] };
+
+        var request = new TransformRequest(
+            "Generated.Mapping", "TargetTransform",
+            "Generated.Sql", "TargetSqlRow",
+            "Generated.Model", "Target",
+            "Generated.Ssis",
+            pipeline, [], destination,
+            CopyMaps: [copyMap]);
+
+        var result = TransformEmitter.Emit(request);
+
+        var gap = Assert.Single(result.Result.Gaps);
+        Assert.Contains("ArrivalDate", gap.Reason);
+        Assert.Contains("DateTime", gap.Reason);
+        Assert.Contains("string", gap.Reason);
+
+        // The MISMATCHED CopyMap column is dropped, but the file still generates with every
+        // other column -- same per-column-gap shape as an untranslatable Derived Column
+        // expression, not a whole-flow failure. No broken `= row.ArrivalDate` (DateTime into a
+        // string-declared row type) reaches the generated file at all.
+        var file = Assert.Single(result.Result.Files);
+        Assert.DoesNotContain("ArrivalDate", file.Content);
+        Assert.Contains("Name = row.Name,", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
+
     [Fact]
     public void Emit_ResolvesAPlainPassthroughColumn_WhenSourceIsStringAndDestinationIsInt()
     {
