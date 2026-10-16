@@ -380,6 +380,18 @@ public static class TransformTestEmitter
         // itself blocked by an unrelated gap first). Any literal 3-byte array is representative;
         // this test only ever proves the sink writes it through, not any specific content.
         "byte[]" => "new byte[] { 1, 2, 3 }",
+        // The remaining CLR types SsisPipelineTypeMap can produce (DT_I1/DT_UI1/DT_GUID/
+        // DT_DBTIME/DT_DBTIME2/DT_DBTIMESTAMPOFFSET) -- added 2026-10-16 after a real client
+        // portfolio (HoldingsClassification_SSIS) hit the NotSupportedException fallback below
+        // via a Flat File Destination sink column of one of these types, crashing the whole
+        // `generate` run. Any literal of the right shape is representative; these starter tests
+        // only ever prove the value flows through, not any specific content.
+        "sbyte" => "(sbyte)7",
+        "byte" => "(byte)7",
+        "Guid" => "new Guid(\"11111111-1111-1111-1111-111111111111\")",
+        "TimeSpan" => "new TimeSpan(12, 0, 0)",
+        "TimeOnly" => "new TimeOnly(12, 0, 0)",
+        "DateTimeOffset" => "new DateTimeOffset(2020, 6, 15, 12, 0, 0, TimeSpan.Zero)",
         _ => throw new NotSupportedException($"TransformTestEmitter has no representative literal for CLR type '{clrTypeName}' -- add one before relying on it for a starter test."),
     };
 

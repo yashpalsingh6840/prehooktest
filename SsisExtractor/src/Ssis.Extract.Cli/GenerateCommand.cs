@@ -492,6 +492,14 @@ internal static class GenerateCommand
         "    <Nullable>enable</Nullable>",
         "    <ImplicitUsings>enable</ImplicitUsings>",
         "    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>",
+        // NU1900 fires whenever NuGet's vulnerability-audit service (api.nuget.org) is
+        // unreachable -- a real, confirmed failure mode on a client machine with restricted
+        // outbound internet (not hypothetical: it broke restore for every single generated
+        // package on a real client portfolio, 2026-10-16). It is purely a connectivity signal,
+        // never a real finding, unlike NU1901-1904 (an ACTUAL vulnerability, reachable or not)
+        // which must stay fatal under TreatWarningsAsErrors -- so only NU1900 is exempted here,
+        // not the audit feature as a whole.
+        "    <WarningsNotAsErrors>NU1900</WarningsNotAsErrors>",
         "    <InvariantGlobalization>false</InvariantGlobalization>",
         "  </PropertyGroup>",
         "",

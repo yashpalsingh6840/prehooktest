@@ -179,4 +179,32 @@ public class TransformTestEmitterTests
 
         CodeAssertions.AssertNoSyntaxErrors(file.Content);
     }
+
+    /// <summary>Pins the 2026-10-16 fix: every CLR type <c>SsisPipelineTypeMap</c> can actually
+    /// produce must have a representative literal, or any starter-test emitter calling this
+    /// (ComponentTestEmitter/TransformTestEmitter/RouterTestEmitter) crashes the whole `generate`
+    /// run with an uncaught NotSupportedException the instant a real column resolves to one of
+    /// them -- exactly what happened on a real client portfolio (HoldingsClassification_SSIS) via
+    /// a Flat File Destination sink column. "byte[]" was already fixed in an earlier round; this
+    /// closes the remaining gap (sbyte/byte/Guid/TimeSpan/TimeOnly/DateTimeOffset) comprehensively
+    /// rather than one client file at a time.</summary>
+    [Theory]
+    [InlineData("sbyte")]
+    [InlineData("byte")]
+    [InlineData("Guid")]
+    [InlineData("TimeSpan")]
+    [InlineData("TimeOnly")]
+    [InlineData("DateTimeOffset")]
+    public void RepresentativeLiteral_HandlesEveryClrTypeSsisPipelineTypeMapCanProduce(string clrTypeName)
+    {
+        var literal = TransformTestEmitter.RepresentativeLiteral(clrTypeName);
+
+        Assert.False(string.IsNullOrWhiteSpace(literal));
+    }
+
+    [Fact]
+    public void RepresentativeLiteral_StillThrows_ForAGenuinelyUnknownClrType()
+    {
+        Assert.Throws<NotSupportedException>(() => TransformTestEmitter.RepresentativeLiteral("SomeFutureUnmappedType"));
+    }
 }
