@@ -4320,12 +4320,45 @@ public static partial class PackageGenerator
 
         var componentColumnNameByExternalName = payload.ColumnMappings.ToDictionary(m => m.ExternalColumnName, m => m.ComponentColumnName);
 
+        // Real, found 2026-10-16 against a client portfolio: this used to take ComponentColumnName
+        // (the raw pipeline buffer/component column name) VERBATIM as FlatFileColumnFormatSpec's
+        // own PropertyName -- but EntityEmitter.Emit (called for this same destination, just below
+        // this method's own call site) sanitizes every property name via
+        // PackageGenerator.MakeColumnIdentifierResolver, keyed by each column's EXTERNAL metadata
+        // name. A real column name with spaces/&/| (e.g. "Total Enrolled CANADA & US | Ttl Active
+        // CAN & US Last 30 Days") builds and generates fine -- the entity property is correctly
+        // sanitized -- but FlatFileBulkSink<TEntity>'s own runtime reflection lookup
+        // (typeof(TEntity).GetProperty(c.PropertyName, ...)) was still being handed the RAW,
+        // unsanitized name, which no longer matches any real property: a build-time-invisible,
+        // runtime-only InvalidOperationException on the very first write. Resolving this
+        // destination's own PipelineResolver.ResolveDestinationInput columns (the identical source
+        // EntityEmitter reads) through an INDEPENDENT identifier resolver instance -- same input
+        // set, same order, so it reproduces EntityEmitter's own naming decisions exactly, with no
+        // shared state between the two emitters -- is the same convention
+        // DbContextEmitter/EntityEmitter's own doc comment already documents for this exact
+        // "two emitters, one identifier mapping" problem.
+        var resolvedDestinationInput = PipelineResolver.ResolveDestinationInput(destination);
+        var entityIdentifierOf = MakeColumnIdentifierResolver();
+        var entityPropertyByExternalName = resolvedDestinationInput.Columns
+            .ToDictionary(c => c.ExternalColumnName, c => entityIdentifierOf(c.ExternalColumnName));
+
         var columns = new List<FlatFileColumnFormatSpec>();
         foreach (var column in format.Columns)
         {
-            if (!componentColumnNameByExternalName.TryGetValue(column.ObjectName, out var propertyName))
+            if (!componentColumnNameByExternalName.TryGetValue(column.ObjectName, out _))
             {
                 gaps.Add(new GenerationGap(taskName, $"Flat File Destination '{destination.Name}': connection manager column '{column.ObjectName}' has no mapped input column -- not supported"));
+                return null;
+            }
+
+            // The mapping above only proves a PIPELINE column exists -- not that EntityEmitter
+            // actually generated a property for it (e.g. an unmapped CLR type is its own,
+            // separately-reported gap). Referencing a property EntityEmitter never emitted would
+            // be the identical runtime crash this whole fix exists to close, just from a different
+            // cause -- so this is a hard stop here too, not a fallback to the raw name.
+            if (!entityPropertyByExternalName.TryGetValue(column.ObjectName, out var propertyName))
+            {
+                gaps.Add(new GenerationGap(taskName, $"Flat File Destination '{destination.Name}': connection manager column '{column.ObjectName}' has no corresponding entity property -- see the '{fileSourceKey}.{column.ObjectName}' gap for why"));
                 return null;
             }
 

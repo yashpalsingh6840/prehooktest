@@ -1065,6 +1065,42 @@ public class PackageGeneratorTests
         Assert.Contains(result.Gaps, g => g.Location == "SyntheticFlatFileDestination.Notification");
     }
 
+    /// <summary>Pins the 2026-10-16 fix: a real column name with spaces/special characters (a
+    /// real client portfolio had one containing spaces and "&amp;"/"|") got a correctly sanitized
+    /// C# property on the ENTITY (EntityEmitter.Emit), but ResolveFlatFileSink was still handing
+    /// the RAW, unsanitized name to FlatFileColumnFormat's own PropertyName -- which
+    /// FlatFileBulkSink{T}.WriteAsync resolves via reflection at RUNTIME
+    /// (typeof(TEntity).GetProperty(...)), so it compiled fine and crashed with an
+    /// InvalidOperationException the moment a row was actually written, invisible to every build
+    /// check. SyntheticFlatFileDestinationSpecialChars.dtsx is a byte-preserving derived copy of
+    /// SyntheticFlatFileDestination.dtsx (CLAUDE.md's trap 18 discipline) with "CleanEmail" renamed
+    /// to "Clean Email | Contact" throughout -- confirmed end to end: generated, built 0
+    /// warnings/0 errors, and the generated FlatFileSinkTests.cs's own WriteAsync test (which
+    /// actually constructs the sink and writes a real file via reflection) passes for real.</summary>
+    [Fact]
+    public void Generate_SanitizesAFlatFileDestinationColumnName_ToMatchItsOwnEntityProperty()
+    {
+        var package = LoadSyntheticFixture("SyntheticFlatFileDestinationSpecialChars.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null);
+
+        var entityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/DFT_ExportDelimited.cs");
+        Assert.Contains("public string CleanEmailContact { get; set; } = \"\";", entityFile.Content);
+
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticFlatFileDestinationSpecialChars.cs");
+        // The PropertyName argument (reflection target) must be the SAME sanitized identifier the
+        // entity actually declares -- the real client crash was this string staying "Clean Email |
+        // Contact" (the raw name) while the entity property was "CleanEmailContact".
+        Assert.Contains("new FlatFileColumnFormat(\"CleanEmailContact\", null, \"\\r\\n\")", classFile.Content);
+        // The physical file's own header line is a SEPARATE concern -- it must still write the
+        // REAL column name, not the sanitized identifier, since that's what actually lands in the
+        // output file.
+        Assert.Contains("Clean Email | Contact", classFile.Content);
+
+        CodeAssertions.AssertNoSyntaxErrors(entityFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+    }
+
     [Fact]
     public void Generate_WiresAConditionalSplitFlowWithNoPerBranchTransform_ThroughSortAndMerge()
     {
