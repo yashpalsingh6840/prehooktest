@@ -1,0 +1,218 @@
+{
+  "package": "Package_Exports",
+  "toolVerified": [
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "ADO_DST_ExportLog",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "ADO_SRC_Customers",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "DFT_ExportDelimited_SRC",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "DFT_ExportFixedWidth_SRC",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "SQL_TruncateExportLog",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "Concurrency",
+      "objectName": "DFT_ExportDelimited",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "Concurrency",
+      "objectName": "DFT_ExportFixedWidth",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "Concurrency",
+      "objectName": "SQL_TruncateExportLog",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "DFT_AdoNetRoundTrip",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_AdoNetRoundTrip",
+      "objectName": "ADO_DST_ExportLog",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_AdoNetRoundTrip",
+      "objectName": "ADO_SRC_Customers",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_ExportDelimited",
+      "objectName": "DFT_ExportDelimited_DST",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_ExportDelimited",
+      "objectName": "DFT_ExportDelimited_SRC",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_ExportFixedWidth",
+      "objectName": "DFT_ExportFixedWidth_DST",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_ExportFixedWidth",
+      "objectName": "DFT_ExportFixedWidth_SRC",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "DestinationInput",
+      "objectName": "ADO_DST_ExportLog",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "SourceOutput",
+      "objectName": "ADO_SRC_Customers",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "DestinationInput",
+      "objectName": "DFT_ExportDelimited_DST",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "SourceOutput",
+      "objectName": "DFT_ExportDelimited_SRC",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "DestinationInput",
+      "objectName": "DFT_ExportFixedWidth_DST",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "SourceOutput",
+      "objectName": "DFT_ExportFixedWidth_SRC",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    }
+  ],
+  "exception": [],
+  "aiVerified": [],
+  "humanNeedsReview": []
+}

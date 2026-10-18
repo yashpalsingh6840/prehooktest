@@ -1,0 +1,159 @@
+{
+  "package": "Package_Exports",
+  "gate": "Gate1_SqlAndSchemaParity",
+  "counts": {
+    "Match": 5
+  },
+  "findings": [
+    {
+      "objectName": "ADO_DST_ExportLog",
+      "verdict": "Match",
+      "detail": "Table identity matches (CustomerExportLog/CustomerExportLog).",
+      "left": {
+        "package": "Package_Exports",
+        "executable_path": "Package\\DFT_AdoNetRoundTrip\\ADO_DST_ExportLog",
+        "object_name": "ADO_DST_ExportLog",
+        "component_type": "Microsoft.ADONETDestination",
+        "source_property": "property:TableOrViewName",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "table_name": "CustomerExportLog",
+        "schema_name": "dbo",
+        "connection_manager": "CM_ADO_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Model\\Package_ExportsDbContext.cs",
+        "object_name": "CustomerExportLog",
+        "shape": "EfCoreTable",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "literal_segments": null,
+        "table_name": "CustomerExportLog",
+        "schema_name": "dbo",
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "ADO_SRC_Customers",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package_Exports",
+        "executable_path": "Package\\DFT_AdoNetRoundTrip\\ADO_SRC_Customers",
+        "object_name": "ADO_SRC_Customers",
+        "component_type": "Microsoft.DataReaderSourceAdapter",
+        "source_property": "property:SqlCommand",
+        "kind": "Statement",
+        "sql_text": "SELECT CustomerID, FullName FROM dbo.StagingCustomers WHERE IsValidRow = 1",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_ADO_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Package_Exports.cs",
+        "object_name": "ADO_SRC_Customers",
+        "shape": "InlineSqlRowSource",
+        "kind": "Statement",
+        "sql_text": "SELECT CustomerID, FullName FROM dbo.StagingCustomers WHERE IsValidRow = 1",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "DFT_ExportDelimited_SRC",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package_Exports",
+        "executable_path": "Package\\DFT_ExportDelimited\\DFT_ExportDelimited_SRC",
+        "object_name": "DFT_ExportDelimited_SRC",
+        "component_type": "Microsoft.OLEDBSource",
+        "source_property": "property:SqlCommand",
+        "kind": "Statement",
+        "sql_text": "SELECT CustomerID, FullName, CleanEmail FROM dbo.StagingCustomers WHERE IsValidRow = 1",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Package_Exports.cs",
+        "object_name": "DFT_ExportDelimited_SRC",
+        "shape": "InlineSqlRowSource",
+        "kind": "Statement",
+        "sql_text": "SELECT CustomerID, FullName, CleanEmail FROM dbo.StagingCustomers WHERE IsValidRow = 1",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "DFT_ExportFixedWidth_SRC",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package_Exports",
+        "executable_path": "Package\\DFT_ExportFixedWidth\\DFT_ExportFixedWidth_SRC",
+        "object_name": "DFT_ExportFixedWidth_SRC",
+        "component_type": "Microsoft.OLEDBSource",
+        "source_property": "property:SqlCommand",
+        "kind": "Statement",
+        "sql_text": "SELECT CustomerID, FullName, CleanEmail, '' AS RowEnd FROM dbo.StagingCustomers WHERE IsValidRow = 1",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Package_Exports.cs",
+        "object_name": "DFT_ExportFixedWidth_SRC",
+        "shape": "InlineSqlRowSource",
+        "kind": "Statement",
+        "sql_text": "SELECT CustomerID, FullName, CleanEmail, '' AS RowEnd FROM dbo.StagingCustomers WHERE IsValidRow = 1",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "SQL_TruncateExportLog",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package_Exports",
+        "executable_path": "Package\\SQL_TruncateExportLog",
+        "object_name": "SQL_TruncateExportLog",
+        "component_type": "Microsoft.ExecuteSQLTask",
+        "source_property": "SQLTask:SqlStatementSource",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.CustomerExportLog;",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Mapping\\SQL_TruncateExportLogStatement.cs",
+        "object_name": "SQL_TruncateExportLog",
+        "shape": "ExecuteSqlStatement",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.CustomerExportLog;",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": ""
+      }
+    }
+  ]
+}

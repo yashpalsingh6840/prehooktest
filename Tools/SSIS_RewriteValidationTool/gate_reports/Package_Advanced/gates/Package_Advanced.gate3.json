@@ -1,0 +1,47 @@
+{
+  "package": "Package_Advanced",
+  "gate": "Gate3_ComponentSchemaParity",
+  "counts": {
+    "Match": 3,
+    "Unverifiable": 1
+  },
+  "findings": [
+    {
+      "scope": "SourceOutput",
+      "objectName": "EXCEL_SRC_Drip",
+      "verdict": "Match",
+      "detail": "vs. generated class 'DripEligibilityExcelRow' (Excel\\DripEligibilityExcelRow.cs):\n  = CustomerID: SSIS 'r8' -> 'double'.\n  = DripEligible: SSIS 'wstr' -> 'string'.\n  = ReviewedBy: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
+    },
+    {
+      "scope": "DestinationInput",
+      "objectName": "OLEDST_Drip",
+      "verdict": "Match",
+      "detail": "vs. generated class 'DripEligibility' (Model\\DripEligibility.cs):\n  = CustomerID: SSIS 'i4' -> 'int'.\n  = DripEligible: SSIS 'wstr' -> 'string'.\n  = ReviewedBy: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
+    },
+    {
+      "scope": "DestinationInput",
+      "objectName": "OLECMD_SetFlag",
+      "verdict": "Unverifiable",
+      "detail": "'OLECMD_SetFlag' (Microsoft.OLEDBCommand) is not a database destination Gate 1 can identify by (schema, table), and no generated factory method is named after this component either \u2014 no schema-correlation mechanism matched (1 declared column(s) not compared).",
+      "componentPath": "Package\\DFT_FlagCustomers\\OLECMD_SetFlag",
+      "evidence": [
+        {
+          "name": "@CustomerID",
+          "ssis_type_raw": "i4"
+        }
+      ]
+    },
+    {
+      "scope": "SourceOutput",
+      "objectName": "OLESRC_CustomerIds",
+      "verdict": "Match",
+      "detail": "vs. generated class 'DFT_FlagCustomersSqlRow' (Sql\\DFT_FlagCustomersSqlRow.cs):\n  = CustomerID: SSIS 'i4' -> 'int'.",
+      "componentPath": "",
+      "evidence": null
+    }
+  ]
+}

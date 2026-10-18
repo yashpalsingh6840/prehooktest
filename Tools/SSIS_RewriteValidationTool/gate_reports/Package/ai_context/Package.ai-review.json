@@ -1,0 +1,26 @@
+[
+  {
+    "component": "SCR_ComputeCustomerTier",
+    "scope": "DataFlowComponent",
+    "verdict": "AiSuspectedDiscrepancy",
+    "rationale": "The tier thresholds match exactly -- both sides use revenue >= 10000 -> Platinum, >= 5000 -> Gold, >= 1000 -> Silver, else Bronze on Row.TotalRevenue/row.TotalRevenue -- so the core business rule is faithfully ported. But the timestamp differs in kind: the original VB/C# script sets Row.ProcessedDateTime = DateTime.Now (local server time, evaluated per row at the moment that specific row is processed), while the generated fill returns ProcessedDateTime: ctx.LoadedAtUtc (UTC, and named \"LoadedAt\" rather than \"processed\" -- almost certainly a single value captured once for the whole batch/load rather than re-evaluated per row). This is a citable difference in both timezone (local vs UTC) and granularity (per-row wall-clock vs one shared load timestamp), which would change the actual values written to ProcessedDateTime for every row, not just an implementation detail."
+  },
+  {
+    "component": "SCR_CleanseCustomerRow",
+    "scope": "DataFlowComponent",
+    "verdict": "AiSuspectedDiscrepancy",
+    "rationale": "The cleansing logic matches closely: both trim FirstName/LastName/Email/CustomerID, build FullName as (first + \" \" + last).Trim(), lowercase the email into CleanEmail, and compute IsValidRow as validId && validEmail using the identical regex ^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$ and the identical int.TryParse validity check (the generated fill even carries a comment matching the original's own NULLIF(...,'') remark). The one discrepancy is the same pattern as SCR_ComputeCustomerTier: the original sets Row.LoadDateTime = DateTime.Now (local, evaluated per row), while the generated fill returns LoadDateTime: ctx.LoadedAtUtc (UTC, apparently a shared load-level timestamp rather than a per-row one). Same citable timezone/granularity difference, carried into every row's LoadDateTime."
+  },
+  {
+    "component": "SCR_NotifyAndLogProgress",
+    "scope": "ScriptTask",
+    "verdict": "AiConfirmedMatch",
+    "rationale": "The generated RunScriptAsync reproduces the original VB script's steps in the same order and with the same effect: it recovers startedAt from User::BatchStartTime via the same round-trip (\"o\") parse convention the original documents, computes elapsedSeconds/elapsed the same way, counts total and invalid staged rows (original: SELECT COUNT(*), SUM(CASE WHEN IsValidRow = 0 THEN 1 ELSE 0 END) FROM dbo.StagingCustomers; generated: customers.CountAsync(ct) and customers.CountAsync(c => !c.IsValidRow, ct) against the same StagingCustomers set), inserts the same dbo.EtlAuditLog row with the same \"Batch Progress\" step name and an equivalent formatted message, sets User::RowsLoaded, and logs the same information. The generated version substitutes an EF query against the shared unit-of-work for the original's raw ADO.NET query against the same table -- a legitimate mechanism swap, not a behavior change -- so this is a confirmed match at the business-logic level."
+  },
+  {
+    "component": "SCR_ValidateAndLogStart",
+    "scope": "ScriptTask",
+    "verdict": "AiSuspectedDiscrepancy",
+    "rationale": "Most of the logic matches: both check the source file exists, stamp User::BatchStartTime with DateTime.Now.ToString(\"o\"), and insert an equivalent \"Batch Start\" row into dbo.EtlAuditLog with the same parameters. However, the failure path differs in a way that could change control-flow behavior, not just internals: the original C# script, on a missing file, calls Dts.Events.FireError(...) and sets Dts.TaskResult = (int)ScriptResults.Failure and returns -- a structured SSIS task failure that the package's own precedence constraints and OnFailure event handlers are designed to react to. The generated fill instead throws new InvalidOperationException($\"Source file not found: {filePath}\") -- an unhandled .NET exception rather than a task-result signal. Whether this is equivalent depends entirely on how the surrounding ILoadTask/orchestration layer (not shown in this packet) treats an exception from RunAsync versus how the original SSIS engine treated a Script Task's Failure result; the packet's excerpt doesn't show that orchestration layer, so this needs a human check of exception handling versus the original's TaskResult-based failure signaling."
+  }
+]

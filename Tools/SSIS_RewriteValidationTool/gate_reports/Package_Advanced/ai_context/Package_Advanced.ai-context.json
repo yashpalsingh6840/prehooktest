@@ -1,0 +1,34 @@
+{
+  "package": "Package_Advanced",
+  "dtsx_file": "D:\\PoC\\SSIS_Packages\\SSIS_From_Sandeep\\RBC_Demo_ETL\\RBC_Demo_ETL\\Package_Advanced.dtsx",
+  "generated_file_path": "D:\\SSIS_Out\\gen\\generate\\Package_Advanced\\Package_Advanced.cs",
+  "sources": {
+    "D:\\SSIS_Out\\gen\\generate\\Package_Advanced\\Package_Advanced.cs (method OLESRC_CustomerIds)": "\n        return new SqlRowSource<DFT_FlagCustomersSqlRow>(\"OLESRC_CustomerIds\", new SqlSourceOptions { ConnectionString = SqlConnectionStringFactory.Build(Db()), CommandText = \"SELECT DISTINCT CustomerID FROM dbo.Orders\" }, DFT_FlagCustomersSqlRowReader.Read, uow);\n    "
+  },
+  "components": [],
+  "correlation_gaps": [
+    {
+      "component_name": "OLECMD_SetFlag",
+      "component_path": "Package\\DFT_FlagCustomers\\OLECMD_SetFlag",
+      "tier1_detail": "'OLECMD_SetFlag' (Microsoft.OLEDBCommand) is not a database destination Gate 1 can identify by (schema, table), and no generated factory method is named after this component either \u2014 no schema-correlation mechanism matched (1 declared column(s) not compared).",
+      "declared_columns": [
+        {
+          "name": "@CustomerID",
+          "ssis_type_raw": "i4"
+        }
+      ],
+      "known_correlate": {
+        "resolved_via": "Gate 1's own SQL-content correlation",
+        "generated_object_name": "DFT_FlagCustomers",
+        "generated_shape": "OleDbCommandStep",
+        "generated_file_path": "Package_Advanced.cs",
+        "excerpt": "\n        var source = OLESRC_CustomerIds(uow);\n        var step = new OleDbCommandStep<DFT_FlagCustomersSqlRow>(\n            \"DFT_FlagCustomers\",\n            source,\n            \"EXEC dbo.usp_SetCustomerFlag {0}, N'flagged'\",\n            row => new object?[] { row.CustomerID },\n            Log<OleDbCommandStep<DFT_FlagCustomersSqlRow>>());\n        _results.Add(await step.RunAsync(uow, _load, ct));\n    ",
+        "related_source_files": [
+          "D:\\SSIS_Out\\gen\\generate\\Package_Advanced\\Package_Advanced.cs (method OLESRC_CustomerIds)"
+        ]
+      },
+      "unconfirmed_candidates": null
+    }
+  ],
+  "left_only_gaps": []
+}

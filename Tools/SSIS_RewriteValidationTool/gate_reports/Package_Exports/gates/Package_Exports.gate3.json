@@ -1,0 +1,57 @@
+{
+  "package": "Package_Exports",
+  "gate": "Gate3_ComponentSchemaParity",
+  "counts": {
+    "Match": 6
+  },
+  "findings": [
+    {
+      "scope": "DestinationInput",
+      "objectName": "ADO_DST_ExportLog",
+      "verdict": "Match",
+      "detail": "vs. generated class 'CustomerExportLog' (Model\\CustomerExportLog.cs):\n  = CustomerID: SSIS 'i4' -> 'int?'.\n  = FullName: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
+    },
+    {
+      "scope": "SourceOutput",
+      "objectName": "ADO_SRC_Customers",
+      "verdict": "Match",
+      "detail": "vs. generated class 'CustomerExportLogSqlRow' (Sql\\CustomerExportLogSqlRow.cs):\n  = CustomerID: SSIS 'wstr' -> 'string?'.\n  = FullName: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
+    },
+    {
+      "scope": "DestinationInput",
+      "objectName": "DFT_ExportDelimited_DST",
+      "verdict": "Match",
+      "detail": "vs. generated class 'DFT_ExportDelimited' (Model\\DFT_ExportDelimited.cs):\n  = CleanEmail: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
+    },
+    {
+      "scope": "SourceOutput",
+      "objectName": "DFT_ExportDelimited_SRC",
+      "verdict": "Match",
+      "detail": "vs. generated class 'DFT_ExportDelimitedSqlRow' (Sql\\DFT_ExportDelimitedSqlRow.cs):\n  = CleanEmail: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
+    },
+    {
+      "scope": "DestinationInput",
+      "objectName": "DFT_ExportFixedWidth_DST",
+      "verdict": "Match",
+      "detail": "vs. generated class 'DFT_ExportFixedWidth' (Model\\DFT_ExportFixedWidth.cs):\n  = CleanEmail: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.\n  = RowEnd: SSIS 'wstr' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
+    },
+    {
+      "scope": "SourceOutput",
+      "objectName": "DFT_ExportFixedWidth_SRC",
+      "verdict": "Match",
+      "detail": "vs. generated class 'DFT_ExportFixedWidthSqlRow' (Sql\\DFT_ExportFixedWidthSqlRow.cs):\n  = CleanEmail: SSIS 'wstr' -> 'string'.\n  = CustomerID: SSIS 'wstr' -> 'string'.\n  = FullName: SSIS 'wstr' -> 'string'.\n  = RowEnd: SSIS 'str' -> 'string'.",
+      "componentPath": "",
+      "evidence": null
+    }
+  ]
+}

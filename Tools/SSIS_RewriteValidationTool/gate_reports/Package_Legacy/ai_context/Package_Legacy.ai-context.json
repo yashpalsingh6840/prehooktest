@@ -1,0 +1,40 @@
+{
+  "package": "Package_Legacy",
+  "dtsx_file": "D:\\PoC\\SSIS_Packages\\SSIS_From_Sandeep\\RBC_Demo_ETL\\RBC_Demo_ETL\\Package_Legacy.dtsx",
+  "generated_file_path": "D:\\SSIS_Out\\gen\\generate\\Package_Legacy\\Package_Legacy.cs",
+  "sources": {},
+  "components": [],
+  "correlation_gaps": [
+    {
+      "component_name": "FFDST_AuditTrail_APPEND",
+      "component_path": "Package\\DFT_FixedWidthImport\\FFDST_AuditTrail_APPEND",
+      "tier1_detail": "'FFDST_AuditTrail_APPEND' (Microsoft.FlatFileDestination) is not a database destination Gate 1 can identify by (schema, table), and no generated factory method is named after this component either \u2014 no schema-correlation mechanism matched (2 declared column(s) not compared).",
+      "declared_columns": [
+        {
+          "name": "CustomerID",
+          "ssis_type_raw": "wstr"
+        },
+        {
+          "name": "CountryCode",
+          "ssis_type_raw": "wstr"
+        }
+      ],
+      "known_correlate": null,
+      "unconfirmed_candidates": [
+        {
+          "file": "Package_Legacy.cs",
+          "excerpt": "            \"DFT_FixedWidthImport\",\n            source,\n            [\n                new ConditionalSplitBranch<DFT_FixedWidthImportCsvRow, CustomerFixedImport>(\n                    \"Multicast Output 1\",\n                    new MCAST_FixedRows_MulticastOutput1(),\n                    new SqlBulkSink<CustomerFixedImport>(Opt<BulkCopyOptions>(), Log<SqlBulkSink<CustomerFixedImport>>())),\n                new ConditionalSplitBranch<DFT_FixedWidthImportCsvRow, DFT_FixedWidthImportFFDST_AuditTrail_APPEND>(\n                    \"Multicast Output 2\",\n                    new MCAST_FixedRows_MulticastOutput2(),\n                    new FlatFileBulkSink<DFT_FixedWidthImportFFDST_AuditTrail_APPEND>(File(\"DFT_FixedWidthImportFFDST_AuditTrail_APPEND\"), false, null, [new FlatFileColumnFormat(\"CustomerID\", null, \",\"), new FlatFileColumnFormat(\"CountryCode\", null, \"\\r\\n\")], Log<FlatFileBulkSink<DFT_FixedWidthImportFFDST_AuditTrail_APPEND>>()))\n            ],\n            Log<MulticastStep<DFT_FixedWidthImportCsvRow>>());"
+        },
+        {
+          "file": "Mapping\\MCAST_FixedRows_MulticastOutput2.cs",
+          "excerpt": "using Etl.Core.Abstractions;\nusing Package_Legacy.Csv;\nusing Package_Legacy.Model;\n\nnamespace Package_Legacy.Mapping;\n\npublic sealed class MCAST_FixedRows_MulticastOutput2 : IRowTransform<DFT_FixedWidthImportCsvRow, DFT_FixedWidthImportFFDST_AuditTrail_APPEND>\n{\n    public DFT_FixedWidthImportFFDST_AuditTrail_APPEND Map(DFT_FixedWidthImportCsvRow row, in RowContext ctx) => new()\n    {\n        CustomerID = row.CustomerID,\n        CountryCode = row.CountryCode,"
+        },
+        {
+          "file": "Model\\DFT_FixedWidthImportFFDST_AuditTrail_APPEND.cs",
+          "excerpt": "namespace Package_Legacy.Model;\n\npublic sealed class DFT_FixedWidthImportFFDST_AuditTrail_APPEND\n{\n    public string CustomerID { get; set; } = \"\";\n\n    public string CountryCode { get; set; } = \"\";\n}"
+        }
+      ]
+    }
+  ],
+  "left_only_gaps": []
+}

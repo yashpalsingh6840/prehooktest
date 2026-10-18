@@ -1,0 +1,8 @@
+[
+  {
+    "component": "OLECMD_SetFlag",
+    "scope": "CorrelationGap",
+    "verdict": "AiConfirmedMatch",
+    "rationale": "Part 1 — the known_correlate is genuinely the generated code for this component: the OLE DB Command component's declared parameter is [{\"name\":\"@CustomerID\",\"ssis_type_raw\":\"i4\"}], and the correlated OleDbCommandStep<DFT_FlagCustomersSqlRow> in Package_Advanced.cs runs \"EXEC dbo.usp_SetCustomerFlag {0}, N'flagged'\" with a parameter binder row => new object?[] { row.CustomerID } — a single integer parameter bound from the row's CustomerID, matching the declared @CustomerID (i4) exactly, and the step is wired directly off OLESRC_CustomerIds (the same source feeding DFT_FlagCustomers), so the identity match isn't just a name coincidence. Part 2 — business-logic equivalence: the SSIS OLE DB Command's only declared column is the single @CustomerID input parameter, and the generated step supplies exactly that one parameter positionally ({0} -> row.CustomerID) to the stored-procedure call, so the parameter shape matches 1:1. Nothing in the packet suggests the OLE DB Command declares more parameters or a different mapping, so this is a confirmed match rather than merely plausible."
+  }
+]

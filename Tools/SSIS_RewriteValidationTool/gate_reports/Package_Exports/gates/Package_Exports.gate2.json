@@ -1,0 +1,69 @@
+{
+  "package": "Package_Exports",
+  "gate": "Gate2_GraphParity",
+  "counts": {
+    "Match": 10
+  },
+  "findings": [
+    {
+      "scope": "Concurrency",
+      "objectName": "DFT_ExportDelimited",
+      "verdict": "Match",
+      "detail": "Part of a matched Task.WhenAll concurrency group: ['DFT_ExportDelimited', 'DFT_ExportFixedWidth', 'SQL_TruncateExportLog']."
+    },
+    {
+      "scope": "Concurrency",
+      "objectName": "DFT_ExportFixedWidth",
+      "verdict": "Match",
+      "detail": "Part of a matched Task.WhenAll concurrency group: ['DFT_ExportDelimited', 'DFT_ExportFixedWidth', 'SQL_TruncateExportLog']."
+    },
+    {
+      "scope": "Concurrency",
+      "objectName": "SQL_TruncateExportLog",
+      "verdict": "Match",
+      "detail": "Part of a matched Task.WhenAll concurrency group: ['DFT_ExportDelimited', 'DFT_ExportFixedWidth', 'SQL_TruncateExportLog']."
+    },
+    {
+      "scope": "ControlFlow",
+      "objectName": "DFT_AdoNetRoundTrip",
+      "verdict": "Match",
+      "detail": "Sequential call found in expected position in RunAsync."
+    },
+    {
+      "scope": "DataFlow:DFT_AdoNetRoundTrip",
+      "objectName": "ADO_DST_ExportLog",
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
+    },
+    {
+      "scope": "DataFlow:DFT_AdoNetRoundTrip",
+      "objectName": "ADO_SRC_Customers",
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
+    },
+    {
+      "scope": "DataFlow:DFT_ExportDelimited",
+      "objectName": "DFT_ExportDelimited_DST",
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
+    },
+    {
+      "scope": "DataFlow:DFT_ExportDelimited",
+      "objectName": "DFT_ExportDelimited_SRC",
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
+    },
+    {
+      "scope": "DataFlow:DFT_ExportFixedWidth",
+      "objectName": "DFT_ExportFixedWidth_DST",
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
+    },
+    {
+      "scope": "DataFlow:DFT_ExportFixedWidth",
+      "objectName": "DFT_ExportFixedWidth_SRC",
+      "verdict": "Match",
+      "detail": "Deferring to Gate 3's own per-component schema comparison for this component, which independently reached 'Match' \u2014 stronger, real evidence than this scope's plain name-presence check (see the Gate 3 report for the actual column-level comparison)."
+    }
+  ]
+}

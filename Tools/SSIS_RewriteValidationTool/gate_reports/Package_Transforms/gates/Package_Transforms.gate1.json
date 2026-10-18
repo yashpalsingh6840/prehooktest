@@ -1,0 +1,279 @@
+{
+  "package": "Package_Transforms",
+  "gate": "Gate1_SqlAndSchemaParity",
+  "counts": {
+    "Match": 9
+  },
+  "findings": [
+    {
+      "objectName": "OLEDST_CustomerEnriched",
+      "verdict": "Match",
+      "detail": "Table identity matches (CustomerEnriched/CustomerEnriched).",
+      "left": {
+        "package": "Package_Transforms",
+        "executable_path": "Package\\DFT_DerivedAndSplit\\OLEDST_CustomerEnriched",
+        "object_name": "OLEDST_CustomerEnriched",
+        "component_type": "Microsoft.OLEDBDestination",
+        "source_property": "property:OpenRowset",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "table_name": "CustomerEnriched",
+        "schema_name": "dbo",
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Model\\Package_TransformsDbContext.cs",
+        "object_name": "CustomerEnriched",
+        "shape": "EfCoreTable",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "literal_segments": null,
+        "table_name": "CustomerEnriched",
+        "schema_name": "dbo",
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "LKP_Country",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package_Transforms",
+        "executable_path": "Package\\DFT_LookupAndAggregate\\LKP_Country",
+        "object_name": "LKP_Country",
+        "component_type": "Microsoft.Lookup",
+        "source_property": "property:SqlCommand",
+        "kind": "Statement",
+        "sql_text": "SELECT CountryName, CountryCode, Region FROM dbo.CountryLookup",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": "Lookup reference query. Join key is declared separately via inputColumn/properties/JoinToReferenceColumn, not in this SQL text."
+      },
+      "right": {
+        "file_path": "Mapping\\LKP_CountryCache.cs",
+        "object_name": "LKP_Country",
+        "shape": "LookupCache",
+        "kind": "Statement",
+        "sql_text": "SELECT CountryName, CountryCode, Region FROM dbo.CountryLookup",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": "Generated class name 'LKP_CountryCache' matched to SSIS component 'LKP_Country' by stripping the 'Cache' suffix the generator appended (not present in the .dtsx)."
+      }
+    },
+    {
+      "objectName": "OLEDST_RegionSummary",
+      "verdict": "Match",
+      "detail": "Table identity matches (RegionSummary/RegionSummary).",
+      "left": {
+        "package": "Package_Transforms",
+        "executable_path": "Package\\DFT_LookupAndAggregate\\OLEDST_RegionSummary",
+        "object_name": "OLEDST_RegionSummary",
+        "component_type": "Microsoft.OLEDBDestination",
+        "source_property": "property:OpenRowset",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "table_name": "RegionSummary",
+        "schema_name": "dbo",
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Model\\Package_TransformsDbContext.cs",
+        "object_name": "RegionSummary",
+        "shape": "EfCoreTable",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "literal_segments": null,
+        "table_name": "RegionSummary",
+        "schema_name": "dbo",
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "OLEDST_CustomerMerged",
+      "verdict": "Match",
+      "detail": "Table identity matches (CustomerMerged/CustomerMerged).",
+      "left": {
+        "package": "Package_Transforms",
+        "executable_path": "Package\\DFT_MergeSortedBranches\\OLEDST_CustomerMerged",
+        "object_name": "OLEDST_CustomerMerged",
+        "component_type": "Microsoft.OLEDBDestination",
+        "source_property": "property:OpenRowset",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "table_name": "CustomerMerged",
+        "schema_name": "dbo",
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Model\\Package_TransformsDbContext.cs",
+        "object_name": "CustomerMerged",
+        "shape": "EfCoreTable",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "literal_segments": null,
+        "table_name": "CustomerMerged",
+        "schema_name": "dbo",
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "OLEDST_CustomerWithContact",
+      "verdict": "Match",
+      "detail": "Table identity matches (CustomerWithContact/CustomerWithContact).",
+      "left": {
+        "package": "Package_Transforms",
+        "executable_path": "Package\\DFT_SortAndMergeJoin\\OLEDST_CustomerWithContact",
+        "object_name": "OLEDST_CustomerWithContact",
+        "component_type": "Microsoft.OLEDBDestination",
+        "source_property": "property:OpenRowset",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "table_name": "CustomerWithContact",
+        "schema_name": "dbo",
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Model\\Package_TransformsDbContext.cs",
+        "object_name": "CustomerWithContact",
+        "shape": "EfCoreTable",
+        "kind": "TableIdentity",
+        "sql_text": null,
+        "literal_segments": null,
+        "table_name": "CustomerWithContact",
+        "schema_name": "dbo",
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "SQL_TruncateEnriched",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package_Transforms",
+        "executable_path": "Package\\SQL_TruncateEnriched",
+        "object_name": "SQL_TruncateEnriched",
+        "component_type": "Microsoft.ExecuteSQLTask",
+        "source_property": "SQLTask:SqlStatementSource",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.CustomerEnriched;",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Mapping\\SQL_TruncateEnrichedStatement.cs",
+        "object_name": "SQL_TruncateEnriched",
+        "shape": "ExecuteSqlStatement",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.CustomerEnriched;",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "SQL_TruncateMerged",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package_Transforms",
+        "executable_path": "Package\\SQL_TruncateMerged",
+        "object_name": "SQL_TruncateMerged",
+        "component_type": "Microsoft.ExecuteSQLTask",
+        "source_property": "SQLTask:SqlStatementSource",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.CustomerMerged;",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Mapping\\SQL_TruncateMergedStatement.cs",
+        "object_name": "SQL_TruncateMerged",
+        "shape": "ExecuteSqlStatement",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.CustomerMerged;",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "SQL_TruncateRegionSummary",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package_Transforms",
+        "executable_path": "Package\\SQL_TruncateRegionSummary",
+        "object_name": "SQL_TruncateRegionSummary",
+        "component_type": "Microsoft.ExecuteSQLTask",
+        "source_property": "SQLTask:SqlStatementSource",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.RegionSummary;",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Mapping\\SQL_TruncateRegionSummaryStatement.cs",
+        "object_name": "SQL_TruncateRegionSummary",
+        "shape": "ExecuteSqlStatement",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.RegionSummary;",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": ""
+      }
+    },
+    {
+      "objectName": "SQL_TruncateWithContact",
+      "verdict": "Match",
+      "detail": "Exact text match.",
+      "left": {
+        "package": "Package_Transforms",
+        "executable_path": "Package\\SQL_TruncateWithContact",
+        "object_name": "SQL_TruncateWithContact",
+        "component_type": "Microsoft.ExecuteSQLTask",
+        "source_property": "SQLTask:SqlStatementSource",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.CustomerWithContact;",
+        "table_name": null,
+        "schema_name": null,
+        "connection_manager": "CM_SQL_SSISDemo",
+        "from_property_expression": false,
+        "evidence": ""
+      },
+      "right": {
+        "file_path": "Mapping\\SQL_TruncateWithContactStatement.cs",
+        "object_name": "SQL_TruncateWithContact",
+        "shape": "ExecuteSqlStatement",
+        "kind": "Statement",
+        "sql_text": "TRUNCATE TABLE dbo.CustomerWithContact;",
+        "literal_segments": null,
+        "table_name": null,
+        "schema_name": null,
+        "evidence": ""
+      }
+    }
+  ]
+}
