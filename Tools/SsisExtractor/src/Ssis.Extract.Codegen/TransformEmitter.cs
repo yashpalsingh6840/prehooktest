@@ -258,6 +258,7 @@ public static class TransformEmitter
         var narrowedNumericToI4Columns = new HashSet<string>();
         var narrowedR4ToI4Columns = new HashSet<string>();
         var widenedI4ToNumericColumns = new HashSet<string>();
+        var formattedI4AsStrColumns = new HashSet<string>();
         // Precomputed via the shared detector (not inline) because PackageGenerator's
         // ResolveNullableColumnNames needs the SAME answer before EntityEmitter runs --
         // ParseWstrToI4 always returns int? (string/string? are the same runtime type, unlike
@@ -278,38 +279,18 @@ public static class TransformEmitter
                 continue;
             }
 
-            if (sourceType.ClrTypeName == "double" && column.Type.ClrTypeName == "int")
+            var coercion = ResolveNumericCoercion(sourceType.ClrTypeName, column.Type.ClrTypeName);
+            if (coercion is { } kind)
             {
-                narrowedR8ToI4Columns.Add(column.PipelineColumnName);
-                continue;
-            }
-
-            if (sourceType.ClrTypeName == "long" && column.Type.ClrTypeName == "int")
-            {
-                narrowedI8ToI4Columns.Add(column.PipelineColumnName);
-                continue;
-            }
-
-            if (sourceType.ClrTypeName == "decimal" && column.Type.ClrTypeName == "int")
-            {
-                narrowedNumericToI4Columns.Add(column.PipelineColumnName);
-                continue;
-            }
-
-            if (sourceType.ClrTypeName == "float" && column.Type.ClrTypeName == "int")
-            {
-                narrowedR4ToI4Columns.Add(column.PipelineColumnName);
-                continue;
-            }
-
-            if (sourceType.ClrTypeName == "int" && column.Type.ClrTypeName == "decimal")
-            {
-                // Strictly widening, lossless -- no dtexec probe was needed (see
-                // ColumnExpressionBuilders' own NumericCoercionKind doc comment). Real, evidenced
-                // instance: sql-server-samples' DailyETLMain.dtsx, StockHolding_Staging's own
-                // "Last Cost Price" (buffered i4 from a SqlCommand result set, decimal(18,2) at
-                // the real destination table).
-                widenedI4ToNumericColumns.Add(column.PipelineColumnName);
+                switch (kind)
+                {
+                    case NumericCoercionKind.NarrowR8ToI4: narrowedR8ToI4Columns.Add(column.PipelineColumnName); break;
+                    case NumericCoercionKind.NarrowI8ToI4: narrowedI8ToI4Columns.Add(column.PipelineColumnName); break;
+                    case NumericCoercionKind.NarrowNumericToI4: narrowedNumericToI4Columns.Add(column.PipelineColumnName); break;
+                    case NumericCoercionKind.NarrowR4ToI4: narrowedR4ToI4Columns.Add(column.PipelineColumnName); break;
+                    case NumericCoercionKind.WidenI4ToNumeric: widenedI4ToNumericColumns.Add(column.PipelineColumnName); break;
+                    case NumericCoercionKind.Str: formattedI4AsStrColumns.Add(column.PipelineColumnName); break;
+                }
                 continue;
             }
 
@@ -379,6 +360,11 @@ public static class TransformEmitter
         // known. Dictionary iteration order matches insertion order here (no removals), matching
         // this project's own established determinism convention elsewhere.
         var scriptComponentGroups = new Dictionary<string, ScriptComponentGroup>();
+        // Cache per producer RefId so a multi-column component (the evidenced shape only ever
+        // produces 2, but nothing requires that of the cache itself) is only pattern-matched
+        // once. See FlatFileErrorScriptComponentRecognizer's own doc comment for the one exact
+        // shape this promotes out of the human-reviewed seam below.
+        var autoRecognizedByRefId = new Dictionary<string, IReadOnlyDictionary<string, string>?>();
         // 1-to-1 component-to-function mapping round (2026-09): one entry per Derived Column
         // component actually referenced by THIS destination's own resolved columns, keyed by that
         // component's own RefId -- see TransformRequest.Holders' own doc comment for why a shared,
@@ -473,6 +459,52 @@ public static class TransformEmitter
             }
             else if (copiedByName.TryGetValue(column.PipelineColumnName, out var copyMapColumn))
             {
+                // TranslateCopyMap resolves the column's TRUE originating producer via its own
+                // "CopyMap" lineage edge -- a genuinely different pipeline buffer type than what
+                // the main mismatch-detection loop above saw (it only ever compares the
+                // DESTINATION's own immediate cached input-column type, which can disagree once a
+                // Copy Column sits behind a Union All/Sort/Merge boundary whose own buffer
+                // re-declares the type). A real client bug, found 2026-10-16: a DateTime-typed
+                // column reaching a string-typed destination through exactly this path compiled
+                // broken (CS0029) because this branch never consulted the mismatch machinery at
+                // all. Re-check here against the TRUE source type -- same "resolve through the
+                // lineage edge, don't trust the immediate buffer" discipline
+                // TranslateDerivedColumn's own Copy-Column-reference branch already applies.
+                var copyEdge = lineage.Edges.FirstOrDefault(e => e.Kind == "CopyMap" && e.ToColumnName == column.PipelineColumnName);
+                var trueSourceType = copyEdge is not null && columnTypes.TryGetValue(copyEdge.FromColumnRefId, out var copySourceColumn)
+                    ? SsisPipelineTypeMap.Resolve(copySourceColumn.DataType)
+                    : null;
+
+                if (!isFlatFileDestination && trueSourceType is not null && column.Type is not null
+                    && trueSourceType.ClrTypeName != column.Type.ClrTypeName)
+                {
+                    var sourceIdentifier = PackageGenerator.SanitizeIdentifier(copyEdge!.FromColumnName);
+                    var coercionKind = ResolveNumericCoercion(trueSourceType.ClrTypeName, column.Type.ClrTypeName);
+                    if (coercionKind is { } kind)
+                    {
+                        var coercedExpr = NumericCoercionExpressionBuilder.Build(kind, sourceIdentifier);
+                        CollectSsisFunctions(coercedExpr, functionsUsed);
+                        assignments.Add($"        {destId} = {coercedExpr},");
+                        continue;
+                    }
+
+                    gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
+                        $"source column '{copyEdge.FromColumnName}' (via Copy Column) is buffered as {trueSourceType.ClrTypeName} but the destination column is {column.Type.ClrTypeName} -- a numeric/string coercion on a Copy Column passthrough column is not generated yet"));
+                    continue;
+                }
+
+                if (isFlatFileDestination && trueSourceType is not null && column.Type is not null
+                    && trueSourceType.ClrTypeName != column.Type.ClrTypeName)
+                {
+                    // Every column a Flat File Destination writes is fundamentally text -- same
+                    // widen-via-ToString() rule the main loop already applies, just reached
+                    // through the Copy Column's own true source identifier instead.
+                    var isNullable = request.NullableColumnNames?.Contains(copyEdge!.FromColumnName) == true;
+                    var flatFileExpr = FlatFileStringConversionExpressionBuilder.Build(PackageGenerator.SanitizeIdentifier(copyEdge!.FromColumnName), isNullable);
+                    assignments.Add($"        {destId} = {flatFileExpr},");
+                    continue;
+                }
+
                 var copied = TranslateCopyMap(copyMapColumn, column.PipelineColumnName, lineage);
                 if (copied is NotTranslatable notTranslatable)
                 {
@@ -538,6 +570,15 @@ public static class TransformEmitter
                 CollectSsisFunctions(expr, functionsUsed);
                 assignments.Add($"        {destId} = {expr},");
             }
+            else if (formattedI4AsStrColumns.Contains(column.PipelineColumnName))
+            {
+                // SsisFn.Str has no nullable overload (ErrorCode/ErrorColumn are never
+                // nullable-inferred) -- a nullable-inferred int source reaching this branch would
+                // need one added; unevidenced for this feature, so not built speculatively.
+                var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.Str, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
+                CollectSsisFunctions(expr, functionsUsed);
+                assignments.Add($"        {destId} = {expr},");
+            }
             else if (parsedWstrToI4Columns.Contains(column.PipelineColumnName))
             {
                 var expr = NumericCoercionExpressionBuilder.Build(NumericCoercionKind.ParseWstrToI4, PackageGenerator.SanitizeIdentifier(column.PipelineColumnName));
@@ -554,6 +595,19 @@ public static class TransformEmitter
                     gaps.Add(new GenerationGap($"{request.EntityName}.{column.ExternalColumnName}",
                         $"column '{column.PipelineColumnName}' is produced by '{producer.Name}' ({producer.ComponentClassId}), a component type this tool does not translate -- cannot safely generate a passthrough reference.",
                         Kind: GapKind.Unclassified));
+                    continue;
+                }
+
+                // Promote the one narrow, measured, repeating shape (a Flat File Source error
+                // output's Script Component -- see FlatFileErrorScriptComponentRecognizer's own
+                // doc comment) straight to a deterministic assignment, bypassing the seam/gap
+                // mechanism below entirely. Cached per producer so a component with more than one
+                // deferred column here is only pattern-matched once.
+                if (!autoRecognizedByRefId.TryGetValue(producer.RefId, out var autoRecognized))
+                    autoRecognizedByRefId[producer.RefId] = autoRecognized = FlatFileErrorScriptComponentRecognizer.TryRecognize(producer);
+                if (autoRecognized is not null && autoRecognized.TryGetValue(column.ExternalColumnName, out var autoExpr))
+                {
+                    assignments.Add($"        {destId} = {autoExpr},");
                     continue;
                 }
 
@@ -608,7 +662,16 @@ public static class TransformEmitter
         foreach (var group in scriptComponentGroups.Values)
         {
             var sanitizedName = PackageGenerator.SanitizeIdentifier(group.Producer.Name);
-            var resultTypeName = $"{sanitizedName}Result";
+            // Prefixed with the TRANSFORM CLASS name, not just the component's own display
+            // name: this record is declared at NAMESPACE scope (see BuildFile below), and a
+            // package with more than one Data Flow Task can easily have two Script Components
+            // both left at SSIS's default display name ("Script Component", never renamed) --
+            // the exact same "component left at its schema default" collision class this tool
+            // has already hit for other component types (OLE DB destinations, etc.), just never
+            // before for a namespace-level type. TransformClassName is already guaranteed unique
+            // per flow within the package (PackageGenerator disambiguates it), so prefixing with
+            // it is sufficient and needs no new uniqueness machinery of its own.
+            var resultTypeName = $"{request.TransformClassName}{sanitizedName}Result";
             var columnList = string.Join(", ", group.Columns.Select(c => c.ExternalColumnName));
 
             if (request.EmitSeams)
@@ -634,7 +697,8 @@ public static class TransformEmitter
                 gaps.Add(new GenerationGap($"{request.EntityName}.{sanitizedName}",
                     $"Script Component '{group.Producer.Name}' produces {group.Columns.Count} column(s) ({columnList}) -- emitted as a single `private partial {resultTypeName} {sanitizedName}({request.RowTypeName} row, in RowContext ctx)` seam. The project will not compile (CS8795) until a second part of '{request.TransformClassName}' implements it; apply one with `ssisx apply-fills`.",
                     Kind: GapKind.ScriptComponentColumn,
-                    EvidenceRefId: group.Producer.RefId));
+                    EvidenceRefId: group.Producer.RefId,
+                    TransformClassName: request.TransformClassName));
 
                 // Companion "Script Task / Script Component seam" taxonomy row
                 // (Docs/Generated-Tests-Plan.md): a filled seam is human logic, and a test for it
@@ -652,7 +716,8 @@ public static class TransformEmitter
                 gaps.Add(new GenerationGap($"{request.EntityName}.{sanitizedName}",
                     $"Script Component '{group.Producer.Name}' produces {group.Columns.Count} column(s) ({columnList}) -- cannot safely generate a passthrough reference; its transform logic must be ported by hand, the same limitation as a Script Task. Re-run with --seams for a fillable partial-method seam instead of this plain gap.",
                     Kind: GapKind.ScriptComponentColumn,
-                    EvidenceRefId: group.Producer.RefId));
+                    EvidenceRefId: group.Producer.RefId,
+                    TransformClassName: request.TransformClassName));
             }
         }
 
@@ -1147,6 +1212,29 @@ public static class TransformEmitter
         "dbdate" => SsisType.DbDate,
         _ => null,
     };
+
+    /// <summary>The single source of truth for which evidenced numeric-passthrough-coercion
+    /// pairing (if any) closes a plain-passthrough type mismatch between a source buffer type and
+    /// a non-Flat-File destination column type -- extracted 2026-10-16 so the main mismatch-
+    /// detection loop above and the CopyMap branch's own re-check (a Copy Column's TRUE source
+    /// type, resolved through its own lineage edge, can disagree with what the destination's
+    /// immediate cached input type suggests -- see that branch's own doc comment) can never
+    /// silently diverge about which pairings are supported. Returns null for an unevidenced
+    /// pairing (e.g. DateTime -> string) -- a real client bug (CopyMap's own branch used to emit
+    /// a bare passthrough for exactly this pairing with no gap at all, producing a CS0029 in the
+    /// generated code) is what this null case now correctly surfaces as a named gap instead.
+    /// Internal, not private, so TransformTestEmitter can ask the identical question when
+    /// deciding a starter test's own representative literal for a Copy-Column-produced column.</summary>
+    internal static NumericCoercionKind? ResolveNumericCoercion(string sourceClrTypeName, string destinationClrTypeName)
+    {
+        if (sourceClrTypeName == "double" && destinationClrTypeName == "int") return NumericCoercionKind.NarrowR8ToI4;
+        if (sourceClrTypeName == "long" && destinationClrTypeName == "int") return NumericCoercionKind.NarrowI8ToI4;
+        if (sourceClrTypeName == "decimal" && destinationClrTypeName == "int") return NumericCoercionKind.NarrowNumericToI4;
+        if (sourceClrTypeName == "float" && destinationClrTypeName == "int") return NumericCoercionKind.NarrowR4ToI4;
+        if (sourceClrTypeName == "int" && destinationClrTypeName == "decimal") return NumericCoercionKind.WidenI4ToNumeric;
+        if (sourceClrTypeName == "int" && destinationClrTypeName == "string") return NumericCoercionKind.Str;
+        return null;
+    }
 
     /// <summary>Internal, not private -- TransformTestEmitter reuses this exact producer-column
     /// lookup (RefId -> its own output column, the same one lineage edges resolve against) so a

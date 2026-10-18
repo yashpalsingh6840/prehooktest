@@ -629,8 +629,18 @@ public static partial class PackageGenerator
                 ? flow.RowCounts.Select(rc => rc.VariableName).ToList()
                 : null;
             var sortKey = flow.SortKey is { } sk ? new ProgramSortKeySpec(sk.KeyColumnName, sk.KeyClrType.ClrTypeName) : null;
+
+            ProgramFlatFileErrorOutputRoute? errorOutputRoute = null;
+            if (flow.FlatFileErrorOutput is { } flatFileErrorOutput)
+            {
+                errorOutputRoute = ResolveFlatFileErrorOutputRoute(
+                    ns, flow.Pipeline, flatFileErrorOutput, entityName, files, tables,
+                    primaryKeysByDestination, functionsUsed, gaps, emitSeams, componentHolders);
+                if (errorOutputRoute is null) continue; // already gapped
+            }
+
             wiredFlows[flow] = new ProgramFlowSpec(flow.TaskName, programSource, rowTypeName, entityName, transformClassName, sink,
-                RowCountVariableNames: rowCountVariableNames, SortKey: sortKey);
+                RowCountVariableNames: rowCountVariableNames, SortKey: sortKey, ErrorOutputRoute: errorOutputRoute);
 
             if (!isFlatFileDestination && authMode is null && ResolveDatabaseAuth(package, flow.DestinationComponent) is { } auth)
             {
@@ -1728,7 +1738,7 @@ public static partial class PackageGenerator
 
             if (FlatFileRuntimeShape.IsFixedWidthWithoutHeader(format))
             {
-                Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+                Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager, flatFileSource));
                 // "Source -- fixed-width" taxonomy row (Docs/Generated-Tests-Plan.md): the SAME
                 // CsvSampleCandidate list a delimited source registers below -- SampleDataEmitter's
                 // own EmitCsv-vs-EmitFixedWidth dispatch (at the one place this list is consumed)
@@ -1806,7 +1816,7 @@ public static partial class PackageGenerator
 
             if (FlatFileRuntimeShape.IsFixedWidthWithoutHeader(format))
             {
-                Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager));
+                Merge(files, gaps, FixedWidthRowReaderEmitter.Emit($"{ns}.Csv", rowTypeName, csvConnectionManager, sourceComponent));
                 csvSampleCandidates?.Add(new CsvSampleCandidate(fileSourceKey, csvConnectionManager, rowTypeName, $"{ns}.Csv", sourceComponent.Name, sourceComponent));
                 return (rowTypeName, new FixedWidthFlowSource(sourceComponent.Name, fileSourceKey,
                     FlatFileRuntimeShape.BuildColumnPlans(format!), format!.HeaderRowsToSkip ?? 0));
@@ -4287,6 +4297,72 @@ public static partial class PackageGenerator
         files.Add(new GeneratedFile($"Mapping/{errorMapClassName}.cs", Rendering.JoinLines(mapLines)));
 
         return new RedirectingSqlFlowSink(destination.Name, errorDestination.Name, errorEntityName, errorMapClassName);
+    }
+
+    /// <summary>Resolves a Flat File Source's own error-output route (<see cref="PackagePlanner.FlatFileErrorOutputPlan"/>)
+    /// into a <see cref="ProgramFlatFileErrorOutputRoute"/> -- the fixed error-row type
+    /// (<see cref="FlatFileErrorRowEmitter"/>), its own EF-mapped error entity, and its own
+    /// transform (reusing <see cref="TransformEmitter"/> exactly like every other destination --
+    /// a Script Component's own synthesized columns (e.g. ErrorDescription) become the usual
+    /// Tier-2 seam automatically, no special handling needed here). Returns <c>null</c> -- a gap
+    /// already added -- when the error destination's own 3-column shape doesn't match what
+    /// <see cref="Ssis.Extract.FixtureBuilder"/>'s own real probe measured, when the destination
+    /// is a Flat File Destination (unevidenced for this feature -- <see cref="ResolveFlatFileSink"/>
+    /// is a completely different, non-SQL-shaped sink-construction path this method does not
+    /// attempt to also drive), or when the transform itself produces nothing (already gapped by
+    /// <see cref="TransformEmitter"/>).</summary>
+    private static ProgramFlatFileErrorOutputRoute? ResolveFlatFileErrorOutputRoute(
+        string ns, PipelineSpec pipeline, FlatFileErrorOutputPlan errorOutputPlan, string entityName,
+        List<GeneratedFile> files, List<DbContextEmitter.TableSpec> tables,
+        Dictionary<string, PrimaryKeyCandidateSpec> primaryKeysByDestination, HashSet<string> functionsUsed,
+        List<GenerationGap> gaps, bool emitSeams, ComponentHolderRegistry componentHolders)
+    {
+        var errorDestination = errorOutputPlan.ErrorDestination;
+        if (errorDestination.ComponentClassId == "Microsoft.FlatFileDestination")
+        {
+            gaps.Add(new GenerationGap(errorOutputPlan.FlatFileSource.Name,
+                $"'{errorOutputPlan.FlatFileSource.Name}''s error output routes to '{errorDestination.Name}', a Flat File Destination -- not supported yet, only an OLE DB/ADO NET destination"));
+            return null;
+        }
+
+        var errorOutput = errorOutputPlan.FlatFileSource.Outputs.FirstOrDefault(o => o.IsErrorOut == true);
+        var rawColumn = errorOutput?.Columns.FirstOrDefault(c => c.Name is not ("ErrorCode" or "ErrorColumn"));
+        if (errorOutput is null || rawColumn is null || errorOutput.Columns.Count != 3)
+        {
+            gaps.Add(new GenerationGap(errorOutputPlan.FlatFileSource.Name,
+                $"'{errorOutputPlan.FlatFileSource.Name}''s error output does not declare the expected 3-column shape (a raw-text column plus ErrorCode/ErrorColumn) -- not supported"));
+            return null;
+        }
+
+        var errorEntityName = entityName + "Error";
+        var errorRowTypeName = $"{entityName}ErrorRow";
+
+        Merge(files, gaps, FlatFileErrorRowEmitter.Emit(ns, entityName, rawColumn.Name));
+        Merge(files, gaps, EntityEmitter.Emit($"{ns}.Model", errorEntityName, errorDestination));
+        primaryKeysByDestination.TryGetValue(errorDestination.RefId, out var errorPrimaryKey);
+        tables.Add(new DbContextEmitter.TableSpec(errorEntityName, errorDestination, errorPrimaryKey));
+
+        var errorTransformClassName = $"{errorEntityName}Transform";
+        var transformResult = TransformEmitter.Emit(new TransformRequest(
+            EmitSeams: emitSeams,
+            MappingNamespace: $"{ns}.Mapping",
+            TransformClassName: errorTransformClassName,
+            RowTypeNamespace: $"{ns}.Csv",
+            RowTypeName: errorRowTypeName,
+            EntityNamespace: $"{ns}.Model",
+            EntityName: errorEntityName,
+            SsisFnNamespace: $"{ns}.Ssis",
+            Pipeline: pipeline,
+            DerivedColumns: [],
+            DestinationComponent: errorDestination,
+            Holders: componentHolders));
+        Merge(files, gaps, transformResult.Result);
+        foreach (var fn in transformResult.SsisFunctionsUsed) functionsUsed.Add(fn);
+
+        if (transformResult.Result.Files.Count == 0) return null; // TransformEmitter already gapped why
+
+        return new ProgramFlatFileErrorOutputRoute(errorRowTypeName, errorEntityName, errorTransformClassName,
+            new SqlFlowSink(errorDestination.Name));
     }
 
     private static FlatFileFlowSink? ResolveFlatFileSink(

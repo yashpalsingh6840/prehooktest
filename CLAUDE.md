@@ -9086,6 +9086,182 @@ up (files to change in `ExtractCommand.cs`/`ReportCommand.cs`/`GraphCommand.cs`/
 `Run-Survey.ps1`, and every doc that names one of these paths) — pick this back up before
 re-deriving it from scratch.
 
+### Flat File Source error output -> Script Component -> second destination (2026-10-12)
+
+Closes a shape `ssisx generate` had only ever DETECTED, not generated: a real client's own
+MFDBUpdate.dtsx (3 identical Data Flow Tasks, `fndInfo`/`fndCompany`/`fndDescription`), read
+directly from its raw XML (not the designer): a Flat File Source's main-output columns configured
+for `ErrorRowDisposition`/`TruncationRowDisposition`=RedirectRow, whose error output is routed
+through a Script Component (`Row.ErrorDescription = ComponentMetaData.GetErrorDescription
+(Row.ErrorCode); Row.FileName = "<literal>";`) into a SECOND OLE DB Destination (5 external
+columns: ErrorCode/ErrorColumn/FileName str,100; ErrorDescription str,1000; ErrorColumnValue
+text — all mapped, "Flat File Source Error Output Column" renamed to ErrorColumnValue). Before
+this round, `PackagePlanner`'s own general "every destination must be accounted for" gate
+correctly refused this shape with a named gap (`DescribeUnresolvedDestinationChain`, built the
+same session, immediately preceding this round) — but nothing could GENERATE it.
+
+**Step 1 — measure first, same discipline as every numeric-coercion round in this file.** A real
+dtexec probe (`Ssis.Extract.FixtureBuilder`'s new `flat-file-error-probe` mode,
+`SyntheticFlatFileErrorProbe.dtsx`: Flat File Source, `ID` DT_I4 with
+`ErrorRowDisposition=RedirectRow`, `Name` DT_WSTR width 5 with `TruncationRowDisposition=
+RedirectRow`, main output -> one destination, error output -> DIRECTLY to a second destination,
+deliberately with NO Script Component in this probe at all) measured the real ErrorCode values
+for a genuine conversion failure (`ID="abc"`) and a genuine truncation failure
+(`Name="TooLongName"`), run against `.\SQLFORPOC_2022`: **-1071607676** ("The data value cannot
+be converted for reasons other than sign mismatch or data overflow.") and **-1071607675** ("The
+data was truncated."), read back from `dbo.SyntheticFlatFileErrorProbeErrors`. `GetErrorDescription`
+itself needed no execution at all to measure — it's a pure design-time lookup on ANY
+`IDTSComponentMetaData100` instance, keyed only by the integer code — so a new, separate
+`ssis-fixture-builder describe-error <code>...` mode (no output path, no XML) measured both
+description strings directly. ErrorColumn was ALSO measured (7 and 10 for the two columns) and
+deliberately NOT reproduced: it's SSIS's own internal pipeline lineage ID, with no equivalent in
+this generated runtime at all — same reasoning, same `= 0` choice, as
+`PackageGenerator.ResolveErrorRedirectSink`'s already-existing, identically-named limitation for
+the destination-level (not source-level) error-redirect shape. The error output's own column SET
+was also confirmed empirically, not assumed from the client's quoted XML: exactly 3 columns,
+regardless of how many real columns the main output declares — ErrorCode/ErrorColumn (system
+columns) plus ONE raw-text column, auto-named `"<ComponentName> Error Output Column"`
+("Flat File Source Error Output Column" here, since the component was never renamed from its
+schema default) and typed `DT_TEXT`, confirmed via the probe's own printed output-column dump.
+
+**Step 2 — `Tools/Etl.Core/Csv/CsvRowSource.cs`: buffer-then-divert, opt-in.** A new
+`CsvRowSource<TRow>` constructor parameter, `divertErrorsToErrorRows` (default `false`): when
+true, a `CsvHelperException` (conversion) or `SsisTruncationException` (truncation, from
+`EnforceWidths`) is caught and the row diverted into a new `IReadOnlyList<CsvErrorRow> ErrorRows`
+property instead of aborting the read — the same buffer-then-sequential-flush shape
+`ConditionalSplitBranch`/`MulticastStep` already established, just on the READ side this time.
+Default `false` deliberately: every existing generated package (no error-output routing
+configured anywhere) keeps today's exact throw-on-failure behavior, zero regression risk —
+confirmed by the pre-existing `ReadAsync_Throws_WhenAColumnExceedsItsSsisWidth` test staying
+green unchanged. New `CsvErrorRow(string RawRow, int ErrorCode, int ErrorColumn)` record (its own
+file, `Csv/CsvErrorRow.cs`) is the runtime-side shape; `RawRow` is `IParser.RawRecord`, captured
+before conversion is even attempted — **confirmed to INCLUDE the trailing row-delimiter (CRLF),
+and confirmed this is an EXACT match with real SSIS's own column, not a bug to fix**: a real
+dtexec probe against the identical literal row measured `DATALENGTH`=11 for a 9-character value
+("abc,Carol"), the same +2 bytes `RawRecord` already includes. A first draft of the unit tests
+asserted the trimmed value and failed against the real measurement — corrected to assert the
+CRLF-inclusive value instead of "fixing" code that was never wrong. Mirrored into the sibling dev
+repo (`D:\PoC\SSIS_Rewrite\src\Etl.Core`, which already had unrelated uncommitted `--storage s3`
+WIP sitting in its tree — confirmed via `git status` before touching anything, left completely
+untouched) via the established robocopy-equivalent sync convention; its own 175-test suite stays
+green with 6 new tests covering both failure kinds and the opt-out default.
+
+**Step 3 — a new fixed error-row-type emitter, `Ssis.Extract.Codegen/FlatFileErrorRowEmitter.cs`.**
+Emits `Csv/{Entity}ErrorRow.cs` — a 3-property record whose RAW-TEXT property is named from the
+REAL pipeline column name (sanitized: `FlatFileSourceErrorOutputColumn` for this client, whatever
+the real column is actually called for another), not a fixed friendly name like "RawRow" — this
+is the one design decision that let `TransformEmitter`'s EXISTING generic lineage-based
+passthrough resolution (`PipelineResolver.ResolveDestinationInput` + `LineageBuilder`) wire the
+whole thing up with ZERO new bridging code, exactly the established convention every other row
+type's own properties already follow. `PackageClassEmitter` constructs this type POSITIONALLY
+from the runtime's own `CsvErrorRow` (whose property IS literally "RawRow") — a positional record
+constructor cares about argument position/type, never property names agreeing between the two.
+
+**Step 4 — `NumericCoercionKind.Str`, reusing `SsisFn.Str` rather than adding a new helper.**
+ErrorCode/ErrorColumn are i4 in the buffer but str,100 at the real destination — the only
+coercion in this whole family needing NO dtexec probe at all (`int.ToString()` is deterministic
+and always fits in any reasonable declared width). Rather than add a near-duplicate method, this
+reuses the EXISTING `SsisFn.Str(int)` the generator already emits for the SSIS expression-language
+`STR()` function (`value.ToString(CultureInfo.InvariantCulture)`, already registered in
+`CollectSsisFunctions`/`SsisFnEmitter`) — `NumericCoercionKind.Str` is just a new enum member, the
+shared `NumericCoercionExpressionBuilder.Build` string-interpolates `SsisFn.{kind}(...)` already,
+so this needed zero new emitter code at all beyond the detection branch in `TransformEmitter`.
+
+**Step 5 — a new planner path, `PackagePlanner.ResolveFlatFileErrorOutput`, deliberately scoped
+to EXACTLY the one evidenced shape.** New `FlatFileErrorOutputPlan(FlatFileSource, ErrorDestination,
+ScriptComponent?)` and a new `DataFlowPlan.FlatFileErrorOutput` field, resolved alongside
+`SortKey`/`ErrorRedirect` (same `conditionalSplit is null && multicast is null && ...` scoping —
+a Conditional Split/Multicast branch's own Flat File Source error output is unevidenced and
+stays a named gap if ever encountered, not guessed at). **Deliberately does NOT reuse
+`ResolveBranch`'s own general multi-hop chain-walk** (Derived Column/Sort/Merge/UnionAll
+pass-through, built for a Conditional Split/Multicast branch) — nothing evidences a Derived
+Column or Sort sitting between a Flat File Source's error output and its destination, and
+guessing that shape works the same way would be exactly the kind of unevidenced generalization
+this tool's own "gaps not guesses" discipline refuses. Recognizes exactly: zero or one
+intermediate hop, and if one, it must be a Script Component (discriminated by
+`PipelineComponentSpec.ScriptComponent`, the same property `TransformEmitter`'s own seam gate
+already uses) — anything else (a different component type, a chain longer than one hop, no
+downstream path at all) is a precisely-worded gap, not a guess. The new destination is folded
+into the existing general "every destination in this pipeline must be accounted for" check
+(`accountedRefIds`) right alongside `ErrorRedirect`'s own destination.
+
+`PackageGenerator.ResolveFlatFileErrorOutputRoute` resolves the plan into a
+`ProgramFlatFileErrorOutputRoute` (new field on `ProgramFlowSpec`): emits the fixed row type, the
+error entity (`EntityEmitter`/`DbContextEmitter.TableSpec`, same as any other destination), and
+the error transform by calling `TransformEmitter.Emit` EXACTLY the way the main flow does
+(`DerivedColumns: []`, `DataConversions: []`, `DestinationComponent: errorDestination`) — the
+Script Component's own two synthesized columns (`ErrorDescription`/`FileName`) become ONE
+combined `GapKind.ScriptComponentColumn` Tier-2 seam automatically, with zero special-casing:
+reusing the existing mechanism, not building a second one, exactly as asked. Gaps explicitly
+(rather than guessing) if the error destination is itself a Flat File Destination (unevidenced
+for this feature — `ResolveFlatFileSink` is a completely different, non-SQL-shaped sink
+construction path this round does not attempt to also drive) or if the error output's own column
+set doesn't match the measured 3-column shape.
+
+`PackageClassEmitter` threads it through: the main source method's DECLARED return type becomes
+the CONCRETE `CsvRowSource<TRow>` (not the `IRowSource<TRow>` interface every other flow's source
+keeps) only for THIS flow — `var` takes a method's declared return type, never its runtime type,
+so this is the one thing that makes `.ErrorRows` visible at the call site — constructed with
+`divertErrorsToErrorRows: true`. After the main `DataFlowStep` completes (which, by walking
+`source.ReadAsync()` to completion internally, is also the first safe point to read
+`.ErrorRows` — the same timing guarantee `MulticastStep`'s own branches already rely on), the
+buffered `CsvErrorRow` values are mapped into the fixed row type and run through a plain
+`Etl.Core.Pipeline.ConditionalSplitBranch<TRow,TEntity>` — reusing Multicast/Conditional Split's
+own buffer-then-flush abstraction rather than inventing a second one, exactly as asked.
+
+**Verified end to end, real dtexec probe + generated code run, diffed row-for-row — this
+project's standard bar:** a new dedicated fixture, `SyntheticFlatFileErrorOutput.dtsx`
+(`flat-file-error-output` mode), reproduces the full real shape (main output -> one destination;
+error output -> a genuine Script Component, its `SourceCode` a real (file name, encoding,
+content) triple -> a second, 5-column destination, "Flat File Source Error Output Column" ->
+`ErrorColumnValue` via a hand-built by-name-with-rename destination resolver,
+`ResolveRenamedDestination`, since the generic by-name-only `ResolveOleDbMetadata` can't express
+a genuine rename). **Deliberately NOT dtexec-executable** — same documented, repeated limitation
+as every other Script-Component-bearing fixture in this project (`BuildScriptComponentSeamsFixture`,
+`BuildBranch3ErrorRouting`): real, valid SourceCode but no cached BinaryCode and no VSTA compile
+step, so `DelayValidation=true` defers validation past where this fixture is ever asked to reach.
+Verified instead via the SAME two-tier split this project already uses whenever a feature
+combines a Script Component with runtime behavior that needs measuring: the PROBE fixture (no
+Script Component) proves the real SSIS numeric/row-routing ground truth via dtexec; the FINAL
+fixture (with Script Component) proves the GENERATED code, cross-checked against the probe's own
+measured values.
+
+`ssisx generate --seams` against the final fixture produced exactly the expected shape: **0
+unexpected gaps** — only the one Tier-2 `ScriptComponentColumn` seam (both `ErrorDescription`
+and `FileName` consolidated into one `ScriptComponentResult`/one partial method, per the
+established per-COMPONENT not per-column seam convention), its companion `TestOracle` advisory,
+and the two unrelated, unavoidable `LocalFileSourceData`/`Notification` advisories every CSV-
+sourced package already gets. Filled the seam with a measured lookup (`DescribeErrorCode(int) =>
+errorCode switch { -1071607676 => "...", -1071607675 => "...", _ => $"Unknown error code
+{{errorCode}}" }` — `ComponentMetaData.GetErrorDescription` has no live-pipeline equivalent to
+call from generated code at all, so this reproduces it as a lookup over the only two codes this
+generator's own `CsvRowSource` can ever produce) via `ssisx apply-fills`, then **built the whole
+generated solution (0 warnings/0 errors) and actually RAN it against `.\SQLFORPOC_2022`**: main
+table landed `1/Alice`, `2/Bob`; error table landed BOTH diverted rows with their real
+`ErrorCode`/`ErrorDescription`/`ErrorColumnValue`/`FileName` — an **exact match, row for row,
+against the real dtexec probe's own measured values**, including the raw failed-row text down to
+its trailing CRLF. `ErrorColumn` reads `0` on both rows, the one and only documented,
+deliberate divergence from the probe's own measured lineage-id values (7/10) — stated plainly,
+not hidden. All 5 non-Integration generated starter tests pass.
+
+New permanent regression tests: `PackagePlannerTests.Plan_ResolvesAFlatFileSourceErrorOutput_
+RoutedThroughAScriptComponent` (reads the real checked-in fixture), `Plan_ReportsAGap_WhenA
+FlatFileSourceErrorOutputRoutesToAnUnsupportedComponent` (hand-built `PipelineSpec`, a dangling
+error output with redirect configured but no downstream path), and `PackageGeneratorTests.
+Generate_WiresAFlatFileSourceErrorOutput_ThroughAScriptComponentSeam_IntoASecondDestination`
+(asserts the exact generated wiring: the concrete `CsvRowSource<T>` source, `divertErrorsToErrorRows:
+true`, the `ConditionalSplitBranch` construction, the fixed row type's real-column-name property,
+the `SsisFn.Str` coercions, the consolidated seam). One pre-existing, UNRELATED golden-file
+mismatch (`SsisFnEmitter.StrBody`'s own doc comment grew by 4 lines, touching both PoC packages'
+checked-in `Ssis/SsisFn.cs` goldens, since both already call `Str()` for an unrelated real
+expression) was patched byte-preservingly (trap 18's own discipline — confirmed LF-only, not
+CRLF, before patching), not regenerated. Regression: 492/493 in `Ssis.Extract.Codegen.Tests`
+(was 490 — the 2 new planner tests plus this round's own generator test), 181/181 in
+`Ssis.Extract.Tests`/`Ssis.Runtime.Expressions.Tests`, 51/51 in `Ssis.Extract.Cli.Tests`, same
+one pre-existing, unrelated `ScriptSeamPacket_SkeletonIsCompleteAndCompilable` failure
+(reconfirmed via `git stash` to fail identically without any of this round's own changes, before
+this round started).
+
 ## Traps already hit once — don't re-derive these
 1. **`Project.params` has a strict, undocumented-by-XML-validity schema.**
    Property order matters (`ID, CreationName, Description,

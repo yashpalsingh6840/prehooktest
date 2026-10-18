@@ -51,7 +51,20 @@ public sealed record GenerationGap(
     // Task, a PipelineComponentSpec for a Script Component/Lookup) -- carried structurally rather
     // than parsed back out of Reason text, so AiPacketEmitter can resolve the real source/SQL/
     // column list unambiguously even when two components share a display name.
-    string? EvidenceRefId = null);
+    string? EvidenceRefId = null,
+    // Set ONLY for a ScriptComponentColumn gap -- the exact generated TRANSFORM CLASS name the
+    // seam lives on (e.g. "adMutualFundCompany_TemporaryErrorTransform"). Location's own prefix
+    // is the DESTINATION ENTITY name, not this -- the two are usually related by a suffix
+    // convention ("{Entity}Transform") but not reliably derivable by string manipulation across
+    // every flow shape (a Conditional Split branch's own disambiguated class name, an error-
+    // output route's class, etc.), so this is carried structurally instead. Real, found bug this
+    // closes: a package with more than one Script Component left at SSIS's own unrenamed default
+    // display name ("Script Component") produces more than one gap whose Location ends in the
+    // IDENTICAL seam method name ("ScriptComponent") -- ApplyFillsCommand used to key its own
+    // "which gap does this fill answer" lookup by that bare method name alone, so only the LAST
+    // such gap survived in the lookup and every OTHER fill for the same method name was checked
+    // against the WRONG gap's evidence hash, reported Stale despite being correct.
+    string? TransformClassName = null);
 
 /// <summary>What one emitter call produced: zero or more files, plus every gap hit along the
 /// way. A gap and a file are not mutually exclusive -- an entity with 7 of 8 columns resolved

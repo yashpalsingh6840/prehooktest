@@ -18,10 +18,21 @@ namespace Ssis.Extract.Model.Analysis;
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum MoreTestStatus
 {
-    /// <summary>Copied into <c>generate/&lt;Package&gt;.Tests/MoreTests/</c>, unconditionally --
-    /// every file present under <c>MoreTests/</c> is applied, whether or not it carries its own
+    /// <summary>Copied into <c>generate/&lt;Package&gt;.Tests/MoreTests/</c> and verified: the
+    /// package's test project compiles with it in place. Every file present under
+    /// <c>MoreTests/</c> that verifies is applied, whether or not it carries its own
     /// <c>// ssisx-more-test:</c> provenance comment (see <see cref="Attributed"/>).</summary>
     Applied,
+
+    /// <summary>The compiler blamed this file, so the copy in <c>generate/</c> was removed again
+    /// and the package's test project was left without it. The original under <c>fills/</c> is
+    /// untouched. <see cref="MoreTestRecordSpec.CompilerErrors"/> holds the diagnostics.</summary>
+    Rejected,
+
+    /// <summary>Copied, but the test project's build failed for a reason the compiler did not
+    /// attribute to any MoreTests file (a restore problem, an error in the main project, ...).
+    /// The copy is left in place, because nothing here can say it is the cause.</summary>
+    Unverified,
 }
 
 /// <summary>
@@ -50,4 +61,8 @@ public sealed class MoreTestRecordSpec
     /// <summary>The generated class/method this test targets, from the comment's own
     /// <c>Targets=</c> field, when present.</summary>
     public string? Targets { get; init; }
+
+    /// <summary>Set only when <see cref="Status"/> is <see cref="MoreTestStatus.Rejected"/>: the
+    /// compiler diagnostics that got the file removed, one per line.</summary>
+    public IReadOnlyList<string>? CompilerErrors { get; init; }
 }

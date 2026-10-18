@@ -1,0 +1,9 @@
+node_modules/
+dist/
+server/data/*.db
+server/data/*.db-journal
+server/data/*.db-wal
+server/data/*.db-shm
+
+# TypeScript incremental-build caches (tsc -b / tsc --incremental), regenerated on every build
+*.tsbuildinfo

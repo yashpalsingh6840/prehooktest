@@ -207,4 +207,110 @@ public class TransformTestEmitterTests
     {
         Assert.Throws<NotSupportedException>(() => TransformTestEmitter.RepresentativeLiteral("SomeFutureUnmappedType"));
     }
+
+    /// <summary>Pins the 2026-10-16 fix: a real client flow had a plain passthrough column whose
+    /// source buffer type (DateTime, from a Flat File Source reading it with no Data Conversion)
+    /// disagreed with its destination's own declared type (string) -- this emitter's plain-
+    /// passthrough branch used to blindly assume the row's own property type matched the
+    /// DESTINATION's type for both the row initializer and the assert, producing a real client
+    /// CS0029 ("string" literal into a row property CsvRowEmitter actually declared DateTime).
+    /// TransformEmitter itself already gaps this exact shape (no coercion is evidenced for
+    /// DateTime -&gt; string); this pilot test emitter now does the same rather than guess.</summary>
+    [Fact]
+    public void Emit_ReportsAGap_ForAPlainPassthroughColumn_WhoseSourceAndDestinationTypesDisagree()
+    {
+        var derivedColumn = new PipelineComponentSpec
+        {
+            RefId = "DER_Test",
+            Name = "DER_Stamp",
+            ComponentClassId = "Microsoft.DerivedColumn",
+            Outputs =
+            [
+                new PipelineOutputSpec
+                {
+                    RefId = "DER_Test.Outputs[Derived Column Output]",
+                    Name = "Derived Column Output",
+                    Columns =
+                    [
+                        new PipelineOutputColumnSpec
+                        {
+                            RefId = "DER_Test.Outputs[Derived Column Output].Columns[LoadedAtUtc]",
+                            Name = "LoadedAtUtc",
+                            LineageId = "LIN_STAMP",
+                            DataType = "dbtimestamp",
+                            Expression = "GETUTCDATE()",
+                            FriendlyExpression = "GETUTCDATE()",
+                        },
+                    ],
+                },
+            ],
+        };
+
+        var destination = new PipelineComponentSpec
+        {
+            RefId = "DST_Test",
+            Name = "OLE DB Destination",
+            ComponentClassId = "Microsoft.OLEDBDestination",
+            Inputs =
+            [
+                new PipelineInputSpec
+                {
+                    RefId = "DST_Test.Inputs[OLE DB Destination Input]",
+                    Name = "OLE DB Destination Input",
+                    Columns =
+                    [
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[LoadedAtUtc]",
+                            CachedName = "LoadedAtUtc",
+                            CachedDataType = "dbtimestamp",
+                            LineageId = "LIN_STAMP",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[LoadedAtUtc]",
+                        },
+                        new PipelineInputColumnSpec
+                        {
+                            RefId = "DST_Test.Inputs[OLE DB Destination Input].Columns[ArrivalDate]",
+                            CachedName = "ArrivalDate",
+                            // Buffered as DateTime (e.g. a Flat File Source's own output column
+                            // override) while the real destination column is declared wstr --
+                            // the exact disagreement TransformEmitter's own mismatch loop
+                            // already gaps; no coercion is evidenced for this pairing.
+                            CachedDataType = "dbtimestamp",
+                            LineageId = "SRC.Outputs[Output].Columns[ArrivalDate]",
+                            ExternalMetadataColumnId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[ArrivalDate]",
+                        },
+                    ],
+                    ExternalMetadataColumns =
+                    [
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[LoadedAtUtc]", Name = "LoadedAtUtc", DataType = "dbtimestamp" },
+                        new PipelineExternalMetadataColumnSpec { RefId = "DST_Test.Inputs[OLE DB Destination Input].ExternalColumns[ArrivalDate]", Name = "ArrivalDate", DataType = "wstr", Length = 20 },
+                    ],
+                },
+            ],
+        };
+
+        var request = new TransformTestRequest(
+            TestNamespace: "Test.Tests",
+            TransformClassName: "TargetTransform",
+            MappingNamespace: "Test.Mapping",
+            RowTypeNamespace: "Test.Sql",
+            RowTypeName: "TargetSqlRow",
+            EntityNamespace: "Test.Model",
+            EntityName: "Target",
+            Pipeline: new PipelineSpec { Components = [derivedColumn, destination] },
+            DerivedColumns: [derivedColumn],
+            DestinationComponent: destination);
+
+        var result = TransformTestEmitter.Emit(request);
+
+        Assert.Contains(result.Gaps, g => g.Location == "Target.ArrivalDate" && g.Reason.Contains("disagree", StringComparison.Ordinal));
+
+        // The MISMATCHED column never reaches the row initializer or an assert at all -- no
+        // broken `ArrivalDate = "Sample"` (a string literal into a row property CsvRowEmitter
+        // actually declared DateTime) reaches the generated test file.
+        var file = Assert.Single(result.Files);
+        Assert.DoesNotContain("ArrivalDate", file.Content);
+        Assert.Contains("Assert.Equal(new DateTime(2020, 6, 15, 12, 0, 0, DateTimeKind.Utc), result.LoadedAtUtc);", file.Content);
+        CodeAssertions.AssertNoSyntaxErrors(file.Content);
+    }
 }

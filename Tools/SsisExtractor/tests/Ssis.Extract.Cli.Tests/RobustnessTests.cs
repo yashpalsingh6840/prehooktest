@@ -150,9 +150,9 @@ public class RobustnessTests : IDisposable
         var exit = RunCaptured(() => ExtractCommand.Run(["--input", CaseDir("dupname"), "--out", outDir, "--recursive"])).Exit;
 
         Assert.Equal(0, exit);
-        Assert.True(Directory.Exists(Path.Combine(outDir, "lineage")), "graph stage (lineage/) never ran");
-        Assert.True(Directory.Exists(Path.Combine(outDir, "conformance")), "conformance stage never ran");
-        Assert.True(Directory.Exists(Path.Combine(outDir, "testgen")), "testgen stage never ran");
+        Assert.True(Directory.Exists(Path.Combine(outDir, "metadata", "lineage")), "graph stage (lineage/) never ran");
+        Assert.True(Directory.Exists(Path.Combine(outDir, "metadata", "conformance")), "conformance stage never ran");
+        Assert.True(Directory.Exists(Path.Combine(outDir, "metadata", "testgen")), "testgen stage never ran");
     }
 
     // ---------------------------------------------------------------------
@@ -209,7 +209,7 @@ public class RobustnessTests : IDisposable
         Assert.True(File.Exists(Path.Combine(outDir, "packages", "Package_Transforms.spec.json")));
         Assert.False(File.Exists(Path.Combine(outDir, "packages", "Package_Advanced.spec.json")));
 
-        var loadFailuresMd = File.ReadAllText(Path.Combine(outDir, "load-failures.md"));
+        var loadFailuresMd = File.ReadAllText(Path.Combine(outDir, "metadata", "report", "load-failures.md"));
         Assert.Contains("Package_Advanced.dtsx", loadFailuresMd);
     }
 
@@ -225,7 +225,7 @@ public class RobustnessTests : IDisposable
 
         Assert.True(File.Exists(Path.Combine(outDir, "packages", "Package_Legacy.spec.json")));
         Assert.False(File.Exists(Path.Combine(outDir, "packages", "Zero.spec.json")));
-        var loadFailuresMd = File.ReadAllText(Path.Combine(outDir, "load-failures.md"));
+        var loadFailuresMd = File.ReadAllText(Path.Combine(outDir, "metadata", "report", "load-failures.md"));
         Assert.Contains("Zero.dtsx", loadFailuresMd);
     }
 
@@ -241,7 +241,7 @@ public class RobustnessTests : IDisposable
         Assert.True(File.Exists(Path.Combine(outDir, "packages", "Package_Legacy.spec.json")));
         Assert.False(File.Exists(Path.Combine(outDir, "packages", "Package.spec.json")));
 
-        var loadFailuresMd = File.ReadAllText(Path.Combine(outDir, "load-failures.md"));
+        var loadFailuresMd = File.ReadAllText(Path.Combine(outDir, "metadata", "report", "load-failures.md"));
         Assert.Contains("Package.dtsx", loadFailuresMd);
         Assert.Contains("Package_Advanced.dtsx", loadFailuresMd);
         Assert.Contains("Package_Transforms.dtsx", loadFailuresMd);

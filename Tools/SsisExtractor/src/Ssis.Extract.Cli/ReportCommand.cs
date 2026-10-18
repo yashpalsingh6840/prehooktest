@@ -106,6 +106,24 @@ internal static class ReportCommand
         }
 
         Directory.CreateDirectory(outDir);
+        // Everything this command writes is analysis OUTPUT, not something `generate`/`svk`
+        // read back (svk's own contract is `packages/*.spec.json`, confirmed by reading
+        // PackageSpecLoader directly) -- it all lands under one `metadata/` subfolder so a real
+        // portfolio's `--out` isn't ~30 loose files deep before `generate` has even run.
+        var metadataDir = Path.Combine(outDir, "metadata");
+        Directory.CreateDirectory(metadataDir);
+        // Two more subfolders, same decluttering reasoning as metadataDir itself: a real
+        // portfolio run used to leave 23 loose files sitting directly in metadata/ alongside its
+        // own 6 subfolders (conformance/graph/lineage/scripts/sql/testgen) -- reportDir holds
+        // ssisx report's own portfolio-level outputs (inventory/findings/portfolio digest/etc.),
+        // analysisDir holds the deeper per-component analysis artifacts (expressions/sql-analysis/
+        // datatouch/etc.). _meta.json and project.spec.json (written by ExtractCommand, not here)
+        // deliberately stay at the metadata/ root -- they describe the extraction itself, not a
+        // report or an analysis.
+        var reportDir = Path.Combine(metadataDir, "report");
+        Directory.CreateDirectory(reportDir);
+        var analysisDir = Path.Combine(metadataDir, "analysis");
+        Directory.CreateDirectory(analysisDir);
 
         var perPackageFindings = new Dictionary<string, List<FindingSpec>>();
         var perPackageComplexity = new Dictionary<string, ComplexityStats>();
@@ -117,7 +135,6 @@ internal static class ReportCommand
         var allPrimaryKeyCandidates = new List<PrimaryKeyCandidateSpec>();
         var allObservableEffects = new List<ObservableEffectSpec>();
 
-        var sqlDir = Path.Combine(outDir, "sql");
         var scriptFilesWritten = 0;
         var scriptItemsStripped = 0;
 
@@ -142,7 +159,11 @@ internal static class ReportCommand
             foreach (var harvested in SqlHarvester.Harvest(pkg))
             {
                 var fileName = SanitizeFileName($"{harvested.Location}.sql");
-                var relativePath = Path.Combine("sql", pkg.ObjectName, fileName);
+                // Stored and reported relative to --out (not metadataDir) -- this value lands
+                // in sql-analysis.json/datatouch.json for a human to follow, so it must name the
+                // real path under --out, "metadata/sql/...", not a path that only makes sense
+                // relative to a folder this spec never names.
+                var relativePath = Path.Combine("metadata", "sql", pkg.ObjectName, fileName);
                 var fullPath = Path.Combine(outDir, relativePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
                 File.WriteAllText(fullPath, harvested.Sql);
@@ -168,7 +189,7 @@ internal static class ReportCommand
                 if (ex.ScriptTask is null) continue;
                 if (ex.ScriptTask.SourceStripped) { scriptItemsStripped++; continue; }
 
-                var taskDir = Path.Combine(outDir, "scripts", pkg.ObjectName, SanitizeFileName(ex.RefId));
+                var taskDir = Path.Combine(metadataDir, "scripts", pkg.ObjectName, SanitizeFileName(ex.RefId));
                 foreach (var item in ex.ScriptTask.ProjectItems)
                 {
                     var relativePath = SanitizeRelativePath(item.Name);
@@ -191,7 +212,7 @@ internal static class ReportCommand
                     if (comp.ScriptComponent is null) continue;
                     if (comp.ScriptComponent.SourceStripped) { scriptItemsStripped++; continue; }
 
-                    var componentDir = Path.Combine(outDir, "scripts", pkg.ObjectName, SanitizeFileName(ex.RefId), SanitizeFileName(comp.Name));
+                    var componentDir = Path.Combine(metadataDir, "scripts", pkg.ObjectName, SanitizeFileName(ex.RefId), SanitizeFileName(comp.Name));
                     var extension = comp.ScriptComponent.Language switch
                     {
                         "CSharp" => ".cs",
@@ -228,34 +249,34 @@ internal static class ReportCommand
             HighestSeverity = HighestSeverity(perPackageFindings[pkg.ObjectName]),
         }).OrderBy(r => r.PackageName, StringComparer.Ordinal).ToList();
 
-        WriteInventoryCsv(inventory, Path.Combine(outDir, "inventory.csv"));
-        WriteInventoryMd(inventory, Path.Combine(outDir, "inventory.md"));
-        WriteFindingsCsv(allFindings, Path.Combine(outDir, "findings.csv"));
-        WriteFindingsMd(allFindings, Path.Combine(outDir, "findings.md"));
-        StableJsonWriter.WriteToFile(allNonDeterministic.OrderBy(n => n.PackageName, StringComparer.Ordinal).ToList(), Path.Combine(outDir, "nondeterministic.json"));
+        WriteInventoryCsv(inventory, Path.Combine(reportDir, "inventory.csv"));
+        WriteInventoryMd(inventory, Path.Combine(reportDir, "inventory.md"));
+        WriteFindingsCsv(allFindings, Path.Combine(reportDir, "findings.csv"));
+        WriteFindingsMd(allFindings, Path.Combine(reportDir, "findings.md"));
+        StableJsonWriter.WriteToFile(allNonDeterministic.OrderBy(n => n.PackageName, StringComparer.Ordinal).ToList(), Path.Combine(analysisDir, "nondeterministic.json"));
         StableJsonWriter.WriteToFile(
             allPrimaryKeyCandidates.OrderBy(p => p.PackageName, StringComparer.Ordinal).ThenBy(p => p.DataFlowTaskPath, StringComparer.Ordinal).ToList(),
-            Path.Combine(outDir, "primary-keys.json"));
-        WriteUnmappedMd(packages, Path.Combine(outDir, "unmapped.md"));
+            Path.Combine(analysisDir, "primary-keys.json"));
+        WriteUnmappedMd(packages, Path.Combine(reportDir, "unmapped.md"));
 
         // Slice 5 outputs (plan §5.2-§5.5)
-        WriteExpressionsCsv(allExpressions, Path.Combine(outDir, "expressions.csv"));
-        WriteExpressionFunctionsMd(allExpressions, Path.Combine(outDir, "expression-functions.md"));
-        StableJsonWriter.WriteToFile(allSqlAnalyses, Path.Combine(outDir, "sql-analysis.json"));
-        StableJsonWriter.WriteToFile(perPackageDataTouch.Values.OrderBy(d => d.PackageName, StringComparer.Ordinal).ToList(), Path.Combine(outDir, "datatouch.json"));
-        WriteDataTouchMd(perPackageDataTouch, Path.Combine(outDir, "datatouch.md"));
-        WritePrimaryKeysMd(allPrimaryKeyCandidates, Path.Combine(outDir, "primary-keys.md"));
-        WriteGenerationReadinessMd(perPackageGenerationGaps, Path.Combine(outDir, "generation-readiness.md"));
+        WriteExpressionsCsv(allExpressions, Path.Combine(analysisDir, "expressions.csv"));
+        WriteExpressionFunctionsMd(allExpressions, Path.Combine(analysisDir, "expression-functions.md"));
+        StableJsonWriter.WriteToFile(allSqlAnalyses, Path.Combine(analysisDir, "sql-analysis.json"));
+        StableJsonWriter.WriteToFile(perPackageDataTouch.Values.OrderBy(d => d.PackageName, StringComparer.Ordinal).ToList(), Path.Combine(analysisDir, "datatouch.json"));
+        WriteDataTouchMd(perPackageDataTouch, Path.Combine(analysisDir, "datatouch.md"));
+        WritePrimaryKeysMd(allPrimaryKeyCandidates, Path.Combine(analysisDir, "primary-keys.md"));
+        WriteGenerationReadinessMd(perPackageGenerationGaps, Path.Combine(reportDir, "generation-readiness.md"));
         StableJsonWriter.WriteToFile(
             allObservableEffects.OrderBy(e => e.PackageName, StringComparer.Ordinal).ThenBy(e => e.Kind, StringComparer.Ordinal).ThenBy(e => e.Target, StringComparer.Ordinal).ToList(),
-            Path.Combine(outDir, "effects.json"));
-        WriteEffectsMd(allObservableEffects, Path.Combine(outDir, "effects.md"));
-        var graphDir = Path.Combine(outDir, "graph");
+            Path.Combine(analysisDir, "effects.json"));
+        WriteEffectsMd(allObservableEffects, Path.Combine(analysisDir, "effects.md"));
+        var graphDir = Path.Combine(metadataDir, "graph");
         Directory.CreateDirectory(graphDir);
         File.WriteAllText(Path.Combine(graphDir, "portfolio.mmd"), DependencyGraphBuilder.ToMermaid(packages, dependencyEdges));
-        StableJsonWriter.WriteToFile(dependencyEdges, Path.Combine(outDir, "dependencies.json"));
+        StableJsonWriter.WriteToFile(dependencyEdges, Path.Combine(analysisDir, "dependencies.json"));
 
-        WritePortfolioMd(inventory, allFindings, allNonDeterministic, allExpressions, allSqlAnalyses, dependencyEdges, perPackageGenerationGaps, Path.Combine(outDir, "portfolio.md"));
+        WritePortfolioMd(inventory, allFindings, allNonDeterministic, allExpressions, allSqlAnalyses, dependencyEdges, perPackageGenerationGaps, Path.Combine(reportDir, "portfolio.md"));
 
         var sqlFileCount = allSqlAnalyses.Count(s => s.SqlFilePath is not null);
         var parseFailures = allSqlAnalyses.Count(s => !s.ParsedSuccessfully);
@@ -263,7 +284,7 @@ internal static class ReportCommand
         Console.WriteLine($"wrote report for {packages.Count} package(s) -> {outDir}");
         Console.WriteLine($"  {allFindings.Count} finding(s), {allNonDeterministic.Count} non-deterministic column(s)");
         Console.WriteLine($"  {sqlFileCount} SQL statement(s) harvested ({parseFailures} failed to parse), {allExpressions.Count} expression(s), {dependencyEdges.Count} cross-package dependency edge(s)");
-        Console.WriteLine($"  {scriptFilesWritten} Script Task/Component source file(s) harvested to `scripts/`{(scriptItemsStripped > 0 ? $", {scriptItemsStripped} script(s) had NO source (binary only -- see findings)" : "")}");
+        Console.WriteLine($"  {scriptFilesWritten} Script Task/Component source file(s) harvested to `metadata/scripts/`{(scriptItemsStripped > 0 ? $", {scriptItemsStripped} script(s) had NO source (binary only -- see findings)" : "")}");
         foreach (var row in inventory)
         {
             var gapCount = perPackageGenerationGaps.TryGetValue(row.PackageName, out var gaps) ? gaps.Count(PortfolioDigest.IsBlockingGap) : 0;
@@ -275,8 +296,8 @@ internal static class ReportCommand
         // screenshot or a phone photo of the terminal. See PortfolioDigest for why it is an
         // allow-list of safe fields rather than a redaction of the fuller report.
         var digest = PortfolioDigest.Build(packages, inventory, allFindings, allExpressions, allObservableEffects, allNonDeterministic, loaded.Failures.Count, perPackageGenerationGaps);
-        File.WriteAllText(Path.Combine(outDir, "portfolio-digest.md"), PortfolioDigest.ToMarkdown(digest));
-        StableJsonWriter.WriteToFile(digest, Path.Combine(outDir, "portfolio-digest.json"));
+        File.WriteAllText(Path.Combine(reportDir, "portfolio-digest.md"), PortfolioDigest.ToMarkdown(digest));
+        StableJsonWriter.WriteToFile(digest, Path.Combine(reportDir, "portfolio-digest.json"));
         Console.WriteLine();
         Console.WriteLine(PortfolioDigest.ToConsoleDigest(digest));
 
@@ -284,10 +305,10 @@ internal static class ReportCommand
         // a survey run on a machine we do not control is usually reduced to whatever ends up
         // in the out directory, and "which packages are missing from this report, and why"
         // is exactly the question that cannot be answered later from console scrollback.
-        WriteLoadFailuresMd(loaded.Failures, Path.Combine(outDir, "load-failures.md"));
+        WriteLoadFailuresMd(loaded.Failures, Path.Combine(reportDir, "load-failures.md"));
         if (loaded.Failures.Count > 0)
         {
-            Console.Error.WriteLine($"warning: {loaded.Failures.Count} input(s) could not be read and are ABSENT from this report -- see load-failures.md");
+            Console.Error.WriteLine($"warning: {loaded.Failures.Count} input(s) could not be read and are ABSENT from this report -- see metadata/report/load-failures.md");
         }
 
         // Phase 1.2 of the independent-review fix plan: a "duplicate-name"/"package-not-found"
@@ -721,7 +742,7 @@ internal static class ReportCommand
         }
         else
         {
-            sb.AppendLine("Exclude these columns from any parallel-run row-hash comparison (plan §5.8) -- full detail in `nondeterministic.json`.");
+            sb.AppendLine("Exclude these columns from any parallel-run row-hash comparison (plan §5.8) -- full detail in `../analysis/nondeterministic.json`.");
             sb.AppendLine();
             sb.AppendLine("| Package | Target | Reason |");
             sb.AppendLine("|---|---|---|");
@@ -743,7 +764,7 @@ internal static class ReportCommand
         {
             var explicitCount = dependencyEdges.Count(e => e.Kind == "ExecutePackageTask");
             var implicitCount = dependencyEdges.Count(e => e.Kind == "SharedTable");
-            sb.AppendLine($"{explicitCount} explicit (Execute Package Task) and {implicitCount} implicit (shared table) edge(s). The implicit ones are the important half -- they exist only in the schedule, not in any package (plan §5.2). See `graph/portfolio.mmd` and `dependencies.json`.");
+            sb.AppendLine($"{explicitCount} explicit (Execute Package Task) and {implicitCount} implicit (shared table) edge(s). The implicit ones are the important half -- they exist only in the schedule, not in any package (plan §5.2). See `../graph/portfolio.mmd` and `../analysis/dependencies.json`.");
             sb.AppendLine();
             sb.AppendLine("| From | To | Kind | Shared object |");
             sb.AppendLine("|---|---|---|---|");
@@ -757,7 +778,7 @@ internal static class ReportCommand
         sb.AppendLine("## SQL harvest");
         sb.AppendLine();
         var parseFailures = sqlAnalyses.Where(s => !s.ParsedSuccessfully).ToList();
-        sb.AppendLine($"{sqlAnalyses.Count} SQL statement(s) harvested to `sql/`, {parseFailures.Count} of which failed to parse.");
+        sb.AppendLine($"{sqlAnalyses.Count} SQL statement(s) harvested to `../sql/`, {parseFailures.Count} of which failed to parse.");
         if (parseFailures.Count > 0)
         {
             sb.AppendLine();
@@ -792,7 +813,7 @@ internal static class ReportCommand
         sb.AppendLine();
         var distinctFunctions = expressions.SelectMany(e => e.Functions).Distinct().OrderBy(f => f, StringComparer.Ordinal).ToList();
         var distinctCasts = expressions.SelectMany(e => e.Casts).Distinct().OrderBy(c => c, StringComparer.Ordinal).ToList();
-        sb.AppendLine($"{expressions.Count} expression(s) using {distinctFunctions.Count} distinct function(s) and {distinctCasts.Count} distinct cast operator(s) -- the surface area a replacement engine must support (plan §5.5). Full breakdown in `expression-functions.md`; every expression, with its referenced variables/columns, in `expressions.csv`.");
+        sb.AppendLine($"{expressions.Count} expression(s) using {distinctFunctions.Count} distinct function(s) and {distinctCasts.Count} distinct cast operator(s) -- the surface area a replacement engine must support (plan §5.5). Full breakdown in `../analysis/expression-functions.md`; every expression, with its referenced variables/columns, in `../analysis/expressions.csv`.");
         if (distinctFunctions.Count > 0)
         {
             sb.AppendLine();
@@ -809,11 +830,11 @@ internal static class ReportCommand
         sb.AppendLine();
         sb.AppendLine("- `inventory.md` / `inventory.csv` -- per-package counts, complexity score, classification");
         sb.AppendLine("- `findings.md` / `findings.csv` -- every rule hit with its location");
-        sb.AppendLine("- `datatouch.md` / `datatouch.json` -- what each package reads and writes");
-        sb.AppendLine("- `expressions.csv` / `expression-functions.md` -- every expression, and the language surface used");
-        sb.AppendLine("- `sql/` / `sql-analysis.json` -- every SQL statement, individually addressable, with its parse result");
-        sb.AppendLine("- `graph/portfolio.mmd` / `dependencies.json` -- cross-package dependency graph");
-        sb.AppendLine("- `nondeterministic.json` -- columns to exclude from parallel-run comparison");
+        sb.AppendLine("- `../analysis/datatouch.md` / `../analysis/datatouch.json` -- what each package reads and writes");
+        sb.AppendLine("- `../analysis/expressions.csv` / `../analysis/expression-functions.md` -- every expression, and the language surface used");
+        sb.AppendLine("- `../sql/` / `../analysis/sql-analysis.json` -- every SQL statement, individually addressable, with its parse result");
+        sb.AppendLine("- `../graph/portfolio.mmd` / `../analysis/dependencies.json` -- cross-package dependency graph");
+        sb.AppendLine("- `../analysis/nondeterministic.json` -- columns to exclude from parallel-run comparison");
         sb.AppendLine("- `unmapped.md` -- what this extraction did not model, per package");
         sb.AppendLine("- `generation-readiness.md` -- whether `ssisx generate` would produce each package with zero gaps");
 

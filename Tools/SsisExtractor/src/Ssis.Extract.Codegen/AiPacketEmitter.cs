@@ -170,6 +170,7 @@ public static class AiPacketEmitter
             EvidenceSha256 = evidenceHash,
             EvidenceRefId = gap.EvidenceRefId,
             ExpectedFileName = gap.Kind == GapKind.LocalFileSourceData ? LocalFileSourceDataExpectedFileName(package, gap) : null,
+            TransformClassName = gap.TransformClassName,
         };
 
     /// <summary>The real <c>TestData/</c> file name this gap's fill must use -- see
@@ -1254,9 +1255,39 @@ public static class AiPacketEmitter
         sb.Append($"- **Reads variables:** {FormatList(script.ReadOnlyVariables)}\n");
         sb.Append($"- **Writes variables:** {FormatList(script.ReadWriteVariables)}\n\n");
 
+        var inputColumns = component.Inputs.SelectMany(i => i.Columns).ToList();
         sb.Append("### Input columns available on `row`\n\n");
-        sb.Append(ColumnTable(component.Inputs.SelectMany(i => i.Columns)
-            .Select(c => (c.CachedName, c.CachedDataType, c.CachedLength))));
+        sb.Append(ColumnTable(inputColumns.Select(c => (c.CachedName, c.CachedDataType, c.CachedLength))));
+
+        // Real SSIS convention, not this tool's own invention: a pipeline component's error
+        // output always carries exactly two system columns named literally "ErrorCode"/
+        // "ErrorColumn" -- confirmed via a real dtexec probe (see this project's own "Flat File
+        // Source error output" round). A Script Component downstream of one always has these two
+        // on its input, which is what distinguishes THIS shape from an ordinary Script Component.
+        // The original SSIS script almost always calls `ComponentMetaData.GetErrorDescription
+        // (Row.ErrorCode)` here -- a LIVE SSIS API with no equivalent in the generated runtime --
+        // and an AI reviewer with no further evidence correctly refuses to guess at its mapping,
+        // exactly the caution this tool wants. The fix is to SUPPLY the evidence: in generated
+        // code, `row.ErrorCode` is never an arbitrary live value, because `Etl.Core.Csv.
+        // CsvRowSource<TRow>` (the ONLY thing that ever produces it) hardcodes exactly these two
+        // outcomes and nothing else -- so the real GetErrorDescription text for exactly these two
+        // codes (measured via a real dtexec run against the real SSIS runtime, not invented) is a
+        // complete, faithful substitute, not a guess.
+        if (inputColumns.Any(c => c.CachedName == "ErrorCode") && inputColumns.Any(c => c.CachedName == "ErrorColumn"))
+        {
+            sb.Append("\n**`row.ErrorCode` is NOT an arbitrary live SSIS value.** The generated runtime's own\n");
+            sb.Append("`Etl.Core.Csv.CsvRowSource<TRow>` (the only thing that produces this row at all) hardcodes\n");
+            sb.Append("exactly two possible values, nothing else -- confirmed via a real dtexec run against the\n");
+            sb.Append("real SSIS pipeline, not invented:\n\n");
+            sb.Append("| `row.ErrorCode` | Real `ComponentMetaData.GetErrorDescription` text (measured) |\n");
+            sb.Append("|---|---|\n");
+            sb.Append("| `-1071607676` | \"The data value cannot be converted for reasons other than sign mismatch or data overflow.\" |\n");
+            sb.Append("| `-1071607675` | \"The data was truncated.\" |\n\n");
+            sb.Append("If the original script calls `ComponentMetaData.GetErrorDescription(Row.ErrorCode)`, translate it\n");
+            sb.Append("as a `switch` over exactly these two values (plus a defensive fallback for any other value --\n");
+            sb.Append("e.g. throw, since no third value is currently possible) -- this is a faithful port, not a guess,\n");
+            sb.Append("because these two codes are the complete, closed set this generator's own runtime can ever produce.\n");
+        }
 
         sb.Append("\n### Columns this component produces\n\n");
         sb.Append("The gap above is for this WHOLE component -- return every one of these columns together from the one combined method.\n\n");

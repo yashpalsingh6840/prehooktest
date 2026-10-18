@@ -155,4 +155,20 @@ public sealed class GapSpec
     /// connection manager has no design-time default path to derive one from.
     /// </summary>
     public string? ExpectedFileName { get; init; }
+
+    /// <summary>
+    /// Set ONLY for a <see cref="GapKind.ScriptComponentColumn"/> gap -- the exact generated
+    /// TRANSFORM CLASS name the seam lives on (e.g. "adMutualFundCompany_TemporaryErrorTransform").
+    /// <see cref="Location"/>'s own prefix is the DESTINATION ENTITY name, not this -- the two are
+    /// usually related by a suffix convention but not reliably derivable by string manipulation
+    /// across every flow shape, so this is carried structurally instead of re-derived. Real,
+    /// confirmed bug this closes: a package with more than one Script Component left at SSIS's
+    /// own unrenamed default display name ("Script Component") produces more than one gap whose
+    /// Location ends in the IDENTICAL seam method name -- <c>ApplyFillsCommand</c> used to key its
+    /// own "which gap does this fill answer" lookup by that bare method name alone across the
+    /// whole package, so only the LAST such gap survived in the lookup and every OTHER fill for
+    /// the same method name was checked against the WRONG gap's evidence hash, reported Stale
+    /// despite being written against the correct, current evidence.
+    /// </summary>
+    public string? TransformClassName { get; init; }
 }

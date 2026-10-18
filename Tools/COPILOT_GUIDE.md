@@ -317,8 +317,8 @@ ssisx generate --input <folder> --out out --recursive --package LoadEmployees --
 .\Tools\SsisExtractor\scripts\Run-Coverage.ps1 -GeneratedRoot out\generate
 ```
 
-Runs `dotnet test --filter Category!=Integration --collect:"XPlat Code Coverage"` per package,
-parses each `coverage.cobertura.xml`, and writes `out\generate\coverage-report.md` splitting the
+Runs the **unit tests only** -- every test except those tagged `Category=Integration` (the ones that need a real database or real files) -- with `dotnet test --filter Category!=Integration --collect:"XPlat Code Coverage"` per package. Integration tests are not included in these numbers.
+It parses each `coverage.cobertura.xml`, and writes `out\generate\coverage-report.md` splitting the
 result into "this package's own generated code" vs. "the shared `Etl.Core` library" -- the
 own-code figure is the honest one for a starter-test baseline; the blended total is dragged down
 by `Etl.Core`'s own infrastructure (SQL bulk-copy, Excel/fixed-width readers, ...) that a starter
@@ -350,6 +350,14 @@ dotnet build out\generate\Generated.slnx --nologo
 dotnet test out\generate\Generated.slnx --filter Category!=Integration --nologo
 ```
 
+`apply-tests` builds each package's test project with the copied files in place. A file the
+compiler rejects is removed from `out\generate\` again (the original under `fills-library\` is never
+touched), and the package still builds without it. Every outcome is written to
+`out\tests-applied.json` and shown on the Applied Tests page: **Applied**, **Rejected** (with the
+compiler errors), or **Unverified** (the build failed for a reason no MoreTests file caused, so the
+copy was left in place). The pipeline runs this as Step 4b, after apply-fills; a Rejected or
+Unverified file is a warning there, never a failed run.
+
 Every file present is copied unconditionally -- there is no `GapId` to check a "more test"
 against, so unlike a Tier-1/2 fill there is nothing to be `Stale`/`Orphaned` about. If a test
 references a method/column that got renamed since the README was read, the next build simply
@@ -374,7 +382,7 @@ never write a fill anywhere under `out\`.**
 | `out\generate\<Package>\TestData\` and `out\generate\<Package>.Tests\SampleData\` | **No -- never delete this** | `TestData\` may hold a real, hand-supplied `LOCAL-DATA` file (copied in by `apply-fills` from `fills-library\<Package>\TestData\`, the durable source -- but the copy under `out\` is what every test/local run actually reads). `SampleData\` is the Tier-A synthetic reference. Neither is safe to nuke as part of "cleaning up `out\`". |
 | `out\fills\` (an old-style location from before `fills-library\` existed) | **No -- never delete this either** | If you see this from an old run, treat it exactly like `fills-library\` below -- check its contents before assuming it's disposable just because it's under `out\`. |
 | `fills-library\` (at the `Tools\` root, NOT under `out\`) | **No -- never delete this. Commit it to git.** | Hand-ported Tier-2 Script Task/Component logic, and Tier-1 `*.decisions.json` answers. `ssisx` never writes to it, and it survives every `out` deletion/regeneration because it was never inside `out` to begin with. |
-| `out\conformance\claims\` | **No -- never delete this** | Human sign-off on gate-1 obligations. Unlike fills, this one genuinely does default to living under `--out` (via `--claims`) -- if you want it durable too, point `--claims` at a folder outside `out\` the same way, e.g. `--claims claims-library`. |
+| `out\metadata\conformance\claims\` | **No -- never delete this** | Human sign-off on gate-1 obligations. Unlike fills, this one genuinely does default to living under `--out` (via `--claims`) -- if you want it durable too, point `--claims` at a folder outside `out\` the same way, e.g. `--claims claims-library`. |
 
 **The short version, per rule 14: never delete anything under `out\` (or anywhere else) on your
 own judgement.** Re-running `generate`/`apply-fills` overwrites the regenerable parts in place --
@@ -426,6 +434,7 @@ so each step stays independently runnable and this file doesn't drift out of syn
 | 3 | Generate | `ssisx-generate.prompt.md` | deterministic |
 | 4 | Tier-1/2 gap fills | `ssisx-fill.prompt.md` | **AI -- stops for review** |
 | 5 | Apply + build | `ssisx-fill.prompt.md`'s own closing step | deterministic |
+| 5b | Optional extra tests (`MoreTests`) | Section "Adding more unit tests" above | **AI -- stops for review** (only if you asked for more coverage) |
 | 6 | Test-oracle/local-data fills | `ssisx-test.prompt.md` | **AI -- stops for review** |
 | 7 | Apply + build + test | `ssisx-test.prompt.md`'s own closing step | deterministic |
 | 8 | Code coverage | `Run-Coverage.ps1`, called directly | deterministic |

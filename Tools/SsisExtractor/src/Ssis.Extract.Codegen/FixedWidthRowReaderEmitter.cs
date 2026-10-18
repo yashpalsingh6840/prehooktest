@@ -1,3 +1,4 @@
+using Ssis.Extract.Model.Pipeline;
 using Ssis.Extract.Model.Shared;
 
 namespace Ssis.Extract.Codegen;
@@ -18,10 +19,23 @@ namespace Ssis.Extract.Codegen;
 /// character slice naturally is) -- confirmed against RBC_Demo_ETL's own CustomersFixed.txt via a
 /// real dtexec run, which lands each column padded/verbatim, never converted. A non-string
 /// column is a named gap, never guessed, since there is no evidenced conversion rule for one.
+///
+/// 2026-10-16 fix: a real client portfolio had a RaggedRight layout whose raw column
+/// <c>ObjectName</c>s were not valid C# identifiers (mainframe/copybook-style names containing
+/// spaces/commas) -- this emitter used to interpolate <c>column.ObjectName</c> VERBATIM as the
+/// property-initializer identifier on the reader's own object-initializer line, producing
+/// invalid C# (CS0103/CS0747/CS1003, two different real column names colliding on one line when
+/// a name itself embedded a delimiter). <see cref="CsvRowEmitter"/> -- which declares this SAME
+/// row type's properties -- already routes every column through
+/// <see cref="PackageGenerator.MakeColumnIdentifierResolver"/>; this emitter now builds an
+/// INDEPENDENT resolver instance over the identical column list/order/skip-conditions so it
+/// reproduces CsvRowEmitter's own naming decisions exactly (the same "two emitters, one
+/// identifier mapping" convention <see cref="EntityEmitter"/>'s own doc comment already
+/// documents), rather than assuming a raw name is already a valid identifier.
 /// </summary>
 public static class FixedWidthRowReaderEmitter
 {
-    public static EmitResult Emit(string ns, string rowClassName, ConnectionManagerSpec connectionManager)
+    public static EmitResult Emit(string ns, string rowClassName, ConnectionManagerSpec connectionManager, PipelineComponentSpec? sourceComponent = null)
     {
         var format = connectionManager.FlatFileFormat;
         if (format is null)
@@ -30,18 +44,38 @@ public static class FixedWidthRowReaderEmitter
                 $"connection manager '{connectionManager.ObjectName}' has no FlatFileFormat (CreationName='{connectionManager.CreationName}')")]);
         }
 
+        var sourceOutputTypeByName = CsvRowEmitter.ResolveSourceOutputTypesByName(sourceComponent);
+
+        // Independent resolver, same column list/order as CsvRowEmitter's own -- see this
+        // emitter's own doc comment. identifierOf must be called for every column CsvRowEmitter
+        // itself would call it for (i.e. every column whose effective type resolves at all), in
+        // the same order, even one this emitter goes on to skip/gap below -- otherwise a later
+        // disambiguation suffix ("_2"/"_3") would be assigned to the wrong column name and the
+        // two emitters would silently disagree again, just one column later.
+        var identifierOf = PackageGenerator.MakeColumnIdentifierResolver();
+
         var gaps = new List<GenerationGap>();
         var assignments = new List<string>();
 
         for (var ordinal = 0; ordinal < format.Columns.Count; ordinal++)
         {
             var column = format.Columns[ordinal];
-            var type = SsisPipelineTypeMap.Resolve(CsvRowEmitter.ToPipelineTypeKey(column.DataTypeName));
+            var effectiveDataTypeName = column.DataTypeName;
+            if (sourceOutputTypeByName.TryGetValue(column.ObjectName, out var sourceDataType)
+                && sourceDataType is not null
+                && !string.Equals(sourceDataType, column.DataTypeName, StringComparison.OrdinalIgnoreCase))
+            {
+                effectiveDataTypeName = sourceDataType;
+            }
+
+            var type = SsisPipelineTypeMap.Resolve(CsvRowEmitter.ToPipelineTypeKey(effectiveDataTypeName));
             if (type is null)
             {
                 // Already reported by CsvRowEmitter against the same row type -- don't double-report.
                 continue;
             }
+
+            var identifier = identifierOf(column.ObjectName);
 
             if (type.ClrTypeName != "string")
             {
@@ -50,7 +84,7 @@ public static class FixedWidthRowReaderEmitter
                 continue;
             }
 
-            assignments.Add($"        {column.ObjectName} = fields[{ordinal}],");
+            assignments.Add($"        {identifier} = fields[{ordinal}],");
         }
 
         if (assignments.Count == 0)

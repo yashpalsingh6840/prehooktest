@@ -62,10 +62,29 @@ public static class SampleDataEmitter
             .ToList();
         var dataLine = string.Join(",", rawValues);
 
+        // 2026-10-16 fix: a real client package whose connection manager declares
+        // HeaderRowsToSkip > 0 (a literal banner/control line before the real header -- the SAME
+        // field EmitFixedWidth below already honors) hit a genuine MissingFieldException at
+        // runtime, because Etl.Core.Csv.CsvRowSource.ReadAsync discards EXACTLY `SkipRows` raw
+        // lines unconditionally BEFORE ever looking for a header, regardless of whether it's
+        // reading the real file or this synthesized one (CsvFlowSource threads
+        // format.HeaderRowsToSkip straight into CsvSourceOptions.SkipRows). This file used to
+        // write only [header, dataLine, dataLine] with no leading skip line(s) at all -- against a
+        // SkipRows > 0 reader, that silently discarded the REAL header as if it were a banner line
+        // and then parsed a representative DATA row (width-truncated "Sample" values) as the
+        // header instead, failing with "Field with name '<real column>' does not exist." Any
+        // placeholder content works -- the skip loop above never parses it -- so this reuses
+        // EmitFixedWidth's own "SKIP" convention for consistency.
+        var skipRows = format.HeaderRowsToSkip ?? 0;
+        var contentLines = new List<string>();
+        for (var i = 0; i < skipRows; i++) contentLines.Add("SKIP");
+        contentLines.Add(header);
         // Two identical rows -- enough to prove "reads more than one row" without needing a
         // second, independently-chosen representative value; a starter test asserting the FIRST
         // row's columns (per the taxonomy table) never needs to distinguish them.
-        var content = string.Join("\r\n", [header, dataLine, dataLine]) + "\r\n";
+        contentLines.Add(dataLine);
+        contentLines.Add(dataLine);
+        var content = string.Join("\r\n", contentLines) + "\r\n";
 
         var fileName = $"{fileSourceKey}.csv";
         var columns = resolvedColumns.Zip(rawValues, (rc, raw) =>

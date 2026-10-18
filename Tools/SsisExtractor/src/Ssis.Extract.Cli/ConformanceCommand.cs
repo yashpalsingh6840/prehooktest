@@ -75,7 +75,7 @@ internal static class ConformanceCommand
         outDir = Path.GetFullPath(outDir);
         // Claims default to living beside the rules, which makes the zero-config flow work:
         // first run writes stubs, the author edits them in place, later runs read them back.
-        claimsDir = Path.GetFullPath(claimsDir ?? Path.Combine(outDir, "conformance", "claims"));
+        claimsDir = Path.GetFullPath(claimsDir ?? Path.Combine(outDir, "metadata", "conformance", "claims"));
 
         try
         {
@@ -88,7 +88,7 @@ internal static class ConformanceCommand
                 return 2;
             }
 
-            var rulesDir = Path.Combine(outDir, "conformance");
+            var rulesDir = Path.Combine(outDir, "metadata", "conformance");
             Directory.CreateDirectory(rulesDir);
             Directory.CreateDirectory(claimsDir);
 

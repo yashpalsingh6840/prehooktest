@@ -23,10 +23,23 @@ public class ApplyTestsCommandTests : IDisposable
 
     private const string Package = "Pkg";
 
+    // A real, dependency-free class library: apply-tests now builds this project to verify each
+    // copy, so the fixture must be buildable (no package references, so no network restore).
+    private const string MinimalTestProjectCsproj = """
+        <Project Sdk="Microsoft.NET.Sdk">
+          <PropertyGroup>
+            <TargetFramework>net8.0</TargetFramework>
+          </PropertyGroup>
+        </Project>
+        """;
+
     private void WriteGeneratedPackage(bool withTestProject = true)
     {
         Directory.CreateDirectory(Path.Combine(_root, "generate", Package));
-        if (withTestProject) Directory.CreateDirectory(Path.Combine(_root, "generate", $"{Package}.Tests"));
+        if (!withTestProject) return;
+        var testDir = Path.Combine(_root, "generate", $"{Package}.Tests");
+        Directory.CreateDirectory(testDir);
+        File.WriteAllText(Path.Combine(testDir, $"{Package}.Tests.csproj"), MinimalTestProjectCsproj);
     }
 
     private string WriteMoreTest(string fileName, string content)
@@ -77,6 +90,53 @@ public class ApplyTestsCommandTests : IDisposable
         Assert.Equal(MoreTestStatus.Applied, record.Status);
         Assert.False(record.Attributed);
         Assert.Null(record.Author);
+    }
+
+    [Fact]
+    public void Run_RejectsOnlyTheFileTheCompilerBlames_AndRemovesItsCopyFromGenerate()
+    {
+        WriteGeneratedPackage();
+        WriteMoreTest("GoodMoreTests.cs", "class Good {}\n");
+        var badOriginal = WriteMoreTest("BadMoreTests.cs", "class Bad { int x = ; }\n");
+
+        var exitCode = ApplyTestsCommand.Run(["--out", _root]);
+
+        // 3 = a warning ("some files not applied"), not a crash. The package still builds.
+        Assert.Equal(3, exitCode);
+        var testDir = Path.Combine(_root, "generate", $"{Package}.Tests", "MoreTests");
+        Assert.True(File.Exists(Path.Combine(testDir, "GoodMoreTests.cs")));
+        Assert.False(File.Exists(Path.Combine(testDir, "BadMoreTests.cs")));
+        // The hand-written original is never deleted or edited -- only the generate/ copy goes.
+        Assert.True(File.Exists(badOriginal));
+
+        var manifest = ReadManifest().ToDictionary(r => r.FileName);
+        Assert.Equal(MoreTestStatus.Applied, manifest["GoodMoreTests.cs"].Status);
+        Assert.Equal(MoreTestStatus.Rejected, manifest["BadMoreTests.cs"].Status);
+        Assert.NotEmpty(manifest["BadMoreTests.cs"].CompilerErrors!);
+        Assert.Contains("CS1525", string.Join("\n", manifest["BadMoreTests.cs"].CompilerErrors!));
+    }
+
+    [Fact]
+    public void Run_LeavesTheCopyInPlace_WhenTheBuildFailsForAReasonNoMoreTestFileCaused()
+    {
+        WriteGeneratedPackage();
+        // A malformed project file fails the build before any MoreTests file is compiled -- nothing
+        // here can be blamed, so the copy must be left alone and reported. (A missing
+        // ProjectReference is only a warning in this SDK, so it cannot be used to force this.)
+        File.WriteAllText(
+            Path.Combine(_root, "generate", $"{Package}.Tests", $"{Package}.Tests.csproj"),
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net8.0</TargetFramework>
+            </Project>
+            """);
+        WriteMoreTest("FooMoreTests.cs", "class Foo {}\n");
+
+        var exitCode = ApplyTestsCommand.Run(["--out", _root]);
+
+        Assert.Equal(3, exitCode);
+        Assert.True(File.Exists(Path.Combine(_root, "generate", $"{Package}.Tests", "MoreTests", "FooMoreTests.cs")));
+        Assert.Equal(MoreTestStatus.Unverified, Assert.Single(ReadManifest()).Status);
     }
 
     [Fact]

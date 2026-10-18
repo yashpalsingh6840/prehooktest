@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using Ssis.Extract.Model.Analysis;
@@ -78,6 +79,9 @@ internal static class ApplyTestsCommand
 
         var applied = new List<string>();
         var unattributed = new List<string>();
+        var rejected = new List<string>();
+        var unverified = new List<string>();
+        var unverifiedReasons = new Dictionary<string, string>(StringComparer.Ordinal);
         var unknownPackages = new List<string>();
         var noTestProject = new List<string>();
         var records = new List<MoreTestRecordSpec>();
@@ -108,24 +112,48 @@ internal static class ApplyTestsCommand
                 }
 
                 var targetDir = Path.Combine(testProjectDir, "MoreTests");
+                var copied = new List<(string FileName, MoreTestProvenance? Provenance)>();
                 foreach (var file in Directory.EnumerateFiles(moreTestsDir, "*.cs").OrderBy(f => f, StringComparer.Ordinal))
                 {
                     var fileName = Path.GetFileName(file);
-                    var provenance = ExtractLeadingProvenance(File.ReadAllText(file));
-
                     Directory.CreateDirectory(targetDir);
                     File.Copy(file, Path.Combine(targetDir, fileName), overwrite: true);
+                    copied.Add((fileName, ExtractLeadingProvenance(File.ReadAllText(file))));
+                }
+                if (copied.Count == 0) continue;
 
-                    if (provenance is null) unattributed.Add($"{packageName}/MoreTests/{fileName}");
-                    else applied.Add($"{packageName}/MoreTests/{fileName}");
+                // Verify the package's test project with the copies in place. A file the compiler
+                // blames is removed again from generate/ (the original under fills/ is never
+                // touched) so one bad hand-written test cannot break the package's own starter
+                // baseline. Anything the compiler cannot pin on these files is reported as
+                // Unverified and left in place.
+                var verification = VerifyMoreTests(testProjectDir, packageName, targetDir, copied.Select(c => c.FileName).ToList());
+
+                foreach (var (fileName, provenance) in copied)
+                {
+                    var status = verification.Rejected.ContainsKey(fileName) ? MoreTestStatus.Rejected
+                        : verification.Unverified ? MoreTestStatus.Unverified
+                        : MoreTestStatus.Applied;
+                    var label = $"{packageName}/MoreTests/{fileName}";
+                    switch (status)
+                    {
+                        case MoreTestStatus.Applied:
+                            if (provenance is null) unattributed.Add(label); else applied.Add(label);
+                            break;
+                        case MoreTestStatus.Rejected: rejected.Add(label); break;
+                        case MoreTestStatus.Unverified: unverified.Add(label); break;
+                    }
 
                     records.Add(new MoreTestRecordSpec
                     {
-                        Package = packageName, FileName = fileName, Status = MoreTestStatus.Applied,
+                        Package = packageName, FileName = fileName, Status = status,
                         Attributed = provenance is not null,
                         Author = provenance?.Author, Date = provenance?.Date, Targets = provenance?.Targets,
+                        CompilerErrors = verification.Rejected.TryGetValue(fileName, out var errors) ? errors : null,
                     });
                 }
+                if (verification.Unverified)
+                    unverifiedReasons[packageName] = verification.UnverifiedReason!;
             }
         }
 
@@ -134,9 +162,120 @@ internal static class ApplyTestsCommand
             records.OrderBy(r => r.Package, StringComparer.Ordinal).ThenBy(r => r.FileName, StringComparer.Ordinal).ToList(),
             manifestPath);
 
-        Report(fillsDir, manifestPath, applied, unattributed, unknownPackages, noTestProject);
+        Report(fillsDir, manifestPath, applied, unattributed, rejected, unverified, unverifiedReasons,
+            unknownPackages, noTestProject);
 
-        return unknownPackages.Count > 0 ? 1 : 0;
+        if (unknownPackages.Count > 0) return 1;
+        // 3 = some files were not applied (rejected) or could not be verified: a warning for the
+        // caller, the same meaning it has for apply-fills. Not a crash, and the package still builds.
+        return rejected.Count > 0 || unverified.Count > 0 ? ExitCodes.BlockingGaps : 0;
+    }
+
+    private sealed record VerificationResult(
+        Dictionary<string, List<string>> Rejected, bool Unverified, string? UnverifiedReason);
+
+    /// <summary>Builds the package's test project with the given MoreTests copies in place and
+    /// removes every copy the compiler blames, looping until the build passes or nothing left can
+    /// be attributed to these files. Rebuilds after each removal, since removing one file can
+    /// change which errors the compiler reports for the rest.</summary>
+    private static VerificationResult VerifyMoreTests(
+        string testProjectDir, string packageName, string targetDir, List<string> fileNames)
+    {
+        var csproj = Path.Combine(testProjectDir, $"{packageName}.Tests.csproj");
+        var rejected = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var live = new HashSet<string>(fileNames, StringComparer.OrdinalIgnoreCase);
+
+        if (!File.Exists(csproj))
+            return new VerificationResult(rejected, true, $"no {packageName}.Tests.csproj to build against");
+
+        while (live.Count > 0)
+        {
+            var result = BuildTestProject(csproj);
+            if (result.Succeeded) return new VerificationResult(rejected, false, null);
+
+            if (result.Failure is not null)
+                return new VerificationResult(rejected, true, $"{result.Failure} {string.Join(" | ", result.OtherErrors.Take(3))}".Trim());
+
+            var blamed = result.MoreTestErrors.Where(e => live.Contains(e.File)).ToList();
+            if (blamed.Count == 0)
+                return new VerificationResult(rejected, true,
+                    "build failed for reasons not in these MoreTests files: " + string.Join(" | ", result.OtherErrors.Take(3)));
+
+            foreach (var group in blamed.GroupBy(e => e.File, StringComparer.OrdinalIgnoreCase))
+            {
+                rejected[group.Key] = group.Select(e => e.Message).Distinct().ToList();
+                live.Remove(group.Key);
+                File.Delete(Path.Combine(targetDir, group.Key));
+            }
+        }
+
+        return new VerificationResult(rejected, false, null);
+    }
+
+    private sealed record BuildResult(
+        bool Succeeded,
+        List<(string File, string Message)> MoreTestErrors,
+        List<string> OtherErrors,
+        string? Failure);
+
+    // Matches "...MoreTests\Foo.cs(12,5): error CS1002: ..." (MSBuild's own compiler diagnostic
+    // format; warnings count too, since generated projects use TreatWarningsAsErrors).
+    private static readonly Regex CompilerErrorPattern =
+        new(@"MoreTests[\\/](?<file>[^\\/()]+\.cs)\(\d+,\d+\):\s*error\s*(?<code>[A-Z]+\d+):\s*(?<msg>.+?)(\s\[.*\])?$",
+            RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static BuildResult BuildTestProject(string csproj)
+    {
+        var psi = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in new[] { "build", csproj, "-nologo", "-v:minimal", "-nodeReuse:false" })
+            psi.ArgumentList.Add(arg);
+
+        Process? process;
+        try { process = Process.Start(psi); }
+        catch (Exception ex)
+        {
+            return new BuildResult(false, [], [], $"could not start 'dotnet build': {ex.Message}");
+        }
+        if (process is null) return new BuildResult(false, [], [], "could not start 'dotnet build'");
+
+        using (process)
+        {
+            // Both streams drained concurrently: reading one to EOF before the other can deadlock
+            // once the child fills the other pipe's buffer. Same rule as GeneratedSolutionBuildTests.
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(TimeSpan.FromMinutes(10)))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+                return new BuildResult(false, [], [], "dotnet build timed out after 10 minutes");
+            }
+            Task.WaitAll([stdout, stderr], TimeSpan.FromSeconds(30));
+            var text = stdout.Result + "\n" + stderr.Result;
+
+            if (process.ExitCode == 0) return new BuildResult(true, [], [], null);
+
+            var moreTest = new List<(string, string)>();
+            var other = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var rawLine in text.Split('\n'))
+            {
+                var line = rawLine.TrimEnd('\r').Trim();
+                if (!line.Contains(": error", StringComparison.Ordinal)) continue;
+                if (!seen.Add(line)) continue;
+                var m = CompilerErrorPattern.Match(line);
+                if (m.Success) moreTest.Add((m.Groups["file"].Value, $"{m.Groups["code"].Value}: {m.Groups["msg"].Value}"));
+                else other.Add(line);
+            }
+            return new BuildResult(false, moreTest, other, moreTest.Count == 0 && other.Count == 0
+                ? $"dotnet build exited {process.ExitCode} with no error lines"
+                : null);
+        }
     }
 
     private static MoreTestProvenance? ExtractLeadingProvenance(string content)
@@ -171,12 +310,30 @@ internal static class ApplyTestsCommand
 
     private static void Report(
         string fillsDir, string manifestPath, List<string> applied, List<string> unattributed,
+        List<string> rejected, List<string> unverified, Dictionary<string, string> unverifiedReasons,
         List<string> unknownPackages, List<string> noTestProject)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"apply-tests: {applied.Count + unattributed.Count} file(s) applied from {fillsDir}");
         foreach (var line in applied) sb.AppendLine($"  + {line}");
         foreach (var line in unattributed) sb.AppendLine($"  + {line} (no // ssisx-more-test: comment -- undocumented addition)");
+
+        if (rejected.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"{rejected.Count} file(s) REJECTED -- the package's test project does not compile with them, so they were");
+            sb.AppendLine("removed from generate/ again (the originals under fills/ are untouched). Fix the file and re-run apply-tests:");
+            foreach (var line in rejected) sb.AppendLine($"  x {line}");
+        }
+
+        if (unverified.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("File(s) copied but NOT verified -- the test project build failed for a reason these files cannot");
+            sb.AppendLine("be blamed for, so they were left in place:");
+            foreach (var line in unverified) sb.AppendLine($"  ? {line}");
+            foreach (var (package, reason) in unverifiedReasons) sb.AppendLine($"    {package}: {reason}");
+        }
 
         if (unknownPackages.Count > 0)
         {

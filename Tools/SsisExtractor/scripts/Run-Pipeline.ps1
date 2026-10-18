@@ -29,6 +29,10 @@
     4. ssisx apply-fills -- applies whatever is ALREADY under -FillsPath (this step does not
        write fills itself -- see ssisx-fill.prompt.md/ssisx-test.prompt.md for the AI-assisted
        gap-filling flow that produces them)
+    4b. ssisx apply-tests -- copies hand-written extra tests from fills\<Package>\MoreTests\ and
+       verifies each by building the test project; a file the compiler rejects is removed from
+       generate\ again (the original under fills\ is never touched) and reported. Never blocks
+       the build below.
     5. dotnet build, then Run-Coverage.ps1 (dotnet test --filter Category!=Integration with code
        coverage collection, per package)
 
@@ -184,7 +188,7 @@ if ($extractExit -ne 0) {
     # package-not-found -- a --package filter miss) from a genuinely unreadable
     # .dtsx/.dtproj/.ispac (Kind package/project/ispac, carrying the real exception message).
     # Only the latter should abort the pipeline.
-    $loadFailuresPath = Join-Path $extractOut 'load-failures.md'
+    $loadFailuresPath = Join-Path $extractOut 'metadata\report\load-failures.md'
     $benignKinds = @('duplicate-name', 'package-not-found')
     $hardFailureRows = @()
     if (Test-Path $loadFailuresPath) {
@@ -244,6 +248,14 @@ elseif ($applyFillsExit -ne 0) { Write-Warning "apply-fills exited $applyFillsEx
 
 Write-Banner ""
 Write-Banner "==================================================================="
+Write-Banner " Step 4b -- apply-tests (from $FillsPath, MoreTests only)"
+Write-Banner "==================================================================="
+$applyTestsExit = Invoke-Tool $ssisx @('apply-tests', '--out', $genOut, '--fills', $FillsPath)
+if ($applyTestsExit -eq 3) { Write-Warning "apply-tests: some MoreTests files were REJECTED (the test project would not compile with them) or could not be verified -- see tests-applied.json. Rejected files were removed from generate/; the build below is unaffected by them. Not a script failure." }
+elseif ($applyTestsExit -ne 0) { Write-Warning "apply-tests exited $applyTestsExit -- see output above." }
+
+Write-Banner ""
+Write-Banner "==================================================================="
 Write-Banner " Step 5/5 -- build + test + coverage"
 Write-Banner "==================================================================="
 $slnx = Join-Path $generateDir 'Generated.slnx'
@@ -279,6 +291,7 @@ Write-Host "     sampledata   : exit $sampledataExit (advisory)"
 $generateNote = if ($generateExit -eq 3) { '(gaps reported -- see generate-report.md)' } elseif ($generateExit -eq 4) { '(nothing written -- see generate-report.md)' } elseif ($generateExit -eq 98) { '(one or more packages crashed -- see generate-report.md)' } else { '' }
 Write-Host "  3. generate     : exit $generateExit $generateNote"
 Write-Host "  4. apply-fills  : exit $applyFillsExit $(if ($applyFillsExit -eq 3) {'(seams still open)'})"
+Write-Host "  4b. apply-tests : exit $applyTestsExit $(if ($applyTestsExit -eq 3) {'(some MoreTests rejected or unverified -- see tests-applied.json)'})"
 Write-Host "  5. build        : exit $buildExit"
 Write-Host "     test+coverage: exit $coverageExit $(if ($coverageExit -eq 2) {'(no test projects -- 0 packages fully generated)'}) -- see $generateDir\coverage-report.md"
 

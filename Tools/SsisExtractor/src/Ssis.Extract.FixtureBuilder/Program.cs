@@ -78,13 +78,28 @@ internal static class Program
 
     private static int Main(string[] args)
     {
+        // Pure object-model LOOKUP, not a fixture build at all -- no output path, no .dtsx. See
+        // DescribeErrorCodes's own doc comment for why this needs no live execution/connection.
+        if (args.Length >= 1 && args[0] == "describe-error")
+        {
+            return DescribeErrorCodes(args.Skip(1).Select(int.Parse).ToArray());
+        }
+
         if (args.Length is < 1 or > 2)
         {
-            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|int-numeric-widen|data-conversion-types2|lookup-single|lookup-no-match-is-live|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources|union-plus-extra-source|aggregate-then-oledb-command|event-handler-probe|error-redirect|expression-task|expression-task-coercion-probe|expression-task-millisecond|for-loop|xml-source|scd-composite-key|cross-database-source|identifier-sanitization]");
+            Console.Error.WriteLine("usage: ssis-fixture-builder <output-dtsx-path> [parallel-shapes|nested-container|post-flow-sql|oledb-source-transform|conditional-split|conditional-split-remerge|file-system-task|findstring-trim|ternary|email-domain|datediff|data-conversion|data-conversion-split|flat-file-destination|merge-join|derived-column-replace|character-map-inplace|sort-merge-remerge|foreach-file-loop|foreach-data-flow-loop|excel-source|oledb-command|multicast|numeric-coercion|data-conversion-types|string-to-int-coercion|excel-source-sqlcommand|aggregate|int-numeric-coercion|int-numeric-widen|data-conversion-types2|lookup-single|lookup-no-match-is-live|script-component-seams|disabled-task|script-task-seams|script-task-hoist-inversion|cond-constraint|cond-guard|failure-handler|second-connection-sql|lookup-then-aggregate|multicast-discard|multicast-aggregate-sibling|execute-package-task|oledb-command-reordered|oledb-command-exec-named|row-count-variable|standalone-sort|merge-interleave-probe|union-two-sources|union-plus-extra-source|aggregate-then-oledb-command|event-handler-probe|error-redirect|expression-task|expression-task-coercion-probe|expression-task-millisecond|for-loop|xml-source|scd-composite-key|cross-database-source|identifier-sanitization|flat-file-error-probe|flat-file-error-output]");
             return 2;
         }
 
         var fixtureName = args.Length == 2 ? args[1] : "parallel-shapes";
+        if (fixtureName == "flat-file-error-probe")
+        {
+            return BuildFlatFileErrorProbeFixture(args[0]);
+        }
+        if (fixtureName == "flat-file-error-output")
+        {
+            return BuildFlatFileErrorOutputFixture(args[0]);
+        }
         if (fixtureName == "nested-container")
         {
             return BuildNestedContainerFixture(args[0]);
@@ -379,7 +394,7 @@ internal static class Program
         }
         if (fixtureName != "parallel-shapes")
         {
-            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'int-numeric-widen', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', 'union-plus-extra-source', 'aggregate-then-oledb-command', 'event-handler-probe', 'error-redirect', 'expression-task', 'expression-task-coercion-probe', 'expression-task-millisecond', 'pct-sampling', or 'xml-source'.");
+            Console.Error.WriteLine($"error: unknown fixture '{fixtureName}' -- expected 'parallel-shapes', 'nested-container', 'post-flow-sql', 'oledb-source-transform', 'conditional-split', 'conditional-split-remerge', 'file-system-task', 'findstring-trim', 'ternary', 'email-domain', 'datediff', 'data-conversion', 'data-conversion-split', 'flat-file-destination', 'merge-join', 'sort-merge-remerge', 'foreach-file-loop', 'foreach-data-flow-loop', 'excel-source', 'oledb-command', 'multicast', 'numeric-coercion', 'data-conversion-types', 'string-to-int-coercion', 'excel-source-sqlcommand', 'aggregate', 'int-numeric-coercion', 'int-numeric-widen', 'data-conversion-types2', 'lookup-single', 'script-component-seams', 'disabled-task', 'script-task-seams', 'script-task-hoist-inversion', 'cond-constraint', 'cond-guard', 'failure-handler', 'second-connection-sql', 'lookup-then-aggregate', 'multicast-discard', 'multicast-aggregate-sibling', 'execute-package-task', 'standalone-sort', 'merge-interleave-probe', 'union-two-sources', 'union-plus-extra-source', 'aggregate-then-oledb-command', 'event-handler-probe', 'error-redirect', 'expression-task', 'expression-task-coercion-probe', 'expression-task-millisecond', 'pct-sampling', 'xml-source', 'flat-file-error-probe', or 'flat-file-error-output'.");
 
             return 2;
         }
@@ -1018,6 +1033,316 @@ internal static class Program
             }
             inst.MapInputColumn(input.ID, match.ID, ext.ID);
         }
+    }
+
+    /// <summary>
+    /// A real dtexec PROBE (not a Gate-3 verification fixture) measuring the ErrorCode values a
+    /// Flat File Source actually produces for a genuine type-conversion failure (the "ID" column,
+    /// DT_I4, a non-numeric value) and a genuine truncation failure (the "Name" column, DT_WSTR
+    /// width 5, an overlong value) -- real client evidence (a .dtsx read directly, not the
+    /// designer) showed a Flat File Source's error output routed through a Script Component
+    /// (computing <c>ComponentMetaData.GetErrorDescription(Row.ErrorCode)</c>) into a second
+    /// destination, and this tool has never before needed to reproduce that error-output shape
+    /// end to end.
+    ///
+    /// Deliberately NO Script Component here -- GetErrorDescription() is a pure object-model
+    /// lookup keyed by the error code alone (see <see cref="DescribeErrorCodes"/>), independent of
+    /// whether anything executes, so measuring it needs no live pipeline run at all. The error
+    /// output is routed straight to a second OLE DB Destination instead, capturing ErrorCode/
+    /// ErrorColumn/the raw text column directly -- exactly the fixed 3-column shape this feature's
+    /// own generated error-row type needs, with no Script Component to get in the way of reading
+    /// the real values back.
+    ///
+    /// <para><b>Per-COLUMN disposition, not per-destination-input</b> -- a different object-model
+    /// property from <see cref="BuildErrorRedirectFixture"/>'s own <c>IDTSInput100.ErrorRowDisposition</c>
+    /// (a whole-row disposition on a DESTINATION's input). Here it's
+    /// <c>IDTSOutputColumn100.ErrorRowDisposition</c>/<c>.TruncationRowDisposition</c> set
+    /// directly on the Flat File SOURCE's own main-output columns -- the same property Data
+    /// Conversion already used elsewhere in this file (<c>RD_IgnoreFailure</c> there), set here to
+    /// <c>RD_RedirectRow</c> instead, one disposition per column so the two failure KINDS are
+    /// independently measurable (seeding one bad value per failure kind, in different rows, so
+    /// neither failure masks the other).</para>
+    /// </summary>
+    private static int BuildFlatFileErrorProbeFixture(string outputPath)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-flat-file-error-probe-csv", "SyntheticFlatFileErrorProbe.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticFlatFileErrorProbe" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_FlatFileErrorProbeCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 5, 0, 0));
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_FlatFileErrorProbe";
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = pipe.ComponentMetaDataCollection.New();
+        srcMeta.ComponentClassID = "Microsoft.FlatFileSource";
+        var srcInst = srcMeta.Instantiate();
+        srcInst.ProvideComponentProperties(); // resets Name -- must set Name after, see AddOleDbComponent's own comment
+        srcMeta.Name = "Flat File Source";
+        var srcConn = srcMeta.RuntimeConnectionCollection[0];
+        srcConn.ConnectionManagerID = csvCm.ID;
+        srcConn.ConnectionManager = DtsConvert.GetExtendedInterface(csvCm);
+        srcInst.AcquireConnections(null);
+        srcInst.ReinitializeMetaData();
+        srcInst.ReleaseConnections();
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+        var errorOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.IsErrorOut);
+
+        var idCol = mainOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>().First(c => c.Name == "ID");
+        idCol.ErrorRowDisposition = DTSRowDisposition.RD_RedirectRow;
+        var nameCol = mainOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>().First(c => c.Name == "Name");
+        nameCol.TruncationRowDisposition = DTSRowDisposition.RD_RedirectRow;
+
+        var mainDestMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticFlatFileErrorProbeMain]");
+        AttachPath(pipe, mainOutput, mainDestMeta.InputCollection[0]);
+        ResolveOleDbMetadata(mainDestMeta, isDestination: true);
+
+        var errDestMeta = AddOleDbComponent(pipe, "OLE DB Destination 1", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticFlatFileErrorProbeErrors]");
+        AttachPath(pipe, errorOutput, errDestMeta.InputCollection[0]);
+        ResolveOleDbMetadata(errDestMeta, isDestination: true);
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+
+        // Printed for convenience while probing -- the error output's own column set is exactly
+        // what this feature's fixed error-row-type emitter needs to match, confirmed here rather
+        // than assumed from the real client's own quoted XML excerpt.
+        Console.WriteLine("error output columns: " + string.Join(", ",
+            errorOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>().Select(c => $"{c.Name} ({c.DataType})")));
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Pure object-model LOOKUP -- <c>IDTSComponentMetaData100.GetErrorDescription(int)</c> is a
+    /// static lookup into SSIS's own shared error-message table, keyed by error code alone,
+    /// independent of component type/connections/execution. Needs any live component metadata
+    /// object to call it FROM, never a running pipeline -- a throwaway OLE DB Source, instantiated
+    /// but never connected/executed, is the cheapest one available. Real client evidence quotes
+    /// <c>ComponentMetaData.GetErrorDescription(Row.ErrorCode)</c> verbatim from inside a Script
+    /// Component; this reproduces the identical call without needing that script to ever compile
+    /// or run.
+    /// </summary>
+    private static int DescribeErrorCodes(int[] codes)
+    {
+        var pkg = new RtPackage { Name = "ErrorDescriptionProbe" };
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.OLEDBSource";
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties();
+        meta.Name = "Probe";
+
+        foreach (var code in codes)
+        {
+            Console.WriteLine($"{code}: {meta.GetErrorDescription(code)}");
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// The full evidenced shape, for Gate-3-style generate+build+run verification --
+    /// Flat File Source main output -> OLE DB Destination (successfully parsed rows), Flat File
+    /// Source ERROR output -> Script Component (synthesizing ErrorDescription via
+    /// <c>ComponentMetaData.GetErrorDescription(Row.ErrorCode)</c>, plus a literal FileName) ->
+    /// a SECOND OLE DB Destination (5 columns: ErrorCode, ErrorColumn, ErrorDescription,
+    /// ErrorColumnValue, FileName -- real client evidence, all 5 mapped, none ignored;
+    /// "Flat File Source Error Output Column" -> ErrorColumnValue is the passthrough).
+    ///
+    /// <para><b>Deliberately NOT dtexec-executable</b> -- same documented limitation as every
+    /// other Script-Component-bearing fixture in this project (<c>BuildScriptComponentSeamsFixture</c>,
+    /// <c>BuildBranch3ErrorRouting</c>'s own Script Component): its SourceCode is a real, valid
+    /// (file name, encoding, content) triple, but has no cached BinaryCode and goes through no
+    /// VSTA compile step, so dtexec cannot run it for real. <c>DelayValidation</c> defers the
+    /// package's own validation past the point this fixture is ever asked to reach. Verification
+    /// for the Script-Component half of this feature is via the GENERATED C# code (built against
+    /// a copy of Etl.Core, then actually run), diffed row-for-row against
+    /// <c>BuildFlatFileErrorProbeFixture</c>'s own real dtexec-measured ground truth -- the same
+    /// two-fixture, two-tier verification this project already uses whenever a feature combines a
+    /// Script Component with runtime behavior that genuinely needs measuring.</para>
+    /// </summary>
+    private static int BuildFlatFileErrorOutputFixture(string outputPath)
+    {
+        var csvPath = Path.Combine(TestFixturesDir(), "synthetic-flat-file-error-probe-csv", "SyntheticFlatFileErrorProbe.csv");
+        if (!File.Exists(csvPath))
+        {
+            Console.Error.WriteLine($"error: expected CSV fixture at {csvPath} -- this tool's checked-in test fixtures are missing or moved.");
+            return 2;
+        }
+
+        var pkg = new RtPackage { Name = "SyntheticFlatFileErrorOutput" };
+        pkg.ProtectionLevel = Microsoft.SqlServer.Dts.Runtime.DTSProtectionLevel.DontSaveSensitive;
+
+        var sqlCm = pkg.Connections.Add("OLEDB");
+        sqlCm.Name = "CM_Sql";
+        sqlCm.ConnectionString = SqlConnectionString;
+
+        var csvCm = AddFlatFileConnectionManager(pkg, "CM_FlatFileErrorOutputCsv", csvPath,
+            ("ID", "DT_I4", 0, 0, 0),
+            ("Name", "DT_WSTR", 5, 0, 0));
+
+        var dftHost = (RtTaskHost)pkg.Executables.Add("Microsoft.Pipeline");
+        dftHost.Name = "DFT_FlatFileErrorOutput";
+        // Matches BuildBranch3ErrorRouting's own DelayValidation -- the Script Component below
+        // never goes through the VSTA editor/compiler, so it has no cached BinaryCode; without
+        // this, SSDT's package validation fails hard on "Add Existing Item". This fixture is
+        // documented as never compiled/executed via dtexec (see this method's own doc comment).
+        dftHost.DelayValidation = true;
+        var pipe = (MainPipe)dftHost.InnerObject;
+
+        var srcMeta = pipe.ComponentMetaDataCollection.New();
+        srcMeta.ComponentClassID = "Microsoft.FlatFileSource";
+        var srcInst = srcMeta.Instantiate();
+        srcInst.ProvideComponentProperties();
+        srcMeta.Name = "Flat File Source";
+        var srcConn = srcMeta.RuntimeConnectionCollection[0];
+        srcConn.ConnectionManagerID = csvCm.ID;
+        srcConn.ConnectionManager = DtsConvert.GetExtendedInterface(csvCm);
+        srcInst.AcquireConnections(null);
+        srcInst.ReinitializeMetaData();
+        srcInst.ReleaseConnections();
+
+        var mainOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => !o.IsErrorOut);
+        var errorOutput = srcMeta.OutputCollection.Cast<IDTSOutput100>().Single(o => o.IsErrorOut);
+
+        var idCol = mainOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>().First(c => c.Name == "ID");
+        idCol.ErrorRowDisposition = DTSRowDisposition.RD_RedirectRow;
+        var nameCol = mainOutput.OutputColumnCollection.Cast<IDTSOutputColumn100>().First(c => c.Name == "Name");
+        nameCol.TruncationRowDisposition = DTSRowDisposition.RD_RedirectRow;
+
+        var mainDestMeta = AddOleDbComponent(pipe, "OLE DB Destination", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticFlatFileErrorOutputMain]");
+        AttachPath(pipe, mainOutput, mainDestMeta.InputCollection[0]);
+        ResolveOleDbMetadata(mainDestMeta, isDestination: true);
+
+        var scriptMeta = BuildErrorDescriptionScriptComponent(pipe, "Script Component", errorOutput);
+
+        var errDestMeta = AddOleDbComponent(pipe, "OLE DB Destination 1", "Microsoft.OLEDBDestination", sqlCm,
+            accessMode: 3, openRowset: "[dbo].[SyntheticFlatFileErrorOutputErrors]");
+        AttachPath(pipe, scriptMeta.OutputCollection[0], errDestMeta.InputCollection[0]);
+        // ResolveOleDbMetadata's own simple by-name mapping can't be reused as-is here -- real
+        // client evidence shows the raw text column genuinely RENAMED at the destination
+        // ("Flat File Source Error Output Column" -> "ErrorColumnValue"), not a same-name
+        // passthrough the way every other mapped column in this fixture is.
+        ResolveRenamedDestination(errDestMeta, renames: new Dictionary<string, string> { ["ErrorColumnValue"] = "Flat File Source Error Output Column" });
+
+        pkg.SaveToXML(out var xml, null);
+        File.WriteAllText(outputPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"wrote {outputPath}");
+        return 0;
+    }
+
+    /// <summary>Same shape as <see cref="ResolveOleDbMetadata"/>'s own destination branch, except
+    /// an external column named in <paramref name="renames"/> maps onto the upstream column NAMED
+    /// by its own value, instead of requiring an identical name.</summary>
+    private static void ResolveRenamedDestination(IDTSComponentMetaData100 meta, Dictionary<string, string> renames)
+    {
+        var inst = meta.Instantiate();
+        inst.AcquireConnections(null);
+        inst.ReinitializeMetaData();
+        inst.ReleaseConnections();
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        var externalNames = new HashSet<string>(
+            input.ExternalMetadataColumnCollection.Cast<IDTSExternalMetadataColumn100>().Select(e => e.Name));
+
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            if (!externalNames.Contains(vcol.Name) && !renames.ContainsValue(vcol.Name)) continue;
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        foreach (IDTSExternalMetadataColumn100 ext in input.ExternalMetadataColumnCollection)
+        {
+            var upstreamName = renames.TryGetValue(ext.Name, out var renamed) ? renamed : ext.Name;
+            var match = input.InputColumnCollection.Cast<IDTSInputColumn100>().FirstOrDefault(c => c.Name == upstreamName);
+            if (match is null)
+            {
+                throw new InvalidOperationException($"fixture build error: no upstream column named '{upstreamName}' to map onto destination '{meta.Name}''s own external column '{ext.Name}'.");
+            }
+            inst.MapInputColumn(input.ID, match.ID, ext.ID);
+        }
+    }
+
+    /// <summary>
+    /// A genuine Script Component synthesizing two columns from a Flat File Source's error
+    /// output -- ErrorDescription (<c>ComponentMetaData.GetErrorDescription(Row.ErrorCode)</c>,
+    /// real client evidence verbatim) and FileName (a literal, differing per real branch --
+    /// <c>"SyntheticFlatFileErrorOutput.csv"</c> here). Its own 3 input columns (the raw text
+    /// column, ErrorCode, ErrorColumn) stay untouched passthroughs -- marked UT_READONLY, exactly
+    /// like <see cref="BuildPassthroughScriptComponent"/>'s own convention -- so the destination
+    /// resolves them by lineageId straight back to the Flat File Source's error output, skipping
+    /// this component's own output entirely for those three.
+    /// </summary>
+    private static IDTSComponentMetaData100 BuildErrorDescriptionScriptComponent(MainPipe pipe, string name, IDTSOutput100 upstreamOutput)
+    {
+        var meta = pipe.ComponentMetaDataCollection.New();
+        meta.ComponentClassID = "Microsoft.ManagedComponentHost";
+
+        var seedProp = meta.CustomPropertyCollection.New();
+        seedProp.Name = "UserComponentTypeName";
+        seedProp.Value = "Microsoft.ScriptComponentHost";
+
+        var inst = meta.Instantiate();
+        inst.ProvideComponentProperties();
+        meta.Name = name;
+
+        SetCustomProperty(meta, "SourceCode", new[]
+        {
+            "main.cs",
+            "UTF8",
+            string.Join("\r\n",
+                "using System;",
+                "using Microsoft.SqlServer.Dts.Pipeline;",
+                "",
+                "[SSISScriptComponentEntryPoint]",
+                "public class ScriptMain : UserComponent",
+                "{",
+                "    public override void Input0_ProcessInputRow(Input0Buffer Row)",
+                "    {",
+                "        Row.ErrorDescription = ComponentMetaData.GetErrorDescription(Row.ErrorCode);",
+                "        Row.FileName = \"SyntheticFlatFileErrorOutput.csv\";",
+                "    }",
+                "}"),
+        });
+
+        AttachPath(pipe, upstreamOutput, meta.InputCollection[0]);
+
+        var input = meta.InputCollection[0];
+        var virtualInput = input.GetVirtualInput();
+        foreach (IDTSVirtualInputColumn100 vcol in virtualInput.VirtualInputColumnCollection)
+        {
+            inst.SetUsageType(input.ID, virtualInput, vcol.LineageID, DTSUsageType.UT_READONLY);
+        }
+
+        var output = meta.OutputCollection[0];
+        var errorDescription = inst.InsertOutputColumnAt(output.ID, output.OutputColumnCollection.Count, "ErrorDescription", "");
+        inst.SetOutputColumnDataTypeProperties(output.ID, errorDescription.ID, DataType.DT_WSTR, 1000, 0, 0, 0);
+        var fileName = inst.InsertOutputColumnAt(output.ID, output.OutputColumnCollection.Count, "FileName", "");
+        inst.SetOutputColumnDataTypeProperties(output.ID, fileName.ID, DataType.DT_WSTR, 100, 0, 0, 0);
+
+        return meta;
     }
 
     /// <summary>

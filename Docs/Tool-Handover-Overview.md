@@ -76,7 +76,7 @@ separate just meant more names to remember.)
 | `ssisx extract` | A folder of `.dtsx` files (or one file) | The full spec, an inventory of every package, a complexity/readiness report, lineage diagrams, "what this package requires of a replacement" obligations, and generated expression tests |
 | `ssisx generate` | Same input, plus a copy of `Etl.Core`, plus a folder for AI-authored answers | A buildable C# project per package, a starter test project, and — if anything couldn't be translated — a folder of "gap" work packets explaining exactly what's missing |
 | `ssisx apply-fills` | Human/AI-authored answers to those gaps | Copies validated answers into the generated code; reports what's still outstanding |
-| `ssisx apply-tests` | Optional hand-picked *extra* tests for an already-working package | Copies them in — this is enrichment, not gap-filling (see section 4) |
+| `ssisx apply-tests` | Optional hand-picked *extra* tests for an already-working package | Copies them in and builds the test project to check each file; a file that does not compile is rejected and removed from the generated output again. Enrichment, not gap-filling (see section 4) |
 | `svk walkthrough` | The output of `extract` | A plain-English, execution-order description of a package — good for a human sanity check before generating |
 | `svk sampledata` | The output of `extract` | Realistic, schema-correct sample CSV/SQL/DDL data for a package, deterministic (same seed → same output every time) |
 
@@ -197,8 +197,10 @@ ssisx apply-tests --out out --fills fills-library
 ```
 
 It reads hand-written test files from a different folder (`fills-library\<Package>\MoreTests\`)
-and copies them in unconditionally — no staleness tracking, because there's no specific gap being
-answered.
+and copies them in. Each copy is then verified: the package's test project is built, and any file
+the compiler rejects is removed from the generated output again (its original stays in `fills-library`).
+There is no staleness tracking, because there's no specific gap being answered. Results are recorded
+in `tests-applied.json` and shown on the Applied Tests page.
 
 **Rule of thumb for the call:** *"Generate always gives you real tests for free. AI only gets
 involved for the handful of tests that genuinely need either ported script logic or realistic
@@ -469,11 +471,11 @@ honest during development.
 
 | Script | What it automates | Typical use | Sample command |
 |---|---|---|---|
-| **`Run-Pipeline.ps1`** | The full mechanical pipeline in one call: extract → `svk` walkthrough/sample data → generate → apply-fills (whatever's already answered) → build → test → coverage | **The one to reach for when there's no Copilot/Claude chat session available** — CI, a scripted regression check, an ops person with no AI at hand. It can *apply* fills already sitting on disk, but it can never *write* one — a plain script has no way to read a work packet and reason about an answer the way an AI can. If a chat session IS available, `/ssisx-rewrite` does the same steps but stops for human review at the two AI boundaries. | `.\Run-Pipeline.ps1 -InputPath D:\Client\SSIS -OutputPath D:\Client\out -Framework net10.0` |
+| **`Run-Pipeline.ps1`** | The full mechanical pipeline in one call: extract → `svk` walkthrough/sample data → generate → apply-fills (whatever's already answered) → apply-tests (any extra hand-written tests, each verified by building) → build → test → coverage | **The one to reach for when there's no Copilot/Claude chat session available** — CI, a scripted regression check, an ops person with no AI at hand. It can *apply* fills already sitting on disk, but it can never *write* one — a plain script has no way to read a work packet and reason about an answer the way an AI can. If a chat session IS available, `/ssisx-rewrite` does the same steps but stops for human review at the two AI boundaries. | `.\Run-Pipeline.ps1 -InputPath D:\Client\SSIS -OutputPath D:\Client\out -Framework net10.0` |
 | **`Run-Survey.ps1`** | Runs a portfolio-wide survey (`ssisx extract` — `report`/`conformance` were folded into it as one command, redaction always forced on) and zips up the result | **This is the script literally designed to be handed to a client.** Ships next to a self-contained `ssisx.exe` — no .NET, SQL Server, SSIS, or network access needed on their side — so someone on their team runs one command and sends the zip back to us | `.\Run-Survey.ps1 -PackageFolder "D:\SSIS_Projects"` |
 | **`Publish-Survey.ps1`** | Builds that self-contained, single-file `ssisx.exe` `Run-Survey.ps1` needs sitting next to it | Run once (or whenever our source changes) before handing `Run-Survey.ps1` + the `.exe` to a client | `.\Publish-Survey.ps1` |
 | **`Verify-GeneratedBuild.ps1`** | Runs `generate`, then immediately `dotnet build`s the result against whichever `Etl.Core` copy you point it at | A quick one-command "does this actually compile" sanity check — handy any time, not just a dev tool | `.\Verify-GeneratedBuild.ps1 -PackageFolder ..\..\..\SSIS -EtlCorePath ..\..\Etl.Core` |
-| **`Run-Coverage.ps1`** | Runs every generated package's non-database-dependent tests with coverage collection, and writes one combined report split into "this package's own code" vs. "the shared runtime library" | Standalone, or as the final step `Run-Pipeline.ps1`/`/ssisx-rewrite` already call automatically | `.\Run-Coverage.ps1 -GeneratedRoot out\generate` |
+| **`Run-Coverage.ps1`** | Runs every generated package's unit tests (everything except the `Category=Integration` tests, which need a real database or real files) with coverage collection, and writes one combined report split into "this package's own code" vs. "the shared runtime library" | Standalone, or as the final step `Run-Pipeline.ps1`/`/ssisx-rewrite` already call automatically | `.\Run-Coverage.ps1 -GeneratedRoot out\generate` |
 
 ### Scripts we use ourselves — keeping the tool honest, not client-facing
 

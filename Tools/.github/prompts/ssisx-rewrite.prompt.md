@@ -120,6 +120,10 @@ Follow `ssisx-test.prompt.md` Step 3 in full (apply-fills, build, `dotnet test -
 Category!=Integration`). Report the final result: build status, test pass/fail/skip counts, and
 any gap of any tier still outstanding for `<package>`.
 
+## Step 7b -- optional extra tests — **AI boundary, stop here**
+
+Only if the user asked for more coverage beyond the starter tests. Read `<out>generate<package>README.md`'s "Test coverage notes" section, pick a few real gaps in coverage, and write one `.cs` file per candidate under `fills-library<package>MoreTests` (never `Tests` -- that is the TEST-ORACLE folder). Show the user each candidate and what it asserts, and stop: do not run `apply-tests` until they confirm. Once confirmed, run `ssisx apply-tests --out <out> --fills fills-library` and report the result from `<out>	ests-applied.json`: which files are Applied, which were Rejected (with their compiler errors), and which are Unverified. A Rejected file is not a failure of this package; fix the file and re-run this step.
+
 ## Step 8 -- code coverage
 
 Run `Tools/SsisExtractor/scripts/Run-Coverage.ps1 -GeneratedRoot <out>/generate -Package

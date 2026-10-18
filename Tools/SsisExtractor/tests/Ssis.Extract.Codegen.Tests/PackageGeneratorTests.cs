@@ -2035,4 +2035,93 @@ public class PackageGeneratorTests
         Assert.Contains("no starter test coverage in this pilot", testOracleGap.Reason);
         Assert.DoesNotContain(result.SiblingFiles, f => f.RelativePath.EndsWith("SourceTests.cs"));
     }
+
+    [Fact]
+    public void Generate_WiresAFlatFileSourceErrorOutput_ThroughAnAutoRecognizedScriptComponent_IntoASecondDestination()
+    {
+        // Real client shape (MFDBUpdate.dtsx): a Flat File Source's main output feeds one
+        // destination; its error output (at least one main-output column configured for
+        // ErrorRowDisposition/TruncationRowDisposition=RedirectRow) routes through a Script
+        // Component (ComponentMetaData.GetErrorDescription(Row.ErrorCode) + a literal FileName)
+        // into a SECOND destination. This ORIGINALLY generated a human-reviewed Tier-2 seam (the
+        // ordinary GapKind.ScriptComponentColumn mechanism), proven correct once filled by hand --
+        // but once the SAME two-statement script turned up verbatim on THREE Data Flow Tasks in
+        // the real client package, FlatFileErrorScriptComponentRecognizer promoted this one exact,
+        // fully-measured shape out of the seam entirely: no human fill needed at all. Confirmed
+        // beyond this test by a real dtexec probe (Ssis.Extract.FixtureBuilder's
+        // "flat-file-error-probe" mode, measuring the real ErrorCode values/GetErrorDescription()
+        // text) and by actually running the auto-translated generated exe against
+        // .\SQLFORPOC_2022 WITH ZERO FILLS APPLIED -- exact row-for-row match, including the raw
+        // failed-row text, against the probe (see Tools/SsisExtractor/CLAUDE.md).
+        var package = LoadSyntheticFixture("SyntheticFlatFileErrorOutput.dtsx");
+
+        var result = PackageGenerator.Generate(package, namespacePrefix: null, emitSeams: true);
+
+        var classFile = Assert.Single(result.Files, f => f.RelativePath == "SyntheticFlatFileErrorOutput.cs");
+        // The main source is kept at its concrete CsvRowSource<T> type (not the IRowSource<T>
+        // interface every other flow's source stays) specifically so .ErrorRows is visible --
+        // and constructed with divertErrorsToErrorRows: true, the one thing that actually makes
+        // CsvRowSource buffer failures instead of throwing.
+        Assert.Contains("var csvSource = FlatFileSource();", classFile.Content);
+        Assert.Contains("divertErrorsToErrorRows: true", classFile.Content);
+        Assert.Contains("IRowSource<SyntheticFlatFileErrorOutputMainCsvRow> source = csvSource;", classFile.Content);
+        // Reuses Etl.Core.Pipeline.ConditionalSplitBranch -- the SAME buffer-then-flush
+        // abstraction Multicast/Conditional Split already use, not a second mechanism.
+        Assert.Contains(
+            "var errorBranch = new ConditionalSplitBranch<SyntheticFlatFileErrorOutputMainErrorRow, SyntheticFlatFileErrorOutputMainError>(",
+            classFile.Content);
+        Assert.Contains("foreach (var raw in csvSource.ErrorRows)", classFile.Content);
+        Assert.Contains(
+            "var errorRow = new SyntheticFlatFileErrorOutputMainErrorRow(raw.RawRow, raw.ErrorCode, raw.ErrorColumn);",
+            classFile.Content);
+        Assert.Contains("var errorWritten = await errorBranch.FlushAsync(uow, ct);", classFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(classFile.Content);
+
+        // The fixed error-row type names its raw-text property from the REAL pipeline column
+        // name ("Flat File Source Error Output Column", sanitized) -- not a hardcoded "RawRow" --
+        // so TransformEmitter's own generic lineage-based passthrough resolves it with zero
+        // bridging code, the same mechanism every other row type's own properties already use.
+        var errorRowFile = Assert.Single(result.Files, f => f.RelativePath == "Csv/SyntheticFlatFileErrorOutputMainErrorRow.cs");
+        Assert.Contains("public sealed record SyntheticFlatFileErrorOutputMainErrorRow(string FlatFileSourceErrorOutputColumn, int ErrorCode, int ErrorColumn);", errorRowFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(errorRowFile.Content);
+
+        // ErrorCode/ErrorColumn are i4 in the buffer but str,100 at the real destination -- the
+        // new i4-to-string coercion (reusing the existing SsisFn.Str helper, not a new method).
+        var transformFile = Assert.Single(result.Files, f => f.RelativePath == "Mapping/SyntheticFlatFileErrorOutputMainErrorTransform.cs");
+        Assert.Contains("ErrorColumnValue = row.FlatFileSourceErrorOutputColumn,", transformFile.Content);
+        Assert.Contains("ErrorCode = SsisFn.Str(row.ErrorCode),", transformFile.Content);
+        Assert.Contains("ErrorColumn = SsisFn.Str(row.ErrorColumn),", transformFile.Content);
+        // The Script Component's own two synthesized columns (ErrorDescription/FileName) are
+        // auto-recognized and resolved INLINE -- no seam, no partial method, no namespace-level
+        // result record at all. The ErrorDescription switch reproduces the two measured, closed
+        // ErrorCode values exactly; FileName is the real literal read straight out of the
+        // script's own source.
+        Assert.DoesNotContain("partial", transformFile.Content);
+        Assert.DoesNotContain("ScriptComponentResult", transformFile.Content);
+        Assert.Contains("ErrorDescription = row.ErrorCode switch", transformFile.Content);
+        Assert.Contains("-1071607676 => \"The data value cannot be converted for reasons other than sign mismatch or data overflow.\",", transformFile.Content);
+        Assert.Contains("-1071607675 => \"The data was truncated.\",", transformFile.Content);
+        Assert.Contains("FileName = \"SyntheticFlatFileErrorOutput.csv\",", transformFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(transformFile.Content);
+
+        var errorEntityFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticFlatFileErrorOutputMainError.cs");
+        Assert.Contains("public string ErrorColumnValue { get; set; }", errorEntityFile.Content);
+        Assert.Contains("public string ErrorCode { get; set; }", errorEntityFile.Content);
+        Assert.Contains("public string ErrorColumn { get; set; }", errorEntityFile.Content);
+        Assert.Contains("public string ErrorDescription { get; set; }", errorEntityFile.Content);
+        Assert.Contains("public string FileName { get; set; }", errorEntityFile.Content);
+        CodeAssertions.AssertNoSyntaxErrors(errorEntityFile.Content);
+
+        var dbContextFile = Assert.Single(result.Files, f => f.RelativePath == "Model/SyntheticFlatFileErrorOutputDbContext.cs");
+        Assert.Contains("modelBuilder.Entity<SyntheticFlatFileErrorOutputMain>", dbContextFile.Content);
+        Assert.Contains("modelBuilder.Entity<SyntheticFlatFileErrorOutputMainError>", dbContextFile.Content);
+
+        // Zero gaps from the error-output routing or its Script Component -- auto-recognized and
+        // translated, not deferred to a human. Only the unrelated, unavoidable
+        // LocalFileSourceData/Notification advisories remain.
+        Assert.DoesNotContain(result.Gaps, g => g.Kind == GapKind.ScriptComponentColumn);
+        Assert.DoesNotContain(result.Gaps, g => g.Kind == GapKind.TestOracle);
+        Assert.DoesNotContain(result.Gaps, g => g.Kind == GapKind.Unclassified && g.IsBlocking);
+        Assert.True(result.Gaps.All(g => !g.IsBlocking), $"expected zero blocking gaps, got: {string.Join(", ", result.Gaps.Where(g => g.IsBlocking).Select(g => g.Reason))}");
+    }
 }
