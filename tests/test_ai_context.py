@@ -28,8 +28,9 @@ def test_ai_context_emits_one_packet_pair_per_genuinely_semantic_finding(tmp_pat
     exit_code = run_ai_context(str(TRANSFORMS_DTSX), str(TRANSFORMS_GENERATED), str(tmp_path))
     assert exit_code == 0
 
-    json_path = tmp_path / "Package_Transforms.LKP_Country.ai-context.json"
-    md_path = tmp_path / "Package_Transforms.LKP_Country.ai-context.md"
+    out_dir = tmp_path / "Package_Transforms" / "ai_context"
+    json_path = out_dir / "Package_Transforms.LKP_Country.ai-context.json"
+    md_path = out_dir / "Package_Transforms.LKP_Country.ai-context.md"
     assert json_path.exists() and md_path.exists()
 
     packet = json.loads(json_path.read_text(encoding="utf-8"))
@@ -43,23 +44,24 @@ def test_ai_context_emits_one_packet_pair_per_genuinely_semantic_finding(tmp_pat
     # A component type with no registered semantic extractor (e.g. Multicast) and every LeftOnly
     # structural gap (Sort/UnionAll/Merge/RowCount, already resolved by Phase A) must NOT get a
     # packet -- Tier 2 is scoped to genuinely irreducible findings only, never a dumping ground.
-    assert not (tmp_path / "Package_Transforms.SORT_Canada.ai-context.json").exists()
-    assert not (tmp_path / "Package_Transforms.MCAST_Matched.ai-context.json").exists()
+    assert not (out_dir / "Package_Transforms.SORT_Canada.ai-context.json").exists()
+    assert not (out_dir / "Package_Transforms.MCAST_Matched.ai-context.json").exists()
 
 
 def test_ai_context_includes_script_component_and_script_task_packets(tmp_path: Path):
     exit_code = run_ai_context(str(PACKAGE_DTSX), str(PACKAGE_GENERATED), str(tmp_path))
     assert exit_code == 0
 
+    out_dir = tmp_path / "Package" / "ai_context"
     script_component = json.loads(
-        (tmp_path / "Package.SCR_ComputeCustomerTier.ai-context.json").read_text(encoding="utf-8")
+        (out_dir / "Package.SCR_ComputeCustomerTier.ai-context.json").read_text(encoding="utf-8")
     )
     assert script_component["scope"] == "DataFlowComponent"
     assert script_component["evidence"]["files"][0]["file_name"] == "main.cs"
     assert "CustomerTier" in script_component["evidence"]["files"][0]["source_code"]
 
     script_task = json.loads(
-        (tmp_path / "Package.SCR_NotifyAndLogProgress.ai-context.json").read_text(encoding="utf-8")
+        (out_dir / "Package.SCR_NotifyAndLogProgress.ai-context.json").read_text(encoding="utf-8")
     )
     assert script_task["scope"] == "ScriptTask"
     assert script_task["component_path"] is None
@@ -76,9 +78,10 @@ def test_combined_mode_deduplicates_shared_related_sources(tmp_path: Path):
     )
     assert exit_code == 0
 
-    assert not list(tmp_path.glob("Package_Transforms.DER_Enrich.ai-context.json"))
+    out_dir = tmp_path / "Package_Transforms" / "ai_context"
+    assert not list(out_dir.glob("Package_Transforms.DER_Enrich.ai-context.json"))
 
-    combined = json.loads((tmp_path / "Package_Transforms.ai-context.json").read_text(encoding="utf-8"))
+    combined = json.loads((out_dir / "Package_Transforms.ai-context.json").read_text(encoding="utf-8"))
     assert combined["package"] == "Package_Transforms"
     assert {c["component_name"] for c in combined["components"]} == {
         "CSPLIT_Validity", "DER_Enrich", "DER_TagInvalid", "DER_TagValid",
@@ -100,10 +103,16 @@ def test_combined_mode_is_smaller_than_the_sum_of_per_component_files(tmp_path: 
     run_ai_context(str(TRANSFORMS_DTSX), str(TRANSFORMS_GENERATED), str(per_component_dir))
     run_ai_context(str(TRANSFORMS_DTSX), str(TRANSFORMS_GENERATED), str(combined_dir), combined=True)
 
+    # Non-combined mode splits its output across ai_context/ (per-component packets) and gaps/
+    # (correlation-gap/left-only-gap packets) -- sum both for a fair total-bytes comparison.
     per_component_total = sum(
-        f.stat().st_size for f in per_component_dir.glob("*.ai-context.json")
+        f.stat().st_size
+        for d in ("ai_context", "gaps")
+        for f in (per_component_dir / "Package_Transforms" / d).glob("*.ai-context.json")
     )
-    combined_total = (combined_dir / "Package_Transforms.ai-context.json").stat().st_size
+    combined_total = (
+        combined_dir / "Package_Transforms" / "ai_context" / "Package_Transforms.ai-context.json"
+    ).stat().st_size
     assert combined_total < per_component_total
 
 
@@ -127,7 +136,10 @@ def test_correlation_gap_uses_gate1s_own_correlation_when_available(tmp_path: Pa
     )
     assert exit_code == 0
 
-    combined = json.loads((tmp_path / "Package_Advanced.ai-context.json").read_text(encoding="utf-8"))
+    combined = json.loads(
+        (tmp_path / "Package_Advanced" / "ai_context" / "Package_Advanced.ai-context.json")
+        .read_text(encoding="utf-8")
+    )
     gaps = {g["component_name"]: g for g in combined["correlation_gaps"]}
     gap = gaps["OLECMD_SetFlag"]
     assert gap["known_correlate"] is not None
@@ -152,7 +164,10 @@ def test_correlation_gap_falls_back_to_bounded_candidate_search(tmp_path: Path):
     )
     assert exit_code == 0
 
-    combined = json.loads((tmp_path / "Package_Legacy.ai-context.json").read_text(encoding="utf-8"))
+    combined = json.loads(
+        (tmp_path / "Package_Legacy" / "ai_context" / "Package_Legacy.ai-context.json")
+        .read_text(encoding="utf-8")
+    )
     gaps = {g["component_name"]: g for g in combined["correlation_gaps"]}
     gap = gaps["FFDST_AuditTrail_APPEND"]
     assert gap["known_correlate"] is None
@@ -166,7 +181,9 @@ def test_correlation_gap_falls_back_to_bounded_candidate_search(tmp_path: Path):
 
 def test_ai_context_markdown_twin_is_self_contained(tmp_path: Path):
     run_ai_context(str(TRANSFORMS_DTSX), str(TRANSFORMS_GENERATED), str(tmp_path))
-    markdown = (tmp_path / "Package_Transforms.LKP_Country.ai-context.md").read_text(encoding="utf-8")
+    markdown = (
+        tmp_path / "Package_Transforms" / "ai_context" / "Package_Transforms.LKP_Country.ai-context.md"
+    ).read_text(encoding="utf-8")
     assert "## Left-side (SSIS) semantic evidence" in markdown
     assert "## Right-side (generated C#) method excerpt" in markdown
     assert "CountryLookup" in markdown

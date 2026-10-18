@@ -84,7 +84,7 @@ def test_event_handler_matches():
 
 def test_disabled_node_reported_unverifiable_not_a_gap():
     result = _run(DTSX_BASE / "Package_Legacy.dtsx", GENERATED_BASE / "Package_Legacy")
-    by_name = _by_name(result, "ControlFlow")
+    by_name = _by_name(result, "ControlFlow:Disabled")
     assert by_name["SQL_LegacyStep_DISABLED"].verdict == Verdict.UNVERIFIABLE
 
 

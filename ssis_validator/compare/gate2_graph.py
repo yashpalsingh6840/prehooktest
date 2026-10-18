@@ -37,7 +37,11 @@ class Verdict(str, Enum):
 
 @dataclass
 class Finding:
-    scope: str          # e.g. "ControlFlow", "Concurrency", "FailureHandler", "DataFlow:<dft>"
+    scope: str          # e.g. "ControlFlow", "Concurrency", "FailureHandler", "DataFlow:<dft>",
+                         # "ControlFlow:Disabled" (confirmed by design, never a gap — see
+                         # `_compare_disabled`; the report/final_summary.py rollup keys off this
+                         # exact scope string to route it to its own "Exception" bucket instead of
+                         # Human-Needs-Review, so don't repurpose it for anything else)
     object_name: str
     verdict: Verdict
     detail: str
@@ -231,7 +235,14 @@ def _compare_event_handlers(graph: ControlFlowGraph, right: CsharpControlFlowGra
 def _compare_disabled(graph: ControlFlowGraph, result: Gate2Result) -> None:
     for node in graph.disabled_nodes:
         result.findings.append(Finding(
-            scope="ControlFlow", object_name=node.object_name, verdict=Verdict.UNVERIFIABLE,
+            # Deliberately its own scope, not plain "ControlFlow" — this is a structurally
+            # *confirmed* by-design exclusion (DTS:Disabled="True" means SSIS itself never runs
+            # this executable, so a rewrite correctly generates nothing for it), not an unresolved
+            # gap. Verdict stays Unverifiable (Tier 1's vocabulary has no "confirmed non-issue"
+            # verdict, and this is not a Match/LeftOnly claim about generated code that doesn't
+            # exist to compare), but the distinct scope lets the final-summary rollup route it to
+            # its own Exception bucket instead of Human-Needs-Review, where it doesn't belong.
+            scope="ControlFlow:Disabled", object_name=node.object_name, verdict=Verdict.UNVERIFIABLE,
             detail="DTS:Disabled=\"True\" — excluded from the comparable node/edge set; confirmed to have no generated counterpart by design, not treated as a gap.",
         ))
 

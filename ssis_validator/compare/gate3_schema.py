@@ -187,6 +187,7 @@ def run_gate3(
                     scope="InternalTransform", object_name=schema.component_name,
                     verdict=Verdict.LEFT_ONLY,
                     component_path=schema.component_path,
+                    evidence=schema.semantic_evidence,
                     detail=(
                         f"'{schema.component_name}' ({schema.component_type}) has no generated "
                         f"counterpart: none of {construct_names!r} — the Etl.Core construct(s) "
@@ -260,6 +261,8 @@ def run_gate3(
             if cls_name is None:
                 result.findings.append(Finding(
                     scope=scope, object_name=schema.component_name, verdict=Verdict.LEFT_ONLY,
+                    component_path=schema.component_path,
+                    evidence=[asdict(c) for c in side.columns],
                     detail=(
                         f"No generated counterpart found for '{schema.component_name}' "
                         f"({schema.component_type}) {side.role} on port {side.port_name!r} — "

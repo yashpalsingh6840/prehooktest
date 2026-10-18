@@ -19,11 +19,11 @@ from the packet it's handed, not from whatever else it could find if it went loo
 1. Identify the package name from the user's request (e.g. "Package_Transforms").
 2. Read `docs/ai-validation-prompt.md` in full — it defines the required verdict vocabulary and
    the independence rule in detail. This skill's summary below is not a substitute for it.
-3. Read the evidence packet: `ai_context/<package>/<package>.ai-context.md`. If it does not
-   exist, stop and tell the user to generate it first (the deterministic
-   `ssis_validator ai-context --dtsx <path> --generated <dir> --out ai_context/<package> --combined`
-   command, or Claude Code's `/ssis-generate-evidence <package>` command) — do not attempt to
-   reconstruct evidence any other way.
+3. Read the evidence packet: `gate_reports/<package>/ai_context/<package>.ai-context.md`. If it
+   does not exist, stop and tell the user to generate it first (the deterministic
+   `ssis_validator ai-context --dtsx <path> --generated <dir> --combined` command, which writes
+   there by default, or Claude Code's `/ssis-generate-evidence <package>` command) — do not
+   attempt to reconstruct evidence any other way.
 
 ## Hard rules
 
@@ -32,23 +32,37 @@ from the packet it's handed, not from whatever else it could find if it went loo
   generated project's own `README.md`. If asked to "double check against the real code," decline
   and explain why — suggest regenerating the packet instead if it's genuinely missing evidence.
 - **Never fabricate a match.** Insufficient evidence in the packet is a real, valid outcome —
-  report it as `AiInconclusive` and state precisely what's missing, never guess.
-- **Output format, per component**, exactly:
+  report it as `AiInconclusive` (or, for a left-only gap, `AiConfirmedGap`) and state precisely
+  what's missing, never guess.
+- **Output format, per entry**, exactly:
   ```
   Component: <name> (<package>)
-  Verdict: AiConfirmedMatch | AiSuspectedDiscrepancy | AiInconclusive | AiNotApplicable
+  Verdict: AiConfirmedMatch | AiSuspectedDiscrepancy | AiInconclusive | AiNotApplicable | AiFoundUnmappedImplementation | AiConfirmedGap
   Rationale: <one paragraph, citing specific quoted evidence from the packet>
   ```
-- **Advisory only.** Never edit `gate_reports/*.json`/`*.md` (Tier 1's own deterministic output).
-  Write your result to a new file, `ai_context/<package>/<package>.ai-review.md`, and tell the
-  user a human still needs to read and confirm it — an `AiConfirmedMatch` here is a
-  recommendation, never a promotion to Tier 1's `Match`.
+  The first four verdicts are for `## Components` and `## Correlation gaps` entries.
+  `AiFoundUnmappedImplementation`/`AiConfirmedGap` are ONLY for `## Left-only gaps` entries — a
+  `LeftOnly` finding means Tier 1 actively confirmed no counterpart exists (stronger than a
+  correlation gap's "couldn't correlate"), so the question is whether an unconfirmed candidate is
+  genuinely an unmapped implementation under a different name/shape (`AiFoundUnmappedImplementation`)
+  or the gap is real (`AiConfirmedGap`) — see `docs/ai-validation-prompt.md`'s "left-only gaps"
+  section for the full two-part judgment.
+- **Advisory only.** Never edit `gate_reports/<package>/gates/<package>.gate{1,2,3}.json`/`.md`
+  (Tier 1's own deterministic output). Write your result to two files, next to the packet: the prose
+  `gate_reports/<package>/ai_context/<package>.ai-review.md`, and a structured sidecar
+  `gate_reports/<package>/ai_context/<package>.ai-review.json` — a flat JSON list of
+  `{"component", "scope", "verdict", "rationale"}` objects, one per entry, so the deterministic
+  `final-summary` CLI command can merge your verdicts without parsing prose. Tell the user a human
+  still needs to read and confirm it — an `AiConfirmedMatch`/`AiFoundUnmappedImplementation` here
+  is a recommendation, never a promotion to Tier 1's `Match`.
 
 ## Process
 
-For every entry listed under the packet's `## Components` section: read its `Tier1 finding`,
-`Left-side evidence`, `Right-side excerpt`, and any files it points to in the packet's `## Sources`
-section (shared files are listed once there, referenced by name from each component — check there
-before concluding a component has no usable evidence). Compare the two sides and write the
-required verdict block. Do this for every component in one pass, then write the combined
-`.ai-review.md` file covering all of them.
+For every entry listed under the packet's `## Components`, `## Correlation gaps`, and
+`## Left-only gaps` sections: read its Tier 1 finding, left-side evidence (or declared evidence),
+right-side excerpt (or unconfirmed candidates), and any files it points to in the packet's
+`## Sources` section (shared files are listed once there, referenced by name from each entry —
+check there before concluding an entry has no usable evidence). Compare the two sides and write
+the required verdict block, using the correct vocabulary for the section that entry came from. Do
+this for every entry in one pass, then write both the combined `.ai-review.md` and the
+`.ai-review.json` sidecar covering all of them.

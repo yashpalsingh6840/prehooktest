@@ -1,0 +1,98 @@
+[
+  {
+    "component": "CSPLIT_Validity",
+    "scope": "DataFlowComponent",
+    "verdict": "AiConfirmedMatch",
+    "rationale": "The SSIS Valid output expression is !ISNULL(CustomerID_i4) && FINDSTRING(TRIM(Email),\"@\",1) > 0 with Invalid as the default output. The generated CSPLIT_ValidityRouter.SelectBranch reproduces exactly this logic and branch order, returning 0 (Valid) when the condition holds and 1 (Invalid) otherwise."
+  },
+  {
+    "component": "DER_Enrich",
+    "scope": "DataFlowComponent",
+    "verdict": "AiSuspectedDiscrepancy",
+    "rationale": "FullName and EmailDomain match exactly, including the DT_WSTR,200 width guard and the FindString/Substring/ternary/(none) fallback logic. TenureDays's null-check and DATEDIFF(\"dd\",...) structure also match, but the second DATEDIFF argument differs: SSIS uses GETDATE() (current wall-clock time evaluated live per row) while the generated code uses ctx.LoadedAtUtc (a UTC, load-level timestamp). A timezone offset or evaluation-time gap near a day boundary could shift the day-count result for rows processed near midnight -- a citable difference in this specific column."
+  },
+  {
+    "component": "DER_TagInvalid",
+    "scope": "DataFlowComponent",
+    "verdict": "AiConfirmedMatch",
+    "rationale": "The SSIS expression is the literal \"Invalid\" for RowSource, and DER_TagInvalid.RowSource returns the literal string \"Invalid\" unconditionally. Exact match."
+  },
+  {
+    "component": "DER_TagValid",
+    "scope": "DataFlowComponent",
+    "verdict": "AiConfirmedMatch",
+    "rationale": "The SSIS expression is the literal \"Valid\" for RowSource, and DER_TagValid.RowSource returns the literal string \"Valid\" unconditionally. Exact match."
+  },
+  {
+    "component": "AGG_ByRegion",
+    "scope": "DataFlowComponent",
+    "verdict": "AiConfirmedMatch",
+    "rationale": "The SSIS Aggregate groups by Region (AggregationType 0, sourced from LKP_Country.Region) and counts CustomerCount (AggregationType 1, sourced from FF_SRC_Customers2.CustomerID). The generated AGG_ByRegion() filters to rows resolved in lKP_CountryCache, groups by lKP_CountryCache[row.Country].Region, and computes CustomerCount = rows.Count(r => r.CustomerID != null) -- a Count aggregation on non-null CustomerID, matching the declared shape. RegionSummaryTransform passes Region through and narrows CustomerCount into the destination."
+  },
+  {
+    "component": "LKP_Country",
+    "scope": "DataFlowComponent",
+    "verdict": "AiInconclusive",
+    "rationale": "The packet's right-side excerpt for this component is identical to AGG_ByRegion's excerpt and does not show where or how lKP_CountryCache itself is built. The declared evidence describes a lookup on SELECT CountryName, CountryCode, Region FROM dbo.CountryLookup joining Country to CountryName and outputting both CountryCode and Region with no-match rows routed to RC_UnmatchedRows, but the shown excerpts only exercise .Region and a .ContainsKey no-match filter -- there is no visible evidence of the cache's SQL source or of CountryCode being consumed anywhere. Judging this requires seeing the actual construction of lKP_CountryCache (source query and both mapped columns)."
+  },
+  {
+    "component": "CSPLIT_ByCountry",
+    "scope": "DataFlowComponent",
+    "verdict": "AiConfirmedMatch",
+    "rationale": "The SSIS Canada output expression is TRIM(Country) == \"Canada\" with RestOfWorld as default. The generated CSPLIT_ByCountryRouter.SelectBranch reproduces this with string.Equals(SsisFn.Trim(row.Country), \"Canada\", StringComparison.Ordinal), matching SSIS's case-sensitive == semantics, returning 0 (Canada) or 1 (RestOfWorld) as fallthrough."
+  },
+  {
+    "component": "MRG_CustomerContacts",
+    "scope": "DataFlowComponent",
+    "verdict": "AiConfirmedMatch",
+    "rationale": "The SSIS MergeJoin declares join_type 2 (Inner), one key column (CustomerID_i4 on both sides), treat_nulls_as_equal true, and outputs Email, CustomerID_i4, ContactPhone, PreferredChannel. The generated MergeJoinRowSource<..., int?, ...> uses MergeJoinType.Inner and Comparer<int?>.Default (which treats two nulls as equal), and CustomerWithContactTransform.Map projects exactly the four declared output columns with no extras or omissions."
+  },
+  {
+    "component": "UNION_Recombine",
+    "scope": "Gate3:InternalTransform",
+    "verdict": "AiConfirmedGap",
+    "rationale": "Tier 1 confirmed no ConcatenatingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for UNION_Recombine returned zero matches. No candidate is present to judge as an unmapped implementation, so Tier 1's gap stands."
+  },
+  {
+    "component": "RC_MatchedRows",
+    "scope": "Gate3:InternalTransform",
+    "verdict": "AiConfirmedGap",
+    "rationale": "Tier 1 confirmed no CountingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for RC_MatchedRows returned zero matches. No candidate is present, so the gap stands -- this is one of the two RowCount tasks that would otherwise provide auditable evidence for the LKP_Country lookup, already flagged AiInconclusive above for lacking that evidence."
+  },
+  {
+    "component": "RC_UnmatchedRows",
+    "scope": "Gate3:InternalTransform",
+    "verdict": "AiConfirmedGap",
+    "rationale": "Tier 1 confirmed no CountingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for RC_UnmatchedRows returned zero matches. No candidate is present, so the gap stands -- this is the no-match counter for LKP_Country's no_match_output_destination; its absence means unmatched rows are silently dropped by the ContainsKey filter in AGG_ByRegion() with no generated audit trail, unlike the original package."
+  },
+  {
+    "component": "MRG_SortedUnion",
+    "scope": "Gate3:InternalTransform",
+    "verdict": "AiConfirmedGap",
+    "rationale": "Tier 1 confirmed no MergeInterleaveRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for MRG_SortedUnion returned zero matches. No candidate is present to judge, so the gap stands."
+  },
+  {
+    "component": "SORT_Canada",
+    "scope": "Gate3:InternalTransform",
+    "verdict": "AiConfirmedGap",
+    "rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_Canada returned zero matches. No candidate is present, so the gap stands. The MRG_CustomerContacts excerpt elsewhere in this packet builds its MergeJoinRowSource directly from unsorted CsvRowSources with no visible sort step, so if the merge-join implementation assumes sorted input this could be a genuine correctness gap rather than just a rename -- worth a human check of whether MergeJoinRowSource sorts internally."
+  },
+  {
+    "component": "SORT_RestOfWorld",
+    "scope": "Gate3:InternalTransform",
+    "verdict": "AiConfirmedGap",
+    "rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_RestOfWorld returned zero matches. No candidate is present, so the gap stands -- same missing-sort concern as SORT_Canada."
+  },
+  {
+    "component": "SORT_Contacts",
+    "scope": "Gate3:InternalTransform",
+    "verdict": "AiConfirmedGap",
+    "rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_Contacts returned zero matches. No candidate is present, so the gap stands. This sort fed the right side of MRG_CustomerContacts's merge join; the generated MergeJoinRowSource is built directly from FF_SRC_Contacts's raw CSV source with no visible sort, reinforcing the same correctness concern."
+  },
+  {
+    "component": "SORT_Customers",
+    "scope": "Gate3:InternalTransform",
+    "verdict": "AiConfirmedGap",
+    "rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_Customers returned zero matches. No candidate is present, so the gap stands -- same missing-sort concern as the other Sort components, this one feeding the left side of MRG_CustomerContacts's merge join."
+  }
+]

@@ -1,0 +1,161 @@
+{
+  "package": "Package_Legacy",
+  "toolVerified": [
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "OLEDST_CustomerFixedImport",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "SQL_AtomicSwap",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "SQL_CacheSet_SecondDb",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "SQL_AtomicSwap",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "DFT_FixedWidthImport",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "SQL_CacheSet_SecondDb",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_FixedWidthImport",
+      "objectName": "FF_SRC_CustomersFixed",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_FixedWidthImport",
+      "objectName": "OLEDST_CustomerFixedImport",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "SourceOutput",
+      "objectName": "FF_SRC_CustomersFixed",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "DestinationInput",
+      "objectName": "OLEDST_CustomerFixedImport",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    }
+  ],
+  "exception": [
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow:Disabled",
+      "objectName": "SQL_LegacyStep_DISABLED",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 already confirmed this by design, not a gap \u2014 DTS:Disabled=\"True\" \u2014 excluded from the comparable node/edge set; confirmed to have no generated counterpart by design, not treated as a gap."
+    }
+  ],
+  "aiVerified": [
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_FixedWidthImport",
+      "objectName": "FFDST_AuditTrail_APPEND",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "Part 1 -- the unconfirmed candidates are genuinely the generated code for this component: Package_Legacy.cs's multicast wiring routes \"Multicast Output 2\" through a FlatFileBulkSink<DFT_FixedWidthImportFFDST_AuditTrail_APPEND> with column formats [new FlatFileColumnFormat(\"CustomerID\", null, \",\"), new FlatFileColumnFormat(\"CountryCode\", null, \"\\r\\n\")] -- two flat-file output columns named exactly CustomerID and CountryCode, matching the declared columns [{\"name\":\"CustomerID\",\"ssis_type_raw\":\"wstr\"},{\"name\":\"CountryCode\",\"ssis_type_raw\":\"wstr\"}] both in name and count. MCAST_FixedRows_MulticastOutput2.cs maps CustomerID = row.CustomerID, CountryCode = row.CountryCode into the model, and DFT_FixedWidthImportFFDST_AuditTrail_APPEND.cs declares both as string properties -- consistent with the SSIS-side wstr (Unicode string) type for both columns. Part 2 -- business-logic equivalence: the declared shape is exactly two wstr columns, CustomerID and CountryCode, and the generated flat-file destination writes exactly those two columns, in the same names, as strings, with no extra or missing columns. This is a confirmed match, not merely a plausible guess -- the column names/types line up 1:1 across all three related files.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "DestinationInput",
+      "objectName": "FFDST_AuditTrail_APPEND",
+      "componentPath": "Package\\DFT_FixedWidthImport\\FFDST_AuditTrail_APPEND",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "Part 1 -- the unconfirmed candidates are genuinely the generated code for this component: Package_Legacy.cs's multicast wiring routes \"Multicast Output 2\" through a FlatFileBulkSink<DFT_FixedWidthImportFFDST_AuditTrail_APPEND> with column formats [new FlatFileColumnFormat(\"CustomerID\", null, \",\"), new FlatFileColumnFormat(\"CountryCode\", null, \"\\r\\n\")] -- two flat-file output columns named exactly CustomerID and CountryCode, matching the declared columns [{\"name\":\"CustomerID\",\"ssis_type_raw\":\"wstr\"},{\"name\":\"CountryCode\",\"ssis_type_raw\":\"wstr\"}] both in name and count. MCAST_FixedRows_MulticastOutput2.cs maps CustomerID = row.CustomerID, CountryCode = row.CountryCode into the model, and DFT_FixedWidthImportFFDST_AuditTrail_APPEND.cs declares both as string properties -- consistent with the SSIS-side wstr (Unicode string) type for both columns. Part 2 -- business-logic equivalence: the declared shape is exactly two wstr columns, CustomerID and CountryCode, and the generated flat-file destination writes exactly those two columns, in the same names, as strings, with no extra or missing columns. This is a confirmed match, not merely a plausible guess -- the column names/types line up 1:1 across all three related files.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    }
+  ],
+  "humanNeedsReview": [
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_FixedWidthImport",
+      "objectName": "MCAST_FixedRows",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "MCAST_FixedRows",
+      "componentPath": "Package\\DFT_FixedWidthImport\\MCAST_FixedRows",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    }
+  ]
+}

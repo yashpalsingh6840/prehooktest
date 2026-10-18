@@ -1,0 +1,8 @@
+[
+  {
+    "component": "FFDST_AuditTrail_APPEND",
+    "scope": "CorrelationGap",
+    "verdict": "AiConfirmedMatch",
+    "rationale": "Part 1 -- the unconfirmed candidates are genuinely the generated code for this component: Package_Legacy.cs's multicast wiring routes \"Multicast Output 2\" through a FlatFileBulkSink<DFT_FixedWidthImportFFDST_AuditTrail_APPEND> with column formats [new FlatFileColumnFormat(\"CustomerID\", null, \",\"), new FlatFileColumnFormat(\"CountryCode\", null, \"\\r\\n\")] -- two flat-file output columns named exactly CustomerID and CountryCode, matching the declared columns [{\"name\":\"CustomerID\",\"ssis_type_raw\":\"wstr\"},{\"name\":\"CountryCode\",\"ssis_type_raw\":\"wstr\"}] both in name and count. MCAST_FixedRows_MulticastOutput2.cs maps CustomerID = row.CustomerID, CountryCode = row.CountryCode into the model, and DFT_FixedWidthImportFFDST_AuditTrail_APPEND.cs declares both as string properties -- consistent with the SSIS-side wstr (Unicode string) type for both columns. Part 2 -- business-logic equivalence: the declared shape is exactly two wstr columns, CustomerID and CountryCode, and the generated flat-file destination writes exactly those two columns, in the same names, as strings, with no extra or missing columns. This is a confirmed match, not merely a plausible guess -- the column names/types line up 1:1 across all three related files."
+  }
+]

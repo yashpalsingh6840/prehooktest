@@ -16,6 +16,11 @@ cannot judge further:
   `build_correlation_gap_packets`) — a different, narrower question than the two above ("which
   generated code even represents this, if any" rather than "does this code implement the same
   logic"), so it gets its own `## Correlation gaps` section and a two-part judgment.
+- A Gate 2 or Gate 3 `LeftOnly` finding — a STRONGER Tier 1 signal than the correlation gaps above:
+  Tier 1 didn't just fail to correlate, it actively confirmed no generated counterpart exists (see
+  `build_left_only_gap_packets`). Kept in its own `## Left-only gaps` section, distinct from
+  `## Correlation gaps`, since the two questions differ ("Tier 1 couldn't tell" vs. "Tier 1
+  actively confirmed a gap") even though both use the same bounded name-search fallback.
 
 Independence, enforced by construction, not just instruction: every packet is assembled purely
 from values Tier 1 already extracted/resolved (dtsx semantic evidence, the owning generated
@@ -38,9 +43,19 @@ from ssis_validator.codegen.csharp_related_source import (
     extract_named_method_bodies,
     find_name_mentions,
 )
+from ssis_validator.compare.gate2_graph import Gate2Result
+from ssis_validator.compare.gate2_graph import Verdict as Gate2Verdict
 from ssis_validator.compare.gate3_schema import Gate3Result
 from ssis_validator.compare.gate3_schema import Verdict as Gate3Verdict
 from ssis_validator.dtsx.semantic_extraction import ScriptSemantics
+
+# Gate 2 scopes with no data-flow angle at all -- a control-flow node/concurrency-group
+# member/failure-handler/event-handler with no matching call site is genuinely new information
+# a LeftOnly-gap packet can add. "DataFlow:<dft>" scope findings are excluded on purpose: those
+# are Gate 2's own name-presence echo of a Gate 3 finding for the SAME component (see
+# compare/gate2_graph.py's _GATE3_TO_GATE2_VERDICT) and would just duplicate the Gate-3-sourced
+# packet below, not add anything.
+_GATE2_LEFT_ONLY_GAP_SCOPES = ("ControlFlow", "Concurrency", "FailureHandler", "EventHandler")
 
 
 def _evidence_to_dict(evidence) -> dict | None:
@@ -203,9 +218,61 @@ def build_correlation_gap_packets(
     return packets
 
 
+def build_left_only_gap_packets(
+    package: str, dtsx_path: str | Path, gate2: Gate2Result | None, gate3: Gate3Result,
+    generated_dir: str | Path,
+) -> list[dict]:
+    """One packet per `LeftOnly` finding on Gate 2 or Gate 3 -- a STRONGER Tier 1 signal than the
+    `Unverifiable` correlation gaps `build_correlation_gap_packets` covers: Tier 1 didn't just fail
+    to correlate, it actively confirmed no generated counterpart exists (see
+    compare/gate3_schema.py's `NO_TRANSLATION_CONSTRUCTS`/source-output branches and
+    compare/gate2_graph.py's call-site/concurrency-group/failure-handler/event-handler checks).
+
+    Exists because a confirmed structural gap can still be a false negative: the generated rewrite
+    may implement the same behavior under a different name or shape that Tier 1's naming-based
+    correlation cannot see. Same bounded, capped name-mention search
+    (`codegen/csharp_related_source.find_name_mentions`) `build_correlation_gap_packets` already
+    uses for its own no-known-correlate fallback -- no new search mechanism, just a wider set of
+    findings routed through it. No Gate 1 `known_correlate` reuse here: a Gate 3 `LeftOnly`
+    structurally means Gate 1 had no SQL-content correlate either (Gate 1 would have let Gate 3
+    resolve it otherwise), and Gate 2's control-flow scopes have no SQL angle at all."""
+    packets = []
+    for finding in gate3.findings:
+        if finding.verdict != Gate3Verdict.LEFT_ONLY:
+            continue
+        packets.append({
+            "package": package,
+            "scope": f"Gate3:{finding.scope}",
+            "component_name": finding.object_name,
+            "component_path": finding.component_path or None,
+            "dtsx_file": str(dtsx_path),
+            "tier1_detail": finding.detail,
+            "declared_evidence": _evidence_to_dict(finding.evidence),
+            "unconfirmed_candidates": find_name_mentions(generated_dir, finding.object_name),
+        })
+
+    for finding in (gate2.findings if gate2 is not None else []):
+        if finding.verdict != Gate2Verdict.LEFT_ONLY:
+            continue
+        if finding.scope not in _GATE2_LEFT_ONLY_GAP_SCOPES:
+            continue
+        packets.append({
+            "package": package,
+            "scope": f"Gate2:{finding.scope}",
+            "component_name": finding.object_name,
+            "component_path": None,
+            "dtsx_file": str(dtsx_path),
+            "tier1_detail": finding.detail,
+            "declared_evidence": None,
+            "unconfirmed_candidates": find_name_mentions(generated_dir, finding.object_name),
+        })
+    return packets
+
+
 def build_combined_package_packet(
     package: str, dtsx_path: str | Path, package_cs_file: Path | None, packets: list[dict],
     correlation_gap_packets: list[dict] | None = None,
+    left_only_gap_packets: list[dict] | None = None,
 ) -> dict:
     """Consolidates every per-component packet for one package into a single structure: every
     distinct related-source file is stored exactly ONCE (keyed by its file path) and each
@@ -266,6 +333,17 @@ def build_combined_package_packet(
             "unconfirmed_candidates": p.get("unconfirmed_candidates"),
         })
 
+    left_only_gaps = []
+    for p in left_only_gap_packets or []:
+        left_only_gaps.append({
+            "scope": p["scope"],
+            "component_name": p["component_name"],
+            "component_path": p["component_path"],
+            "tier1_detail": p["tier1_detail"],
+            "declared_evidence": p["declared_evidence"],
+            "unconfirmed_candidates": p.get("unconfirmed_candidates"),
+        })
+
     return {
         "package": package,
         "dtsx_file": str(dtsx_path),
@@ -273,6 +351,7 @@ def build_combined_package_packet(
         "sources": sources,
         "components": components,
         "correlation_gaps": correlation_gaps,
+        "left_only_gaps": left_only_gaps,
     }
 
 
@@ -363,6 +442,48 @@ def render_combined_markdown(combined: dict) -> str:
                     lines += ["(no mentions of this component's name found anywhere in the generated project)", ""]
                 for cand in candidates:
                     lines += [f"- `{cand['file']}`:", "", "```csharp", cand["excerpt"], "```", ""]
+
+    left_only_gaps = combined.get("left_only_gaps") or []
+    if left_only_gaps:
+        lines += [
+            "## Left-only gaps (Tier 1 confirmed no counterpart)", "",
+            "Unlike a Correlation gap above, Tier 1 didn't just fail to correlate here — it "
+            "actively confirmed no generated counterpart exists at all (a project-wide construct-"
+            "presence check for `Gate3:InternalTransform`, a failed schema correlation for "
+            "`Gate3:SourceOutput`, or a missing call site/concurrency-group member/handler for "
+            "`Gate2:*`). Your job: decide whether any `unconfirmed_candidates` entry is genuinely "
+            "an unmapped implementation of this item under a different name/shape — the rewrite "
+            "may be functionally equivalent but not a 1:1 structural match. If so, judge it "
+            "against `declared_evidence` (when present) and use `AiFoundUnmappedImplementation`. "
+            "If nothing plausible is present, or a candidate clearly does not implement the "
+            "missing behavior, that is `AiConfirmedGap` — Tier 1's gap stands.", "",
+        ]
+        for g in left_only_gaps:
+            lines += [
+                f"### {g['component_name']} (`{g['scope']}`)", "",
+                (
+                    f"- Component path: `{g['component_path']}`" if g["component_path"]
+                    else "- Component path: (none — control-flow level)"
+                ),
+                "",
+                "**Tier 1 finding:** " + (g["tier1_detail"] or "(none)"),
+                "",
+            ]
+            if g.get("declared_evidence") is not None:
+                lines += [
+                    "**Declared evidence (left/SSIS side):**", "",
+                    "```json", json.dumps(g["declared_evidence"], separators=(",", ":"), default=str), "```", "",
+                ]
+            candidates = g.get("unconfirmed_candidates") or []
+            lines.append(
+                f"**Unconfirmed candidates** (found by a bounded name search, "
+                f"{len(candidates)} match(es) — none of these are confirmed correlates):"
+            )
+            lines.append("")
+            if not candidates:
+                lines += ["(no mentions of this component's name found anywhere in the generated project)", ""]
+            for cand in candidates:
+                lines += [f"- `{cand['file']}`:", "", "```csharp", cand["excerpt"], "```", ""]
     return "\n".join(lines)
 
 
@@ -453,4 +574,42 @@ def render_correlation_gap_markdown(packet: dict) -> str:
             lines += ["(no mentions of this component's name found anywhere in the generated project)", ""]
         for cand in candidates:
             lines += [f"### `{cand['file']}`", "", "```csharp", cand["excerpt"], "```", ""]
+    return "\n".join(lines)
+
+
+def render_left_only_gap_markdown(packet: dict) -> str:
+    lines = [
+        f"# AI evidence packet (left-only gap) — {packet['package']} / {packet['component_name']}", "",
+        f"- Scope: `{packet['scope']}`",
+        (
+            f"- Component path: `{packet['component_path']}`" if packet["component_path"]
+            else "- Component path: (none — control-flow level)"
+        ),
+        f"- .dtsx file: `{packet['dtsx_file']}`",
+        "",
+        "Tier 1 actively confirmed no generated counterpart exists for this item (a stronger "
+        "signal than a correlation gap's 'could not correlate'). Your job: decide whether any "
+        "`unconfirmed_candidates` entry below is genuinely an unmapped implementation under a "
+        "different name/shape — the rewrite may be functionally equivalent but not a 1:1 "
+        "structural match. If so, judge it against the declared evidence (when present) and use "
+        "`AiFoundUnmappedImplementation`. If nothing plausible is present, or a candidate clearly "
+        "does not implement the missing behavior, that is `AiConfirmedGap` — Tier 1's gap stands.", "",
+        "## Tier 1 finding", "",
+        packet["tier1_detail"] or "(none)", "",
+    ]
+    if packet.get("declared_evidence") is not None:
+        lines += [
+            "## Declared evidence (left/SSIS side)", "",
+            "```json", json.dumps(packet["declared_evidence"], indent=2, default=str), "```", "",
+        ]
+    candidates = packet.get("unconfirmed_candidates") or []
+    lines.append(
+        f"## Unconfirmed candidates (bounded name search, {len(candidates)} match(es) — "
+        "none of these are confirmed correlates)"
+    )
+    lines.append("")
+    if not candidates:
+        lines += ["(no mentions of this component's name found anywhere in the generated project)", ""]
+    for cand in candidates:
+        lines += [f"### `{cand['file']}`", "", "```csharp", cand["excerpt"], "```", ""]
     return "\n".join(lines)

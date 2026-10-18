@@ -1,0 +1,229 @@
+{
+  "package": "Package_Advanced",
+  "toolVerified": [
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "OLEDST_Drip",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "OLECMD_SetFlag",
+      "componentPath": null,
+      "tier1Verdict": "NormalizedMatch",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "OLESRC_CustomerIds",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "SQL_LogFileName",
+      "componentPath": null,
+      "tier1Verdict": "NormalizedMatch",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "SQL_TruncateTargets",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "SQL_LogOnError",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "SEQ_Prepare",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "Concurrency",
+      "objectName": "DFT_ExcelImport",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "Concurrency",
+      "objectName": "DFT_FlagCustomers",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "Concurrency",
+      "objectName": "FEL_SampleFiles",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "SQL_TruncateTargets",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "FST_ArchiveWorkbook",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "SQL_LogFileName",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "EventHandler",
+      "objectName": "SQL_LogOnError",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_ExcelImport",
+      "objectName": "EXCEL_SRC_Drip",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_ExcelImport",
+      "objectName": "OLEDST_Drip",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_FlagCustomers",
+      "objectName": "OLESRC_CustomerIds",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "SourceOutput",
+      "objectName": "EXCEL_SRC_Drip",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "DestinationInput",
+      "objectName": "OLEDST_Drip",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "SourceOutput",
+      "objectName": "OLESRC_CustomerIds",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    }
+  ],
+  "exception": [],
+  "aiVerified": [
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_FlagCustomers",
+      "objectName": "OLECMD_SetFlag",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "Part 1 \u2014 the known_correlate is genuinely the generated code for this component: the OLE DB Command component's declared parameter is [{\"name\":\"@CustomerID\",\"ssis_type_raw\":\"i4\"}], and the correlated OleDbCommandStep<DFT_FlagCustomersSqlRow> in Package_Advanced.cs runs \"EXEC dbo.usp_SetCustomerFlag {0}, N'flagged'\" with a parameter binder row => new object?[] { row.CustomerID } \u2014 a single integer parameter bound from the row's CustomerID, matching the declared @CustomerID (i4) exactly, and the step is wired directly off OLESRC_CustomerIds (the same source feeding DFT_FlagCustomers), so the identity match isn't just a name coincidence. Part 2 \u2014 business-logic equivalence: the SSIS OLE DB Command's only declared column is the single @CustomerID input parameter, and the generated step supplies exactly that one parameter positionally ({0} -> row.CustomerID) to the stored-procedure call, so the parameter shape matches 1:1. Nothing in the packet suggests the OLE DB Command declares more parameters or a different mapping, so this is a confirmed match rather than merely plausible.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "DestinationInput",
+      "objectName": "OLECMD_SetFlag",
+      "componentPath": "Package\\DFT_FlagCustomers\\OLECMD_SetFlag",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "Part 1 \u2014 the known_correlate is genuinely the generated code for this component: the OLE DB Command component's declared parameter is [{\"name\":\"@CustomerID\",\"ssis_type_raw\":\"i4\"}], and the correlated OleDbCommandStep<DFT_FlagCustomersSqlRow> in Package_Advanced.cs runs \"EXEC dbo.usp_SetCustomerFlag {0}, N'flagged'\" with a parameter binder row => new object?[] { row.CustomerID } \u2014 a single integer parameter bound from the row's CustomerID, matching the declared @CustomerID (i4) exactly, and the step is wired directly off OLESRC_CustomerIds (the same source feeding DFT_FlagCustomers), so the identity match isn't just a name coincidence. Part 2 \u2014 business-logic equivalence: the SSIS OLE DB Command's only declared column is the single @CustomerID input parameter, and the generated step supplies exactly that one parameter positionally ({0} -> row.CustomerID) to the stored-procedure call, so the parameter shape matches 1:1. Nothing in the packet suggests the OLE DB Command declares more parameters or a different mapping, so this is a confirmed match rather than merely plausible.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    }
+  ],
+  "humanNeedsReview": []
+}

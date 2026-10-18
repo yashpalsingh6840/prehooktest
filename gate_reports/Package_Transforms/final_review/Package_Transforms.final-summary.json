@@ -1,0 +1,780 @@
+{
+  "package": "Package_Transforms",
+  "toolVerified": [
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "OLEDST_CustomerEnriched",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "LKP_Country",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "OLEDST_RegionSummary",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "OLEDST_CustomerMerged",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "OLEDST_CustomerWithContact",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "SQL_TruncateEnriched",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "SQL_TruncateMerged",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "SQL_TruncateRegionSummary",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate1",
+      "scope": null,
+      "objectName": "SQL_TruncateWithContact",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "SQL_TruncateEnriched",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "DFT_DerivedAndSplit",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "SQL_TruncateRegionSummary",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "DFT_LookupAndAggregate",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "SQL_TruncateWithContact",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "DFT_SortAndMergeJoin",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "SQL_TruncateMerged",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "ControlFlow",
+      "objectName": "DFT_MergeSortedBranches",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "FF_SRC_Customers",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "OLEDST_CustomerEnriched",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "FF_SRC_Customers2",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "OLEDST_RegionSummary",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "FF_SRC_Customers4",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "OLEDST_CustomerMerged",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "FF_SRC_Contacts",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "FF_SRC_Customers3",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "OLEDST_CustomerWithContact",
+      "componentPath": null,
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "SourceOutput",
+      "objectName": "FF_SRC_Customers",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "DestinationInput",
+      "objectName": "OLEDST_CustomerEnriched",
+      "componentPath": "",
+      "tier1Verdict": "NormalizedMatch",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "SourceOutput",
+      "objectName": "FF_SRC_Customers2",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "DestinationInput",
+      "objectName": "OLEDST_RegionSummary",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "SourceOutput",
+      "objectName": "FF_SRC_Customers4",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "DestinationInput",
+      "objectName": "OLEDST_CustomerMerged",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "SourceOutput",
+      "objectName": "FF_SRC_Contacts",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "SourceOutput",
+      "objectName": "FF_SRC_Customers3",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "DestinationInput",
+      "objectName": "OLEDST_CustomerWithContact",
+      "componentPath": "",
+      "tier1Verdict": "Match",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 deterministic match \u2014 no AI involvement needed."
+    }
+  ],
+  "exception": [],
+  "aiVerified": [
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "CSPLIT_Validity",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS Valid output expression is !ISNULL(CustomerID_i4) && FINDSTRING(TRIM(Email),\"@\",1) > 0 with Invalid as the default output. The generated CSPLIT_ValidityRouter.SelectBranch reproduces exactly this logic and branch order, returning 0 (Valid) when the condition holds and 1 (Invalid) otherwise.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "DER_TagInvalid",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS expression is the literal \"Invalid\" for RowSource, and DER_TagInvalid.RowSource returns the literal string \"Invalid\" unconditionally. Exact match.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "DER_TagValid",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS expression is the literal \"Valid\" for RowSource, and DER_TagValid.RowSource returns the literal string \"Valid\" unconditionally. Exact match.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "AGG_ByRegion",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS Aggregate groups by Region (AggregationType 0, sourced from LKP_Country.Region) and counts CustomerCount (AggregationType 1, sourced from FF_SRC_Customers2.CustomerID). The generated AGG_ByRegion() filters to rows resolved in lKP_CountryCache, groups by lKP_CountryCache[row.Country].Region, and computes CustomerCount = rows.Count(r => r.CustomerID != null) -- a Count aggregation on non-null CustomerID, matching the declared shape. RegionSummaryTransform passes Region through and narrows CustomerCount into the destination.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "CSPLIT_ByCountry",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS Canada output expression is TRIM(Country) == \"Canada\" with RestOfWorld as default. The generated CSPLIT_ByCountryRouter.SelectBranch reproduces this with string.Equals(SsisFn.Trim(row.Country), \"Canada\", StringComparison.Ordinal), matching SSIS's case-sensitive == semantics, returning 0 (Canada) or 1 (RestOfWorld) as fallthrough.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "MRG_CustomerContacts",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS MergeJoin declares join_type 2 (Inner), one key column (CustomerID_i4 on both sides), treat_nulls_as_equal true, and outputs Email, CustomerID_i4, ContactPhone, PreferredChannel. The generated MergeJoinRowSource<..., int?, ...> uses MergeJoinType.Inner and Comparer<int?>.Default (which treats two nulls as equal), and CustomerWithContactTransform.Map projects exactly the four declared output columns with no extras or omissions.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "CSPLIT_Validity",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\CSPLIT_Validity",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS Valid output expression is !ISNULL(CustomerID_i4) && FINDSTRING(TRIM(Email),\"@\",1) > 0 with Invalid as the default output. The generated CSPLIT_ValidityRouter.SelectBranch reproduces exactly this logic and branch order, returning 0 (Valid) when the condition holds and 1 (Invalid) otherwise.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "DER_TagInvalid",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\DER_TagInvalid",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS expression is the literal \"Invalid\" for RowSource, and DER_TagInvalid.RowSource returns the literal string \"Invalid\" unconditionally. Exact match.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "DER_TagValid",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\DER_TagValid",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS expression is the literal \"Valid\" for RowSource, and DER_TagValid.RowSource returns the literal string \"Valid\" unconditionally. Exact match.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "AGG_ByRegion",
+      "componentPath": "Package\\DFT_LookupAndAggregate\\AGG_ByRegion",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS Aggregate groups by Region (AggregationType 0, sourced from LKP_Country.Region) and counts CustomerCount (AggregationType 1, sourced from FF_SRC_Customers2.CustomerID). The generated AGG_ByRegion() filters to rows resolved in lKP_CountryCache, groups by lKP_CountryCache[row.Country].Region, and computes CustomerCount = rows.Count(r => r.CustomerID != null) -- a Count aggregation on non-null CustomerID, matching the declared shape. RegionSummaryTransform passes Region through and narrows CustomerCount into the destination.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "CSPLIT_ByCountry",
+      "componentPath": "Package\\DFT_MergeSortedBranches\\CSPLIT_ByCountry",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS Canada output expression is TRIM(Country) == \"Canada\" with RestOfWorld as default. The generated CSPLIT_ByCountryRouter.SelectBranch reproduces this with string.Equals(SsisFn.Trim(row.Country), \"Canada\", StringComparison.Ordinal), matching SSIS's case-sensitive == semantics, returning 0 (Canada) or 1 (RestOfWorld) as fallthrough.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "MRG_CustomerContacts",
+      "componentPath": "Package\\DFT_SortAndMergeJoin\\MRG_CustomerContacts",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiConfirmedMatch",
+      "tier2Rationale": "The SSIS MergeJoin declares join_type 2 (Inner), one key column (CustomerID_i4 on both sides), treat_nulls_as_equal true, and outputs Email, CustomerID_i4, ContactPhone, PreferredChannel. The generated MergeJoinRowSource<..., int?, ...> uses MergeJoinType.Inner and Comparer<int?>.Default (which treats two nulls as equal), and CustomerWithContactTransform.Map projects exactly the four declared output columns with no extras or omissions.",
+      "reason": "Tier 1 Unverifiable, Tier 2 resolved it as AiConfirmedMatch."
+    }
+  ],
+  "humanNeedsReview": [
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "DCONV_Types",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "DER_Enrich",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiSuspectedDiscrepancy",
+      "tier2Rationale": "FullName and EmailDomain match exactly, including the DT_WSTR,200 width guard and the FindString/Substring/ternary/(none) fallback logic. TenureDays's null-check and DATEDIFF(\"dd\",...) structure also match, but the second DATEDIFF argument differs: SSIS uses GETDATE() (current wall-clock time evaluated live per row) while the generated code uses ctx.LoadedAtUtc (a UTC, load-level timestamp). A timezone offset or evaluation-time gap near a day boundary could shift the day-count result for rows processed near midnight -- a citable difference in this specific column.",
+      "reason": "Tier 2 returned AiSuspectedDiscrepancy \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_DerivedAndSplit",
+      "objectName": "UNION_Recombine",
+      "componentPath": null,
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no ConcatenatingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for UNION_Recombine returned zero matches. No candidate is present to judge as an unmapped implementation, so Tier 1's gap stands.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "LKP_Country",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiInconclusive",
+      "tier2Rationale": "The packet's right-side excerpt for this component is identical to AGG_ByRegion's excerpt and does not show where or how lKP_CountryCache itself is built. The declared evidence describes a lookup on SELECT CountryName, CountryCode, Region FROM dbo.CountryLookup joining Country to CountryName and outputting both CountryCode and Region with no-match rows routed to RC_UnmatchedRows, but the shown excerpts only exercise .Region and a .ContainsKey no-match filter -- there is no visible evidence of the cache's SQL source or of CountryCode being consumed anywhere. Judging this requires seeing the actual construction of lKP_CountryCache (source query and both mapped columns).",
+      "reason": "Tier 2 returned AiInconclusive \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "MCAST_Matched",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "RC_MatchedRows",
+      "componentPath": null,
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no CountingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for RC_MatchedRows returned zero matches. No candidate is present, so the gap stands -- this is one of the two RowCount tasks that would otherwise provide auditable evidence for the LKP_Country lookup, already flagged AiInconclusive above for lacking that evidence.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_LookupAndAggregate",
+      "objectName": "RC_UnmatchedRows",
+      "componentPath": null,
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no CountingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for RC_UnmatchedRows returned zero matches. No candidate is present, so the gap stands -- this is the no-match counter for LKP_Country's no_match_output_destination; its absence means unmatched rows are silently dropped by the ContainsKey filter in AGG_ByRegion() with no generated audit trail, unlike the original package.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "DCONV_MergeId",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "MRG_SortedUnion",
+      "componentPath": null,
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no MergeInterleaveRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for MRG_SortedUnion returned zero matches. No candidate is present to judge, so the gap stands.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "SORT_Canada",
+      "componentPath": null,
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_Canada returned zero matches. No candidate is present, so the gap stands. The MRG_CustomerContacts excerpt elsewhere in this packet builds its MergeJoinRowSource directly from unsorted CsvRowSources with no visible sort step, so if the merge-join implementation assumes sorted input this could be a genuine correctness gap rather than just a rename -- worth a human check of whether MergeJoinRowSource sorts internally.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_MergeSortedBranches",
+      "objectName": "SORT_RestOfWorld",
+      "componentPath": null,
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_RestOfWorld returned zero matches. No candidate is present, so the gap stands -- same missing-sort concern as SORT_Canada.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "DCONV_CustId_L",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "DCONV_CustId_R",
+      "componentPath": null,
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "SORT_Contacts",
+      "componentPath": null,
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_Contacts returned zero matches. No candidate is present, so the gap stands. This sort fed the right side of MRG_CustomerContacts's merge join; the generated MergeJoinRowSource is built directly from FF_SRC_Contacts's raw CSV source with no visible sort, reinforcing the same correctness concern.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate2",
+      "scope": "DataFlow:DFT_SortAndMergeJoin",
+      "objectName": "SORT_Customers",
+      "componentPath": null,
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_Customers returned zero matches. No candidate is present, so the gap stands -- same missing-sort concern as the other Sort components, this one feeding the left side of MRG_CustomerContacts's merge join.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "DCONV_Types",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\DCONV_Types",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "DER_Enrich",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\DER_Enrich",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiSuspectedDiscrepancy",
+      "tier2Rationale": "FullName and EmailDomain match exactly, including the DT_WSTR,200 width guard and the FindString/Substring/ternary/(none) fallback logic. TenureDays's null-check and DATEDIFF(\"dd\",...) structure also match, but the second DATEDIFF argument differs: SSIS uses GETDATE() (current wall-clock time evaluated live per row) while the generated code uses ctx.LoadedAtUtc (a UTC, load-level timestamp). A timezone offset or evaluation-time gap near a day boundary could shift the day-count result for rows processed near midnight -- a citable difference in this specific column.",
+      "reason": "Tier 2 returned AiSuspectedDiscrepancy \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "UNION_Recombine",
+      "componentPath": "Package\\DFT_DerivedAndSplit\\UNION_Recombine",
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no ConcatenatingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for UNION_Recombine returned zero matches. No candidate is present to judge as an unmapped implementation, so Tier 1's gap stands.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "LKP_Country",
+      "componentPath": "Package\\DFT_LookupAndAggregate\\LKP_Country",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": "AiInconclusive",
+      "tier2Rationale": "The packet's right-side excerpt for this component is identical to AGG_ByRegion's excerpt and does not show where or how lKP_CountryCache itself is built. The declared evidence describes a lookup on SELECT CountryName, CountryCode, Region FROM dbo.CountryLookup joining Country to CountryName and outputting both CountryCode and Region with no-match rows routed to RC_UnmatchedRows, but the shown excerpts only exercise .Region and a .ContainsKey no-match filter -- there is no visible evidence of the cache's SQL source or of CountryCode being consumed anywhere. Judging this requires seeing the actual construction of lKP_CountryCache (source query and both mapped columns).",
+      "reason": "Tier 2 returned AiInconclusive \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "MCAST_Matched",
+      "componentPath": "Package\\DFT_LookupAndAggregate\\MCAST_Matched",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "RC_MatchedRows",
+      "componentPath": "Package\\DFT_LookupAndAggregate\\RC_MatchedRows",
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no CountingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for RC_MatchedRows returned zero matches. No candidate is present, so the gap stands -- this is one of the two RowCount tasks that would otherwise provide auditable evidence for the LKP_Country lookup, already flagged AiInconclusive above for lacking that evidence.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "RC_UnmatchedRows",
+      "componentPath": "Package\\DFT_LookupAndAggregate\\RC_UnmatchedRows",
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no CountingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for RC_UnmatchedRows returned zero matches. No candidate is present, so the gap stands -- this is the no-match counter for LKP_Country's no_match_output_destination; its absence means unmatched rows are silently dropped by the ContainsKey filter in AGG_ByRegion() with no generated audit trail, unlike the original package.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "DCONV_MergeId",
+      "componentPath": "Package\\DFT_MergeSortedBranches\\DCONV_MergeId",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "MRG_SortedUnion",
+      "componentPath": "Package\\DFT_MergeSortedBranches\\MRG_SortedUnion",
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no MergeInterleaveRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for MRG_SortedUnion returned zero matches. No candidate is present to judge, so the gap stands.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "SORT_Canada",
+      "componentPath": "Package\\DFT_MergeSortedBranches\\SORT_Canada",
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_Canada returned zero matches. No candidate is present, so the gap stands. The MRG_CustomerContacts excerpt elsewhere in this packet builds its MergeJoinRowSource directly from unsorted CsvRowSources with no visible sort step, so if the merge-join implementation assumes sorted input this could be a genuine correctness gap rather than just a rename -- worth a human check of whether MergeJoinRowSource sorts internally.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "SORT_RestOfWorld",
+      "componentPath": "Package\\DFT_MergeSortedBranches\\SORT_RestOfWorld",
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_RestOfWorld returned zero matches. No candidate is present, so the gap stands -- same missing-sort concern as SORT_Canada.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "DCONV_CustId_L",
+      "componentPath": "Package\\DFT_SortAndMergeJoin\\DCONV_CustId_L",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "DCONV_CustId_R",
+      "componentPath": "Package\\DFT_SortAndMergeJoin\\DCONV_CustId_R",
+      "tier1Verdict": "Unverifiable",
+      "tier2Verdict": null,
+      "tier2Rationale": null,
+      "reason": "Tier 1 Unverifiable, no Tier 2 review has been run yet."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "SORT_Contacts",
+      "componentPath": "Package\\DFT_SortAndMergeJoin\\SORT_Contacts",
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_Contacts returned zero matches. No candidate is present, so the gap stands. This sort fed the right side of MRG_CustomerContacts's merge join; the generated MergeJoinRowSource is built directly from FF_SRC_Contacts's raw CSV source with no visible sort, reinforcing the same correctness concern.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    },
+    {
+      "gate": "Gate3",
+      "scope": "InternalTransform",
+      "objectName": "SORT_Customers",
+      "componentPath": "Package\\DFT_SortAndMergeJoin\\SORT_Customers",
+      "tier1Verdict": "LeftOnly",
+      "tier2Verdict": "AiConfirmedGap",
+      "tier2Rationale": "Tier 1 confirmed no SortingRowSource-shaped construct exists anywhere in the generated project, and the bounded name search for SORT_Customers returned zero matches. No candidate is present, so the gap stands -- same missing-sort concern as the other Sort components, this one feeding the left side of MRG_CustomerContacts's merge join.",
+      "reason": "Tier 2 returned AiConfirmedGap \u2014 needs human judgment, not a clean resolution."
+    }
+  ]
+}
