@@ -182,3 +182,59 @@ export function describeResolution(): Record<ToolName, ResolutionInfo> & { valid
       : { mode: "venv", path: `${inv.command} ${inv.prefix.join(" ")}` },
   };
 }
+
+/** The exe path each tool's Settings box shows when no override is saved: where the
+ * published exe is expected (ssisx/svk, next to the scripts folder), or the venv
+ * interpreter the validator actually runs with. Auto-detection looks at these same
+ * locations, so the box and the resolver can never disagree. */
+export function defaultExePaths(): { ssisx: string; svk: string; validator: string } {
+  const scriptsDir = path.join(TOOLS_ROOT, "SsisExtractor", "scripts");
+  return {
+    ssisx: path.join(scriptsDir, SSISX_EXE),
+    svk: path.join(scriptsDir, SVK_EXE),
+    validator: VALIDATOR_VENV_PYTHON,
+  };
+}
+
+// --- Publish script (Publish-Survey.ps1) -----------------------------------
+// Builds the self-contained ssisx.exe into the scripts folder. When no ssisx exe
+// exists, a pipeline run runs this first (see commands.ts publishBootstrap).
+const PUBLISH_SCRIPT_KEY = "publishScriptPath";
+
+export function defaultPublishScript(): string {
+  return path.join(TOOLS_ROOT, "SsisExtractor", "scripts", "Publish-Survey.ps1");
+}
+
+export function getPublishScriptOverride(): string | null {
+  const row = db
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(PUBLISH_SCRIPT_KEY) as { value: string } | undefined;
+  const value = row?.value ?? null;
+  return value && fs.existsSync(value) ? value : null;
+}
+
+/** `null`/empty clears the saved path, reverting to the checked-in default. */
+export function setPublishScriptOverride(value: string | null): void {
+  if (!value) {
+    db.prepare("DELETE FROM settings WHERE key = ?").run(PUBLISH_SCRIPT_KEY);
+    return;
+  }
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(PUBLISH_SCRIPT_KEY, value);
+}
+
+/** The publish script a run may execute: the saved path if it still exists, else the
+ * checked-in default if present, else null (no publish possible). */
+export function resolvePublishScript(): string | null {
+  const override = getPublishScriptOverride();
+  if (override) return override;
+  const def = defaultPublishScript();
+  return fs.existsSync(def) ? def : null;
+}
+
+/** True when no ssisx.exe is found anywhere, so ssisx would run through `dotnet run`. */
+export function ssisxExeMissing(): boolean {
+  return resolveSsisx().command === "dotnet";
+}

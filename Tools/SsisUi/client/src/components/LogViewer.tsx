@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import NavIcon from "./NavIcon";
 
 /** Status buckets an apply-fills trace line can belong to. The first matching
  * pattern wins, so an error line that also mentions "stale" reads as an error. */
@@ -104,9 +105,11 @@ export default function LogViewer({
         <button
           type="button"
           onClick={copy}
-          className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-800"
+          title={copied ? "Copied" : "Copy log"}
+          aria-label={copied ? "Copied" : "Copy log"}
+          className="flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-gray-600 text-gray-200 hover:bg-gray-800"
         >
-          {copied ? "Copied" : "Copy"}
+          <NavIcon name="copy" className="h-3.5 w-3.5" />
         </button>
       </div>
 

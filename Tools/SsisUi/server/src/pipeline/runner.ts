@@ -178,6 +178,11 @@ function runCommandAt(
       finishRun(id, next, logStream, emitter);
       return;
     }
+    if (cmd.rebuild) {
+      // A successful publish: carry on with the commands rebuilt now that the exe exists.
+      runCommandAt(id, cmd.rebuild(), 0, next, logStream, emitter);
+      return;
+    }
     runCommandAt(id, commands, index + 1, next, logStream, emitter);
   });
 }

@@ -324,7 +324,7 @@ export default function PipelineDashboard({
                   disabled={anyRunning || !!blockedReason}
                   aria-label={STEP_LABELS.validation}
                   title={`${STEP_LABELS.validation}: runs Validate and Evidence Packets for every package. Run Final Summary after the AI review.`}
-                  className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-full bg-teal-600 text-white shadow-sm hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-teal-500 bg-white text-teal-700 shadow-sm hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <svg viewBox="0 0 20 20" fill="currentColor" className="h-2.5 w-2.5" aria-hidden="true">
                     <path d="M6 4.5v11l9-5.5z" />
@@ -550,7 +550,7 @@ function StepCard({
       )}
       {onCancel ? (
         <button
-          className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded border border-red-500 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
           onClick={onCancel}
           disabled={cancelling}
           title="Stop this run"
@@ -559,8 +559,8 @@ function StepCard({
         </button>
       ) : (
         <button
-          className={`rounded px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 ${
-            PHASE2_STEPS.has(step) ? "bg-teal-600 hover:bg-teal-700" : "bg-blue-600 hover:bg-blue-700"
+          className={`rounded border bg-white px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+            PHASE2_STEPS.has(step) ? "border-teal-500 text-teal-700 hover:bg-teal-50" : "border-blue-500 text-blue-700 hover:bg-blue-50"
           }`}
           onClick={onRun}
           disabled={disabled || !!blockedReason}
@@ -635,7 +635,7 @@ function ManualCard({
         <div className="text-xs text-gray-500">{blockedReason ?? statusText}</div>
       )}
       <button
-        className="mt-auto rounded bg-teal-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+        className="mt-auto rounded border border-teal-500 bg-white px-3 py-1.5 text-sm font-medium text-teal-700 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
         onClick={onOpen}
         disabled={!!blockedReason}
       >

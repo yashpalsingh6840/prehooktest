@@ -1,0 +1,30 @@
+<Solution>
+  <!-- One solution for everything under Tools/ that is plain .NET and builds on any machine
+       with the .NET SDK. Build with: dotnet build Tools.slnx
+       Deliberately NOT included: the Windows-only, GAC-dependent projects (Ssis.Extract.ObjectModel,
+       Ssis.Extract.ObjectModel.Tests, Ssis.Extract.FixtureBuilder, Ssis.Expression.Oracle), which
+       stay in SsisExtractor/SsisExtractor.ObjectModel.slnx so this file keeps a clean build on a
+       client machine. The SsisUi (Node) and SSIS_RewriteValidationTool (Python) folders are not
+       .NET projects and are built by their own README instructions. -->
+  <Folder Name="/ssisx/src/">
+    <Project Path="SsisExtractor/src/Ssis.Extract.Cli/Ssis.Extract.Cli.csproj" />
+    <Project Path="SsisExtractor/src/Ssis.Extract.Codegen/Ssis.Extract.Codegen.csproj" />
+    <Project Path="SsisExtractor/src/Ssis.Extract.Dtsx/Ssis.Extract.Dtsx.csproj" />
+    <Project Path="SsisExtractor/src/Ssis.Extract.Model/Ssis.Extract.Model.csproj" />
+    <Project Path="SsisExtractor/src/Ssis.Extract.Sql/Ssis.Extract.Sql.csproj" />
+    <Project Path="SsisExtractor/src/Ssis.Runtime.Expressions/Ssis.Runtime.Expressions.csproj" />
+  </Folder>
+  <Folder Name="/ssisx/tests/">
+    <Project Path="SsisExtractor/tests/Ssis.Extract.Cli.Tests/Ssis.Extract.Cli.Tests.csproj" />
+    <Project Path="SsisExtractor/tests/Ssis.Extract.Codegen.Tests/Ssis.Extract.Codegen.Tests.csproj" />
+    <Project Path="SsisExtractor/tests/Ssis.Extract.Tests/Ssis.Extract.Tests.csproj" />
+    <Project Path="SsisExtractor/tests/Ssis.Runtime.Expressions.Tests/Ssis.Runtime.Expressions.Tests.csproj" />
+  </Folder>
+  <Folder Name="/svk/src/">
+    <Project Path="SsisValidationKit/src/SvkCore/SvkCore.csproj" />
+    <Project Path="SsisValidationKit/src/SvkCli/SvkCli.csproj" />
+  </Folder>
+  <Folder Name="/etl-core/">
+    <Project Path="Etl.Core/Etl.Core.csproj" />
+  </Folder>
+</Solution>

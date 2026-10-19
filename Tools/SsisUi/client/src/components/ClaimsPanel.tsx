@@ -11,6 +11,7 @@ import { type BadgeColor } from "./Badge";
 import LoadingState from "./LoadingState";
 import ErrorState from "./ErrorState";
 import EmptyState from "./EmptyState";
+import NavIcon from "./NavIcon";
 
 const STATUSES: WalkthroughStatus[] = ["NotValidated", "Validated", "Blocked"];
 
@@ -113,7 +114,7 @@ function ClaimRow({
       </td>
       <td className="px-3 py-2 align-top">
         <button className={btnPrimary} onClick={handleSave} disabled={saving}>
-          {saving ? "Saving..." : "Save"}
+          <span className="inline-flex items-center gap-1.5"><NavIcon name="save" className="h-3.5 w-3.5" />{saving ? "Saving..." : "Save"}</span>
         </button>
         {saved && <div className="mt-1 text-xs text-green-700">Saved</div>}
         {error && <div className="mt-1 text-xs text-red-700">{error}</div>}

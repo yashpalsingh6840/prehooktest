@@ -199,13 +199,31 @@ findings resolved into real, tool-solvable verdicts (8 `LeftOnly`, 2 `Match`); e
 
 ## Setup
 
+**Requirements**
+
+- Windows (the UI and slash commands expect `.venv\Scripts\python.exe`).
+- **Python 3.11 or later**. Tested on 3.12. Python 3.14 should work (the only runtime dependency,
+  `sqlglot`, and `pytest` are pure Python), but 3.14 has been verified only as a beta. Prefer a
+  released 3.13 or 3.14 for a client machine.
+- `python` on `PATH` must be a real install, not the Windows Store alias. Check with
+  `python --version`; if it opens the Microsoft Store or prints nothing, install Python from
+  python.org and turn off the "App execution aliases" entry for `python.exe` in Windows settings.
+- Network access to PyPI the first time the venv is created (for `sqlglot`, `pytest`, and
+  `setuptools`).
+
 ```bash
 python -m venv .venv
-.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\python -m pip install -e ".[dev]"
+.venv\Scripts\python -m pytest tests/ -q
 ```
 
-Only needed if you're running the CLI straight from a terminal. The Claude Code/Copilot slash
-commands below do this for you automatically the first time, if `.venv` isn't there yet.
+Run the CLI from this folder. Use `python -m pip` rather than `.venv\Scripts\pip`, which can point at
+the wrong interpreter if the venv was moved or created from a different Python.
+
+The venv is created by the `ssis_validator` step, in the Validation pages, or by the Claude Code/Copilot
+slash commands below the first time they run, if `.venv` isn't there yet. Those paths use the same
+`python` on `PATH`, so the checks above apply there too. If `.venv` was created with the wrong Python,
+delete the folder and run the steps above again.
 
 ## Commands at a glance, and the order to run them
 

@@ -7,13 +7,14 @@ import {
 } from "../api/client";
 import LoadingState from "../components/LoadingState";
 import ErrorState from "../components/ErrorState";
+import NavIcon from "../components/NavIcon";
 
 type ToolKey = "ssisx" | "svk" | "validator";
 
 const TOOL_LABEL: Record<ToolKey, string> = {
-  ssisx: "ssisx",
-  svk: "svk",
-  validator: "SSIS_RewriteValidationTool",
+  ssisx: "SSIS Extract/Rewrite EXE Path",
+  svk: "SSIS Walkthrough EXE Path",
+  validator: "SSIS Rewrite Validation EXE Path",
 };
 
 const PLACEHOLDER: Record<ToolKey, string> = {
@@ -29,9 +30,8 @@ const FIELD: Record<ToolKey, "ssisxExePath" | "svkExePath" | "validatorExePath">
   validator: "validatorExePath",
 };
 
-const btnSecondary = "rounded border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50";
-const btnPrimary =
-  "rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50";
+// Hidden for now: the publish script box is not used from the UI. Flip to true to show it again.
+const SHOW_PUBLISH_SCRIPT = false;
 
 function describeMode(info: ResolutionInfo): string {
   switch (info.mode) {
@@ -54,15 +54,19 @@ export default function Settings() {
   });
 
   const [inputs, setInputs] = useState<Record<ToolKey, string>>({ ssisx: "", svk: "", validator: "" });
+  const [publishInput, setPublishInput] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
+  // The box shows the saved override if there is one, else the exe the tool is expected at
+  // (defaultExePaths from the server -- the same locations auto-detection looks at).
   useEffect(() => {
     if (data) {
       setInputs({
-        ssisx: data.ssisxExePath ?? "",
-        svk: data.svkExePath ?? "",
-        validator: data.validatorExePath ?? "",
+        ssisx: data.ssisxExePath ?? data.defaultExePaths.ssisx,
+        svk: data.svkExePath ?? data.defaultExePaths.svk,
+        validator: data.validatorExePath ?? data.defaultExePaths.validator,
       });
+      setPublishInput(data.publishScriptPath ?? data.defaultPublishScript);
     }
   }, [data]);
 
@@ -78,7 +82,28 @@ export default function Settings() {
 
   function save(tool: ToolKey) {
     setFormError(null);
-    mutation.mutate({ [FIELD[tool]]: inputs[tool] || null });
+    if (!data) return;
+    const value = inputs[tool].trim();
+    const savedOverride = data[FIELD[tool]];
+    // Pressing Save on the auto-detected path, with no override saved, must not pin it
+    // as an override -- that would stop auto-detection from following a later republish.
+    const isUnchangedDetection = !savedOverride && value === data.defaultExePaths[tool];
+    mutation.mutate({ [FIELD[tool]]: value && !isUnchangedDetection ? value : null });
+  }
+
+  function savePublish() {
+    setFormError(null);
+    if (!data) return;
+    const value = publishInput.trim();
+    // Same rule as the tool boxes: saving the checked-in default must not pin it as an override.
+    const isUnchangedDefault = !data.publishScriptPath && value === data.defaultPublishScript;
+    mutation.mutate({ publishScriptPath: value && !isUnchangedDefault ? value : null });
+  }
+
+  function clearPublish() {
+    setFormError(null);
+    setPublishInput("");
+    mutation.mutate({ publishScriptPath: null });
   }
 
   function clear(tool: ToolKey) {
@@ -108,6 +133,47 @@ export default function Settings() {
 
       {data && (
         <>
+          {SHOW_PUBLISH_SCRIPT && (
+          <section className="mb-5 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-gray-500">
+              Publish SSIS Extract/Rewrite/Walkthrough/Validation Script Path
+            </h2>
+            <p className="mb-2 break-all font-mono text-xs text-gray-600">
+              {data.resolvedPublishScript
+                ? `Run when no ssisx.exe is found, then ssisx is used: ${data.resolvedPublishScript}`
+                : `No publish script found. ssisx will use the slower "dotnet run" fallback.`}
+            </p>
+            <div className="flex gap-2">
+              <input
+                className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                placeholder="Path to Publish-Survey.ps1"
+                value={publishInput}
+                onChange={(e) => setPublishInput(e.target.value)}
+              />
+              <button
+                type="button"
+                className="flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded bg-blue-600 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={mutation.isPending}
+                onClick={savePublish}
+                title="Save publish script path"
+                aria-label="Save publish script path"
+              >
+                <NavIcon name="save" className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className="flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={mutation.isPending}
+                onClick={clearPublish}
+                title="Clear saved path (use the checked-in default)"
+                aria-label="Clear publish script path"
+              >
+                <NavIcon name="clear" className="h-4 w-4" />
+              </button>
+            </div>
+          </section>
+          )}
+
           {(["ssisx", "svk", "validator"] as const).map((tool) => {
             const info = data.resolution[tool];
             return (
@@ -128,24 +194,29 @@ export default function Settings() {
                   />
                   <button
                     type="button"
-                    className={btnPrimary}
+                    className="flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded bg-blue-600 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={mutation.isPending}
                     onClick={() => save(tool)}
+                    title="Save override"
+                    aria-label={`Save ${TOOL_LABEL[tool]} path`}
                   >
-                    Save
+                    <NavIcon name="save" className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
-                    className={btnSecondary}
+                    className="flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={mutation.isPending}
                     onClick={() => clear(tool)}
+                    title="Clear override (revert to auto-detection)"
+                    aria-label={`Clear ${TOOL_LABEL[tool]} override`}
                   >
-                    Clear
+                    <NavIcon name="clear" className="h-4 w-4" />
                   </button>
                 </div>
               </section>
             );
           })}
+
         </>
       )}
     </main>

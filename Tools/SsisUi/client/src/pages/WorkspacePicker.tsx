@@ -15,6 +15,7 @@ import LoadingState from "../components/LoadingState";
 import ErrorState from "../components/ErrorState";
 import EmptyState from "../components/EmptyState";
 import { formatDateTime } from "../utils/formatDateTime";
+import NavIcon from "../components/NavIcon";
 
 const emptyForm: WorkspaceInput = {
   name: "",
@@ -37,7 +38,11 @@ const btnSecondary =
 
 export default function WorkspacePicker() {
   const queryClient = useQueryClient();
-  const { data: workspaces, isLoading, error } = useQuery({
+  const {
+    data: workspaces,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["workspaces"],
     queryFn: listWorkspaces,
   });
@@ -173,7 +178,9 @@ export default function WorkspacePicker() {
   // Name search, then paging over the matches. Clamp the page so a shrinking
   // list (e.g. after a delete) never leaves the view on an empty page.
   const needle = query.trim().toLowerCase();
-  const matches = (workspaces ?? []).filter((ws) => ws.name.toLowerCase().includes(needle));
+  const matches = (workspaces ?? []).filter((ws) =>
+    ws.name.toLowerCase().includes(needle),
+  );
   const pageCount = Math.max(1, Math.ceil(matches.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
   const pageStart = (currentPage - 1) * PAGE_SIZE;
@@ -182,9 +189,15 @@ export default function WorkspacePicker() {
   return (
     <main className="p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">SsisUi — Workspaces</h1>
-        <button type="button" className={btnPrimary} onClick={openCreate}>
-          New workspace
+        <h1 className="text-xl font-semibold"> Workspaces</h1>
+        <button
+          type="button"
+          onClick={openCreate}
+          title="New workspace"
+          aria-label="New workspace"
+          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded border border-blue-400 bg-white text-blue-600 shadow-sm hover:border-blue-500 hover:bg-blue-50"
+        >
+          <NavIcon name="plus" className="h-4 w-4" />
         </button>
       </div>
 
@@ -238,17 +251,29 @@ export default function WorkspacePicker() {
                     }`}
                   >
                     <td className="px-3 py-2">
-                      <Link to={`/workspaces/${ws.id}`} className="font-medium text-blue-700 hover:underline">
+                      <Link
+                        to={`/workspaces/${ws.id}`}
+                        className="font-medium text-blue-700 hover:underline"
+                      >
                         {ws.name}
                       </Link>
                     </td>
-                    <td className="max-w-[220px] truncate px-3 py-2 font-mono text-xs" title={ws.inputPath}>
+                    <td
+                      className="max-w-[220px] truncate px-3 py-2 font-mono text-xs"
+                      title={ws.inputPath}
+                    >
                       {ws.inputPath}
                     </td>
-                    <td className="max-w-[220px] truncate px-3 py-2 font-mono text-xs" title={ws.outputPath}>
+                    <td
+                      className="max-w-[220px] truncate px-3 py-2 font-mono text-xs"
+                      title={ws.outputPath}
+                    >
                       {ws.outputPath}
                     </td>
-                    <td className="max-w-[220px] truncate px-3 py-2 font-mono text-xs" title={ws.fillsPath}>
+                    <td
+                      className="max-w-[220px] truncate px-3 py-2 font-mono text-xs"
+                      title={ws.fillsPath}
+                    >
                       {ws.fillsPath}
                     </td>
                     <td className="px-3 py-2">{ws.framework}</td>
@@ -260,15 +285,24 @@ export default function WorkspacePicker() {
                       )}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">
-                      <button className={`${btnSecondary} mr-1.5`} onClick={() => startEdit(ws)}>
-                        Edit
+                      <div className="flex items-center gap-1.5">
+                      <button
+                        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
+                        onClick={() => startEdit(ws)}
+                        title="Edit workspace"
+                        aria-label={`Edit ${ws.name}`}
+                      >
+                        <NavIcon name="edit" className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        className="rounded border border-red-200 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
+                        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-red-200 bg-white text-red-700 shadow-sm hover:bg-red-50"
                         onClick={() => setPendingDelete(ws)}
+                        title="Delete workspace"
+                        aria-label={`Delete ${ws.name}`}
                       >
-                        Delete
+                        <NavIcon name="delete" className="h-3.5 w-3.5" />
                       </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -277,7 +311,8 @@ export default function WorkspacePicker() {
             {pageCount > 1 && (
               <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600">
                 <span>
-                  Showing {pageStart + 1}–{pageStart + pageItems.length} of {matches.length}
+                  Showing {pageStart + 1}–{pageStart + pageItems.length} of{" "}
+                  {matches.length}
                 </span>
                 <div className="flex items-center gap-2">
                   <button
@@ -310,7 +345,11 @@ export default function WorkspacePicker() {
         <DeleteConfirmModal
           workspace={pendingDelete}
           deleting={deleteMutation.isPending}
-          error={deleteMutation.error instanceof Error ? deleteMutation.error.message : null}
+          error={
+            deleteMutation.error instanceof Error
+              ? deleteMutation.error.message
+              : null
+          }
           onCancel={() => {
             deleteMutation.reset();
             setPendingDelete(null);
@@ -390,7 +429,11 @@ export default function WorkspacePicker() {
                 <button type="submit" className={btnPrimary} disabled={saving}>
                   {editingId ? "Save changes" : "Create workspace"}
                 </button>
-                <button type="button" className={btnSecondary} onClick={resetForm}>
+                <button
+                  type="button"
+                  className={btnSecondary}
+                  onClick={resetForm}
+                >
                   Cancel
                 </button>
               </div>
@@ -398,12 +441,11 @@ export default function WorkspacePicker() {
           </div>
         </div>
       )}
-
     </main>
   );
 }
 
-/** Confirms before removing a workspace. Only the SsisUi entry is deleted; the
+/** Confirms before removing a workspace. Only the SSIS Rewrite Studio entry is deleted; the
  * input, output and fills folders on disk are left exactly as they are. */
 function DeleteConfirmModal({
   workspace,
@@ -430,13 +472,21 @@ function DeleteConfirmModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-4">
-      <div role="alertdialog" aria-modal="true" aria-labelledby="delete-workspace-title" className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
-        <h2 id="delete-workspace-title" className="text-base font-semibold text-gray-900">
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="delete-workspace-title"
+        className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+      >
+        <h2
+          id="delete-workspace-title"
+          className="text-base font-semibold text-gray-900"
+        >
           Delete workspace?
         </h2>
         <p className="mt-2 text-sm text-gray-700">
-          <span className="font-semibold">{workspace.name}</span> will be removed from SsisUi, along with
-          its run history.
+          <span className="font-semibold">{workspace.name}</span> will be
+          removed from SSIS Rewrite Studio, along with its run history.
         </p>
         <label className="mt-3 flex items-start gap-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
           <input
@@ -447,17 +497,25 @@ function DeleteConfirmModal({
             disabled={deleting}
           />
           <span>
-            Also delete the output folder and everything in it (generated code, logs, reports).
-            <span className="mt-1 block break-all font-mono text-xs text-red-800">{workspace.outputPath}</span>
+            Also delete the output folder and everything in it (generated code,
+            logs, reports).
+            <span className="mt-1 block break-all font-mono text-xs text-red-800">
+              {workspace.outputPath}
+            </span>
           </span>
         </label>
         <p className="mt-2 text-xs text-gray-600">
-          The input folder (your source packages) and the fills folder (hand-written fills) are{" "}
-          <strong>never</strong> deleted.
+          The input folder (your source packages) and the fills folder
+          (hand-written fills) are <strong>never</strong> deleted.
         </p>
         {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" className={btnSecondary} onClick={onCancel} disabled={deleting}>
+          <button
+            type="button"
+            className={btnSecondary}
+            onClick={onCancel}
+            disabled={deleting}
+          >
             Cancel
           </button>
           <button
@@ -513,7 +571,9 @@ function PathField({
           </button>
         )}
       </div>
-      {hint && <span className="text-xs font-normal text-gray-500">{hint}</span>}
+      {hint && (
+        <span className="text-xs font-normal text-gray-500">{hint}</span>
+      )}
     </label>
   );
 }

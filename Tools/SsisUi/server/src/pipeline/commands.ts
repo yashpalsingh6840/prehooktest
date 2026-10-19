@@ -10,6 +10,8 @@ import {
   VALIDATOR_VENV_PYTHON,
   validatorInvocation,
   resolveSsisx,
+  resolvePublishScript,
+  ssisxExeMissing,
   resolveSvk,
 } from "./toolResolver.js";
 
@@ -44,6 +46,9 @@ export type ResolvedCommand = {
   args: string[];
   cwd?: string;
   bootstrap?: boolean;
+  /** Set on a publish bootstrap: builds the commands to run once it succeeds (the
+   * published exe now exists, so the real step resolves to it instead of dotnet run). */
+  rebuild?: () => ResolvedCommand[];
 };
 
 // The three CLI stages each get their own subfolder under the workspace's
@@ -143,6 +148,24 @@ function targetPackages(ws: Workspace, pkg: string | undefined): string[] {
   return all;
 }
 
+/** Steps that run the ssisx exe (svk steps are unaffected: Publish-Survey.ps1 builds only ssisx). */
+const SSISX_STEPS: ReadonlySet<Step> = new Set<Step>(["extract", "generate", "apply-fills", "apply-tests"]);
+
+/** When no ssisx.exe exists, run Publish-Survey.ps1 first; the rebuilt step then uses the exe. */
+function publishBootstrap(ws: Workspace, step: Step, pkg?: string): ResolvedCommand | null {
+  if (!SSISX_STEPS.has(step) || !ssisxExeMissing()) return null;
+  const script = resolvePublishScript();
+  if (!script) return null;
+  return {
+    step,
+    bootstrap: true,
+    command: "powershell.exe",
+    args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
+    cwd: path.dirname(script),
+    rebuild: () => buildCommands(ws, step, pkg, { allowPublish: false }),
+  };
+}
+
 function validatorBootstrap(): ResolvedCommand[] {
   if (validatorInvocation().usesOverride) return [];
   if (fs.existsSync(VALIDATOR_VENV_PYTHON)) return [];
@@ -214,7 +237,12 @@ function validatorCommand(
  * stage per package for "validation"), prefixed by venv bootstrap when the
  * validator has never been set up on this machine.
  */
-export function buildCommands(ws: Workspace, step: Step, pkg?: string): ResolvedCommand[] {
+export function buildCommands(
+  ws: Workspace,
+  step: Step,
+  pkg?: string,
+  opts: { allowPublish?: boolean } = {},
+): ResolvedCommand[] {
   switch (step) {
     case "validate":
     case "ai-context":
@@ -232,8 +260,10 @@ export function buildCommands(ws: Workspace, step: Step, pkg?: string): Resolved
           validatorCommand(ws, "ai-context", p),
         ]),
       ];
-    default:
-      return [buildPhase1Command(ws, step, pkg)];
+    default: {
+      const publish = opts.allowPublish === false ? null : publishBootstrap(ws, step, pkg);
+      return publish ? [publish] : [buildPhase1Command(ws, step, pkg)];
+    }
   }
 }
 

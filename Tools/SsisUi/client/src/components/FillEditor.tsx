@@ -13,6 +13,7 @@ import {
 } from "../api/client";
 import LoadingState from "./LoadingState";
 import ErrorState from "./ErrorState";
+import NavIcon from "./NavIcon";
 
 const TIER1_KINDS: ReadonlySet<GapSpec["Kind"]> = new Set([
   "EncryptedConnectionManagerSecret",
@@ -285,7 +286,7 @@ export default function FillEditor({
             pending and does not use it.
           </p>
           <button className={btnPrimary} onClick={handleSave} disabled={saving || !confirmedBy}>
-            {saving ? "Saving..." : "Save decision"}
+            <span className="inline-flex items-center gap-1.5"><NavIcon name="save" className="h-3.5 w-3.5" />{saving ? "Saving..." : "Save decision"}</span>
           </button>
         </div>
       )}
@@ -327,7 +328,7 @@ export default function FillEditor({
           </div>
           <div className="mt-2">
             <button className={btnPrimary} onClick={handleSave} disabled={saving || !relPath}>
-              {saving ? "Saving..." : "Save fill"}
+              <span className="inline-flex items-center gap-1.5"><NavIcon name="save" className="h-3.5 w-3.5" />{saving ? "Saving..." : "Save fill"}</span>
             </button>
           </div>
         </div>

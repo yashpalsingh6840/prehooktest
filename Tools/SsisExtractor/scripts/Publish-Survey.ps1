@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Builds the self-contained ssisx.exe that Run-Survey.ps1 / Run-Survey.bat need next to them.
+  Builds the self-contained ssisx.exe (extractor) and svk.exe (walkthrough/sample data) next to these scripts.
 
 .DESCRIPTION
   Run-Survey.ps1's whole premise is that a client machine needs nothing installed --
@@ -25,38 +25,45 @@ param()
 $ErrorActionPreference = 'Stop'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $cliProject = Join-Path $scriptDir '..\src\Ssis.Extract.Cli\Ssis.Extract.Cli.csproj'
+$svkProject = Join-Path $scriptDir '..\..\SsisValidationKit\src\SvkCli\SvkCli.csproj'
 
 if (-not (Test-Path $cliProject)) {
     Write-Error "Ssis.Extract.Cli.csproj not found at $cliProject -- run this from its checked-in location (Tools/SsisExtractor/scripts/)."
 }
-
-Write-Host "Publishing self-contained single-file ssisx.exe (win-x64) into $scriptDir ..."
-# PublishSingleFile bundles the whole CoreCLR runtime AND every managed/native dependency
-# into one .exe -- without it, --self-contained alone still produces a correct build, but
-# as ~210 loose files (the runtime DLLs, ICU/locale folders, etc.) instead of one, which is
-# a worse thing to zip and hand to a client. IncludeNativeLibrariesForSelfExtract folds the
-# native (non-managed) dependencies in too rather than extracting them beside the exe.
-# EnableCompressionInSingleFile roughly halves the result (measured: 75 MB -> ~36 MB here).
-# DebugType=none skips generating the half-dozen stray .pdb files a client has no use for --
-# without it, scripts/ ends up with 5 loose .pdb files sitting next to the one .exe.
-& dotnet publish $cliProject -c Release -r win-x64 --self-contained true `
-    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-    -p:EnableCompressionInSingleFile=true -p:DebugType=none `
-    -o $scriptDir --nologo
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "dotnet publish failed with exit code $LASTEXITCODE."
+if (-not (Test-Path $svkProject)) {
+    Write-Error "SvkCli.csproj not found at $svkProject -- SsisValidationKit must sit beside SsisExtractor under Tools/."
 }
 
-$exe = Join-Path $scriptDir 'ssisx.exe'
-if (-not (Test-Path $exe)) {
-    Write-Error "Publish reported success but ssisx.exe is missing from $scriptDir -- something is wrong with the publish output path."
+# Publishes one CLI as a self-contained single-file win-x64 exe directly into this scripts/
+# folder. PublishSingleFile bundles the CoreCLR runtime and every managed/native dependency
+# into one .exe; EnableCompressionInSingleFile roughly halves it; DebugType=none skips the
+# stray .pdb files a client has no use for.
+function Publish-Cli {
+    param([string]$Project, [string]$ExeName)
+
+    Write-Host "Publishing self-contained single-file $ExeName (win-x64) into $scriptDir ..."
+    & dotnet publish $Project -c Release -r win-x64 --self-contained true `
+        -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+        -p:EnableCompressionInSingleFile=true -p:DebugType=none `
+        -o $scriptDir --nologo
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "dotnet publish of $ExeName failed with exit code $LASTEXITCODE."
+    }
+
+    $exe = Join-Path $scriptDir $ExeName
+    if (-not (Test-Path $exe)) {
+        Write-Error "Publish reported success but $ExeName is missing from $scriptDir -- something is wrong with the publish output path."
+    }
+    return $exe
 }
 
+$exe = Publish-Cli -Project $cliProject -ExeName 'ssisx.exe'
+$svkExe = Publish-Cli -Project $svkProject -ExeName 'svk.exe'
 $fileCount = @(Get-ChildItem -Path $scriptDir -File -Recurse).Count
 $sizeMb = [Math]::Round((Get-ChildItem -Path $scriptDir -Recurse -File | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
 
 Write-Host ""
-Write-Host "Done: $exe"
+Write-Host "Done: $exe, $svkExe"
 Write-Host "  ($fileCount files, $sizeMb MB total in $scriptDir)"
 Write-Host ""
 Write-Host "To ship to a client: zip this whole scripts/ folder (Run-Survey.ps1, Run-Survey.bat,"

@@ -12,6 +12,7 @@ import ErrorState from "../components/ErrorState";
 import EmptyState from "../components/EmptyState";
 import PageInfo from "../components/PageInfo";
 import ApplyTestsModal from "../components/ApplyTestsModal";
+import NavIcon from "../components/NavIcon";
 
 const STATUS_COLORS: Record<MoreTestStatus, BadgeColor> = {
   Applied: "green",
@@ -33,22 +34,27 @@ function TestsPageInfo() {
       details={
         <>
           <p>
-            Apply Tests reads the MoreTests folder under the workspace's Fills Path, copies each
-            file into the package's test project, and builds that project to check it. A file the
-            compiler rejects is removed from the generated output again. Its original stays in the
-            Fills Path, untouched.
+            Apply Tests reads the MoreTests folder under the workspace's Fills
+            Path, copies each file into the package's test project, and builds
+            that project to check it. A file the compiler rejects is removed
+            from the generated output again. Its original stays in the Fills
+            Path, untouched.
           </p>
           <p>
-            <strong>Applied</strong> means the file compiled with the project and is in place.{" "}
-            <strong>Rejected</strong> means the compiler blamed the file. Open the row to see the
-            errors, fix the file, and re-run Apply Tests. <strong>Unverified</strong> means the
-            build failed for a reason no MoreTests file caused, so the copy was left in place
+            <strong>Applied</strong> means the file compiled with the project
+            and is in place. <strong>Rejected</strong> means the compiler blamed
+            the file. Open the row to see the errors, fix the file, and re-run
+            Apply Tests. <strong>Unverified</strong> means the build failed for
+            a reason no MoreTests file caused, so the copy was left in place
             without being checked.
           </p>
           <p>
             <strong>Undocumented</strong> means the file has no{" "}
-            <code className="rounded bg-gray-200 px-1 py-0.5">// ssisx-more-test:</code> provenance
-            comment. It is still applied, but nothing records who wrote it or why.
+            <code className="rounded bg-gray-200 px-1 py-0.5">
+              // ssisx-more-test:
+            </code>{" "}
+            provenance comment. It is still applied, but nothing records who
+            wrote it or why.
           </p>
         </>
       }
@@ -82,11 +88,16 @@ export default function TestsApplied({ workspace }: { workspace: Workspace }) {
   }
 
   const tests = data.tests;
-  const packages = [...new Set(tests.map((t) => t.Package))].sort((a, b) => a.localeCompare(b));
-  const count = (s: MoreTestStatus) => tests.filter((t) => t.Status === s).length;
+  const packages = [...new Set(tests.map((t) => t.Package))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const count = (s: MoreTestStatus) =>
+    tests.filter((t) => t.Status === s).length;
   const undocumented = tests.filter((t) => !t.Attributed).length;
   const visible = tests.filter(
-    (t) => (pkg === "all" || t.Package === pkg) && (status === "all" || t.Status === status),
+    (t) =>
+      (pkg === "all" || t.Package === pkg) &&
+      (status === "all" || t.Status === status),
   );
 
   return (
@@ -102,19 +113,30 @@ export default function TestsApplied({ workspace }: { workspace: Workspace }) {
         <div className="ml-auto flex items-center gap-2">
           <button
             type="button"
-            onClick={() => queryClient.invalidateQueries({ queryKey: ["artifacts", workspace.id, "tests-applied"] })}
-            className="cursor-pointer rounded border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            onClick={() =>
+              queryClient.invalidateQueries({
+                queryKey: ["artifacts", workspace.id, "tests-applied"],
+              })
+            }
+            title="Refresh"
+            aria-label="Refresh applied tests"
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
           >
-            Refresh
+            <NavIcon name="refresh" className="h-3.5 w-3.5" />
           </button>
           <button
             type="button"
             onClick={() => setShowWrite(true)}
             className="cursor-pointer rounded bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700"
           >
-            Write more tests
+            Add more tests
           </button>
-          {showWrite && <ApplyTestsModal workspace={workspace} onClose={() => setShowWrite(false)} />}
+          {showWrite && (
+            <ApplyTestsModal
+              workspace={workspace}
+              onClose={() => setShowWrite(false)}
+            />
+          )}
         </div>
       </div>
 
@@ -155,7 +177,13 @@ export default function TestsApplied({ workspace }: { workspace: Workspace }) {
       </div>
 
       {visible.length === 0 ? (
-        <EmptyState message={tests.length === 0 ? "No extra tests were recorded." : "No tests match these filters."} />
+        <EmptyState
+          message={
+            tests.length === 0
+              ? "No extra tests were recorded."
+              : "No tests match these filters."
+          }
+        />
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
           <table className="w-full border-collapse text-sm">
@@ -172,7 +200,9 @@ export default function TestsApplied({ workspace }: { workspace: Workspace }) {
             <tbody>
               {visible.map((t, i) => {
                 const key = `${t.Package}/${t.FileName}`;
-                const expandable = t.Status === "Rejected" && (t.CompilerErrors?.length ?? 0) > 0;
+                const expandable =
+                  t.Status === "Rejected" &&
+                  (t.CompilerErrors?.length ?? 0) > 0;
                 return (
                   <TestRow
                     key={`${key}-${i}`}
@@ -217,7 +247,9 @@ function TestRow({
         <td className="px-3 py-2 font-mono text-xs">{record.FileName}</td>
         <td className="px-3 py-2">
           <Badge color={STATUS_COLORS[record.Status]}>{record.Status}</Badge>
-          {!record.Attributed && <span className="ml-2 text-xs text-gray-500">undocumented</span>}
+          {!record.Attributed && (
+            <span className="ml-2 text-xs text-gray-500">undocumented</span>
+          )}
         </td>
         <td className="px-3 py-2">{record.Author ?? "—"}</td>
         <td className="px-3 py-2">{record.Date ?? "—"}</td>
@@ -227,7 +259,8 @@ function TestRow({
         <tr className="border-t border-gray-100 bg-red-50/40">
           <td colSpan={6} className="px-3 py-2">
             <p className="mb-1 text-xs font-semibold text-red-700">
-              Compiler errors -- fix the file under the Fills Path, then re-run Apply Tests:
+              Compiler errors -- fix the file under the Fills Path, then re-run
+              Apply Tests:
             </p>
             <ul className="space-y-0.5 font-mono text-xs text-gray-800">
               {record.CompilerErrors?.map((e, i) => (

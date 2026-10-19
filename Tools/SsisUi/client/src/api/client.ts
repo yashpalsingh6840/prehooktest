@@ -629,7 +629,14 @@ export type SettingsResult = {
   ssisxExePath: string | null;
   svkExePath: string | null;
   validatorExePath: string | null;
+  /** Saved Publish-Survey.ps1 path, or null to use the checked-in default. */
+  publishScriptPath: string | null;
+  /** The script a run will actually execute (saved path, else default), or null if none exists. */
+  resolvedPublishScript: string | null;
+  defaultPublishScript: string;
   resolution: { ssisx: ResolutionInfo; svk: ResolutionInfo; validator: ResolutionInfo };
+  /** The exe each box shows when no override is saved. */
+  defaultExePaths: { ssisx: string; svk: string; validator: string };
 };
 
 export function getSettings(): Promise<SettingsResult> {
@@ -640,6 +647,7 @@ export function updateSettings(data: {
   ssisxExePath?: string | null;
   svkExePath?: string | null;
   validatorExePath?: string | null;
+  publishScriptPath?: string | null;
 }): Promise<SettingsResult> {
   return fetch("/api/settings", {
     method: "PUT",
