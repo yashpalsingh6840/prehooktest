@@ -225,6 +225,73 @@ slash commands below the first time they run, if `.venv` isn't there yet. Those 
 `python` on `PATH`, so the checks above apply there too. If `.venv` was created with the wrong Python,
 delete the folder and run the steps above again.
 
+### Offline install (no access to PyPI)
+
+Use this when the machine can't reach `pypi.org` or `files.pythonhosted.org` (a proxy,
+firewall or antivirus blocks it). Symptom: `pip install -e ".[dev]"` fails with
+`Installing build dependencies ... error`, `ConnectionResetError(10054)` or
+`Could not find a version that satisfies the requirement setuptools>=68`.
+
+The validator's only runtime dependency (`sqlglot`) and its test dependencies (`pytest`) are pure
+Python, and `setuptools` is needed to build the project itself. All of them are packaged as
+`py3-none-any` wheels, so one set works with any Python 3.11 or later, including 3.14.
+
+**Step 1 — build the wheelhouse on a machine with internet access** (once, from any folder):
+
+```powershell
+python -m pip download sqlglot pytest setuptools -d wheelhouse --only-binary=:all:
+```
+
+It should download these eight files (the versions may be newer when you run it):
+
+```
+colorama-0.4.6-py2.py3-none-any.whl     pluggy-1.7.0-py3-none-any.whl
+iniconfig-2.3.1-py3-none-any.whl        pygments-2.21.0-py3-none-any.whl
+packaging-26.3-py3-none-any.whl         pytest-9.1.1-py3-none-any.whl
+setuptools-84.0.0-py3-none-any.whl      sqlglot-30.23.0-py3-none-any.whl
+```
+
+The `NativeCommandError` line PowerShell prints afterwards is only pip's "new release available"
+notice. Check the folder has all eight files.
+
+**Step 2 — copy the folder to the offline machine**, named exactly `wheelhouse`, in the `Tools`
+folder that contains `SSIS_RewriteValidationTool`:
+
+```
+<Tools>├── SSIS_RewriteValidationTool\      <- the validator source (no .venv needed)
+└── wheelhouse\                      <- the eight .whl files, directly inside, not in a subfolder
+```
+
+Send the validator source without `.venv`, `*.egg-info`, `__pycache__` and `.pytest_cache`.
+
+**Step 3 — install from the wheelhouse** (from the validator folder, with the full path):
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python -m pip install --no-index --find-links "C:\full\path\to\Tools\wheelhouse" -e ".[dev]"
+.venv\Scripts\python -m pytest tests/ -q
+```
+
+Use the full path to `wheelhouse`. A relative path such as `..\wheelhouse` fails, because pip's
+build step runs from a temporary folder. `--no-index` stops pip from contacting PyPI, and the
+`setuptools` wheel covers the build step that failed online.
+
+Expected results: the install ends with `Successfully installed ... ssis-validator-0.1.0`, and the
+tests report `13 passed, 47 skipped`. The skipped tests need the real sample `.dtsx` and
+generated-project pairs, which aren't shipped with the validator, so they skip by design.
+
+**Troubleshooting**
+
+| Message | Cause and fix |
+|---|---|
+| `WARNING: Location '...\wheelhouse' is ignored: it is either a non-existing path or lacks a specific scheme` | The folder isn't at that path. Check with `Test-Path "<full path>"` and `Get-ChildItem "<full path>"`. If the folder is nested (`wheelhouse\wheelhouse`), move the files up one level. |
+| `No matching distribution found for setuptools>=68` | The wheelhouse is missing `setuptools`, or the install isn't using `--no-index --find-links`. Compare the folder with the eight files above. |
+| `ConnectionResetError(10054)` / `Retrying ... /simple/...` | Network access to PyPI is blocked. Use this offline procedure, or ask IT to allow `pypi.org` and `files.pythonhosted.org` (or set the proxy for pip). |
+| `file:///` form | If a plain Windows path is still rejected, pass the folder as a URL: `--find-links "file:///C:/full/path/to/Tools/wheelhouse"`. |
+
+Do not copy a `.venv` from another machine. It points at that machine's Python install and cannot be
+reused. If an earlier install failed partway, delete `.venv` and run the steps again.
+
 ## Commands at a glance, and the order to run them
 
 There are exactly three CLI subcommands, always run in this order for one package (steps 2-3 are
