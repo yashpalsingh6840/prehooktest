@@ -174,9 +174,13 @@ function Find-Repos {
             }
         } catch { }
     }
-    if ($found.Count -eq 0) {
-        # No .git folders (e.g. zipped/exported sources): treat each first-level folder as a repo.
-        foreach ($s in [System.IO.Directory]::EnumerateDirectories($Root)) { $found.Add($s) }
+    # First-level folders that are not (and do not contain) a git repo - e.g. exported/zipped sources - are treated as repos too.
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    foreach ($s in [System.IO.Directory]::EnumerateDirectories($Root)) {
+        if ($ExcludeDir -contains [System.IO.Path]::GetFileName($s)) { continue }
+        $covered = $false
+        foreach ($f in $found) { if ($f -eq $s -or $f.StartsWith($s + $sep) -or $s.StartsWith($f + $sep)) { $covered = $true; break } }
+        if (-not $covered) { $found.Add($s); Write-Host "  note: '$([System.IO.Path]::GetFileName($s))' has no .git folder - treated as a repo" -ForegroundColor Yellow }
     }
     return @($found | Where-Object { $ExcludeRepo -notcontains (Split-Path $_ -Leaf) } | Sort-Object)
 }

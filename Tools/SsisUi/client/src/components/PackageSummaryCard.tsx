@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { summarizePackage, type DetailKey, type DetailRow, type PackageSummary } from "../utils/packageSummary";
+import { DETAIL_INFO, componentInfo, connectionInfo } from "../utils/summaryInfo";
 
 type Tone = "slate" | "emerald" | "violet" | "sky" | "amber" | "orange" | "rose";
 
@@ -277,7 +278,15 @@ export default function PackageSummaryCard({ json }: { json: unknown }) {
       rows: s.details[k],
       emptyText: EMPTY_TEXT[k],
       groupBy: GROUP[k],
-      intro: k === "coverage" ? <CoverageIntro s={s} /> : undefined,
+      intro:
+        k === "coverage" ? (
+          <>
+            <p>{DETAIL_INFO[k]}</p>
+            <CoverageIntro s={s} />
+          </>
+        ) : (
+          <p>{DETAIL_INFO[k]}</p>
+        ),
     });
 
   // Component rows carry "<Type> · <data flow>" as their note.
@@ -287,6 +296,7 @@ export default function PackageSummaryCard({ json }: { json: unknown }) {
       rows: s.details.components.filter((r) => r.secondary?.startsWith(`${type} · `)),
       emptyText: `No ${type} components.`,
       groupBy: GROUP.components,
+      intro: <p>{componentInfo(type)}</p>,
     });
 
   // Connection rows carry "<type>[ · <scope>]" as their note.
@@ -296,6 +306,7 @@ export default function PackageSummaryCard({ json }: { json: unknown }) {
       rows: s.details.connections.filter((r) => r.secondary === type || r.secondary?.startsWith(`${type} · `)),
       emptyText: `No ${type} connections.`,
       groupBy: GROUP.connections,
+      intro: <p>{connectionInfo(type)}</p>,
     });
 
   return (

@@ -49,8 +49,9 @@ param(
     # Optional CSV with columns Repo,Host (host may be a name or URL; several rows per repo allowed).
     [string]$HostMapPath,
     [string[]]$ExcludeRepo = @(),
-    [string[]]$ExcludeDir = @('bin', 'obj', 'node_modules', '.git', '.vs', '.idea', 'packages', 'TestResults', 'artifacts'),
-    [string[]]$TextExtensions = @('.cs', '.vb', '.cshtml', '.razor', '.config', '.json', '.xml', '.yml', '.yaml', '.ps1', '.psm1', '.tf', '.tfvars', '.bicep', '.sh', '.txt', '.md', '.wsdl', '.svcmap', '.http', '.settings', '.ini', '.properties'),
+    [string[]]$ExcludeDir = @('bin', 'obj', 'node_modules', '.git', '.vs', '.idea', 'packages', 'TestResults', 'artifacts', 'dist', '.next', '.angular', 'coverage'),
+    [string[]]$TextExtensions = @('.cs', '.vb', '.cshtml', '.razor', '.config', '.json', '.xml', '.yml', '.yaml', '.ps1', '.psm1', '.tf', '.tfvars', '.bicep', '.sh', '.wsdl', '.svcmap', '.http', '.settings', '.ini', '.properties',
+        '.js', '.jsx', '.mjs', '.ts', '.tsx', '.vue', '.svelte', '.html', '.htm', '.aspx', '.ascx'),
     [switch]$IncludeSelf,
     [switch]$IncludeTests,
     [int]$MaxFileSizeMB = 5
@@ -188,7 +189,20 @@ $hostRx = $null
 if ($allHosts.Count -gt 0) { $hostRx = New-Object Regex(('(?<![\w.-])(?:' + (($allHosts | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')(?![\w-])'), 'IgnoreCase,Compiled') }
 
 $RxLit = New-Object Regex('(?:\$@|@\$|\$|@)?"(?<s>[^"\r\n]{3,300})"|(?<u>https?://[^\s"''<>)]{4,300})', 'Compiled')
-$RxVerbHint = New-Object Regex('HttpMethod\.(?<a>Get|Post|Put|Delete|Patch)|\b(?<b>Get|Post|Put|Delete|Patch)(?:Async|FromJsonAsync|AsJsonAsync|ByteArrayAsync|StringAsync|StreamAsync)\b|\[(?<c>Get|Post|Put|Delete|Patch)\s*\(|Method\.(?<d>Get|Post|Put|Delete|Patch)\b|\.(?<e>Get|Post|Put|Delete|Patch)\s*<', 'Compiled')
+$verbGroups = 'v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'
+$RxLitJs = New-Object Regex('"(?<s>[^"\r\n]{3,300})"|''(?<s2>[^''\r\n]{3,300})''|`(?<s3>[^`]{3,300})`|(?<u>https?://[^\s"''`<>)]{4,300})', 'Compiled')
+$jsLikeExt = @('.js', '.jsx', '.mjs', '.ts', '.tsx', '.vue', '.svelte', '.html', '.htm', '.cshtml', '.razor', '.aspx', '.ascx', '.ps1', '.sh')
+$RxVerbHint = New-Object Regex((@(
+    'HttpMethod\.(?<v1>Get|Post|Put|Delete|Patch)\b',
+    '\b(?<v2>Get|Post|Put|Delete|Patch)(?:Async|FromJsonAsync|AsJsonAsync|ByteArrayAsync|StringAsync|StreamAsync)\b',
+    '\[(?<v3>Get|Post|Put|Delete|Patch)\s*\(',
+    'Method\.(?<v4>Get|Post|Put|Delete|Patch)\b',
+    '\.(?<v5>Get|Post|Put|Delete|Patch)\s*<',
+    'new\s+HttpMethod\s*\(\s*"(?<v6>GET|POST|PUT|DELETE|PATCH)"',
+    '(?:[Hh]ttp|axios|[Cc]lient|[Aa]pi|[Rr]equest|[Ff]etch|ajax|\$)\w*\s*\.\s*(?<v7>get|post|put|delete|patch)\s*(?:<[^>]*>)?\s*\(',
+    '(?:method|type)\s*[:=]\s*["''`](?<v8>GET|POST|PUT|DELETE|PATCH|get|post|put|delete|patch)["''`]',
+    '\.request\s*\(\s*["''](?<v9>get|post|put|delete|patch)["'']'
+) -join '|'), 'Compiled')
 
 # ------------------------------------------------------------------------------------------------
 # Evidence collection
@@ -216,7 +230,12 @@ function Get-TargetHostRepos($c, [string]$urlHost) {
 function Add-Ev($c, [string]$repo, [string]$rel, [int]$line, [string]$type, [string]$conf, [string]$res, [string]$op, [string]$snip, [string]$cands, [string]$matched, [string]$urlHost = '') {
     if (-not $c.InScope) { return }
     $isSelf = $c.SelfRepos.Contains($repo)
-    if ($isSelf -and -not $IncludeSelf) { return }
+    if ($isSelf) {
+        if (-not $IncludeSelf) { return }
+        # Inside the home repo only genuine *client-side* use counts for SOAP (own client proxy / client endpoint config);
+        # the implementation, host config and wiring all mention the contract without being consumers.
+        if ($c.Kind -eq 'WCF' -and @('GeneratedProxy', 'ManualClientProxy', 'ConfigClientEndpoint') -notcontains $type) { return }
+    }
     $ev.Add([pscustomobject][ordered]@{
         ClusterId = $c.Id; Kind = $c.Kind; Endpoint = $c.Name; Owner = $c.Owner; ConsumerRepo = $repo; File = $rel; Line = $line
         EvidenceType = $type; Operation = $op; Confidence = $conf; Resolution = $res; Candidates = $cands; TargetHostRepo = (Get-TargetHostRepos $c $urlHost); Matched = $matched; Snippet = $snip; IsSelf = $isSelf
@@ -257,14 +276,15 @@ function Get-LitParts([string]$s) {
     $m = [regex]::Match($s, '^[a-zA-Z][a-zA-Z0-9+.-]*://([^/\s?#]+)(/[^?#]*)?')
     if ($m.Success) { $litHost = ($m.Groups[1].Value -replace ':\d+$', '').ToLowerInvariant(); $path = $m.Groups[2].Value }
     $path = ($path -split '[?#]')[0]
-    $path = [regex]::Replace($path, '\{[^}]*\}', '{}')
+    $trail = $path.TrimEnd().EndsWith('/')
+    $path = [regex]::Replace($path, '\{\{[^}]*\}\}|\$?\{[^}]*\}', '{}')
     $segs = @($path.Trim('~', '/').ToLowerInvariant() -split '/' | Where-Object { $_ -ne '' })
     while ($segs.Count -gt 0 -and $segs[0] -eq '{}') { if ($segs.Count -gt 1) { $segs = $segs[1..($segs.Count - 1)] } else { $segs = @() } }
     if ($segs.Count -eq 0) { return $null }
-    return [pscustomobject]@{ Host = $litHost; Segs = $segs }
+    return [pscustomobject]@{ Host = $litHost; Segs = $segs; Trail = $trail }
 }
 
-function Test-RouteMatch($c, $lit) {
+function Test-RouteMatch($c, $lit, [bool]$trail = $false) {
     $n = [Math]::Min($lit.Count, $c.Segs.Count)
     for ($i = 0; $i -lt $n; $i++) {
         $p = $c.SegRx[$i]; $sg = $lit[$i]
@@ -273,7 +293,11 @@ function Test-RouteMatch($c, $lit) {
         else { if (-not $p.IsMatch($sg)) { return $null } }
     }
     if ($lit.Count -eq $c.Segs.Count) { return 'Full' }
-    if ($lit.Count -lt $c.Segs.Count) { return 'Prefix' }
+    if ($lit.Count -lt $c.Segs.Count) {
+        # "api/orders/" + id : trailing slash and exactly one {param} segment left = the complete route, id appended at runtime
+        if ($trail -and $c.Segs.Count -eq $lit.Count + 1 -and $c.SegRx[$lit.Count] -is [string]) { return 'Full' }
+        return 'Prefix'
+    }
     return $null
 }
 
@@ -296,13 +320,16 @@ foreach ($repo in $repos) {
         $ext = [System.IO.Path]::GetExtension($f).ToLowerInvariant()
         if ($TextExtensions -notcontains $ext) { continue }
         $leaf = [System.IO.Path]::GetFileName($f)
-        if ($leaf -match '(?i)package-lock\.json|\.min\.|\.(g|designer)\.cs$|AssemblyInfo\.cs$') { continue }
+        if ($leaf -match '(?i)package-lock\.json|\.min\.|\.bundle\.|\.d\.ts$|\.(g|designer)\.cs$|AssemblyInfo\.cs$|launchSettings\.json$|^(swagger|openapi)[^\\/]*\.(json|ya?ml)$') { continue }
         $rel = ($f.Substring($rootLen).TrimStart('\', '/')) -replace '\\', '/'
         if (-not $IncludeTests -and (Test-IsTestPath $rel)) { continue }
         $text = Read-Text $f $MaxFileSizeMB
         if (-not $text) { continue }
         $isCode = $ext -in '.cs', '.vb', '.cshtml', '.razor'
-        $clean = if ($ext -eq '.cs') { ([CsMasker]::Process($text))[0] } else { $text }
+        $jsLike = $jsLikeExt -contains $ext
+        if ($ext -eq '.cs') { $clean = ([CsMasker]::Process($text))[0] }
+        elseif ($ext -in '.js', '.jsx', '.mjs', '.ts', '.tsx', '.vue', '.svelte') { $clean = [regex]::Replace($text, '(?m)^[ \t]*(?://|/\*|\*).*$', [System.Text.RegularExpressions.MatchEvaluator]{ param($m) ' ' * $m.Length }) }
+        else { $clean = $text }
         $fileKey = $repo.Name + '|' + $rel
         $attributed = @{}    # cluster id -> @{ Cluster; Conf }  for operation-level search
 
@@ -408,8 +435,9 @@ foreach ($repo in $repos) {
         if ($restIdx.Count -gt 0 -and $clean.IndexOf('/') -ge 0) {
             $isRestDef = $restDefFiles.Contains($fileKey)
             $done = @{}
-            foreach ($lm in $RxLit.Matches($clean)) {
-                $s = if ($lm.Groups['s'].Success) { $lm.Groups['s'].Value } else { $lm.Groups['u'].Value }
+            $litRx = if ($jsLike) { $RxLitJs } else { $RxLit }
+            foreach ($lm in $litRx.Matches($clean)) {
+                $s = ''; foreach ($gn in 's', 's2', 's3', 'u') { if ($lm.Groups[$gn].Success) { $s = $lm.Groups[$gn].Value; break } }
                 $parts = Get-LitParts $s
                 if (-not $parts) { continue }
                 $keys = @(); if ($parts.Segs.Count -ge 2) { $keys += ($parts.Segs[0] + '/' + $parts.Segs[1]) }; $keys += $parts.Segs[0]
@@ -417,19 +445,20 @@ foreach ($repo in $repos) {
                 foreach ($k in $keys) {
                     if (-not $restIdx.ContainsKey($k)) { continue }
                     foreach ($c in $restIdx[$k]) {
-                        $lvl = Test-RouteMatch $c $parts.Segs
+                        $lvl = Test-RouteMatch $c $parts.Segs $parts.Trail
                         if ($lvl) { $found.Add(@{ C = $c; Lvl = $lvl }) }
                     }
                 }
                 if ($found.Count -eq 0) { continue }
                 $lineTxt = Get-LineText $text $lm.Index
-                if ($isRestDef -and ($lineTxt -match '^\s*\[\s*(Route|Http\w+|AcceptVerbs|RoutePrefix)' -or $lineTxt -match '\.Map(Get|Post|Put|Delete|Patch|Methods|Group)\s*\(')) { continue }
+                if ($isRestDef -and ($lineTxt -match '\[[^\]]*\b(Route|RoutePrefix|Http(Get|Post|Put|Delete|Patch|Head|Options)|AcceptVerbs)\b' -or $lineTxt -match '\.Map(Get|Post|Put|Delete|Patch|Methods|Group)\s*\(')) { continue }
                 # HTTP verb hint: same line first, previous line as fallback (keeps neighbouring statements from polluting the hint)
                 $hint = New-Object System.Collections.Generic.HashSet[string]
                 $ls = $clean.LastIndexOf("`n", $lm.Index)
                 $probe = @($lineTxt); if ($ls -gt 0) { $probe += (Get-LineText $text ($ls - 1)) }
+                $le = $clean.IndexOf("`n", $lm.Index); if ($le -ge 0 -and $le + 1 -lt $text.Length) { $probe += (Get-LineText $text ($le + 1)) }
                 foreach ($pt in $probe) {
-                    foreach ($vm in $RxVerbHint.Matches($pt)) { foreach ($gn in 'a', 'b', 'c', 'd', 'e') { if ($vm.Groups[$gn].Success) { [void]$hint.Add($vm.Groups[$gn].Value.ToUpperInvariant()) } } }
+                    foreach ($vm in $RxVerbHint.Matches($pt)) { foreach ($gn in $verbGroups) { if ($vm.Groups[$gn].Success) { [void]$hint.Add($vm.Groups[$gn].Value.ToUpperInvariant()) } } }
                     if ($hint.Count -gt 0) { break }
                 }
                 $keep = New-Object System.Collections.Generic.List[object]
@@ -488,12 +517,12 @@ $evArr | Sort-Object ClusterId, ConsumerRepo, File, Line | Export-Csv -Path (Joi
 if ($HostMapPath) { $hostRefs.ToArray() | Export-Csv -Path (Join-Path $OutputPath 'host-references.csv') -NoTypeInformation -Encoding UTF8 }
 
 $summary = New-Object System.Collections.Generic.List[object]
-foreach ($g in ($evArr | Where-Object { -not $_.IsSelf } | Group-Object ClusterId, ConsumerRepo)) {
+foreach ($g in ($evArr | Group-Object ClusterId, ConsumerRepo)) {
     $rows = $g.Group
     $best = ($rows | Sort-Object { -$rank[$_.Confidence] } | Select-Object -First 1)
     $c = $cl[$best.ClusterId]
     $summary.Add([pscustomobject][ordered]@{
-        ClusterId = $c.Id; Kind = $c.Kind; Endpoint = $c.Name; Owner = $c.Owner; ConsumerRepo = $best.ConsumerRepo
+        ClusterId = $c.Id; Kind = $c.Kind; Endpoint = $c.Name; Owner = $c.Owner; ConsumerRepo = $best.ConsumerRepo; InHomeRepo = $best.IsSelf
         BestConfidence = $best.Confidence; EvidenceCount = $rows.Count
         EvidenceTypes = (($rows | Select-Object -ExpandProperty EvidenceType -Unique) -join ';')
         Resolutions = (($rows | Select-Object -ExpandProperty Resolution -Unique) -join ';')

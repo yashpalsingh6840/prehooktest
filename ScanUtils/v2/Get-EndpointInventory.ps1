@@ -111,7 +111,105 @@ function Join-Route($prefix, $tpl, [string]$ctl, [string]$action, [bool]$isWebAp
 #endregion
 
 #region REST parsers
-function Get-ControllerRoutes($text, $clean, $mask, $rel, $repoName, $proj, $nsList) {
+# ---- route expression helpers: [Route(Routes.Employees)], [HttpGet(Routes.Base + "/x")], base-class [Route] ----
+$RxConst     = New-Object Regex('(?:const|static\s+readonly|readonly\s+static)\s+string\s+(?<n>\w+)\s*=\s*(?<v>[^;]+);', 'Compiled')
+$RxClassName = New-Object Regex('\bclass\s+(\w+)', 'Compiled')
+
+function Add-Consts($clean, $mask, $repo) {
+    $classes = @($RxClassName.Matches($mask))
+    foreach ($m in $RxConst.Matches($clean)) {
+        $cls = ''
+        foreach ($c in $classes) { if ($c.Index -lt $m.Index) { $cls = $c.Groups[1].Value } else { break } }
+        $n = $m.Groups['n'].Value; $v = $m.Groups['v'].Value.Trim()
+        if ($cls) { $repo.Consts["$cls.$n"] = $v }
+        if (-not $repo.ConstBare.ContainsKey($n)) { $repo.ConstBare[$n] = New-Object System.Collections.Generic.List[string] }
+        $repo.ConstBare[$n].Add($v)
+    }
+}
+
+function Add-ClassInfo($clean, $mask, $repo) {
+    foreach ($cm in $RxClass.Matches($mask)) {
+        $base = ''
+        foreach ($tm in [regex]::Matches($cm.Groups['bases'].Value, '[\w\.]+')) {
+            $n = Get-ShortName $tm.Value
+            if ($n -notmatch '^I[A-Z]' -and @('Controller', 'ControllerBase', 'ApiController') -notcontains $n) { $base = $n; break }
+        }
+        $repo.ClassInfo[$cm.Groups['name'].Value] = @{ Attrs = (Get-Val $cm 'attrs' $clean); Base = $base }
+    }
+}
+
+function Resolve-Const([string]$id, $repo, [int]$depth) {
+    $parts = $id -split '\.'
+    if ($parts.Count -ge 2) {
+        $q = $parts[-2] + '.' + $parts[-1]
+        if ($repo.Consts.ContainsKey($q)) { return (Resolve-Expr $repo.Consts[$q] $repo ($depth + 1)) }
+    }
+    $b = $parts[-1]
+    if ($repo.ConstBare.ContainsKey($b)) {
+        $vals = @($repo.ConstBare[$b] | Select-Object -Unique)
+        if ($vals.Count -eq 1) { return (Resolve-Expr $vals[0] $repo ($depth + 1)) }
+    }
+    return $null
+}
+
+# Evaluates  "lit" + Const.Name + "lit"  ; returns $null when anything cannot be resolved (interpolation, method calls, unknown constants)
+function Resolve-Expr([string]$expr, $repo, [int]$depth = 0) {
+    if ($depth -gt 5) { return $null }
+    $sb = ''
+    foreach ($tk in [regex]::Matches($expr, '@?"(?:[^"\\]|\\.)*"|\$"[^"]*"|[A-Za-z_][\w\.]*|\+|\S')) {
+        $v = $tk.Value
+        if ($v -eq '+') { continue }
+        if ($v.StartsWith('"') -or $v.StartsWith('@"')) { $sb += $v.TrimStart('@').Trim('"'); continue }
+        if ($v -match '^[A-Za-z_][\w\.]*$') { $r = Resolve-Const $v $repo $depth; if ($null -eq $r) { return $null }; $sb += $r; continue }
+        return $null
+    }
+    return $sb
+}
+
+function Get-AttrArgs([string]$attrs, [string]$names) {
+    $o = @()
+    foreach ($m in [regex]::Matches($attrs, "\b(?:$names)(?:Attribute)?(?!\w)\s*(?:\((?<a>(?:[^()]|\([^()]*\))*)\))?")) { $o += $m.Groups['a'].Value }
+    return $o
+}
+
+function Get-FirstArg([string]$a) {
+    $first = ''
+    foreach ($t in [regex]::Matches($a, '@?"(?:[^"\\]|\\.)*"|,|[^,"]+')) { if ($t.Value -eq ',') { break }; $first += $t.Value }
+    return $first.Trim()
+}
+
+# -> @{ Has = <attribute carries a route template>; Value = <resolved text or $null if unresolvable> }
+function Get-TemplateArg([string]$a, $repo) {
+    $first = Get-FirstArg $a
+    if ([string]::IsNullOrWhiteSpace($first)) { return @{ Has = $false; Value = $null } }
+    if ($first -match '^\s*template\s*:\s*(.*)$') { $first = $Matches[1] }
+    elseif ($first -match '^\s*\w+\s*[:=]') { return @{ Has = $false; Value = $null } }     # e.g. [HttpGet(Name = "x")]
+    return @{ Has = $true; Value = (Resolve-Expr $first $repo) }
+}
+
+# Class-level route(s): own [Route]/[RoutePrefix], otherwise inherited from the base-class chain (same repo)
+function Get-ClassRoutes([string]$name, [string]$attrs, $repo) {
+    $res = @{ Routes = @(); Unresolved = $false }
+    $cur = $attrs; $nm = $name; $depth = 0
+    while ($true) {
+        $ra = @(Get-AttrArgs $cur 'Route|RoutePrefix')
+        if ($ra.Count -gt 0) {
+            foreach ($a in $ra) {
+                $t = Get-TemplateArg $a $repo
+                if (-not $t.Has) { continue }
+                if ($null -eq $t.Value) { $res.Unresolved = $true } else { $res.Routes += $t.Value }
+            }
+            break
+        }
+        if ($depth -ge 5 -or -not $repo.ClassInfo.ContainsKey($nm)) { break }
+        $base = $repo.ClassInfo[$nm].Base
+        if (-not $base -or -not $repo.ClassInfo.ContainsKey($base)) { break }
+        $cur = $repo.ClassInfo[$base].Attrs; $nm = $base; $depth++
+    }
+    return $res
+}
+
+function Get-ControllerRoutes($text, $clean, $mask, $rel, $repo, $proj, $nsList) {
     $out = New-Object System.Collections.Generic.List[object]
     foreach ($cm in $RxClass.Matches($mask)) {
         $name = $cm.Groups['name'].Value
@@ -122,7 +220,9 @@ function Get-ControllerRoutes($text, $clean, $mask, $rel, $repoName, $proj, $nsL
         if (-not $isCtl) { continue }
         $isWebApi2 = [bool]($bases -match '\bApiController\b')
         $ctl = $name -replace 'Controller$', ''
-        $classRoutes = @([regex]::Matches($attrs, '\b(?:Route|RoutePrefix)(?:Attribute)?\s*\(\s*"(?<t>[^"]*)"') | ForEach-Object { $_.Groups['t'].Value })
+        $cr = Get-ClassRoutes $name $attrs $repo
+        $prefixes = @($cr.Routes)
+        if ($prefixes.Count -eq 0) { $prefixes = $(if ($cr.Unresolved) { @('{unresolved}') } else { @('<none>') }) }   # sentinel: a lone $null would make foreach run zero times
         $open = $cm.Index + $cm.Length - 1
         $close = [CsMasker]::MatchBrace($mask, $open)
         $bodyMask = $mask.Substring($open, $close - $open + 1)
@@ -132,30 +232,36 @@ function Get-ControllerRoutes($text, $clean, $mask, $rel, $repoName, $proj, $nsL
             $mattrs = Get-Val $mm 'attrs' $bodyClean
             if ($mattrs -match '\bNonAction\b') { continue }
             $mname = $mm.Groups['m'].Value
-            $verbs = @(); $tpl = $null
-            foreach ($vm in [regex]::Matches($mattrs, '\bHttp(Get|Post|Put|Delete|Patch|Head|Options)(?:Attribute)?\b(?:\s*\(\s*(?:template\s*:\s*)?"(?<t>[^"]*)")?')) {
+            $verbs = @(); $tpl = $null; $tplUnresolved = $false
+            foreach ($vm in [regex]::Matches($mattrs, '\bHttp(Get|Post|Put|Delete|Patch|Head|Options)(?:Attribute)?(?!\w)\s*(?:\((?<a>(?:[^()]|\([^()]*\))*)\))?')) {
                 $verbs += $vm.Groups[1].Value.ToUpperInvariant()
-                if ($vm.Groups['t'].Success -and $null -eq $tpl) { $tpl = $vm.Groups['t'].Value }
+                $ta = Get-TemplateArg $vm.Groups['a'].Value $repo
+                if ($ta.Has -and $null -eq $tpl) { if ($null -eq $ta.Value) { $tpl = '{unresolved}'; $tplUnresolved = $true } else { $tpl = $ta.Value } }
             }
-            $rm = [regex]::Match($mattrs, '\bRoute(?:Attribute)?\s*\(\s*"(?<t>[^"]*)"')
-            if ($rm.Success -and $null -eq $tpl) { $tpl = $rm.Groups['t'].Value }
+            $routeArgs = @(Get-AttrArgs $mattrs 'Route')
+            $hasRoute = $routeArgs.Count -gt 0
+            if ($hasRoute -and $null -eq $tpl) {
+                $ta = Get-TemplateArg $routeArgs[0] $repo
+                if ($ta.Has) { if ($null -eq $ta.Value) { $tpl = '{unresolved}'; $tplUnresolved = $true } else { $tpl = $ta.Value } }
+            }
             $conv = $false
             if ($verbs.Count -eq 0) {
                 $av = [regex]::Match($mattrs, '\bAcceptVerbs\s*\((?<a>[^)]*)\)')
                 if ($av.Success) { $verbs = @([regex]::Matches($av.Groups['a'].Value, '"(\w+)"') | ForEach-Object { $_.Groups[1].Value.ToUpperInvariant() }) }
             }
             if ($verbs.Count -eq 0 -and $isWebApi2 -and $mname -match '^(Get|Post|Put|Delete|Patch|Head|Options)') { $verbs = @($Matches[1].ToUpperInvariant()); $conv = $true }
-            if ($verbs.Count -eq 0 -and $rm.Success) { $verbs = @('ANY') }
+            if ($verbs.Count -eq 0 -and $hasRoute) { $verbs = @('ANY') }
             if ($verbs.Count -eq 0) { continue }
             $line = [CsMasker]::Line($text, $open + $mm.Index)
-            $prefixes = if ($classRoutes.Count -gt 0) { $classRoutes } else { @($null) }
             foreach ($verb in ($verbs | Select-Object -Unique)) {
                 foreach ($prefix in $prefixes) {
-                    $jr = Join-Route $prefix $tpl $ctl $mname $isWebApi2
+                    $pfx = if ($prefix -eq '<none>') { $null } else { $prefix }
+                    $jr = Join-Route $pfx $tpl $ctl $mname $isWebApi2
                     $flag = $jr.Flag
                     if ($conv -and -not $flag) { $flag = 'ConventionVerb' }
+                    if ($cr.Unresolved -or $tplUnresolved) { $flag = 'UnresolvedRoute' }
                     $out.Add([pscustomobject]@{
-                        Repo = $repoName; Rel = $rel; Line = $line; Controller = $name; ClrNs = $clrNs; Method = $mname
+                        Repo = $repo.Name; Rel = $rel; Line = $line; Controller = $name; ClrNs = $clrNs; Method = $mname
                         Verb = $verb; Route = $jr.Route; RouteNorm = (Normalize-Route $jr.Route)
                         Framework = $(if ($isWebApi2) { 'WebApi2' } else { 'AspNetCore' })
                         Project = $(if ($proj) { $proj.Name } else { '' }); IsWeb = $(if ($proj) { [bool]$proj.IsWeb } else { $false }); Flag = $flag
@@ -219,6 +325,10 @@ foreach ($dir in $repoDirs) {
     $meta | Add-Member -NotePropertyName Refs            -NotePropertyValue (New-CiSet)
     $meta | Add-Member -NotePropertyName CsFiles         -NotePropertyValue (New-Object System.Collections.Generic.List[string])
     $meta | Add-Member -NotePropertyName Projects        -NotePropertyValue @{}
+    $meta | Add-Member -NotePropertyName Consts          -NotePropertyValue @{}
+    $meta | Add-Member -NotePropertyName ConstBare       -NotePropertyValue @{}
+    $meta | Add-Member -NotePropertyName ClassInfo       -NotePropertyValue @{}
+    $meta | Add-Member -NotePropertyName PendingRest     -NotePropertyValue (New-Object System.Collections.Generic.List[string])
     $repos[$meta.Name] = $meta
 }
 
@@ -291,12 +401,15 @@ foreach ($repo in $repos.Values) {
         $needSvc  = $text.Contains('ServiceContract')
         $needRest = $RxRestHint.IsMatch($text)
         $needHost = $text.Contains('ServiceHost') -or $text.Contains('AddService<') -or $text.Contains('AddServiceEndpoint<')
-        if (-not ($needSvc -or $needRest -or $needHost)) { continue }
+        $needConst = $text.Contains('const string') -or $text.Contains('readonly string') -or $text.Contains('readonly static')
+        if (-not ($needSvc -or $needRest -or $needHost -or $needConst)) { continue }
 
         try {
             $mm = [CsMasker]::Process($text); $clean = $mm[0]; $mask = $mm[1]
             $nsList = @($RxNs.Matches($mask) | ForEach-Object { [pscustomobject]@{ Idx = $_.Index; Name = $_.Groups['n'].Value } })
             $proj = Find-Project $repo $f
+            if ($needConst) { Add-Consts $clean $mask $repo }
+            if ($needRest)  { Add-ClassInfo $clean $mask $repo; $repo.PendingRest.Add($f) }   # parsed after the whole repo is read, so constants/base classes in other files are known
 
             if ($needHost) {
                 foreach ($hm in $RxHostCode.Matches($clean)) {
@@ -356,15 +469,24 @@ foreach ($repo in $repos.Values) {
                 }
             }
 
-            if ($needRest) {
-                foreach ($r in (Get-ControllerRoutes $text $clean $mask ($rel -replace '\\', '/') $repo.Name $proj $nsList)) { $routeRows.Add($r) }
-                if ($clean -match '\bMap(?:Get|Post|Put|Delete|Patch)\s*\(') {
-                    foreach ($r in (Get-MinimalRoutes $text $clean ($rel -replace '\\', '/') $repo.Name $proj)) { $routeRows.Add($r) }
-                }
-            }
         } catch {
             Add-Warn $repo.Name $rel ("Parse error: " + $_.Exception.Message)
         }
+    }
+
+    # --- REST controllers / minimal APIs (now that every constant and base class of the repo is known)
+    foreach ($f in $repo.PendingRest) {
+        $rel = ($f.Substring($rootLen).TrimStart('\', '/')) -replace '\\', '/'
+        $text = Read-Text $f; if (-not $text) { continue }
+        try {
+            $mm = [CsMasker]::Process($text); $clean = $mm[0]; $mask = $mm[1]
+            $nsList = @($RxNs.Matches($mask) | ForEach-Object { [pscustomobject]@{ Idx = $_.Index; Name = $_.Groups['n'].Value } })
+            $proj = Find-Project $repo $f
+            foreach ($r in (Get-ControllerRoutes $text $clean $mask $rel $repo $proj $nsList)) { $routeRows.Add($r) }
+            if ($clean -match '\bMap(?:Get|Post|Put|Delete|Patch)\s*\(') {
+                foreach ($r in (Get-MinimalRoutes $text $clean $rel $repo.Name $proj)) { $routeRows.Add($r) }
+            }
+        } catch { Add-Warn $repo.Name $rel ("Parse error: " + $_.Exception.Message) }
     }
 }
 Write-Progress -Activity 'Pass 1: contracts, controllers, hosting evidence' -Completed
@@ -489,6 +611,58 @@ if ($ifaceSet.Count -gt 0) {
 }
 
 # ------------------------------------------------------------------------------------------------
+# PHASE 3b - hosted services whose contract was NOT found in any scanned repo (e.g. interface lives in a NuGet package
+#            we have no source for). Create a host-only cluster from the .svc file so the service can still be searched for.
+# ------------------------------------------------------------------------------------------------
+foreach ($repo in $repos.Values) {
+    foreach ($type in @($repo.SvcFiles.Keys)) {
+        $covered = $false
+        foreach ($c in $wcfClusters) { foreach ($o in $c.Occs) { if ($o.Repo -eq $repo.Name -and $o.ImplClasses.Contains($type)) { $covered = $true } } }
+        if ($covered) { continue }
+        # find the implementing class + its interface(s)
+        $implFile = ''; $implLine = 1; $ifaces = New-Object System.Collections.Generic.List[string]
+        $clsRx = New-Object Regex(('\bclass\s+' + [regex]::Escape($type) + '\b'))
+        foreach ($f in $repo.CsFiles) {
+            $t = Read-Text $f; if (-not $t -or -not $clsRx.IsMatch($t)) { continue }
+            $m2 = [CsMasker]::Process($t)[1]
+            foreach ($cm in $RxClass.Matches($m2)) {
+                if ($cm.Groups['name'].Value -ne $type) { continue }
+                $implFile = ($f.Substring($repo.Dir.Length).TrimStart('\', '/')) -replace '\\', '/'; $implLine = [CsMasker]::Line($t, $cm.Index)
+                foreach ($tm in [regex]::Matches($cm.Groups['bases'].Value, '[\w\.]+')) { $n = Get-ShortName $tm.Value; if ($n -match '^I[A-Z]' -and -not $ifaces.Contains($n)) { $ifaces.Add($n) } }
+            }
+            if ($implFile) { break }
+        }
+        $ifaceName = if ($ifaces.Count -gt 0) { $ifaces[0] } else { $type }
+        $id = 'WCF-' + (Get-ShortHash ('hostonly|' + $repo.Name + '|' + $type))
+        $newC = [pscustomobject]@{
+            Id = $id; Kind = 'WCF'; SeedOpKey = ''; SeedOps = @(); WireKey = ''; WireNs = ''; Name = $ifaceName
+            Occs = (New-Object System.Collections.Generic.List[object]); ClientClasses = (New-Object System.Collections.Generic.List[string])
+            ExtraFlags = (New-Object System.Collections.Generic.List[string])
+        }
+        $newC.ExtraFlags.Add('ContractNotInScannedRepos')
+        $svcRel = $repo.SvcFiles[$type][0]
+        $newC.Occs.Add([pscustomobject]@{ Repo = $repo.Name; Rel = $(if ($implFile) { $implFile } else { $svcRel }); Line = $implLine; Iface = $ifaceName; ClrNs = ''; WireNs = ''; WireName = $ifaceName
+            ConfigName = ''; Ops = @(); OpDetails = @(); Project = ''; ProjectNames = @(); IsGen = $false; Role = 'Host'; Resolution = 'HostOnly'
+            Confidence = 'Medium'; IsPseudo = $true; ImplClasses = (New-Object System.Collections.Generic.List[string]); ClusterId = $id; IsDrifted = $false })
+        $newC.Occs[0].ImplClasses.Add($type)
+        # if the consumers' generated proxies reveal the contract (wire namespace + operations), adopt them - but only when unambiguous
+        $proxyOnly = @($wcfClusters | Where-Object {
+            $cc = $_
+            (@($cc.Occs | Where-Object { -not $_.IsGen -and -not $_.IsPseudo }).Count -eq 0) -and (@($cc.Occs | Where-Object { $ifaces -contains $_.Iface -or $_.Iface -eq $ifaceName }).Count -gt 0) })
+        if ($proxyOnly.Count -eq 1) {
+            $pc = $proxyOnly[0]
+            foreach ($o in $pc.Occs) { $o.ClusterId = $id; $newC.Occs.Add($o) }
+            foreach ($x in $pc.ClientClasses) { $newC.ClientClasses.Add($x) }
+            $newC.WireNs = $pc.WireNs; $newC.Name = $pc.Name
+            $newC.ExtraFlags.Add('ProxiesMergedByInterfaceName')
+            [void]$wcfClusters.Remove($pc)
+        } elseif ($proxyOnly.Count -gt 1) { $newC.ExtraFlags.Add('SeveralProxyContractsShareThisName') }
+        $wcfClusters.Add($newC)
+        Add-Warn $repo.Name $svcRel "Service '$type' is hosted here but its contract '$ifaceName' was not found in any scanned repo (cluster $id is host-only)"
+    }
+}
+
+# ------------------------------------------------------------------------------------------------
 # PHASE 4 - ownership, flags, REST clustering, output
 # ------------------------------------------------------------------------------------------------
 function Select-Owner($repoNames) {
@@ -515,6 +689,7 @@ foreach ($c in $wcfClusters) {
     if ($defRepos.Count -gt 1) { $flags.Add('DefinedInMultipleRepos') }
     if (@($c.Occs | Where-Object IsDrifted).Count -gt 0) { $flags.Add('ContractDrift') }
     if ($nameCount[$c.Name.ToLowerInvariant()] -gt 1) { $flags.Add('NameCollision') }
+    if ($c.PSObject.Properties['ExtraFlags']) { foreach ($x in $c.ExtraFlags) { $flags.Add($x) } }
 
     $allOps = @($c.Occs | ForEach-Object { $_.Ops } | Where-Object { $_ } | Sort-Object -Unique)
     $svcFiles = @($hostRepos + $implRepos | Select-Object -Unique | ForEach-Object {
